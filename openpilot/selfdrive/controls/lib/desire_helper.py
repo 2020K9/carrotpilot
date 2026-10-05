@@ -7,7 +7,8 @@ from openpilot.selfdrive.controls.lib.desire_lib.constants import (
   LaneChangeState, LaneChangeDirection, TurnDirection,
   LANE_CHANGE_SPEED_MIN, LANE_CHANGE_TIME_MAX,
   BLINKER_NONE, BLINKER_LEFT, BLINKER_RIGHT,
-  DESIRES, TURN_DESIRES
+  DESIRES, TURN_DESIRES,
+  TURN_RELEASE_ANGLE_DEG, TURN_RELEASE_PEAK_ANGLE_DEG, TURN_RELEASE_TIME
 )
 from openpilot.selfdrive.controls.lib.desire_lib.side_state import SideState
 from openpilot.selfdrive.controls.lib.desire_lib.maneuver_classifier import classify_maneuver_type
@@ -33,6 +34,10 @@ class DesireHelper:
     self.turn_desire_state = False
     self.desire_disable_count = 0
     self.turn_disable_count = 0
+    self.turn_only = False
+    self.turn_peak_angle = 0.0
+    self.turn_low_angle_count = 0
+    self.turn_released = False
 
     # per-side states
     self.left = SideState("left")
@@ -80,15 +85,31 @@ class DesireHelper:
 
   def _check_desire_state(self, modeldata, carstate, maneuver_type):
     desire_state = modeldata.meta.desireState
-    orientation_rate = abs(modeldata.orientationRate.z[5])
-    orientation_rate_future = abs(modeldata.orientationRate.z[15])
 
     self.turn_desire_state = (desire_state[1] + desire_state[2]) > 0.1
 
-    if maneuver_type == "turn" and abs(carstate.steeringAngleDeg) > 80 and orientation_rate_future < orientation_rate:
-      self.turn_disable_count = int(10.0 / DT_MDL)
-    else:
-      self.turn_disable_count = max(0, self.turn_disable_count - 1)
+    # turn desire is released once the wheel comes back from its peak, and stays
+    # released until the driver cancels the blinker
+    if not (carstate.leftBlinker or carstate.rightBlinker):
+      self.turn_peak_angle = 0.0
+      self.turn_low_angle_count = 0
+      self.turn_released = False
+      self.turn_disable_count = 0
+      return
+
+    if maneuver_type == "turn":
+      angle = abs(carstate.steeringAngleDeg)
+      self.turn_peak_angle = max(self.turn_peak_angle, angle)
+      if angle < TURN_RELEASE_ANGLE_DEG:
+        self.turn_low_angle_count += 1
+      else:
+        self.turn_low_angle_count = 0
+
+      if self.turn_peak_angle > TURN_RELEASE_PEAK_ANGLE_DEG and \
+         self.turn_low_angle_count >= int(TURN_RELEASE_TIME / DT_MDL):
+        self.turn_released = True
+
+    self.turn_disable_count = 1 if self.turn_released else 0
 
   # ─────────────────────────────────────────────
   # blinkers/ATC (원본 로직 유지, side 계산은 별개)
@@ -99,8 +120,8 @@ class DesireHelper:
     self.driver_blinker_state = st
 
     enabled = st in (BLINKER_LEFT, BLINKER_RIGHT)
-    if self.laneChangeNeedTorque < 0:
-      enabled = False
+    # LaneChangeNeedTorque<0: no lane changes at all, driver blinker only arms turn desires
+    self.turn_only = self.laneChangeNeedTorque < 0
     return st, changed, enabled
 
   def _update_atc_blinker(self, carrotMan, driver_blinker_state, remote=None):
@@ -318,6 +339,7 @@ class DesireHelper:
           turn_desire_state=self.turn_desire_state,
           atc_type=self.atc_type,
           old_type=self.maneuver_type,
+          modeldata=modeldata,
         )
       else:
         new_type = "none"
@@ -350,7 +372,7 @@ class DesireHelper:
 
         if self.lane_change_state == LaneChangeState.off:
           driver_desire_started = driver_enabled and driver_changed
-          if desire_enabled and (not self.prev_desire_enabled or driver_desire_started) and \
+          if not self.turn_only and desire_enabled and (not self.prev_desire_enabled or driver_desire_started) and \
              not below_lane_change_speed and side is not None:
             self.lane_change_state = LaneChangeState.preLaneChange
             self.lane_change_ll_prob = 1.0
