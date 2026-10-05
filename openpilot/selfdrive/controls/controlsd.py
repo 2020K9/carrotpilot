@@ -18,6 +18,8 @@ from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
+from openpilot.selfdrive.controls.lib.lat_mode_blend import (LAT_MODE_BLEND_SECONDS, blend_lat_mode,
+                                                             lat_mode_blend_target, update_lat_mode_blend)
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -70,6 +72,7 @@ class Controls:
     self.steer_limited_by_safety = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
+    self.lat_mode_blend = 0.0  # 1.0 = lane mode, 0.0 = laneless (ramped over LAT_MODE_BLEND_SECONDS)
 
     # VW MEB(ID.4/ID.5)에서만 사용. infiniteCable2 LatControlCurvature 정확 복제:
     # EnableCurvatureController=1(기본 ON) 상태의 곡률 폐루프 PID + useCarSteerCurvature 보정
@@ -191,8 +194,18 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    # Both curvature sources every cycle: switching between them in one step caused a
+    # steering jerk, so they are crossfaded over LAT_MODE_BLEND_SECONDS.
+    lane_curvature = None
+    if len(lat_plan.curvatures) > 0:
+      lane_curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures,
+                                                  steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
+    laneless_curvature = float(model_v2.action.desiredCurvature)
+
     if not CC.latActive:
       new_desired_curvature = self.curvature
+      # Snap the weight so engaging never starts mid-blend
+      self.lat_mode_blend = lat_mode_blend_target(self.lanefull_mode_enabled, lane_curvature is not None)
     elif self.is_vw_meb:
       # VW MEB(ID.4/ID.5): 기본은 레인리스(raw 모델곡률 = infiniteCable2 동일).
       # carrot 횡플래너가 레인모드 활성(lat_plan.useLaneLines, UseLaneLineSpeed>0 & 차선감지)일 때만
@@ -203,14 +216,13 @@ class Controls:
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
       else:
         new_desired_curvature = float(model_v2.action.desiredCurvature)  # raw 모델곡률 (if2 기본과 동일)
-    elif self.lanefull_mode_enabled:
-      if len(lat_plan.curvatures) == 0:
-        new_desired_curvature = self.curvature
-      else:
-        curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
-        new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
-    else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+    else:
+      self.lat_mode_blend = update_lat_mode_blend(self.lat_mode_blend, self.lanefull_mode_enabled,
+                                                  lane_curvature is not None, DT_CTRL, LAT_MODE_BLEND_SECONDS)
+      lane_target = laneless_curvature if lane_curvature is None else lane_curvature
+      curvature = blend_lat_mode(self.lat_mode_blend, lane_target, laneless_curvature)
+      tau = blend_lat_mode(self.lat_mode_blend, lat_smooth_seconds, 0.1)
+      new_desired_curvature = smooth_value(curvature, self.desired_curvature, tau)
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
