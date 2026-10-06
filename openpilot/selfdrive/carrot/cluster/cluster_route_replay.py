@@ -216,7 +216,6 @@ CONTINUOUS_LANE_CHANGE_REBASE_PROGRESS = 0.12
 LANE_CHANGE_MODEL_DIRECT_ONLY = True
 ROUTE_REPLAY_USE_LANE_CHANGE_ANIMATION = True
 LANE_LINE_PROBABILITY_MIN = 0.4
-LANE_LINE_PROBABILITY_OFF = 0.25
 MODEL_DIRECT_LANE_SETTLE_MIN_PROGRESS = 0.65
 LONGITUDINAL_PERSONALITY_GAPS = {
     "aggressive": 1,
@@ -1506,12 +1505,6 @@ class RouteLogParser:
         self.right_lane_prob = 1.0
         self.outer_left_lane_prob = 0.0
         self.outer_right_lane_prob = 0.0
-        self.lane_line_visible_state = {
-            "left": False,
-            "right": False,
-            "outer_left": False,
-            "outer_right": False,
-        }
         self.left_road_edge_confidence = 0.0
         self.right_road_edge_confidence = 0.0
         self.left_lane_style = "solid"
@@ -3403,24 +3396,10 @@ class RouteLogParser:
             if right_code < 0:
                 self.right_lane_prob = 0.0
 
-    def _lane_line_visible(self, key: str, prob: float) -> bool:
-        # HDA1 model probabilities swing across a single threshold often enough to
-        # make the drawn lane lines flicker, so latch each line separately.
-        if self.lane_line_visible_state.get(key, False):
-            visible = prob >= LANE_LINE_PROBABILITY_OFF
-        else:
-            visible = prob >= LANE_LINE_PROBABILITY_MIN
-        self.lane_line_visible_state[key] = visible
-        return visible
-
     def _lane_values(self) -> dict[str, Any]:
         width = clamp(self.lane_width_m, 2.4, 4.6)
         left_y = self.left_lane_y_m
         right_y = self.right_lane_y_m
-        left_prob_visible = self._lane_line_visible("left", self.left_lane_prob)
-        right_prob_visible = self._lane_line_visible("right", self.right_lane_prob)
-        outer_left_prob_visible = self._lane_line_visible("outer_left", self.outer_left_lane_prob)
-        outer_right_prob_visible = self._lane_line_visible("outer_right", self.outer_right_lane_prob)
         if left_y is None or right_y is None or right_y <= left_y:
             center_m: float | None = None
             return {
@@ -3428,8 +3407,8 @@ class RouteLogParser:
                 "center": center_m,
                 "left_offset": -0.5,
                 "right_offset": 0.5,
-                "left_visible": left_prob_visible,
-                "right_visible": right_prob_visible,
+                "left_visible": self.left_lane_prob >= LANE_LINE_PROBABILITY_MIN,
+                "right_visible": self.right_lane_prob >= LANE_LINE_PROBABILITY_MIN,
                 "extra_left_visible": False,
                 "extra_right_visible": False,
                 "left_road_edge_offset": None,
@@ -3459,13 +3438,13 @@ class RouteLogParser:
         extra_left_visible = (
             outer_left_offset is not None
             and outer_left_offset < -0.78
-            and outer_left_prob_visible
+            and self.outer_left_lane_prob >= LANE_LINE_PROBABILITY_MIN
             and lane_offset_inside_road_edges(outer_left_offset, left_edge_bound, right_edge_bound)
         )
         extra_right_visible = (
             outer_right_offset is not None
             and outer_right_offset > 0.78
-            and outer_right_prob_visible
+            and self.outer_right_lane_prob >= LANE_LINE_PROBABILITY_MIN
             and lane_offset_inside_road_edges(outer_right_offset, left_edge_bound, right_edge_bound)
         )
         return {
@@ -3473,8 +3452,8 @@ class RouteLogParser:
             "center": center_m,
             "left_offset": left_offset,
             "right_offset": right_offset,
-            "left_visible": left_prob_visible and lane_offset_inside_road_edges(left_offset, left_edge_bound, right_edge_bound),
-            "right_visible": right_prob_visible and lane_offset_inside_road_edges(right_offset, left_edge_bound, right_edge_bound),
+            "left_visible": self.left_lane_prob >= LANE_LINE_PROBABILITY_MIN and lane_offset_inside_road_edges(left_offset, left_edge_bound, right_edge_bound),
+            "right_visible": self.right_lane_prob >= LANE_LINE_PROBABILITY_MIN and lane_offset_inside_road_edges(right_offset, left_edge_bound, right_edge_bound),
             "extra_left_visible": extra_left_visible,
             "extra_right_visible": extra_right_visible,
             "left_road_edge_offset": left_edge_bound,
@@ -5432,9 +5411,7 @@ def tuple_value(values: tuple[float, ...], index: int) -> float:
 
 
 def lane_style_from_code(code: int) -> str:
-    # Codes below 10 carry no color information (HDA1 cars always report 0), so
-    # they mean "unknown" rather than "dashed white line".
-    if code < 10:
+    if code < 0:
         return "solid"
     return "dashed" if code % 10 == 0 else "solid"
 
