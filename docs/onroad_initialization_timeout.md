@@ -135,3 +135,44 @@ Desktop validation: 40 Jetlink tests pass with five platform-dependent skips;
 14 firmware identity tests pass separately. New helper/tests pass Ruff; the
 model wrapper retains its two pre-existing style findings. No test weakens
 camera/model validity or treats optional preparation completion as engagement.
+
+### Parked startup and installation follow-up
+
+On the first C4 deployment, first valid modelV2 advanced from CAN-relative
+15.717 s to 8.287 s; initialization completed in 7.54 s without the timeout.
+However, installing the prepared adapter later stalled model output: installation
+took 0.723 s. A second startup reproduced 0.729 s, split into 0.724 s before
+restoration and 0.005 s restoring the executable, with 0.701 s thread CPU.
+Isolated warm/prepared tests (20-31 ms) had not exposed this live-process cost.
+
+JoiningModel now allocates the two independent 3x3 NPY transform tensors before
+starting inference and passes them to the installed Warp. This adds no GPU
+compilation or peer wait, and never shares the local model's mutable inputs.
+Late installation reuses these buffers. This alone did **not** fix the stall:
+the next startup still measured 0.736 s before restoration. That phase included
+`Device.DEFAULT`, not just input creation. A fresh parked-device reproduction
+had QCOM and NPY already open with DEV unset; querying DEFAULT still searched
+other backends and consumed 2.450 s wall / 2.071 s thread CPU under low priority.
+
+Warp now checks the explicit QCOM device, avoiding default-backend discovery in
+live modeld. The isolated compiler receives DEV=QCOM and WARP_DEV=QCOM; this
+does not change the parent model's backend selection. Compilation-only imports
+remain in the worker construction path. One-time phase diagnostics retain input
+setup, executable restore and thread CPU durations for device verification.
+
+The full parked C4 restart on `896d20b158` confirms the distinction: internal
+construction 1.799 s, wrapper 0.022 s, first valid modelV2 CAN-relative 8.289 s,
+initialization 8.01 s without timeout. Adapter compilation continued separately
+for 24.309 s; installation then took 4.23 ms (setup 0.088 ms, restore 4.139 ms),
+and Jetlink became active. The recorded transition's largest model-message gap
+fell from 778.7 ms to 85.8 ms. The first external inference still has a transient
+gap; this is not a claim of gap-free handover. Both recordings contain no modelV2
+messages marked invalid, which by itself would not detect missing messages.
+
+The final capture has no Panda RX/TX queue overflow or faults, and the observed
+Panda signature matches the local signed H7 firmware. Its SPI checksum counter
+is seven, so do not describe the whole boot as SPI-error-free. This parked
+CAN-FD result does not validate classic-CAN preservation or resolve the original
+Casper SPI incident. Final status confirms Park, zero speed, inactive controls,
+valid/alive CAN, model and manager services, active Jetlink and ShareData still
+zero. Final Jetlink tests: 41 pass, five platform-dependent skips.

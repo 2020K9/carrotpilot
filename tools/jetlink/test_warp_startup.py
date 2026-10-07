@@ -14,9 +14,31 @@ def test_constructor_never_prepares_gpu_or_connects(monkeypatch):
   monkeypatch.setitem(sys.modules, 'openpilot.selfdrive.modeld.parse_model_outputs', NS(Parser=lambda: None))
   monkeypatch.setitem(sys.modules, 'openpilot.system.hardware', NS(HARDWARE=NS(get_device_type=lambda: 'mici')))
   monkeypatch.setattr(model, 'Warp', lambda *a, **k: pytest.fail('eager GPU preparation'))
+  buffers = object()
+  monkeypatch.setattr(model, 'make_warp_inputs', lambda: buffers)
   monkeypatch.setattr(model, 'ClientConnection', lambda: pytest.fail('eager connection'))
   m = model.JoiningModel(NS(), 1344, 760)
   assert m.warp is None and m.preparation is None and m.small_runs == 0
+  assert m.warp_inputs is buffers
+
+
+def test_prepared_warp_never_discovers_default_gpu(monkeypatch):
+  class Device:
+    @property
+    def DEFAULT(self):
+      pytest.fail('live model must not probe unrelated GPU backends')
+    def __getitem__(self, key):
+      assert key == 'QCOM'
+      return NS(device='QCOM')
+  from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
+  executable, transforms, inputs = object(), object(), object()
+  identity = (1344, 760, get_nv12_info(1344, 760)[3], model.SPEC.sha256)
+  monkeypatch.setitem(sys.modules, 'tinygrad', NS(Device=Device()))
+  monkeypatch.setitem(sys.modules, 'openpilot.selfdrive.modeld.helpers',
+                      NS(load_oob=lambda _: {'identity': identity, 'warp': executable}))
+  monkeypatch.setattr(model, 'make_warp_inputs', lambda: pytest.fail('late buffer allocation'))
+  warp = model.Warp(1344, 760, prepared=b'captured', input_buffers=(transforms, inputs))
+  assert warp.run_warp is executable and warp.transforms is transforms and warp.inputs is inputs
 
 
 @pytest.mark.parametrize('ready,allowed,outputs', [(False, True, 3), (True, False, 3), (True, True, 0), (True, True, 2)])
@@ -52,7 +74,8 @@ def test_completed_preparation_obeys_current_join_permission(monkeypatch):
   m.preparation = NS(future=future)
   m.join_allowed = False
   installed = []
-  def install(*args, prepared):
+  def install(*args, prepared, input_buffers):
+    assert input_buffers is m.warp_inputs
     installed.append(prepared)
     return lambda *a: None
   monkeypatch.setattr(model, 'Warp', install)
@@ -101,6 +124,7 @@ def test_worker_is_bounded_reaped_and_cleans_private_artifacts(monkeypatch, tmp_
   class Process:
     returncode = None
     def __init__(self, args, **kwargs):
+      assert kwargs['env']['DEV'] == kwargs['env']['WARP_DEV'] == 'QCOM'
       self.target = Path(args[-1])
       calls.append(self.target.parent)
       self.target.write_bytes(b'executable')
