@@ -133,6 +133,7 @@
               "params": [
                 "SteerActuatorDelay",
                 "LatSmoothSec",
+                "PathVerifier",
                 "LatSuspendAngleDeg",
                 "CustomSR",
                 "SteerRatioRate"
@@ -989,6 +990,22 @@
       "min": 1,
       "max": 30,
       "default": 13,
+      "unit": 1
+    },
+    {
+      "group": "조향튜닝",
+      "name": "PathVerifier",
+      "title": "경로 검증기(레인리스)",
+      "descr": "레인리스 주행중 모델경로의 급격한 반대방향 변화를 증거(차선기억/도로경계/선행차/자차거동)로 검증하여 완화함.\n 0:끔 1:켬",
+      "egroup": "LAT",
+      "etitle": "Path verifier (laneless)",
+      "edescr": "Checks sudden opposite model path changes while laneless against lane memory / road edges / lead trail / ego motion.\n 0:off 1:on",
+      "cgroup": "转向",
+      "ctitle": "路径验证器(无车道)",
+      "cdescr": "无车道行驶时，用车道记忆/道路边缘/前车/本车运动验证模型路径的突然反向变化。\n 0:关 1:开",
+      "min": 0,
+      "max": 1,
+      "default": 0,
       "unit": 1
     },
     {

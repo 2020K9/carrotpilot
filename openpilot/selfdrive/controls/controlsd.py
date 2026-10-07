@@ -25,6 +25,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
+from openpilot.selfdrive.controls.lib.path_verifier import PathVerifier
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 
 
@@ -65,7 +66,7 @@ class Controls:
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'carState', 'carOutput',
-                                   'carrotMan', 'lateralPlan', 'radarState',
+                                   'carrotMan', 'lateralPlan', 'radarState', 'liveTracks',
                                    'driverMonitoringState', 'onroadEvents', 'driverAssistance'], poll='selfdriveState')
     self.pm = messaging.PubMaster(['carControl', 'controlsState'])
 
@@ -83,6 +84,10 @@ class Controls:
                                                       pos_limit=MEB_CURVATURE_MAX, neg_limit=-MEB_CURVATURE_MAX)
                               if self.is_vw_meb else None)
     self.atc_turn_speed = self.params.get_int("AutoTurnControlSpeedTurn")
+
+    # 레인리스 경로검증기 (기본 꺼짐). 1Hz로만 파라미터 IO.
+    self.path_verifier = PathVerifier()
+    self.path_verifier_enabled = self.params.get_int("PathVerifier") > 0
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -110,6 +115,52 @@ class Controls:
     if self.sm.updated["livePose"]:
       device_pose = Pose.from_live_pose(self.sm['livePose'])
       self.calibrated_pose = self.pose_calibrator.build_calibrated_pose(device_pose)
+
+  def path_verifier_curvature(self, CS, model_v2, lat_plan, laneless_curvature, lat_active):
+    # 레인리스 구간에서 모델경로가 증거(차선기억/도로경계/선행차/자차거동/모델자기일관성)와
+    # 반대로 급변할 때만 그 변화를 일시적으로 완화한다. 증거가 없거나 지지하면 그대로 통과.
+    lane_lines = model_v2.laneLines
+    road_edges = model_v2.roadEdges
+    probs = model_v2.laneLineProbs
+    stds = model_v2.laneLineStds
+    edge_stds = model_v2.roadEdgeStds
+    if len(lane_lines) < 4 or len(road_edges) < 2 or len(probs) < 4:
+      return laneless_curvature
+
+    live_pose = self.sm['livePose']
+    tracks = self.sm['liveTracks']
+    points = tracks.points
+    lead = self.sm['radarState'].leadOne
+    desire = lat_plan.desire
+    Desire = log.Desire
+
+    curvature, _ = self.path_verifier.update(
+      v_ego=CS.vEgo,
+      model_curvature=laneless_curvature,
+      plan_x=model_v2.position.x, plan_y=model_v2.position.y,
+      lll_prob=probs[1], rll_prob=probs[2],
+      lll_std=stds[1] if len(stds) > 2 else 1.0, rll_std=stds[2] if len(stds) > 2 else 1.0,
+      lane_x=lane_lines[1].x, lll_y=lane_lines[1].y, rll_y=lane_lines[2].y,
+      edge_x=road_edges[0].x, le_y=road_edges[0].y, re_y=road_edges[1].y,
+      le_std=edge_stds[0] if len(edge_stds) > 1 else 1.0,
+      re_std=edge_stds[1] if len(edge_stds) > 1 else 1.0,
+      lead_present=lead.status, lead_d_rel=lead.dRel, lead_y_rel=lead.yRel, lead_v_lead=lead.vLead,
+      track_d_rel=[p.dRel for p in points], track_y_rel=[p.yRel for p in points],
+      track_v_lead=[p.vLead for p in points], track_id=[p.trackId for p in points],
+      yaw_rate=live_pose.angularVelocityDevice.z,
+      steering_pressed=CS.steeringPressed,
+      lat_active=lat_active, dt=DT_CTRL,
+      lane_mode_weight=self.lat_mode_blend,
+      lane_change_active=model_v2.meta.laneChangeState != LaneChangeState.off,
+      desire_turn=desire in (Desire.turnLeft, Desire.turnRight, Desire.keepLeft, Desire.keepRight),
+      blinker_left=CS.leftBlinker, blinker_right=CS.rightBlinker,
+      nav_turn=self.sm['carrotMan'].atcType not in ("", "none"),
+      pose_valid=live_pose.posenetOK and live_pose.inputsOK,
+      calibrated=self.calibrated_pose is not None,
+      radar_valid=not (tracks.errors.canError or tracks.errors.radarFault or tracks.errors.wrongConfig),
+      model_ok=model_v2.frameDropPerc <= 20.0,
+    )
+    return curvature
 
   def state_control(self):
     CS = self.sm['carState']
@@ -187,6 +238,8 @@ class Controls:
     self.lanefull_mode_enabled = (lat_plan.useLaneLines and curve_speed_abs > self.params.get_int("UseLaneLineCurveSpeed"))
     lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
     steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
+    if self.sm.frame % 100 == 0:  # 1Hz로만 파라미터 IO (100Hz 루프 보호)
+      self.path_verifier_enabled = self.params.get_int("PathVerifier") > 0
     if steer_actuator_delay == 0.0:
       steer_actuator_delay = self.sm['liveDelay'].lateralDelay 
     
@@ -219,6 +272,8 @@ class Controls:
     else:
       self.lat_mode_blend = update_lat_mode_blend(self.lat_mode_blend, self.lanefull_mode_enabled,
                                                   lane_curvature is not None, DT_CTRL, LAT_MODE_BLEND_SECONDS)
+      if self.path_verifier_enabled:
+        laneless_curvature = self.path_verifier_curvature(CS, model_v2, lat_plan, laneless_curvature, CC.latActive)
       lane_target = laneless_curvature if lane_curvature is None else lane_curvature
       curvature = blend_lat_mode(self.lat_mode_blend, lane_target, laneless_curvature)
       tau = blend_lat_mode(self.lat_mode_blend, lat_smooth_seconds, 0.1)
