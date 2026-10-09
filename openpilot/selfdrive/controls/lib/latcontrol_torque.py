@@ -82,7 +82,6 @@ class LatControlTorque(LatControl):
     self.latAccelFactor_default = self.torque_params.latAccelFactor
     self.latAccelOffset_default = self.torque_params.latAccelOffset
     self.friction_default = self.torque_params.friction
-    self.pid_gains_default = (self.pid._k_p, self.pid._k_i, self.pid.k_f, self.pid._k_d)
 
     # Twilsonco's Lateral Neural Network Feedforward
     self.use_nnff = CI.use_nnff
@@ -156,11 +155,10 @@ class LatControlTorque(LatControl):
         self.pid.k_f = lateralTorqueKf
         self.pid._k_d = [[0], [lateralTorqueKd]]
         self.torque_params.latAccelOffset = self.latAccelOffset_default
-      elif self.lateralTorqueCustom > 0:  # 1 -> 0, reset to default (the setting is 0/1, so "> 1" never ran)
+      elif self.lateralTorqueCustom > 1:  # 1 -> 0, reset to default
         self.torque_params.latAccelFactor = self.latAccelFactor_default
         self.torque_params.friction = self.friction_default
         self.torque_params.latAccelOffset = self.latAccelOffset_default
-        self.pid._k_p, self.pid._k_i, self.pid.k_f, self.pid._k_d = self.pid_gains_default
       self.lateralTorqueCustom = lateralTorqueCustom
 
     pid_log = log.ControlsState.LateralTorqueState.new_message()
