@@ -26,6 +26,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, S
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.controls.lib.path_verifier import PathVerifier
+from openpilot.selfdrive.controls.lib.laneless_center import LanelessCenterCorrection
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
 
@@ -91,6 +92,8 @@ class Controls:
     # 레인리스 경로검증기 (기본 꺼짐). 1Hz로만 파라미터 IO.
     self.path_verifier = PathVerifier()
     self.path_verifier_enabled = self.params.get_int("PathVerifier") > 0
+    # 레인리스 중앙 보정 (승인값 없음 -> 항상 꺼짐, 기존 경로 그대로).
+    self.laneless_center = LanelessCenterCorrection()
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -164,6 +167,39 @@ class Controls:
       model_ok=model_v2.frameDropPerc <= 20.0,
     )
     return curvature
+
+  def laneless_center_delta(self, CS, model_v2, laneless_curvature, lat_active):
+    lane_lines = model_v2.laneLines
+    probs = model_v2.laneLineProbs
+    stds = model_v2.laneLineStds
+    have_lanes = len(lane_lines) >= 3 and len(probs) >= 3 and len(stds) >= 3
+    model_age = (self.sm.frame - self.sm.recv_frame['modelV2']) * DT_CTRL
+    return self.laneless_center.update(
+      dt=DT_CTRL, lat_active=lat_active, steering_pressed=CS.steeringPressed,
+      lane_change_active=model_v2.meta.laneChangeState != LaneChangeState.off,
+      lane_mode_weight=self.lat_mode_blend, model_age=model_age,
+      model_valid=self.sm.valid['modelV2'] and self.sm.alive['modelV2'] and have_lanes,
+      # Raw model direct curvature: the path/direct consistency check is about the model, not the verifier.
+      model_curvature=float(model_v2.action.desiredCurvature),
+      path_verifier_effect=self.path_verifier.effect if self.path_verifier_enabled else 0.0,
+      plan_x=model_v2.position.x, plan_y=model_v2.position.y,
+      lane_x=lane_lines[1].x if have_lanes else (), lll_x=lane_lines[1].x if have_lanes else (),
+      rll_x=lane_lines[2].x if have_lanes else (),
+      lll_y=lane_lines[1].y if have_lanes else (), rll_y=lane_lines[2].y if have_lanes else (),
+      lll_prob=probs[1] if have_lanes else 0.0, rll_prob=probs[2] if have_lanes else 0.0,
+      lll_std=stds[1] if have_lanes else 1.0, rll_std=stds[2] if have_lanes else 1.0,
+      clearance=None,  # no side/edge free-space source is connected; unknown blocks (see REVIEW.md)
+    )
+
+  def consume_laneless_center(self, CS, lp, model_v2, lane_curvature, laneless_curvature, delta, lat_smooth_seconds):
+    # Same blend -> smooth -> clip as the default branch; only the laneless candidate carries delta.
+    # The library checks the candidate, recomputes on violation and checks the recomputation again.
+    lcc = self.laneless_center
+    lcc.trace.update(model_raw=float(model_v2.action.desiredCurvature), verified=laneless_curvature,
+                     requested_delta=delta, model_frame_id=model_v2.frameId,
+                     model_recv_frame=self.sm.recv_frame['modelV2'], consume_frame=self.sm.frame)
+    return lcc.consume(self.lat_mode_blend, lane_curvature, laneless_curvature, self.desired_curvature,
+                       lat_smooth_seconds, CS.vEgo, lp.roll, DT_CTRL, clip_curvature)
 
   def state_control(self):
     CS = self.sm['carState']
@@ -283,12 +319,23 @@ class Controls:
                                                   lane_curvature is not None, DT_CTRL, LAT_MODE_BLEND_SECONDS)
       if self.path_verifier_enabled:
         laneless_curvature = self.path_verifier_curvature(CS, model_v2, lat_plan, laneless_curvature, CC.latActive)
-      lane_target = laneless_curvature if lane_curvature is None else lane_curvature
-      curvature = blend_lat_mode(self.lat_mode_blend, lane_target, laneless_curvature)
-      tau = blend_lat_mode(self.lat_mode_blend, lat_smooth_seconds, 0.1)
-      new_desired_curvature = smooth_value(curvature, self.desired_curvature, tau)
+      if self.laneless_center.operational:  # needs config, safety contract and residual policy
+        new_desired_curvature = None
+        laneless_center_delta = self.laneless_center_delta(CS, model_v2, laneless_curvature, CC.latActive)
+      else:
+        lane_target = laneless_curvature if lane_curvature is None else lane_curvature
+        curvature = blend_lat_mode(self.lat_mode_blend, lane_target, laneless_curvature)
+        tau = blend_lat_mode(self.lat_mode_blend, lat_smooth_seconds, 0.1)
+        new_desired_curvature = smooth_value(curvature, self.desired_curvature, tau)
 
-    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
+    if new_desired_curvature is None:
+      # Disabled by default (no approved LanelessCenterConfig); see lib/laneless_center.py.
+      self.desired_curvature, curvature_limited = self.consume_laneless_center(
+        CS, lp, model_v2, lane_curvature, laneless_curvature, laneless_center_delta, lat_smooth_seconds)
+    else:
+      if self.laneless_center.enabled:
+        self.laneless_center.reset()  # inactive or VW MEB: never carry a correction across
+      self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
     actuators.curvature = float(self.desired_curvature)
 
@@ -329,6 +376,9 @@ class Controls:
                                                        model_data=self.sm['modelV2'])
     actuators.torque = float(steer)
     actuators.steeringAngleDeg = float(steeringAngleDeg)
+    if self.laneless_center.enabled:
+      self.laneless_center.trace.update(lac_curvature=float(self.desired_curvature), torque=float(steer),
+                                        steering_angle_deg=float(steeringAngleDeg))
     # Ensure no NaNs/Infs
     for p in ACTUATOR_FIELDS:
       attr = getattr(actuators, p)
