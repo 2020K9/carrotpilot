@@ -26,8 +26,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, S
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.controls.lib.path_verifier import PathVerifier
-from openpilot.selfdrive.controls.lib.laneless_center import (BLOCK_CONSUMED_VIOLATION, LanelessCenterCorrection,
-                                                              consume_curvature)
+from openpilot.selfdrive.controls.lib.laneless_center import LanelessCenterCorrection
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
 
@@ -180,7 +179,8 @@ class Controls:
       lane_change_active=model_v2.meta.laneChangeState != LaneChangeState.off,
       lane_mode_weight=self.lat_mode_blend, model_age=model_age,
       model_valid=self.sm.valid['modelV2'] and self.sm.alive['modelV2'] and have_lanes,
-      model_curvature=laneless_curvature,
+      # Raw model direct curvature: the path/direct consistency check is about the model, not the verifier.
+      model_curvature=float(model_v2.action.desiredCurvature),
       path_verifier_effect=self.path_verifier.effect if self.path_verifier_enabled else 0.0,
       plan_x=model_v2.position.x, plan_y=model_v2.position.y,
       lane_x=lane_lines[1].x if have_lanes else (), lll_x=lane_lines[1].x if have_lanes else (),
@@ -188,24 +188,18 @@ class Controls:
       lll_y=lane_lines[1].y if have_lanes else (), rll_y=lane_lines[2].y if have_lanes else (),
       lll_prob=probs[1] if have_lanes else 0.0, rll_prob=probs[2] if have_lanes else 0.0,
       lll_std=stds[1] if have_lanes else 1.0, rll_std=stds[2] if have_lanes else 1.0,
+      clearance=None,  # no side/edge free-space source is connected; unknown blocks (see REVIEW.md)
     )
 
-  def consume_laneless_center(self, CS, lp, lane_curvature, laneless_curvature, delta, lat_smooth_seconds):
+  def consume_laneless_center(self, CS, lp, model_v2, lane_curvature, laneless_curvature, delta, lat_smooth_seconds):
     # Same blend -> smooth -> clip as the default branch; only the laneless candidate carries delta.
+    # The library checks the candidate, recomputes on violation and checks the recomputation again.
     lcc = self.laneless_center
-    prev = self.desired_curvature
-    shadow_prev = prev if lcc.shadow_desired is None else lcc.shadow_desired
-    args = (self.lat_mode_blend, lane_curvature, laneless_curvature)
-    tail = (lat_smooth_seconds, CS.vEgo, lp.roll, DT_CTRL, clip_curvature)
-    desired, limited, stages = consume_curvature(*args, delta, prev, *tail)
-    shadow, _, _ = consume_curvature(*args, 0.0, shadow_prev, *tail)
-    if not lcc.check_consumed(desired, shadow):
-      lcc.trace["reason"] = BLOCK_CONSUMED_VIOLATION
-      lcc.delta = 0.0
-      desired, limited, stages = consume_curvature(*args, 0.0, prev, *tail)
-    lcc.shadow_desired = shadow
-    lcc.trace.update(stages, model=laneless_curvature, curvature_limited=limited)
-    return desired, limited
+    lcc.trace.update(model_raw=float(model_v2.action.desiredCurvature), verified=laneless_curvature,
+                     requested_delta=delta, model_frame_id=model_v2.frameId,
+                     model_recv_frame=self.sm.recv_frame['modelV2'], consume_frame=self.sm.frame)
+    return lcc.consume(self.lat_mode_blend, lane_curvature, laneless_curvature, self.desired_curvature,
+                       lat_smooth_seconds, CS.vEgo, lp.roll, DT_CTRL, clip_curvature)
 
   def state_control(self):
     CS = self.sm['carState']
@@ -325,7 +319,7 @@ class Controls:
                                                   lane_curvature is not None, DT_CTRL, LAT_MODE_BLEND_SECONDS)
       if self.path_verifier_enabled:
         laneless_curvature = self.path_verifier_curvature(CS, model_v2, lat_plan, laneless_curvature, CC.latActive)
-      if self.laneless_center.enabled:
+      if self.laneless_center.operational:  # needs config, safety contract and residual policy
         new_desired_curvature = None
         laneless_center_delta = self.laneless_center_delta(CS, model_v2, laneless_curvature, CC.latActive)
       else:
@@ -337,7 +331,7 @@ class Controls:
     if new_desired_curvature is None:
       # Disabled by default (no approved LanelessCenterConfig); see lib/laneless_center.py.
       self.desired_curvature, curvature_limited = self.consume_laneless_center(
-        CS, lp, lane_curvature, laneless_curvature, laneless_center_delta, lat_smooth_seconds)
+        CS, lp, model_v2, lane_curvature, laneless_curvature, laneless_center_delta, lat_smooth_seconds)
     else:
       if self.laneless_center.enabled:
         self.laneless_center.reset()  # inactive or VW MEB: never carry a correction across

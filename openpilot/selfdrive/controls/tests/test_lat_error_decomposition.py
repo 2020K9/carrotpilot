@@ -155,3 +155,65 @@ def test_ratio_near_zero_target_is_not_filled():
   assert safe_ratio(0.1, 0.2, None) is None
   assert safe_ratio(0.1, 0.2, 1e-3) == pytest.approx(0.5)
   assert safe_ratio(float("nan"), 0.2, 1e-3) is None
+
+
+# ------------------------------------------------------------ v4: tolerance / ratio numeric validity
+# Written for the v4 review; NOT executed.  Values are UNAPPROVED DEFAULTS -- SYNTHETIC TEST ONLY.
+
+@pytest.mark.parametrize("tol", [float("nan"), float("inf"), float("-inf"), -0.1, "0.5", True, [0.5]])
+def test_invalid_tangential_tolerance_is_unevaluable_with_reason(tol):
+  # 3 m longitudinal mismatch: an infinite/NaN tolerance must not let it through.
+  r = decompose(*STRAIGHT, 40.0, (40.0, 0.5), (43.0, 0.2), tol)
+  assert r["status"] == UNEVALUABLE and r["reason"] == "tolerance_invalid"
+  assert r["total"] is None and r["path"] is None and r["tracking"] is None
+
+
+def test_unset_tolerance_reason():
+  r = decompose(*STRAIGHT, 40.0, (40.0, 0.5), (40.0, 0.2), None)
+  assert r["status"] == UNEVALUABLE and r["reason"] == "tolerance_unset"
+
+
+def test_zero_tolerance_accepts_only_exact_progress():
+  assert decompose(*STRAIGHT, 40.0, (40.0, 0.5), (40.0, 0.2), 0.0)["status"] == OK
+  r = decompose(*STRAIGHT, 40.0, (40.0, 0.5), (40.01, 0.2), 0.0)
+  assert r["status"] == UNEVALUABLE and r["reason"] == "longitudinal_mismatch"
+
+
+@pytest.mark.parametrize("dx,status", [(0.25, OK), (0.5, OK), (0.75, UNEVALUABLE)])
+def test_tolerance_boundary_is_inclusive(dx, status):
+  # dx values are exact in binary; |tangential| == tol is accepted.
+  assert decompose(*STRAIGHT, 40.0, (40.0, 0.5), (40.0 + dx, 0.2), 0.5)["status"] == status
+
+
+def test_large_finite_inputs_with_large_mismatch_not_ok():
+  r = decompose(*STRAIGHT, 40.0, (40.0, 1e300), (1e300, 0.2), 1.0)
+  assert r["status"] == UNEVALUABLE
+
+
+@pytest.mark.parametrize("min_den", [0.0, -0.0, -1e-3, float("nan"), float("inf"), True, "1e-3", None])
+def test_ratio_invalid_lower_bound(min_den):
+  assert safe_ratio(0.1, 0.5, min_den) is None
+
+
+@pytest.mark.parametrize("den", [0.0, -0.0])
+@pytest.mark.parametrize("min_den", [1e-3, 1e-300])
+def test_ratio_signed_zero_denominator_rejected_before_division(den, min_den):
+  assert safe_ratio(0.1, den, min_den) is None
+
+
+def test_ratio_bound_inclusive_and_negative_denominator():
+  m = 0.5  # exact in binary
+  assert safe_ratio(0.25, 0.5, m) == 0.5           # |den| == bound: accepted
+  assert safe_ratio(0.25, -0.5, m) == -0.5         # negative denominator keeps its sign
+  assert safe_ratio(0.25, np.nextafter(0.5, 0.0), m) is None
+  assert safe_ratio(0.25, np.nextafter(0.5, 1.0), m) is not None
+
+
+def test_ratio_nonfinite_result_is_not_a_number():
+  assert safe_ratio(1e308, 1e-300, 1e-310) is None   # overflows to inf
+  assert safe_ratio(-1e308, 1e-300, 1e-310) is None
+
+
+@pytest.mark.parametrize("num", [None, "0.1", float("nan"), float("inf"), True])
+def test_ratio_missing_or_nonnumeric_numerator_no_exception(num):
+  assert safe_ratio(num, 0.5, 1e-3) is None

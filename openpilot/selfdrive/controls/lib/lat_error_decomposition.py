@@ -37,6 +37,13 @@ def _finite(*arrs: np.ndarray) -> bool:
   return all(a.size > 0 and bool(np.all(np.isfinite(a))) for a in arrs)
 
 
+def _real(v: object) -> bool:
+  """Finite real number; bool, strings and None are not numbers here."""
+  if isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, float, np.integer, np.floating)):
+    return False
+  return math.isfinite(float(v))
+
+
 def reconstruct_from_curvature(t: Sequence[float], curvature: Sequence[float], v: Sequence[float],
                                x0: float, y0: float, psi0: float) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
   """P(t) from the consumed curvature history. None if time is not strictly
@@ -81,27 +88,51 @@ def center_frame_at(cx: Sequence[float], cy: Sequence[float], s: float) -> Optio
 def decompose(cx: Sequence[float], cy: Sequence[float], s: float,
               ego_xy: Sequence[float], target_xy: Sequence[float],
               max_tangential: Optional[float]) -> Dict[str, object]:
-  """One sample at one time t: C(s), E(t), P(t) all in the same frame."""
-  out: Dict[str, object] = {"status": UNEVALUABLE, "total": None, "path": None, "tracking": None,
+  """One sample at one time t: C(s), E(t), P(t) all in the same frame.
+
+  max_tangential (m) must be a finite real >= 0; 0 accepts only an exact
+  progress match.  Anything else is unevaluable with a reason, never a pass."""
+  out: Dict[str, object] = {"status": UNEVALUABLE, "reason": "", "total": None, "path": None, "tracking": None,
                             "ego_tangential": None, "target_tangential": None}
+  if max_tangential is None:
+    out["reason"] = "tolerance_unset"
+    return out
+  if not _real(max_tangential) or max_tangential < 0.0:
+    out["reason"] = "tolerance_invalid"
+    return out
   frame = center_frame_at(cx, cy, s)
   e, p = np.asarray(ego_xy, dtype=np.float64).ravel(), np.asarray(target_xy, dtype=np.float64).ravel()
-  if frame is None or e.size != 2 or p.size != 2 or not _finite(e, p) or max_tangential is None:
+  if frame is None or e.size != 2 or p.size != 2 or not _finite(e, p):
+    out["reason"] = "input_invalid"
     return out
   c, tan, nrm = frame
   e_tan, p_tan = float((e - c) @ tan), float((p - c) @ tan)
   out["ego_tangential"], out["target_tangential"] = e_tan, p_tan
-  if abs(e_tan) > max_tangential or abs(p_tan) > max_tangential:
-    return out  # longitudinal mismatch: not the same progress position
   e_lat, p_lat = float((e - c) @ nrm), float((p - c) @ nrm)
+  if not all(math.isfinite(z) for z in (e_tan, p_tan, e_lat, p_lat, e_lat - p_lat)):
+    out["reason"] = "result_not_finite"  # finite inputs do not guarantee finite results
+    return out
+  if abs(e_tan) > max_tangential or abs(p_tan) > max_tangential:
+    out["reason"] = "longitudinal_mismatch"
+    return out  # not the same progress position
   out.update(status=OK, total=e_lat, path=p_lat, tracking=e_lat - p_lat)
   return out
 
 
 def safe_ratio(numerator: float, denominator: float, min_abs_denominator: Optional[float]) -> Optional[float]:
-  """Target/actual style ratio; None (not a normal value) near zero or unconfigured."""
-  if min_abs_denominator is None or not (math.isfinite(numerator) and math.isfinite(denominator)):
+  """Target/actual style ratio; None (not a normal value) near zero or unconfigured.
+
+  min_abs_denominator must be a finite real > 0.  A denominator of exactly
+  (+/-) 0 is rejected before dividing; |denominator| == min_abs_denominator is
+  accepted (inclusive bound).  A non-finite quotient is also None."""
+  if not (_real(min_abs_denominator) and min_abs_denominator > 0.0):
     return None
-  if abs(denominator) < min_abs_denominator:
+  if not (_real(numerator) and _real(denominator)):
     return None
-  return numerator / denominator
+  if denominator == 0.0 or abs(denominator) < min_abs_denominator:
+    return None
+  try:
+    r = float(numerator) / float(denominator)
+  except (ZeroDivisionError, OverflowError):
+    return None
+  return r if math.isfinite(r) else None
