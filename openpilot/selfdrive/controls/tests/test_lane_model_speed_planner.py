@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
+from openpilot.selfdrive.controls.lib.lane_avoid import LaneAvoidController
 
 
 class StubMpc:
@@ -50,6 +51,7 @@ def make_planner():
     'LateralMpc': StubMpc,
     'LanePlanner': StubLanePlanner,
     'LaneModelSpeedGuard': LaneModelSpeedGuard,
+    'LaneAvoidController': LaneAvoidController,
     'time': SimpleNamespace(monotonic=lambda: 0),
     'log': SimpleNamespace(Desire=SimpleNamespace(none=0)),
     'yaw_from_path_no_scipy': lambda *a, **k: (np.zeros(33), np.zeros(33)),
