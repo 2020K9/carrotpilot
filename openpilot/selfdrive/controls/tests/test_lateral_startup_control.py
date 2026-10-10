@@ -14,6 +14,8 @@ from openpilot.common.constants import CV
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.interfaces import CarInterfaceBase
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature
+from openpilot.selfdrive.controls.lib.lat_mode_blend import (LAT_MODE_BLEND_SECONDS, blend_lat_mode,
+                                                             lat_mode_blend_target, update_lat_mode_blend)
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
@@ -35,6 +37,8 @@ def control_fixture():
         'clip_curvature': clip_curvature, 'get_lag_adjusted_curvature': get_lag_adjusted_curvature,
         'resolve_vehicle_model_steer_ratio': resolve_vehicle_model_steer_ratio,
         'lateral_vehicle_parameters': lateral_vehicle_parameters,
+        'LAT_MODE_BLEND_SECONDS': LAT_MODE_BLEND_SECONDS, 'blend_lat_mode': blend_lat_mode,
+        'lat_mode_blend_target': lat_mode_blend_target, 'update_lat_mode_blend': update_lat_mode_blend,
         'cloudlog': NS(error=lambda msg: pytest.fail(msg))}
   exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), ns)
   cp = car.CarParams.new_message(brand='hyundai', steerRatio=12.81, wheelbase=2.84, mass=1600,
@@ -64,7 +68,8 @@ def control_fixture():
                LoC=NS(reset=lambda: None, update=lambda *args: (0.0, 0.0, 0.0), long_control_state='off'),
                carrot_controls=NS(lat_suspend_control=lambda cs, active: active), is_vw_meb=False,
                desired_curvature=0.0, lateral_startup=LateralStartupGate(), lateral_started=False,
-               steer_limited_by_safety=False)
+               steer_limited_by_safety=False, lat_mode_blend=0.0,
+               path_verifier_enabled=False, path_verifier_curvature=lambda *args: pytest.fail('PathVerifier used'))
   return control, lambda: ns['state_control'](control)
 
 
@@ -118,3 +123,43 @@ def test_normal_torque_reset_preserves_existing_integral_and_nn_history():
   lac.reset()
   assert lac.pid.i == 0.8
   assert len(lac.roll_deque) == len(lac.error_deque) == len(lac.lateral_accel_desired_deque) == 30
+
+
+def lane_plan():
+  return log.LateralPlan.new_message(useLaneLines=True, mpcSolutionValid=True, psis=[0.0] * 17,
+                                     curvatures=[0.002] * 17, distances=[float(i) for i in range(17)])
+
+
+def test_first_activation_starts_from_measured_curvature_with_snapped_blend():
+  control, step = control_fixture()
+  sm = control.sm
+  plan = sm['lateralPlan'] = lane_plan()
+  sm['carState'].latEnabled = False
+  control.lat_mode_blend = 0.5
+  cc, _ = step()
+  assert not cc.latActive and control.lateral_startup.ready and not control.lateral_started
+  assert control.lat_mode_blend == 1.0  # snapped to the lane target while inactive
+  sm['carState'].latEnabled = True
+  control.desired_curvature = -0.15
+  cc, _ = step()
+  assert cc.latActive and control.lateral_started
+  assert control.lat_mode_blend == 1.0  # no mid-blend start
+  v_ego = sm['carState'].vEgo
+  lane = get_lag_adjusted_curvature(control.CP, v_ego, plan.psis, plan.curvatures, 0.1 + 0.13, plan.distances)
+  alpha = 1 - np.exp(-DT_CTRL / 0.13)
+  expected, _ = clip_curvature(v_ego, control.curvature, alpha * lane + (1 - alpha) * control.curvature, 0.0)
+  assert control.desired_curvature == pytest.approx(expected)
+
+
+def test_unready_startup_gate_skips_blend_ramp_and_path_verifier():
+  control, step = control_fixture()
+  sm = control.sm
+  sm['lateralPlan'] = lane_plan()
+  sm.seen['modelV2'] = False
+  control.path_verifier_enabled = True  # path_verifier_curvature fails the test if reached
+  control.lat_mode_blend = 0.5
+  for _ in range(10):
+    cc, _ = step()
+    assert not cc.latActive and cc.actuators.torque == 0
+    assert control.lat_mode_blend == 1.0  # inactive snap, not the active ramp from 0.5
+  assert not control.lateral_startup.ready and not control.lateral_started

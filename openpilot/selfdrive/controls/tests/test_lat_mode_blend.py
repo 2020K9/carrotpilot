@@ -127,6 +127,9 @@ def make_controls(*, lanefull=True, has_curvatures=True, lat_active=True):
   controls.LaC = SimpleNamespace(reset=lambda: None, update=lambda *_a, **_k: (0.0, 0.0, None))
   controls.CI = SimpleNamespace(get_pid_accel_limits=lambda *_args: (-1.0, 1.0))
   controls.carrot_controls = SimpleNamespace(lat_suspend_control=lambda _cs, active: active)
+  # Startup gate already passed and first activation already seeded, so only the blend is under test.
+  controls.lateral_startup = SimpleNamespace(update=lambda *_args: True)
+  controls.lateral_started = True
 
   curvatures = [LANE_CURVATURE] * 17 if has_curvatures else []
   controls.sm = FakeSubMaster({
