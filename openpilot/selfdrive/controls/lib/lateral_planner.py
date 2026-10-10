@@ -173,8 +173,13 @@ class LateralPlanner:
     if self.lane_avoid.refresh():
       if self.lanelines_active:
         self.lane_avoid_out = self.lane_avoid.update(self.lane_avoid_inputs(sm, carrot, md, model_active))
-        # uniform shift of every consumed point: plan_yaw/plan_yaw_rate stay consistent
-        self.path_xyz[:, 1] += self.lane_avoid_out.applied
+        # uniform shift of every consumed point: plan_yaw/plan_yaw_rate stay consistent.
+        # v3.2: an invalid output (constraint conflict / failed final check) is never
+        # consumed as an avoidance command. Not adding it is NOT an approved response
+        # (it drops a non-zero offset at once); the replacement command is undecided and
+        # this branch is unreachable in production (blockers keep lane_avoid disabled).
+        if self.lane_avoid_out.valid:
+          self.path_xyz[:, 1] += self.lane_avoid_out.applied
       else:
         # lane-mode path not consumed: the offset episode ends; re-entry starts from 0
         self.lane_avoid_out = self.lane_avoid.mode_inactive(self.lane_avoid_clock())

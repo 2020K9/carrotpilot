@@ -32,7 +32,9 @@ TEST_POLICY = 'test_only_not_approved'
 # last point + body front = -1 .. 104 m here), so the synthetic coverage and road-edge
 # samples must span it too. Previously (-15, 40) and X; see REVIEW.md "fixture conflicts".
 FULL_COV = Coverage(-15.0, 115.0, 0.0, 5.0)
-EDGE_X = np.linspace(0.0, 110.0, N)
+# v3.2 fixture update: road edges must be observed from the body rear (-1 m) too
+# (previously np.linspace(0.0, 110.0, N); see REVIEW.md v3.2 fixture changes).
+EDGE_X = np.linspace(-10.0, 110.0, N)
 TEST_CFG = LaneAvoidConfig(
   enabled=True, max_offset_m=0.5, entry_rate_mps=0.3, return_rate_mps=0.2, max_rate_change_mps2=2.0,
   candidate_x_m=(5.0, 60.0), candidate_deadband_m=0.05, max_abs_curvature=0.01, vehicle_half_width_m=0.95,
@@ -43,7 +45,8 @@ TEST_CFG = LaneAvoidConfig(
   max_input_gap_s=0.2, entry_confirm_frames=2, reentry_wait_s=1.0,
   return_risk_policy=TEST_POLICY, center_invalid_policy=TEST_POLICY,
   vehicle_front_m=4.0, vehicle_rear_m=1.0, side_clearance_m=0.3,
-  occupancy_prediction_policy=TEST_POLICY, body_geometry_model=TEST_POLICY, constraint_conflict_policy=TEST_POLICY)
+  occupancy_prediction_policy=TEST_POLICY, body_geometry_model=TEST_POLICY, constraint_conflict_policy=TEST_POLICY,
+  prediction_horizon_s=3.0)
 
 POLICY_TUPLES = ('APPROVED_RETURN_RISK_POLICIES', 'APPROVED_CENTER_INVALID_POLICIES',
                  'APPROVED_OCCUPANCY_PREDICTION_POLICIES', 'APPROVED_BODY_GEOMETRY_MODELS',
@@ -54,6 +57,32 @@ POLICY_TUPLES = ('APPROVED_RETURN_RISK_POLICIES', 'APPROVED_CENTER_INVALID_POLIC
 def approved_policies(monkeypatch):
   for name in POLICY_TUPLES:
     monkeypatch.setattr(la, name, (TEST_POLICY,))
+  # v3.2: approval alone no longer activates; register test-only implementations
+  for kind, impl in TEST_IMPLEMENTATIONS.items():
+    monkeypatch.setitem(la.POLICY_IMPLEMENTATIONS[kind], TEST_POLICY, impl)
+
+
+def cv_predictor(objects, side, space, horizon_s, t, step=0.1):
+  """Test-only constant-velocity predictor (synthetic, not an approved policy): any object
+  rectangle intersecting the space at any sampled time in [t, t + horizon] -> OCCUPIED."""
+  for o in objects:
+    for k in range(int(round(horizon_s / step)) + 1):
+      tau = (t - o.t) + k * step
+      x, lat = o.x + o.vx * tau, o.lat + o.vlat * tau
+      if (x + o.length / 2 >= space.x_min and x - o.length / 2 <= space.x_max and
+          lat + o.width / 2 >= space.lat_min and lat - o.width / 2 <= space.lat_max):
+        return OCCUPIED
+  return CLEAR
+
+
+# None = no proposal: the constraint-only step is used (test stand-in, not an approved policy)
+TEST_IMPLEMENTATIONS = {
+  'return_risk': lambda ctx: None,
+  'center_invalid': lambda ctx: None,
+  'occupancy_prediction': cv_predictor,
+  'body_geometry': la.body_footprint,
+  'constraint_conflict': lambda ctx: 'test_conflict_action',
+}
 
 
 def clear():
@@ -78,7 +107,9 @@ def inp(t, shift, left=None, right=None, road=None, **kw):
   args = dict(t=t, center_valid=True, path_x=X, model_y=lane_y + shift, lane_y=lane_y, base_y=np.zeros(N),
               d_prob=1.0, model_valid=True, model_age_s=0.0, lane_change_active=False, driver_steering=False,
               measured_curvature=0.0, side_readings={LEFT: left or side(), RIGHT: right or side()},
-              road_edges=road if road is not None else edges(), model_t=t, clock_verified=True)
+              road_edges=road if road is not None else edges(), model_t=t, clock_verified=True,
+              # v3.2: an observed, empty object list per side (missing -> UNKNOWN)
+              side_objects={LEFT: [], RIGHT: []})
   args.update(kw)
   return AvoidInputs(**args)
 
@@ -94,7 +125,9 @@ def frame(out, t):
   return {'t': t, 'state': out.state, 'permitted': out.permitted, 'target': out.target, 'applied': out.applied,
           'avoid_side': out.avoid_side, 'side_state': dict(out.side_state), 'edge_state': dict(out.edge_state),
           # v3.1: the controller's rate seeds the first interval; edge room bounds every applied value
-          'rate': out.rate, 'edge_room': dict(out.edge_room)}
+          'rate': out.rate, 'edge_room': dict(out.edge_room),
+          # v3.2: invalid outputs are audit failures
+          'valid': out.valid, 'invalid_reasons': out.invalid_reasons}
 
 
 def run(ctrl, seq, t0=0.0):
@@ -762,7 +795,8 @@ def test_far_path_point_edge_intrusion_outside_candidate_blocks(approved_policie
 
 @pytest.mark.parametrize('direction', [LEFT, RIGHT])
 def test_edge_narrowing_between_path_points_and_beyond_last_point(direction):
-  dense = np.linspace(0.0, 110.0, 221)  # 0.5 m knots; 51.5 m lies between path points 50.0 and 53.125
+  # v3.2 fixture: starts at -5 m so the body rear is observed (was np.linspace(0.0, 110.0, 221))
+  dense = np.linspace(-5.0, 110.0, 231)  # 0.5 m knots; 51.5 m lies between path points 50.0 and 53.125
   y = np.full(dense.size, 5.0)
   y[np.isclose(dense, 51.5)] = 1.0
   road = road_on(direction, dense, y)

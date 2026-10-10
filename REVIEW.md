@@ -1,85 +1,88 @@
-# 레인모드 회피 3.1 — 보류 5건 정적 검토 보고서
+# 레인모드 회피 3.2 — 이전 보류 및 18:56:44 보류 5건 정적 검토 보고서
 
-상태: **코드리뷰 대기 (STATUS=AWAITING_CODE_REVIEW)**. 테스트 **미실행**(실행 미허용). 안전 확보·효과 검증·차량 해결 보고가 아니다.
+상태: **코드리뷰 대기**. 테스트·구문 검사·불러오기·빌드 **미실행**(부모가 별도 기록으로 시행). 안전 확보·효과 검증·차량 해결 보고가 아니다. 기능 기본값 꺼짐, 운영 승인 정책 목록 비어 있음, 미승인 수치 미설정은 그대로다.
 
-## 1. 승인·기준·커밋
+v3.1 보고서 원문은 기준 커밋 `9bd8d65b`의 REVIEW.md(git 이력)에 보존된다. 아래 행 번호 중 "원본"은 9bd8d65b, "수정"은 이 커밋 기준이다. 경로 접두사 `openpilot/selfdrive/controls/`.
+
+## 1. 승인·기준·경로
 
 | 항목 | 값 |
 |---|---|
-| 원 지시문 | lanemode_avoid_prompt_v3_1.md, SHA256 `54af503a8c81f771597f796dd79d13da0eab3a707770a3107cf654921b342c41` (감사원 2026-10-10 17:16 승인, 요청자 전달 기록 기준) |
-| 이어하기 지시문 | lanemode_avoid_v3_1_continue_v2.md (같은 범위, ../cont/) |
-| 격리 사본 | 워커 i-043a7af79082c7f70 `/home/ssm-user/work/lanemode_avoid_v3_1/repo`, 브랜치 `lanemode-avoid-v3-1` |
-| 기준 커밋 / 트리 | `0e117698806939a80ab25d5611838ab2368e732e` / `2791c2cb77f336a6d52bfd4245cbd37552a58daf` |
-| 이식 커밋 | `5e4574ce` — v3 코드 커밋 7361cb5의 기능·테스트 변경만 이식 (리뷰 커밋 a605a227 미이식) |
-| WIP 보존 커밋 | `6b57d243` — 1차 실행 시간초과(17:59:26) 시점의 미커밋 수정분을 런처가 남김. 고쳐 쓰거나 되돌리지 않음 |
-| 코드·테스트 최종 커밋 | `137afb0d` — 보류 1~5 테스트, 재진입 대기 보존 수정 |
-| 리뷰 자료 커밋 | 이 파일을 담은 커밋 (`git log -1 -- REVIEW.md`) |
+| 지시문 | refs/lanemode_avoid_prompt_v3_2.md, SHA256 `1c261273d41218da0493f68648eac72661e28698228bf3d0f3f35052466607e3` |
+| 실행 승인 | 회장님 2026-10-10 19:43 사람 승인(감사원 승인 대기 헤더 대체, 부모 세션 전달). 감사원 제출·멘션 없음 |
+| 격리 사본 | `/home/ssm-user/work/lanemode_avoid_v3_2/repo`, 브랜치 `secretary-lanemode_avoid_v3_2` |
+| 기준 커밋 | `9bd8d65bcc3fc70168169bf0345a6e322a716fa9` (시작 시 작업 트리 깨끗함 확인) |
+| 최종 커밋 | 이 파일을 담은 커밋 (`git log -1 -- REVIEW.md`) |
+| 원본 저장소 | `/home/ssm-user/work/lanemode_avoid_v3_1/repo` — 수정하지 않음. 이번에는 사본의 기준 커밋을 직접 열람했다 |
+| push | 안 함 |
 
-push 안 함. 원본 저장소·이전 사본 `/home/ssm-user/work/lanemode_avoid_v3`(미추적 자료 포함)은 읽기만 했다.
+이전 제출 꾸러미(`reviews/avoid31_submit/9bd8d65b/`)는 사본에 없어 참조하지 않았다(미보유). 사실 확인은 기준 커밋의 소스·시험·REVIEW.md를 직접 열어 했다.
 
-### 이식 충돌 기록
-- 5e4574ce 커밋 메시지 기준: 6개 blob이 7361cb5와 동일하다. 기존 파일 3개(lane_planner_2.py, lateral_planner.py, test_lane_model_speed_planner.py)는 81fae5e와 0e117698의 기준 blob이 같아서 충돌 없이 적용됐다(1차 실행 기록, 이번에 다시 검증하지 않음).
-- `git diff 0e117698 HEAD --stat -- openpilot/selfdrive/controls/controlsd.py` 결과는 비어 있다. controlsd.py는 바뀌지 않았으므로 병합본의 시작 준비·차량모델 준비(168~180행), 횡제어 활성 제한(213행), 최초 목표곡률 초기화(229~231행)가 그대로 보존된다.
-- 기준 대비 변경 파일은 6개뿐이다(lane_avoid.py, lane_avoid_audit.py, lane_planner_2.py, lateral_planner.py, test_lane_avoid.py, test_lane_model_speed_planner.py). 이 밖의 변경은 없다.
-- 호출 순서(lateral_planner.update): `get_d_path`(157) → `pathOffset`(170) → `lane_avoid.refresh()` 후 lane mode면 `update()` + `path_xyz[:,1] += applied`(173~177), lane mode가 아니면 `mode_inactive()`(180). 횡이동량은 기존 카메라·차선·공통 오프셋 뒤에 한 번만 더하며, 비활성이면 경로 수치가 바뀌지 않는다.
+## 2. 변경 파일 (기준 대비 6개)
 
-## 2. 보류 5건 대응표
+- `lib/lane_avoid.py` — 출력 유효성, 정책 구현 등록부, 공통 차체 외곽, 이동 객체 예측 호출, 위험 처리 제안 검증, 최종 재검사, 잔류 폐기 보고
+- `lib/lane_avoid_audit.py` — `output_invalid` 규칙, `audit_signal_chain`(최종 신호 연쇄 연속성 구조)
+- `lib/lateral_planner.py` — 무효 출력 소비 거부(:176~182)
+- `tests/test_lane_avoid.py` — 준비 객체만 수정(아래 §4). assert 무변경
+- `tests/test_lane_avoid_v3_2.py` — 신규 시험 30개 함수
+- `REVIEW.md`, `RUN_AFTER_REVIEW.md` — 검토 자료
 
-경로 접두사는 `openpilot/selfdrive/controls/`. 원본 행은 v3 회수 소스(refs/reviews/lanemode_avoid_cc/src_changed) 기준, 수정 후 행은 137afb0d 기준이다. 테스트 행은 tests/test_lane_avoid.py.
+## 3. 이번 보류 5건 대응표
 
-| 보류 | 원본 위치 | 수정 후 위치 | 작성 테스트 | 남은 blocker |
+| 보류 | 원본 | 수정 | 작성 시험 (test_lane_avoid_v3_2.py) | 남은 미해결 |
 |---|---|---|---|---|
-| 1 경로 전체 점유·관측·경계 | lib/lane_avoid.py:171~183 evaluate_side(고정 영역만), :236~269 road_edge_allowance(candidate_x_m만), :186~201·:226~235 레이더 고정 x; lib/lateral_planner.py:167~173 경로 전체에 applied 가산 | lib/lane_avoid.py:233 required_x_range(차체 후단~마지막 점+차체 전단), :248 required_space(0·현재·목표 오프셋 전부, 지점·구간·반폭·여유), :265 evaluate_side(spaces 추가, None=UNKNOWN), :335 road_edge_allowance(전 지점·구간 knot, 외삽 금지), :465 radar_region_x(고정∪동적), :533~555 update에서 매 주기 산출; lib/lateral_planner.py:244 레이더 동적 x | :737 span, :751 먼 지점만 경계 침범, :764 구간 중간·차체 전단 좁아짐, :777 부분 관측·외삽, :787 차체 폭·여유만으로 부족, :799 고정 영역만 덮는 관측, :809 고정 영역 밖 경로 위 레이더 객체, :821 복귀 공간, :835 최종 경로 소비 연결; 기존 :152 정상 사례(좌우 대칭) | 점유 예측(이동 객체) 정책, 차체 기하 모델, 차체 길이·폭·여유 수치, 관측원별 실제 공간 범위, 독립 모델 측면 감지 부재(SRC_MODEL 항상 unsupported → 실제 입력으로는 CLEAR 불가) |
-| 2 실제 메시지 시각 신선도 | lib/lateral_planner.py:221~222, :242 경계 age 0.0, :253 model_age 0.0; lib/lane_avoid.py:245, :370~373 | lib/lateral_planner.py:84 평가 시계 `time.monotonic`, :226~282 now−logMonoTime(미수신=None, 경계는 모델 age 상속, model_active 아니면 None); lib/lane_avoid.py:495~506 평가 시각 역행·중복·공백, :508~518 model_t 누락·미래·역행·중복·clock_unverified, :557~561 builder age와 t−model_t 동시 검사 | :860 메시지 고정·시각만 진행, :869 builder age 0 거짓, :889/:899 누락·NaN·미래·역행·반복·시계 미검증(시작/진행 중), :914 한계 양쪽 값, :924 builder 실제 경과·레이더만 오래됨·경계 상속·미래·미수신 | 신선도 수치 전부 미승인. logMonoTime은 발행 시각이고 센서 촬영 시각은 아니다(그 지연은 측정하지 않음). 근거는 cereal/messaging/__init__.py:43(new_message logMonoTime=time.monotonic)·:252(SubMaster update_msgs(time.monotonic()))의 정적 열람뿐이다. carState BSD는 독립 시각·유효 필드가 없어 False는 항상 UNKNOWN이다. 경계 표본의 독립 시각 필드는 없고 꾸미지 않았다 |
-| 3 여유 축소 시 적용량 제한 | lib/lane_avoid.py:409~410 목표만 자름, :426~448 제한기 후 적용량, :433~444 RETURN_RISK 유지, :465~485 _step | lib/lane_avoid.py:543 cap(관측된 여유와 max_offset, 미관측이면 0), :665 _step 교집합 선택(room 상한 포함), :628~638 교집합이 없으면 CONFLICT + `constraint_conflict_policy_unapproved`(유지 승인 아님); lane_avoid_audit.py:88~100 모든 프레임에서 applied ≤ edge_room, consumed=applied | :959 연속성 안에서 즉시 축소 가능, :982 여유 축소·0·미관측·방향 반전 × 복귀 안전 여부의 교집합 부재 → CONFLICT·감사 fail, :996 운영 승인 목록 비어 있음·blocker | 교집합 부재 시 정책(constraint_conflict_policy) 미승인. 현재 자리표시는 이동 거부(값 유지)이며 경계 침범 상태로 남는다. 운영 활성화는 blockers()로 차단. 기존 안전 처리(차선변경 보호·운전자 우선)와의 연결은 미확인 |
-| 4 강제 영점 예외 제거·연속성 | lib/lane_avoid.py:429~431, :442~443, :476~484 rate 강제 0; tests:518~529(특히 :525~528 목표 도달 표본 제외); lane_avoid_audit.py:56~85 | lib/lane_avoid.py:665~712 _step: 강제 0 없음, 이산 제동 프로파일, 모든 제약을 clip; lane_avoid_audit.py:102~130 실제 차분 변화율과 그 변화를 실제 dt로 매 프레임 검사, 미분 불가 구간은 non_differentiable로 나열(삭제 안 함), :28 최종 명령 신호 미검증 목록 | :1014 목표 도달 포함 전 표본, :1027 불균일 dt·감지 취소·복귀·부호 전환, :1051 진행 중 복귀 위험 전환 → CONFLICT 보고, :1070 도달 프레임 변화율 위반 검출, :1079 첫 표본·공백·불일치·소비값, :1092 최종 신호 미검증 표시. 기존 :518~529는 보존 | 변화율·변화 한도 미승인. 최종 조향·곡률·횡가속 신호의 변화율 검사는 없다(정의·단위·소비 지점만 lane_avoid_audit.py:28에 나열). CONFLICT 프레임에서는 연속성이 깨진다(정책 미승인 → 운영 차단). 불균일 dt에서는 제동 프로파일이 근사다 |
-| 5 승인 목록 비활성·재진입 초기화 | lib/lane_avoid.py:53~54 빈 튜플, :127~130 검사, :314~321 초기화; lib/lateral_planner.py:169~173; lib/lane_avoid.py:358~361, :433~444 잔류 | lib/lane_avoid.py:69~78 승인 튜플 5개(모두 빈 값), :133~169 blockers, :444~463 refresh(매 프레임 재검증, 변경 시 초기화, 재진입 대기 보존, note 누적), :473~485 mode_inactive(재진입 대기 보존), :417~423 상태 소유권; lib/lateral_planner.py:173~182 | :1100 모드 끔→여러 주기→켬 첫 적용량 0·상태 초기화·대기, :1124 반복 전환, :1138 planner 게시 경로에 잔류 없음, :1168 설정 끔·다시 켬, :1186 승인 철회, :1198 시간 공백 후 옛 허가 재사용 없음, :1209 수치만 채운 경우 비활성 | 비영 잔류에서 모드 종료나 승인 변경 시 내부 상태를 0으로 초기화하는 전환은 안전 처리로 승인되지 않았다(사유 `mode_exit_with_residual_unverified`·`approval_change_with_residual_unverified`). 시작 준비 미완료·모델 무효 복구는 controlsd 무변경으로 보존되며, 이 기능 쪽 테스트는 모델 무효·시간 공백까지만 다룬다 |
+| 1 충돌 시 이전 적용량 재출력 | lane_avoid.py:628~642(`new_applied = self.applied` 유효 반환), :687~697; lateral_planner.py:173~177 무조건 가산 | lane_avoid.py:554~561 `AvoidOutput.valid/invalid_reasons/conflict_action`; :810~843 충돌 시 `valid=False`, 사유, 충돌 처리기 결과는 전달만; 비충돌 프레임은 :834~843에서 `_violations`(:869~896)로 게시 직전 재검사(연속성·변화율·여유·교차·허가·복귀 허가), dt 없는 프레임은 여유 재검사; lateral_planner.py:176~182 `valid`일 때만 가산 | :37 충돌=무효·사유·처리기 결과, :51 0 여유·방향 반전·미관측, :60 교집합 존재 시 전 프레임 유효·여유 이내·감사 무위반, :71 시각 결함 프레임의 여유 초과 검출, :83 제약별 위반 이름, :95 계획기가 무효 값을 소비하지 않음, :115 운영 차단 | **충돌 시 최종 명령 계약 미결정(사람 결정 필요)**. 계획기가 무효 값을 더하지 않는 것은 비영 적용 중 순간 0과 같아 **승인된 처리가 아니다**(운영 도달 불가: 정책 미승인·미구현). 감속·경고·조향 해제 연결 없음. 충돌 예방 허가 조건(진입 전 변화율 제한 등)은 미작성 |
+| 2 도로 경계 후단 누락 | lane_avoid.py:335~373 (:345~346 전단만, :361~365 첫 지점부터) | :307~334 `body_footprint`: 각 경로 자세의 경사 방향 강체 직사각형(후단~전단, 반폭), 첫 자세 후단~마지막 자세 전단 확장 중심선. 경로가 자차 앞에서 시작(x[0]>0)하면 None. :337~355 `required_space`와 :427~ `road_edge_allowance`가 같은 외곽 사용; 경계는 후단부터 관측돼야 함(외삽 없음), 띠+회전 모서리 모두 검사 | :132 후단만 침범, :139 후단 미관측(0 시작·일부만), 정상 관측 CLEAR, :150 경로가 앞에서 시작, :159 중간 좁아짐, :166 모서리 회전 침범(띠만으로는 여유 있음), :184 점유·경계 동일 외곽, :192 회피·복귀 양쪽 제어기 연결, 좌우 대칭 매개변수화 | 차체 기하 모델(`rigid_rect_heading_v3_2`)·길이·폭·여유는 **미승인 기본값/사람 결정 필요**. 후단 위치는 첫 자세의 강체 가정이며 실제 후단 경로 기하의 독립 관측은 없다. modelV2 경계가 x<0을 주지 않으면 운영 입력에서는 항상 UNKNOWN(차단) — 확인 필요. 지점 사이 곡선 휩쓸림은 자세별 모서리+중심선 띠로 근사 |
+| 3 정책 이름만 검사 | lane_avoid.py:69~78, :159~168, :248~262, :607~617, :628~638 | :97~131 `POLICY_IMPLEMENTATIONS`·계약·`policy_impl`; :223~227 승인 이름이어도 구현 없으면 `<field>_unimplemented`; :472~516 `SideObject`·`predict_side`(누락·오래됨·미래·좌우 불일치·비유한·예외·잘못된 반환 → UNKNOWN); :709~716 매 주기 양쪽 예측을 상태에 반영; :791~809 위험/중앙 무효 처리기 제안은 `_violations` 통과 시에만 사용 | :209 구현 없으면 차단, :219 운영 등록부 비어 있음(차체 모델만 구현·미승인), :243 공간 밖 객체 진입·후측방 접근 차단·정지 객체는 허가까지 전달, :256 입력 결함, :274 잘못된 반환·예외, :280 복귀 중 새 점유, :290 처리기 제안 검증·예외 | 예측 모델·구간(`prediction_horizon_s`)·여유·관측 출처 **사람 결정 필요**. 운영 입력 조립기는 `side_objects`를 채우지 않는다(근거 있는 측면 객체 출처 없음) → 운영 입력은 UNKNOWN. 시험의 등속 예측기·처리기는 시험 전용 대체물이다. 단위 불일치는 검출하지 못한다(필드 단위 표기만). 자차 이동 시간 대응은 전체 공간·고정 구간으로 근사 |
+| 4 잔류 초기화·최종 연속성 | lane_avoid.py:434~485; lane_avoid_audit.py:28~35, :102~129 | lane_avoid.py:600~604 승인 변경 시 폐기 잔류 기록, :623~637 모드 종료 `residual_dropped`, :639~647 다음 출력에 1회 보고; lane_avoid_audit.py:180~ `audit_signal_chain`(신호별 실제 차분·변화, 한도 없으면 not_evaluable) | :306 모드 종료 잔류 보고·소비 오프셋 단절 검출·한도 없으면 평가불가, :325 승인 변경 잔류 1회 보고, :338 모델 무효·운전자·공백 후 재진입 첫 주기 0·불허·대기, :351 연쇄 감사 결측·비증가 시각 나열 | **잔류 전환 정책 사람 결정 필요**(순간 0·유지·자동 복귀 미구현). 계획 곡률→혼합→평활→제한→조향 명령 실제 연쇄 자료는 만들지 않았다(controlsd·MPC 미실행) → 해당 시험 미작성/평가불가. 최종 신호 한도 정의 없음 |
+| 5 감지 취소와 기존 시험 충돌 | tests/test_lane_avoid.py:361~375 vs :1051~1067 | 기존 시험 원문 보존. 충돌 프레임은 이제 `valid=False`로도 표시 | :363 증가 중 취소 → 충돌·무효 검출(결함 검출 시험), :377 정지 후 취소·복귀 쪽 안전·불균일 dt에서 전 프레임 유효(수용 시험), :401 전 범위 관측에서 비유한 값 하나만 판별 | **최소 모순 조건**: 변화율 u_prev>max_rate_change·dt 인 증가 중에 회피 쪽 점유(증가 금지 u≤0)와 원 장애물 잔존(복귀 금지 u≥0)이 동시에 오면 연속성 \|u−u_prev\|≤d·dt 와 교집합이 없다. :373 `state in (RETURN, RETURN_RISK)`·:375 위반 없음은 이 조건에서 만족 불가 → **실패 예상, 사람 결정 필요**(진입 변화율 제한·감지 지연 가정·위험 처리 정책). 기대값 변경·위반 허용은 하지 않았다 |
 
-### 이번 이어하기에서 고친 코드 (137afb0d)
-- `mode_inactive()`: `reset()`이 `revoked_t`를 지우므로 레인모드 비활성이 두 번째 주기부터 이어지면 재진입 대기가 사라졌다. 이전 값을 보존하도록 고쳤다(lane_avoid.py:480~483).
-- `refresh()`: 승인이 바뀌어 초기화될 때도 재진입 대기를 보존한다. 끔→켬 연속 변경에서 잔류 폐기 사유가 덮어써지지 않도록 note를 누적한다(lane_avoid.py:449~462).
+## 4. 기존 시험 준비 객체 변경 (assert 원문 무변경)
 
-## 3. 테스트 준비 객체 충돌 (기존 assert 원문 보존)
+- `EDGE_X`: `linspace(0,110,N)` → `linspace(-10,110,N)` — 후단(−1 m)부터 경계 관측 필요.
+- :764 시험의 `dense`: `linspace(0,110,221)` → `linspace(-5,110,231)` (0.5 m 간격과 51.5 m 지점 유지).
+- `TEST_CFG.prediction_horizon_s=3.0`, `inp()`의 `side_objects={LEFT: [], RIGHT: []}`, `frame()`의 `valid`/`invalid_reasons`.
+- `approved_policies` 준비 객체가 시험 전용 구현(`TEST_IMPLEMENTATIONS`: 등속 예측기, 제안 없음 처리기, 내장 차체 외곽, 충돌 처리기 표식)을 등록한다. **합성 입력이며 운영 승인값이 아니다.**
+- **예상 실패(정적 추론, 미실행)**:
+  - `test_new_avoid_side_detection_revokes_and_never_grows`(:361~375) — §3 보류 5 모순, v3.1부터 지속.
+  - `test_required_span_covers_body_and_whole_path`의 `bend` 단언(`lat_max == approx(0.8+1.25)`) — 계단형 경로에서 경사 방향 모서리 회전이 띠보다 바깥으로 나가 lat_max가 커진다. 원문은 띠 모델을 고정한 기대값이며 §4 요구(모서리 회전 포함)와 충돌한다. 단언을 고치지 않았다 → 사람 결정 필요.
+  - v3.1의 `test_edge_partial_observation_is_unknown_never_extrapolated` 등 x=0 시작 경계 사례는 준비 객체 변경으로 CLEAR/OCCUPIED 기대가 유지된다고 추론했다(미실행).
 
-기존 확인 문은 삭제·약화하지 않았다. `git diff 5e4574ce HEAD`로 삭제된 테스트 행은 준비 객체 7행뿐이며 모두 대체됐다.
-- `FULL_COV (-15,40)` → `(-15,115)`, 경계 x를 `X(0..100)` → `EDGE_X(0..110)`로 바꿨다. v3.1의 필요 공간이 차체 후단~마지막 점+차체 전단(−1~104 m)이라 기존 값으로는 모든 사례가 UNKNOWN이 된다.
-- TEST_CFG에 v3.1 필드(vehicle_front_m=4.0, vehicle_rear_m=1.0, side_clearance_m=0.3, 정책 3종 TEST_POLICY)를 넣었다. `approved_policies`는 튜플 5개를 테스트 안에서만 패치한다. **합성 입력이며 운영 승인값이 아니다.**
-- `inp()`에 `model_t=t, clock_verified=True`를 추가하고, `frame()`에 `rate`, `edge_room`을 추가했다(감사 검사 강화).
-- **예상 충돌(미실행, 정적 추론):** `test_new_avoid_side_detection_revokes_and_never_grows`의 `all(o.state in (RETURN, RETURN_RISK))`와 `audit(...)['violations'] == []`. 진행 중(변화율 0.3 m/s)에 회피 쪽이 감지되면 증가도 복귀도 금지되고, 변화율을 한 프레임 안에 0으로 만들 수 없어 v3.1에서는 CONFLICT가 되고 변화율 연속성 위반이 기록된다. 원문을 보존했고, 새 테스트(:1051)가 이 동작을 명시한다. 해결하려면 constraint_conflict 정책 승인이 필요하다.
-- `test_road_edge_not_extrapolated_and_shape_checked:333`(X 경계 + NaN)은 이제 x 범위 부족만으로도 UNKNOWN이 되어 NaN 판별력이 약해졌다. assert 자체는 바꾸지 않았다.
+## 5. 이전 보류 1~5 유지 확인
 
-## 4. 승인 설정 목록 (전부 미승인, 빈칸을 임의 수치로 채우지 않음)
+- 이전 1 전 구간 공간·경계: 이번 §3 보류 2·3으로 후단·회전·예측 보완. 고정 영역 축소 없음.
+- 이전 2 시각 신선도: 무변경(lane_avoid.py update 시각 검사, lateral_planner.py:226~ 조립기). 예측 객체 시각도 같은 시계·`max_age_s['radar']`로 검사(별도 한도는 미정의 — 미승인 재사용임을 명시).
+- 이전 3 실제 적용량 제한: 최종 재검사로 강화. 이전 4 강제 영점 없음 유지. 이전 5 빈 승인 목록·매 주기 재검증·재진입 대기 유지.
+- BSD 양성 예외 없는 차단, 좌우 대칭, 원 모델/혼합/회피 경로 분리, 중복 가산 금지, 꺼짐 경로 수치 동일성(계획기는 `refresh()` 거짓이면 무변경) 유지.
 
-미설정 동작: 아래 항목 중 하나라도 비거나 무효면 `blockers()`가 비지 않는다. 그러면 `active=False`, 상태는 DISABLED, `lane_avoid_out=None`이 되고 경로는 바뀌지 않는다(추가 적용량 0).
+## 6. 승인 설정 표 (전부 미승인)
 
-| 분류 | 항목 | 승인 |
-|---|---|---|
-| 기능 | enabled | 미승인(False) |
-| 수치 | max_offset_m, entry_rate_mps, return_rate_mps, max_abs_curvature, candidate_x_m, candidate_deadband_m | 미승인 |
-| 감지 영역 | required_region_x_m, required_region_lat_m, coverage{(bsd/radar/model, left/right)} | 미승인 |
-| 차체·여유 | vehicle_half_width_m, vehicle_front_m, vehicle_rear_m, side_clearance_m, road_edge_margin_m, road_edge_std_max_m, body_geometry_model | 미승인 |
-| 시각·신선도 | max_age_s{bsd, radar, model, road_edge, model_path}, max_input_gap_s, 시계 대응 근거 | 미승인 |
-| 변화율·연속성 | max_rate_change_mps2(적용량의 2차 미분), 최종 조향·곡률·횡가속 변화율 한도 | 미승인 / 정의 없음 |
-| 복귀·유지 | return_risk_policy, center_invalid_policy, constraint_conflict_policy, occupancy_prediction_policy | 미승인(튜플 비어 있음) |
-| 재진입 | entry_confirm_frames, reentry_wait_s, 잔류 중 모드 종료·승인 변경 전환 정책 | 미승인 |
-| 판정 기준 | 감사 `no_violation_found`는 합격이 아니다. 합격·개선 판정 기준은 따로 승인받은 재생 평가 절차가 정한다 | 미승인 |
+| 항목 | 단위·범위 | 정책 구현 | 승인 | 미설정 동작 |
+|---|---|---|---|---|
+| 기존 수치·영역·신선도 전부(v3.1 표 동일) | 기존 표 | 해당 없음 | 미승인 | blocker → DISABLED, 경로 무변경 |
+| prediction_horizon_s | s, >0 | — | 미승인 | blocker |
+| occupancy_prediction_policy | 이름 | **없음**(시험 전용만) | 미승인 | `_unapproved`·`_unimplemented` |
+| body_geometry_model | 이름 | `rigid_rect_heading_v3_2` 구현 | 미승인 | `_unapproved` |
+| return_risk_policy / center_invalid_policy | 이름 | **없음** | 미승인 | 두 blocker |
+| constraint_conflict_policy | 이름 | **없음**; 결과가 있어도 출력은 무효 | 미승인 | 두 blocker |
+| 충돌 시 최종 명령, 잔류 전환, 최종 신호 한도 | — | 없음 | 사람 결정 필요 | 운영 도달 불가 |
 
-## 5. 쏠림·코너 3판과의 충돌표 (자동 병합·조합 활성화 금지)
+## 7. 쏠림·코너 4판(기준 931f447e) 충돌표 — 자동 병합·조합 활성화 금지
 
-쏠림·코너 작업의 소스는 이번에 열람하지 않았다. 아래는 이 작업이 건드리는 지점만 적은 것이다.
+읽기 전용으로 `lanebias_corner_v3/repo`에서 `git diff 0e117698 931f447e --stat`과 controlsd.py 차분만 열람했다(쏠림 작업 사본 미수정). 변경 파일: controlsd.py, lib/laneless_center.py, lib/lat_error_decomposition.py와 시험.
 
-| 파일·지점 | 이 작업 | 충돌 가능성 |
-|---|---|---|
-| lateral_planner.py:170~182 경로 오프셋 가산 순서 | pathOffset 뒤에 applied를 한 번 가산 | 쏠림·코너가 같은 경로에 오프셋을 더하면 중복 가산이나 제한 우회가 생길 수 있다. 중앙 제한과 복귀 처리 소유권을 정해야 한다(미확인) |
-| lateral_planner.py:226~282 입력 조립 | base_y = 현재 path_xyz y | 다른 기능의 오프셋이 먼저 더해지면 base가 바뀌고 경계 여유 계산도 달라진다(미확인) |
-| lane_planner_2.py:234~237, :252 복사본 | model/lane y와 d_prob 복사(경로 무변경) | 같은 혼합부를 수정하면 문맥 충돌이 난다(미확인) |
-| controlsd.py | 무변경 | 해당 없음 |
+| 지점 | 회피 3.2 | 쏠림 4 | 충돌 |
+|---|---|---|---|
+| 경로 | lateral_planner.py 레인모드 경로에 균일 오프셋(lateralPlan → lane_curvature) | 미변경 | 직접 충돌 없음 |
+| controlsd 혼합 | 미변경 | `blend_lat_mode`/평활/`clip_curvature`를 `consume_curvature`로 대체, laneless 후보에만 중앙 보정 delta | 혼합 구간에서 회피 오프셋(lane 쪽)과 중앙 보정(laneless 쪽)이 동시에 들어갈 수 있다. 서로 반대 방향일 수 있음 — 소유권 미정(미확인) |
+| 상태 소유 | 회피 내부 상태·잔류 | `desired_curvature`·혼합 상태·추적 기록 | 회피의 최종 연속성 검사(§3 보류 4)는 쏠림의 consume 단계 출력을 봐야 하는데 연결 없음 |
+| 오차 분해 | — | lat_error_decomposition이 경로 오차를 쏠림으로 분류 | 회피 오프셋이 쏠림 오차로 분류될 가능성(미확인) |
 
-## 6. 미해결·미확인
-- 테스트 실행 결과 없음(실행 미허용). 구문·불러오기 검사도 하지 않았다. 위 기대값은 모두 정적 추론이다.
-- 관측원의 실제 공간 범위, 독립 모델 측면 감지(없음), 도로 경계 품질(가드레일 검출이 아님), 시계 근거(정적 열람만), 승인 수치·정책 전부.
-- 안전 제약 교집합이 없을 때의 연결 정책, 잔류 중 모드 종료·승인 변경 시 전환 정책, 최종 조향·곡률 명령의 연속성.
-- 쏠림·코너 작업과의 기능 간 충돌, 현재 차량 코드·설정, 실차 효과.
+## 8. 미해결·미확인
+
+- 시험 결과 없음. 위 기대값은 모두 정적 추론이다.
+- 충돌 시 최종 명령, 잔류 전환, 최종 조향 연쇄 연속성 자료와 한도, 예측 모델·출처, 차체 기하·수치, 후단 경로 기하 관측 근거, 쏠림 작업과의 소유권 — **사람 결정 필요**.
 - 비활성이라는 사실은 결함 수정 완료나 안전 검증을 대신하지 않는다.
+- 전체 소스 사본·SHA256SUMS·최종 지문은 이 작성 단계에서 만들지 않았다(부모가 회수 시 준비).
 
-향후 검사 절차는 RUN_AFTER_REVIEW.md에 문서로만 적었다(실행하지 않음).
+향후 검사 명령과 의존성은 RUN_AFTER_REVIEW.md에 적었다.

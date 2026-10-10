@@ -1,10 +1,22 @@
-# 회피 3.1 — 향후 검사 절차 (문서 전용, 실행하지 않음)
+# 회피 3.2 — 향후 검사 절차 (문서 전용, 이 작성 단계에서 실행하지 않음)
 
-이 문서는 실행 권한이 아니다. 단위 테스트 실행에도 별도 사람 승인이 필요하다. 그 승인이 나더라도 시험·스윕·시뮬·차량·배포 권한으로 넓히지 않는다.
+이 문서는 실행 권한이 아니다. 시험 실행은 부모 세션이 별도 기록으로 시행한다. 통과해도 안전 확보·효과 검증이 아니며 운영 기본값은 비활성 그대로다.
 
-1. 승인 후 지정 격리 사본에서만 실행한다. 의존성 설치나 빌드가 필요하면 그것도 따로 승인받는다.
-   - 대상: `openpilot/selfdrive/controls/tests/test_lane_avoid.py`, `openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py`
-2. 결과는 기존 v3 테스트와 v3.1 신규 테스트로 나눠 기록한다. 실패한 테스트는 assert를 고쳐 맞추지 않고 원문과 실패 내용을 보고한다.
-   - REVIEW.md §3의 예상 충돌(`test_new_avoid_side_detection_revokes_and_never_grows`)은 실패가 예상된다. 정책 승인 전에는 그대로 보고한다.
-3. 통과해도 안전 확보·효과 검증이 아니다. 운영 기본값은 비활성 그대로다.
-4. 재생 평가·실차 검증은 승인 수치·정책과 별도 평가 절차가 정해진 뒤 따로 승인받는다.
+## 명령 (저장소 루트 `/home/ssm-user/work/lanemode_avoid_v3_2/repo`에서)
+
+```
+PYTHONPATH=/home/ssm-user/work/lanemode_avoid_v3_2/repo python3 -m pytest -q \
+  openpilot/selfdrive/controls/tests/test_lane_avoid.py \
+  openpilot/selfdrive/controls/tests/test_lane_avoid_v3_2.py \
+  openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py
+```
+
+## 의존성 (확인 안 됨 — 설치·빌드는 별도 승인)
+- python3, pytest, numpy
+- `openpilot` 패키지 불러오기 경로(위 PYTHONPATH). lane_avoid.py/lane_avoid_audit.py는 numpy만 쓴다.
+- 계획기 시험(`make_planner`, test_lane_model_speed_planner.py)은 lateral_planner.py의 의존(cereal/pycapnp 메시지, openpilot.common, 횡 MPC 모듈 등)이 필요하다. 해당 시험 파일이 쓰는 대체·준비 방식을 따른다(정적 확인 안 함).
+
+## 기록 방법
+1. 기존 v3/v3.1 시험과 v3.2 신규(test_lane_avoid_v3_2.py)를 나눠 기록한다. 실패는 assert를 고쳐 맞추지 않고 원문·실패 내용을 보고한다.
+2. 예상 실패(REVIEW.md §4): `test_new_avoid_side_detection_revokes_and_never_grows`, `test_required_span_covers_body_and_whole_path`(bend 단언). 사람 결정 전에는 그대로 보고한다.
+3. 재생 평가·실차 검증은 승인 수치·정책과 별도 평가 절차가 정해진 뒤 따로 승인받는다.

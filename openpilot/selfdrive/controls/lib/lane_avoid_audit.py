@@ -96,6 +96,9 @@ def audit_frames(frames, cfg):
       elif f['edge_state'].get(side_now) != CLEAR:
         fail('applied_toward_unobserved_edge', side=side_now, applied=applied,
              edge_state=f['edge_state'].get(side_now))
+    # v3.2: an invalid output is a failure of the trace, never a normal frame
+    if f.get('valid') is False:
+      fail('output_invalid', invalid_reasons=f.get('invalid_reasons'))
     if 'consumed' in f and not (_num(f['consumed']) and abs(f['consumed'] - applied) <= RATE_TOL):
       fail('consumed_differs_from_applied', applied=applied, consumed=f['consumed'])
 
@@ -172,3 +175,44 @@ def audit_frames(frames, cfg):
     'blockers': blockers,
     'final_command_signals_unverified': FINAL_COMMAND_SIGNALS_UNVERIFIED,
   }
+
+
+def audit_signal_chain(records, limits):
+  """v3.2 structure for final-control continuity: records are dicts with 't' (s, one
+  monotonic clock) and one value per signal of the chain (e.g. consumed offset m, planned
+  curvature 1/m, blended/smoothed/clipped curvature, steering command). limits maps each
+  signal to (max_rate, max_rate_change) in that signal's unit per s and per s^2, or None.
+  No limit is approved: a signal without limits is listed 'not_evaluable' (its steps are
+  still reported), never passed. The actual difference over the actual interval is
+  checked on every sample; nothing is dropped. This does not produce the chain: the
+  caller must record real consumed values (the controlsd/actuator chain is not
+  reproduced by any test here)."""
+  per = {}
+  for sig, lim in limits.items():
+    viol, steps, non_diff = [], [], []
+    prev_t = prev_v = prev_r = None
+    for i, r in enumerate(records):
+      t, v = r.get('t'), r.get(sig)
+      if not (_num(t) and _num(v)):
+        non_diff.append({'frame': i, 'why': 'missing_or_nonfinite'})
+        prev_t = prev_v = prev_r = None
+        continue
+      if prev_t is not None:
+        dt = t - prev_t
+        if dt <= 0.0:
+          non_diff.append({'frame': i, 'why': 'time_not_increasing', 'dt': dt})
+          prev_t = prev_v = prev_r = None
+          continue
+        rate = (v - prev_v) / dt
+        steps.append({'frame': i, 'rate': rate})
+        if lim is not None:
+          if abs(rate) > lim[0] + RATE_TOL:
+            viol.append({'frame': i, 'rule': 'rate_above_limit', 'rate': rate, 'limit': lim[0]})
+          if prev_r is not None and abs(rate - prev_r) > lim[1] * dt + RATE_TOL:
+            viol.append({'frame': i, 'rule': 'rate_change_above_limit', 'change': rate - prev_r, 'dt': dt})
+        prev_r = rate
+      prev_t, prev_v = t, v
+    result = 'fail' if viol else ('not_evaluable' if lim is None or non_diff or len(records) < 2
+                                  else 'no_violation_found')
+    per[sig] = {'result': result, 'violations': viol, 'steps': steps, 'non_differentiable': non_diff}
+  return per

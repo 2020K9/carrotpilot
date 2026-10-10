@@ -33,6 +33,24 @@ v3.1 (lanemode_avoid_prompt_v3_1):
   forced-zero rate exception. An empty intersection is CONFLICT: its policy is not
   approved, so blockers() keeps the controller disabled.
 - Approval is re-validated every frame; any change resets all avoidance state.
+
+v3.2 (lanemode_avoid_prompt_v3_2):
+- A CONFLICT frame (or any frame whose final re-check fails) is an INVALID output
+  (AvoidOutput.valid False, invalid_reasons). Its applied value is the internal state for
+  reporting only and must not be consumed as an avoidance command. What the consumer
+  commands instead is NOT decided (human decision); the planner refuses consumption and
+  reports it. Production cannot reach this: the conflict policy has no implementation.
+- Road edges are checked over the same rigid-body footprint as the side space: body rear
+  at the first pose through the body front at the last pose, every pose's corners rotated
+  by the path heading. A path that starts ahead of the ego (x[0] > 0) has no observed
+  body pose there and is UNKNOWN; edges must be observed from the body rear (no
+  extrapolation in either direction).
+- A policy name in an approved tuple is not an implementation. blockers() also requires
+  a registered callable in POLICY_IMPLEMENTATIONS (empty in production except the
+  unapproved built-in body model). Occupancy prediction is called per side with
+  time-stamped objects; missing/stale/bad results are UNKNOWN.
+- Mode exit / approval-change resets report the dropped residual (residual_dropped) so
+  the consumed-signal discontinuity is visible; its handling is not decided.
 """
 import math
 from dataclasses import dataclass, field
@@ -76,6 +94,41 @@ APPROVED_CENTER_INVALID_POLICIES: tuple = ()
 APPROVED_OCCUPANCY_PREDICTION_POLICIES: tuple = ()
 APPROVED_BODY_GEOMETRY_MODELS: tuple = ()
 APPROVED_CONSTRAINT_CONFLICT_POLICIES: tuple = ()
+
+# v3.2: name -> callable per policy kind. Approval (tuples above) and implementation
+# (this registry) are separate; both are required. Contracts:
+# - return_risk / center_invalid: handler(ctx: dict) -> float | None, a proposed applied
+#   offset (model y, m) that is accepted only if it satisfies every constraint of _step;
+#   None = no proposal (the constraint-only step is used). ctx keys: applied, rate, dt,
+#   target, permitted, return_ok, cap, avoid_side.
+# - constraint_conflict: handler(ctx) -> opaque action reported as out.conflict_action.
+#   The offset stays INVALID whatever it returns (no offset satisfies the constraints).
+#   No consumer executes the action yet (unresolved).
+# - occupancy_prediction: predictor(objects, side, space, horizon_s, t) -> OCCUPIED |
+#   CLEAR | UNKNOWN for the space during [t, t + horizon_s]. objects: [SideObject].
+# - body_geometry: footprint(path_x, path_y, cfg) -> (corner_x, corner_y, line_x, line_y)
+#   or None (body_footprint below is the only implementation; it is NOT approved).
+BODY_MODEL_RIGID_HEADING = 'rigid_rect_heading_v3_2'
+POLICY_IMPLEMENTATIONS: dict = {
+  'return_risk': {},
+  'center_invalid': {},
+  'occupancy_prediction': {},
+  'body_geometry': {},       # filled below with the unapproved built-in model
+  'constraint_conflict': {},
+}
+# (kind, config field, approved tuple name)
+POLICY_FIELDS = (
+  ('return_risk', 'return_risk_policy', 'APPROVED_RETURN_RISK_POLICIES'),
+  ('center_invalid', 'center_invalid_policy', 'APPROVED_CENTER_INVALID_POLICIES'),
+  ('occupancy_prediction', 'occupancy_prediction_policy', 'APPROVED_OCCUPANCY_PREDICTION_POLICIES'),
+  ('body_geometry', 'body_geometry_model', 'APPROVED_BODY_GEOMETRY_MODELS'),
+  ('constraint_conflict', 'constraint_conflict_policy', 'APPROVED_CONSTRAINT_CONFLICT_POLICIES'),
+)
+
+
+def policy_impl(kind, name):
+  impl = POLICY_IMPLEMENTATIONS.get(kind, {}).get(name) if isinstance(name, str) else None
+  return impl if callable(impl) else None
 
 
 def other_side(side):
@@ -129,6 +182,8 @@ class LaneAvoidConfig:
   occupancy_prediction_policy: str | None = None
   body_geometry_model: str | None = None
   constraint_conflict_policy: str | None = None
+  # v3.2 (unapproved)
+  prediction_horizon_s: float | None = None     # s, occupancy prediction span from t
 
   def blockers(self):
     out = []
@@ -137,7 +192,7 @@ class LaneAvoidConfig:
     positive = ('max_offset_m', 'entry_rate_mps', 'return_rate_mps', 'max_rate_change_mps2',
                 'candidate_deadband_m', 'max_abs_curvature', 'vehicle_half_width_m',
                 'road_edge_margin_m', 'road_edge_std_max_m', 'max_input_gap_s', 'reentry_wait_s',
-                'vehicle_front_m', 'vehicle_rear_m', 'side_clearance_m')
+                'vehicle_front_m', 'vehicle_rear_m', 'side_clearance_m', 'prediction_horizon_s')
     for name in positive:
       v = getattr(self, name)
       if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0.0):
@@ -166,6 +221,10 @@ class LaneAvoidConfig:
       out.append('body_geometry_model_unapproved')
     if self.constraint_conflict_policy not in APPROVED_CONSTRAINT_CONFLICT_POLICIES:
       out.append('constraint_conflict_policy_unapproved')
+    # v3.2: an approved name without a registered implementation still blocks
+    for kind, fld, _ in POLICY_FIELDS:
+      if policy_impl(kind, getattr(self, fld)) is None:
+        out.append(f'{fld}_unimplemented')
     return out
 
 
@@ -245,21 +304,54 @@ def required_x_range(path_x, cfg):
   return min(float(x[0]), 0.0) - cfg.vehicle_rear_m, float(x[-1]) + cfg.vehicle_front_m
 
 
+def body_footprint(path_x, path_y, cfg):
+  """Rigid-rectangle body at every consumed path pose (v3.2 model, NOT approved):
+  heading from the path slope, body rear..front along the heading, half width across.
+  Returns (corner_x, corner_y, line_x, line_y): every pose's four corners and the body
+  centreline extended rigidly from the rear of the first pose to the front of the last
+  pose. The first pose must be at or behind the ego reference point: a path starting
+  ahead (x[0] > 0) leaves the current body pose unobserved -> None. No path point is
+  invented behind x[0]; the rear comes from the rigid body at the first pose."""
+  arrays = _path_arrays(path_x, path_y)
+  if arrays is None or not _finite(cfg.vehicle_half_width_m, cfg.vehicle_front_m, cfg.vehicle_rear_m):
+    return None
+  x, y = arrays
+  if x[0] > 0.0:
+    return None
+  th = np.arctan(np.gradient(y, x))
+  c, s = np.cos(th), np.sin(th)
+  a = np.array([-cfg.vehicle_rear_m, cfg.vehicle_front_m])
+  b = np.array([-cfg.vehicle_half_width_m, cfg.vehicle_half_width_m])
+  aa, bb = np.meshgrid(a, b)
+  aa, bb = aa.ravel(), bb.ravel()
+  cx = (x[:, None] + aa[None, :] * c[:, None] - bb[None, :] * s[:, None]).ravel()
+  cy = (y[:, None] + aa[None, :] * s[:, None] + bb[None, :] * c[:, None]).ravel()
+  lx = np.concatenate(([x[0] - cfg.vehicle_rear_m * c[0]], x, [x[-1] + cfg.vehicle_front_m * c[-1]]))
+  ly = np.concatenate(([y[0] - cfg.vehicle_rear_m * s[0]], y, [y[-1] + cfg.vehicle_front_m * s[-1]]))
+  return cx, cy, lx, ly
+
+
+POLICY_IMPLEMENTATIONS['body_geometry'][BODY_MODEL_RIGID_HEADING] = body_footprint
+
+
 def required_space(path_x, base_y, offsets, side, cfg):
   """Space on `side` swept by the body while the consumed path (base_y + uniform offset)
-  takes any of `offsets` (current applied, target, 0 for the return). Every path point
-  and, since the rectangle bounds each segment's end points, every segment between them
-  is inside. Moving objects need the (unapproved) occupancy prediction policy."""
+  takes any of `offsets` (current applied, target, 0 for the return). v3.2: the same
+  body_footprint as road_edge_allowance (rear, corners rotated by heading, centreline
+  band). Moving objects are handled by the occupancy prediction policy."""
   xr = required_x_range(path_x, cfg)
-  arrays = _path_arrays(path_x, base_y)
-  if xr is None or arrays is None or not _finite(cfg.vehicle_half_width_m, cfg.side_clearance_m):
+  fp = body_footprint(path_x, base_y, cfg)
+  if xr is None or fp is None or not _finite(cfg.vehicle_half_width_m, cfg.side_clearance_m):
     return None
   offs = np.asarray(offsets, dtype=float)
   if offs.ndim != 1 or offs.size == 0 or not np.all(np.isfinite(offs)):
     return None
-  u = SIDE_SIGN[side] * (arrays[1][None, :] + offs[:, None])
-  lat_max = max(float(np.max(u)) + cfg.vehicle_half_width_m + cfg.side_clearance_m, 0.0)
-  return RequiredSpace(xr[0], xr[1], 0.0, lat_max)
+  cx, cy, lx, ly = fp
+  band = SIDE_SIGN[side] * ly + cfg.vehicle_half_width_m
+  corners = SIDE_SIGN[side] * cy
+  u = max(float(np.max(band)), float(np.max(corners))) + float(np.max(SIDE_SIGN[side] * offs))
+  lat_max = max(u + cfg.side_clearance_m, 0.0)
+  return RequiredSpace(min(xr[0], float(np.min(cx))), max(xr[1], float(np.max(cx))), 0.0, lat_max)
 
 
 def evaluate_side(readings, side, cfg, spaces=()):
@@ -343,34 +435,81 @@ def road_edge_allowance(path_x, base_y, edge_x, edge_y, edge_std, edge_age_s, si
   ages = cfg.max_age_s if isinstance(cfg.max_age_s, dict) else {}
   max_age = ages.get('road_edge')
   if not _finite(cfg.vehicle_half_width_m, cfg.road_edge_margin_m, cfg.road_edge_std_max_m, max_age,
-                 cfg.vehicle_front_m):
+                 cfg.vehicle_front_m, cfg.vehicle_rear_m):
     return UNKNOWN, 0.0
   if not (_finite(edge_std, edge_age_s) and 0.0 <= edge_age_s <= max_age and edge_std <= cfg.road_edge_std_max_m):
     return UNKNOWN, 0.0
-  arrays = _path_arrays(path_x, base_y)
+  # v3.2: the same rigid-body footprint as required_space, body rear included
+  fp = body_footprint(path_x, base_y, cfg)
   try:
     ex = np.asarray(edge_x, dtype=float)
     ey = np.asarray(edge_y, dtype=float)
   except (TypeError, ValueError):
     return UNKNOWN, 0.0
-  if arrays is None or ex.shape != ey.shape or ex.ndim != 1 or ex.size < 2:
+  if fp is None or ex.shape != ey.shape or ex.ndim != 1 or ex.size < 2:
     return UNKNOWN, 0.0
-  x, by = arrays
+  cx, cy, lx, ly = fp
   if not (np.all(np.isfinite(ex)) and np.all(np.isfinite(ey))) or np.any(np.diff(ex) <= 0.0):
     return UNKNOWN, 0.0
-  x_end = float(x[-1]) + cfg.vehicle_front_m
-  # no extrapolation: the edge must be observed over the whole consumed span
-  if x[0] < ex[0] or x_end > ex[-1]:
+  x_start = min(float(lx[0]), float(np.min(cx)))
+  x_end = max(float(lx[-1]), float(np.max(cx)))
+  # no extrapolation: the edge must be observed from the body rear through the body front
+  if x_start < ex[0] or x_end > ex[-1]:
     return UNKNOWN, 0.0
-  knots = np.union1d(np.append(x, x_end), ex[(ex >= x[0]) & (ex <= x_end)])
-  # beyond the last point the body front is taken at the last path y (body geometry model)
-  path_at = np.interp(knots, x, by)
+  # centreline band at every knot of the extended centreline or the edge in range
+  knots = np.union1d(lx, ex[(ex >= lx[0]) & (ex <= lx[-1])])
+  path_at = np.interp(knots, lx, ly)
   edge_at = np.interp(knots, ex, ey)
-  dist = SIDE_SIGN[side] * (edge_at - path_at)
-  allowance = float(np.min(dist)) - cfg.vehicle_half_width_m - cfg.road_edge_margin_m
+  band = SIDE_SIGN[side] * (edge_at - path_at) - cfg.vehicle_half_width_m
+  # every pose's corners (heading rotation can push a corner beyond the band)
+  corner = SIDE_SIGN[side] * (np.interp(cx, ex, ey) - cy)
+  allowance = min(float(np.min(band)), float(np.min(corner))) - cfg.road_edge_margin_m
   if allowance <= 0.0:
     return OCCUPIED, 0.0
   return CLEAR, allowance
+
+
+@dataclass(frozen=True)
+class SideObject:
+  """A tracked object for occupancy prediction, Coverage axes on `side` (x m, negative
+  behind ego; lat m outward from the ego centreline), velocities m/s on the same axes,
+  t s on the evaluation clock. No production source fills this yet (radarState side
+  lists carry no lateral velocity/size with approved semantics)."""
+  side: str
+  x: float
+  lat: float
+  vx: float
+  vlat: float
+  length: float
+  width: float
+  t: float
+
+
+def predict_side(objects, side, space, cfg, t):
+  """Run the configured occupancy predictor; (state, reason). Missing, stale, mismatched
+  or non-finite inputs, failures and unexpected returns are UNKNOWN, never CLEAR."""
+  pred = policy_impl('occupancy_prediction', cfg.occupancy_prediction_policy)
+  if pred is None:
+    return UNKNOWN, 'prediction_unimplemented'
+  if space is None or not _finite(t, cfg.prediction_horizon_s):
+    return UNKNOWN, 'prediction_space_unavailable'
+  if not isinstance(objects, (list, tuple)):
+    return UNKNOWN, 'prediction_input_missing'
+  max_age = (cfg.max_age_s or {}).get('radar')
+  for o in objects:
+    if not isinstance(o, SideObject) or o.side != side:
+      return UNKNOWN, 'prediction_input_mismatch'
+    if not _finite(o.x, o.lat, o.vx, o.vlat, o.length, o.width, o.t, max_age) or o.length < 0.0 or o.width < 0.0:
+      return UNKNOWN, 'prediction_input_invalid'
+    if not 0.0 <= t - o.t <= max_age:
+      return UNKNOWN, 'prediction_input_stale'
+  try:
+    state = pred(tuple(objects), side, space, cfg.prediction_horizon_s, t)
+  except Exception:
+    return UNKNOWN, 'prediction_failed'
+  if state not in (OCCUPIED, CLEAR, UNKNOWN):
+    return UNKNOWN, 'prediction_bad_return'
+  return state, ''
 
 
 @dataclass
@@ -391,6 +530,7 @@ class AvoidInputs:
   road_edges: dict = field(default_factory=dict)      # {side: (edge_x, edge_y, std, age_s)}
   model_t: float | None = None          # s, modelV2 message time on the same clock as t
   clock_verified: bool = False          # t and every message time come from one verified clock
+  side_objects: dict = field(default_factory=dict)    # {side: [SideObject]}; missing side -> UNKNOWN
 
 
 @dataclass
@@ -412,6 +552,13 @@ class AvoidOutput:
   source_state: dict = field(default_factory=dict)    # {side: {source: state}}
   edge_state: dict = field(default_factory=dict)      # {side: state}
   blockers: tuple = ()
+  # v3.2: False = do not consume `applied` as an avoidance command (CONFLICT or a failed
+  # final re-check). The replacement command is not decided (unresolved).
+  valid: bool = True
+  invalid_reasons: tuple = ()
+  conflict_action: object = None                      # opaque constraint_conflict handler result
+  prediction_state: dict = field(default_factory=dict)  # {side: state from predict_side}
+  residual_dropped: tuple | None = None               # (applied, rate) discarded by a reset this frame
 
 
 class LaneAvoidController:
@@ -429,6 +576,7 @@ class LaneAvoidController:
     self.active = not self.blockers
     self.last_model_t = None
     self.note = ()
+    self.dropped = None
     self.reset()
 
   def reset(self):
@@ -451,6 +599,8 @@ class LaneAvoidController:
       engaged = self.state not in (STANDBY, DISABLED) or residual
       # the re-entry wait survives the reset (counted from the change if engaged)
       revoked = self.last_t if engaged and self.last_t is not None else self.revoked_t
+      if residual:
+        self.dropped = (self.applied, self.rate)  # reported on the next output (v3.2)
       self._cfg_seen, self.blockers = self.cfg, blockers
       self.active = not blockers
       self.reset()
@@ -477,18 +627,23 @@ class LaneAvoidController:
     and the transition of a non-zero residual is not validated (reported reason)."""
     engaged = self.state not in (STANDBY, DISABLED) or self.applied != 0.0 or self.rate != 0.0
     residual = self.applied != 0.0 or self.rate != 0.0
+    dropped = (self.applied, self.rate) if residual else self.dropped
+    self.dropped = None
     revoked = self.revoked_t
     self.reset()
     # keep the re-entry wait across repeated inactive frames (reset() clears revoked_t)
     self.revoked_t = t if engaged and _finite(t) else revoked
     reasons = ('lane_mode_inactive_reset',) + (('mode_exit_with_residual_unverified',) if residual else ())
-    return AvoidOutput(state=self.state, blockers=self.blockers, reasons=reasons)
+    return AvoidOutput(state=self.state, blockers=self.blockers, reasons=reasons, residual_dropped=dropped)
 
   def update(self, inp):
     if not self.refresh():
-      return AvoidOutput(blockers=self.blockers)
+      out = AvoidOutput(blockers=self.blockers, residual_dropped=self.dropped)
+      self.dropped = None
+      return out
     cfg = self.cfg
-    out = AvoidOutput(blockers=self.blockers)
+    out = AvoidOutput(blockers=self.blockers, residual_dropped=self.dropped)
+    self.dropped = None
     reasons = list(self.note)
     self.note = ()
 
@@ -552,6 +707,13 @@ class LaneAvoidController:
     sides, sources = {}, {}
     for side in (LEFT, RIGHT):
       sides[side], sources[side] = evaluate_side(inp.side_readings.get(side, {}), side, cfg, (spaces[side],))
+      # v3.2: the current empty space does not prove the space stays empty while moving
+      pred, pwhy = predict_side(inp.side_objects.get(side), side, spaces[side], cfg, inp.t)
+      out.prediction_state[side] = pred
+      if sides[side] == CLEAR and pred != CLEAR:
+        sides[side] = pred
+        if pwhy:
+          reasons.append(f'{side}_{pwhy}')
     out.side_state, out.source_state = sides, sources
 
     max_model = cfg.max_age_s['model_path']
@@ -605,7 +767,8 @@ class LaneAvoidController:
       return_ok = sides[ret] == CLEAR and edges[ret] == CLEAR and inp.center_valid and dt is not None
 
     s = self.motion_sign
-    if s != 0.0 and max(s * target, 0.0) < s * self.applied and not return_ok:
+    risk = s != 0.0 and max(s * target, 0.0) < s * self.applied and not return_ok
+    if risk:
       # Reducing |applied| would move toward the original obstacle side without
       # observed-clear space. The approved risk policy would act here; none is
       # approved, so blockers() keeps the controller disabled. Permission is revoked
@@ -625,11 +788,32 @@ class LaneAvoidController:
         conflict = ('time_fault_during_motion',)
     else:
       new_applied, conflict = self._step(target, dt, permitted, return_ok, cap)
+      if risk and not conflict:
+        # v3.2: the configured risk handler (centre-invalid when there is no centre) may
+        # propose an offset; it is accepted only inside every constraint of _step
+        kind, name = (('center_invalid', cfg.center_invalid_policy) if not inp.center_valid else
+                      ('return_risk', cfg.return_risk_policy))
+        handler = policy_impl(kind, name)
+        if handler is None:
+          conflict = (f'{kind}_policy_unimplemented',)
+        else:
+          ctx = dict(applied=self.applied, rate=self.rate, dt=dt, target=target, permitted=permitted,
+                     return_ok=return_ok, cap=dict(cap), avoid_side=self.avoid_side)
+          try:
+            proposal = handler(ctx)
+          except Exception:
+            proposal, conflict = None, (f'{kind}_policy_failed',)
+          if proposal is not None and not conflict:
+            if _finite(proposal) and not self._violations(proposal, dt, permitted, return_ok, cap):
+              new_applied = float(proposal)
+            else:
+              conflict = (f'{kind}_policy_result_rejected',)
     if conflict:
-      # No offset satisfies every constraint this frame. The response belongs to the
-      # unapproved constraint_conflict_policy (blockers() keeps production disabled).
-      # This placeholder only refuses movement; it is not an approved hold and breaks
-      # the continuity limit whenever the rate was non-zero.
+      # No offset satisfies every constraint this frame. v3.2: the output is INVALID and
+      # must not be consumed; the internal applied stays for reporting only. The
+      # replacement command is the unapproved, unimplemented constraint_conflict_policy
+      # (human decision: neither holding nor an instant 0 is approved). blockers() keeps
+      # production disabled.
       if self.state == AVOID:
         self.revoked_t = self.last_t
       self.state = CONFLICT
@@ -637,6 +821,26 @@ class LaneAvoidController:
       new_applied = self.applied
       reasons.append('constraint_conflict_policy_unapproved')
       reasons.extend(conflict)
+      out.valid = False
+      out.invalid_reasons = ('constraint_conflict',) + tuple(conflict)
+      handler = policy_impl('constraint_conflict', cfg.constraint_conflict_policy)
+      if handler is not None:
+        try:
+          out.conflict_action = handler(dict(applied=self.applied, rate=self.rate, dt=dt, conflict=conflict,
+                                             cap=dict(cap), avoid_side=self.avoid_side))
+        except Exception:
+          out.invalid_reasons += ('constraint_conflict_policy_failed',)
+    elif dt is not None:
+      # final re-check of the value about to be published (same constraints as _step)
+      bad = self._violations(new_applied, dt, permitted, return_ok, cap)
+      if bad:
+        out.valid = False
+        out.invalid_reasons = tuple(f'final_check_{b}' for b in bad)
+    elif new_applied != 0.0:
+      side_now = RIGHT if new_applied > 0.0 else LEFT
+      if abs(new_applied) > cap[side_now] + 1e-12:
+        out.valid = False
+        out.invalid_reasons = ('final_check_edge_room_or_max_offset',)
     new_rate = (new_applied - self.applied) / dt if dt is not None else 0.0
     out.return_move_permitted = abs(new_applied) < abs(self.applied) and return_ok
     self.applied, self.rate = new_applied, new_rate
@@ -661,6 +865,35 @@ class LaneAvoidController:
     out.edge_allowance = room.get(want_side) if want_side else None
     out.reasons = tuple(reasons)
     return out
+
+  def _violations(self, new_applied, dt, permitted, return_ok, cap, tol=1e-9):
+    """Constraints of _step violated by publishing `new_applied` this frame (v3.2 final
+    re-check; also validates risk-handler proposals). Empty list = consumable."""
+    cfg = self.cfg
+    s = self.motion_sign
+    if s == 0.0:
+      if new_applied == 0.0:
+        return [] if self.rate == 0.0 or abs(self.rate) <= cfg.max_rate_change_mps2 * dt + tol else ['continuity']
+      s = math.copysign(1.0, new_applied)
+    m, u_prev, m_new = s * self.applied, s * self.rate, s * new_applied
+    u = (m_new - m) / dt
+    m_cap = cap[RIGHT if s > 0.0 else LEFT]
+    bad = []
+    if abs(u - u_prev) > cfg.max_rate_change_mps2 * dt + tol:
+      bad.append('continuity')
+    if u > cfg.entry_rate_mps + tol:
+      bad.append('entry_rate')
+    if u < -cfg.return_rate_mps - tol:
+      bad.append('return_rate')
+    if m_new > m_cap + tol * dt:
+      bad.append('edge_room_or_max_offset')
+    if m_new < -tol * dt:
+      bad.append('no_side_crossing')
+    if not permitted and u > tol:
+      bad.append('no_growth_without_permission')
+    if not return_ok and u < -tol:
+      bad.append('no_return_without_clear_return_side')
+    return bad
 
   def _step(self, target, dt, permitted, return_ok, cap):
     """Choose this frame's applied offset inside the intersection of every constraint,
