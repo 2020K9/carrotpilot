@@ -1,0 +1,2276 @@
+diff --git a/openpilot/selfdrive/controls/lib/lane_avoid.py b/openpilot/selfdrive/controls/lib/lane_avoid.py
+new file mode 100644
+index 00000000..bfd8ef3d
+--- /dev/null
++++ b/openpilot/selfdrive/controls/lib/lane_avoid.py
+@@ -0,0 +1,714 @@
++"""Bounded lateral avoidance component for lane mode (lanemode_avoid_prompt_v3).
++
++Lane mode replaces the model (laneless) path with
++  d_prob * lane_path + (1 - d_prob) * model_path            (lane_planner_2.get_d_path)
++so the share d_prob * (model_path - lane_path) of a model sidestep is removed.
++This module decides, frame by frame, whether a bounded part of that removed share
++may be added back as a uniform lateral offset of the lane-mode path.
++
++Every limit, coverage, freshness and return/risk policy below is an approval-bound
++setting. None of them is approved: LaneAvoidConfig() has every value unset, so
++validate() reports blockers and the controller stays DISABLED (offset exactly 0).
++Do not fill these values from other features' constants.
++
++Coordinates: modelV2 path/laneLines/roadEdges y is positive to the RIGHT
++(lane_planner_2: path_from_left_lane = lll_y + width/2). radarState yRel is
++positive to the LEFT. A LEFT avoidance therefore has a negative model-y offset.
++
++Observation states: "not detected" is never "clear". A side is CLEAR only when
++every required source is CLEAR (supported, valid, fresh, no detection) and the
++approved coverage of those sources spans the approved required region.
++
++v3.1 (lanemode_avoid_prompt_v3_1):
++- Safety checks cover the whole consumed path. The offset is a uniform shift of every
++  path point (lateral_planner), so road-edge room and the side space are evaluated over
++  all path points, the segments between them and the approved body extents, not only
++  over candidate_x_m. The fixed required region stays as an additional constraint.
++- Freshness comes from real message times: evaluation time t and the model message
++  time model_t share one monotonic clock; repeated, reversed, future or missing times
++  are invalid, never age 0.
++- Every frame's applied offset is chosen inside the intersection of all constraints
++  (edge room, max offset, entry/return rate, rate-change continuity, no growth without
++  permission, no return without a clear return side, no side crossing). There is no
++  forced-zero rate exception. An empty intersection is CONFLICT: its policy is not
++  approved, so blockers() keeps the controller disabled.
++- Approval is re-validated every frame; any change resets all avoidance state.
++"""
++import math
++from dataclasses import dataclass, field
++
++import numpy as np
++
++LEFT = 'left'
++RIGHT = 'right'
++
++# model-y sign of a movement toward each side
++SIDE_SIGN = {LEFT: -1.0, RIGHT: 1.0}
++
++OCCUPIED = 'occupied'
++CLEAR = 'clear'
++UNKNOWN = 'unknown'
++
++# required observation sources for a side; the radar side lists are built from the
++# model path (radar_motion d_path) and are NOT independent model observations
++SRC_BSD = 'bsd'
++SRC_RADAR = 'radar'
++SRC_MODEL = 'model'
++REQUIRED_SOURCES = (SRC_BSD, SRC_RADAR, SRC_MODEL)
++
++# controller states
++DISABLED = 'disabled'
++STANDBY = 'standby'        # permission pending
++AVOID = 'avoid'
++RETURN = 'return'          # new-avoidance target 0, residual offset remains
++RETURN_RISK = 'return_risk'
++CONFLICT = 'constraint_conflict'  # no offset satisfies every constraint this frame
++
++# Return-risk policies (hold / decelerate / driver warning ...) are not approved.
++# The empty tuple keeps validate() failing until a reviewed policy is added here.
++APPROVED_RETURN_RISK_POLICIES: tuple = ()
++APPROVED_CENTER_INVALID_POLICIES: tuple = ()
++# v3.1: none of these are approved either; each empty tuple is a blocker.
++# - occupancy prediction: objects moving into the required space during the manoeuvre
++# - body geometry: the band model (half width + clearance at every path point, front/rear
++#   extents along x, no heading-induced corner offset) used by required_space/road_edge_allowance
++# - constraint conflict: what to command when CONFLICT occurs
++APPROVED_OCCUPANCY_PREDICTION_POLICIES: tuple = ()
++APPROVED_BODY_GEOMETRY_MODELS: tuple = ()
++APPROVED_CONSTRAINT_CONFLICT_POLICIES: tuple = ()
++
++
++def other_side(side):
++  return RIGHT if side == LEFT else LEFT
++
++
++def _finite(*values):
++  return all(v is not None and math.isfinite(v) for v in values)
++
++
++@dataclass(frozen=True)
++class Coverage:
++  """Approved observation area of one source on one side (ego-relative metres).
++
++  x: longitudinal (negative = behind ego), lat: outward distance from the ego
++  centreline on that side. Only evidence-backed, approved coverage belongs here.
++  """
++  x_min: float
++  x_max: float
++  lat_min: float
++  lat_max: float
++
++
++@dataclass(frozen=True)
++class LaneAvoidConfig:
++  enabled: bool = False
++  # limits (unit, all unapproved)
++  max_offset_m: float | None = None             # m, |applied offset| limit
++  entry_rate_mps: float | None = None           # m/s, magnitude increase rate
++  return_rate_mps: float | None = None          # m/s, magnitude decrease rate
++  max_rate_change_mps2: float | None = None     # m/s^2, continuity limit on offset rate
++  candidate_x_m: tuple | None = None            # (min, max) m, path x range used for the candidate
++  candidate_deadband_m: float | None = None     # m, minimum |candidate| treated as a sidestep
++  max_abs_curvature: float | None = None        # 1/m, above this avoidance is not separable from a curve
++  vehicle_half_width_m: float | None = None     # m
++  road_edge_margin_m: float | None = None       # m, clearance between body and road edge
++  road_edge_std_max_m: float | None = None      # m, roadEdgeStds above this -> unknown
++  required_region_x_m: tuple | None = None      # (min, max) m, side space that must be observed
++  required_region_lat_m: tuple | None = None    # (min, max) m outward from centreline
++  coverage: dict | None = None                  # {(source, side): Coverage}
++  max_age_s: dict | None = None                 # {'bsd'|'radar'|'model'|'road_edge'|'model_path': s}
++  max_input_gap_s: float | None = None          # s, larger dt revokes permission
++  entry_confirm_frames: int | None = None       # consecutive permitted frames before AVOID
++  reentry_wait_s: float | None = None           # s after a revocation before a new AVOID
++  return_risk_policy: str | None = None
++  center_invalid_policy: str | None = None
++  # v3.1 (all unapproved)
++  vehicle_front_m: float | None = None          # m, body extent ahead of a path point
++  vehicle_rear_m: float | None = None           # m, body extent behind the current reference point
++  side_clearance_m: float | None = None         # m, lateral clearance to side objects
++  occupancy_prediction_policy: str | None = None
++  body_geometry_model: str | None = None
++  constraint_conflict_policy: str | None = None
++
++  def blockers(self):
++    out = []
++    if not self.enabled:
++      out.append('feature_disabled')
++    positive = ('max_offset_m', 'entry_rate_mps', 'return_rate_mps', 'max_rate_change_mps2',
++                'candidate_deadband_m', 'max_abs_curvature', 'vehicle_half_width_m',
++                'road_edge_margin_m', 'road_edge_std_max_m', 'max_input_gap_s', 'reentry_wait_s',
++                'vehicle_front_m', 'vehicle_rear_m', 'side_clearance_m')
++    for name in positive:
++      v = getattr(self, name)
++      if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0.0):
++        out.append(f'{name}_unapproved')
++    for name in ('candidate_x_m', 'required_region_x_m', 'required_region_lat_m'):
++      v = getattr(self, name)
++      if not (isinstance(v, tuple) and len(v) == 2 and _finite(*v) and v[0] < v[1]):
++        out.append(f'{name}_unapproved')
++    if not (isinstance(self.entry_confirm_frames, int) and self.entry_confirm_frames >= 1):
++      out.append('entry_confirm_frames_unapproved')
++    if not isinstance(self.coverage, dict) or not all(
++        isinstance(self.coverage.get((s, side)), Coverage) for s in REQUIRED_SOURCES for side in (LEFT, RIGHT)):
++      out.append('coverage_unapproved')
++    ages = self.max_age_s if isinstance(self.max_age_s, dict) else {}
++    for key in REQUIRED_SOURCES + ('road_edge', 'model_path'):
++      v = ages.get(key)
++      if not (isinstance(v, (int, float)) and math.isfinite(v) and v > 0.0):
++        out.append(f'max_age_{key}_unapproved')
++    if self.return_risk_policy not in APPROVED_RETURN_RISK_POLICIES:
++      out.append('return_risk_policy_unapproved')
++    if self.center_invalid_policy not in APPROVED_CENTER_INVALID_POLICIES:
++      out.append('center_invalid_policy_unapproved')
++    if self.occupancy_prediction_policy not in APPROVED_OCCUPANCY_PREDICTION_POLICIES:
++      out.append('occupancy_prediction_policy_unapproved')
++    if self.body_geometry_model not in APPROVED_BODY_GEOMETRY_MODELS:
++      out.append('body_geometry_model_unapproved')
++    if self.constraint_conflict_policy not in APPROVED_CONSTRAINT_CONFLICT_POLICIES:
++      out.append('constraint_conflict_policy_unapproved')
++    return out
++
++
++@dataclass(frozen=True)
++class SourceReading:
++  """One observation source on one side. None means unknown, never False."""
++  supported: bool | None = None
++  valid: bool | None = None
++  age_s: float | None = None
++  detected: bool | None = None
++
++
++def evaluate_source(reading, max_age_s):
++  # A positive detection is a veto whatever the validity/age/settings (BSD true included).
++  if reading is None:
++    return UNKNOWN
++  if reading.detected is True:
++    return OCCUPIED
++  if (reading.detected is False and reading.supported is True and reading.valid is True and
++      _finite(reading.age_s, max_age_s) and 0.0 <= reading.age_s <= max_age_s):
++    return CLEAR
++  return UNKNOWN
++
++
++def region_covered(coverages, region_x, region_lat):
++  """True when the union of the given coverages spans the required rectangle."""
++  if region_x is None or region_lat is None:
++    return False
++  spans = sorted((c.x_min, c.x_max) for c in coverages
++                 if c is not None and c.lat_min <= region_lat[0] and c.lat_max >= region_lat[1])
++  reach = region_x[0]
++  for x0, x1 in spans:
++    if x0 > reach:
++      return False
++    reach = max(reach, x1)
++    if reach >= region_x[1]:
++      return True
++  return False
++
++
++@dataclass(frozen=True)
++class RequiredSpace:
++  """Ego-relative rectangle on one side (same axes as Coverage) that must be observed."""
++  x_min: float
++  x_max: float
++  lat_min: float
++  lat_max: float
++
++
++def _path_arrays(path_x, base_y):
++  """Validated (x, y) of the consumed path, or None. x must be strictly increasing so
++  that segments between points are well defined."""
++  try:
++    x = np.asarray(path_x, dtype=float)
++    y = np.asarray(base_y, dtype=float)
++  except (TypeError, ValueError):
++    return None
++  if x.ndim != 1 or x.shape != y.shape or x.size < 2:
++    return None
++  if not (np.all(np.isfinite(x)) and np.all(np.isfinite(y))) or np.any(np.diff(x) <= 0.0):
++    return None
++  return x, y
++
++
++def required_x_range(path_x, cfg):
++  """Longitudinal span of the space the body sweeps along the whole consumed path:
++  from the body rear at the current position to the body front at the last path point.
++  It does not depend on the offset. None when not computable (never a smaller range)."""
++  if not _finite(cfg.vehicle_front_m, cfg.vehicle_rear_m):
++    return None
++  try:
++    x = np.asarray(path_x, dtype=float)
++  except (TypeError, ValueError):
++    return None
++  if x.ndim != 1 or x.size < 2 or not np.all(np.isfinite(x)) or np.any(np.diff(x) <= 0.0):
++    return None
++  return min(float(x[0]), 0.0) - cfg.vehicle_rear_m, float(x[-1]) + cfg.vehicle_front_m
++
++
++def required_space(path_x, base_y, offsets, side, cfg):
++  """Space on `side` swept by the body while the consumed path (base_y + uniform offset)
++  takes any of `offsets` (current applied, target, 0 for the return). Every path point
++  and, since the rectangle bounds each segment's end points, every segment between them
++  is inside. Moving objects need the (unapproved) occupancy prediction policy."""
++  xr = required_x_range(path_x, cfg)
++  arrays = _path_arrays(path_x, base_y)
++  if xr is None or arrays is None or not _finite(cfg.vehicle_half_width_m, cfg.side_clearance_m):
++    return None
++  offs = np.asarray(offsets, dtype=float)
++  if offs.ndim != 1 or offs.size == 0 or not np.all(np.isfinite(offs)):
++    return None
++  u = SIDE_SIGN[side] * (arrays[1][None, :] + offs[:, None])
++  lat_max = max(float(np.max(u)) + cfg.vehicle_half_width_m + cfg.side_clearance_m, 0.0)
++  return RequiredSpace(xr[0], xr[1], 0.0, lat_max)
++
++
++def evaluate_side(readings, side, cfg, spaces=()):
++  """readings: {source: SourceReading}. Returns (state, {source: state}).
++  Coverage must span the fixed required region AND every space in `spaces`; a None
++  space (not computable) is UNKNOWN. The controller always passes its dynamic space."""
++  ages = cfg.max_age_s if isinstance(cfg.max_age_s, dict) else {}
++  per = {s: evaluate_source(readings.get(s), ages.get(s)) for s in REQUIRED_SOURCES}
++  if any(v == OCCUPIED for v in per.values()):
++    return OCCUPIED, per
++  if not all(v == CLEAR for v in per.values()):
++    return UNKNOWN, per
++  cov = cfg.coverage if isinstance(cfg.coverage, dict) else {}
++  covs = [cov.get((s, side)) for s in REQUIRED_SOURCES]
++  if not region_covered(covs, cfg.required_region_x_m, cfg.required_region_lat_m):
++    return UNKNOWN, per
++  for sp in spaces:
++    if sp is None or not region_covered(covs, (sp.x_min, sp.x_max), (sp.lat_min, sp.lat_max)):
++      return UNKNOWN, per
++  return CLEAR, per
++
++
++def radar_side_reading(leads, valid, age_s, region_x):
++  """radarState side list (leadLeft/leadsLeft or right). Any status lead inside the
++  required x range is a detection; non-finite values make the reading unknown.
++  The lists are classified on the model path and are not model observations."""
++  if leads is None or region_x is None:
++    return SourceReading(supported=None, valid=valid, age_s=age_s, detected=None)
++  detected = False
++  for lead in leads:
++    if not bool(getattr(lead, 'status', False)):
++      continue
++    d_rel = getattr(lead, 'dRel', None)
++    if not _finite(d_rel):
++      return SourceReading(supported=True, valid=valid, age_s=age_s, detected=None)
++    if region_x[0] <= d_rel <= region_x[1]:
++      detected = True
++  return SourceReading(supported=True, valid=valid, age_s=age_s, detected=detected)
++
++
++def avoid_candidate(path_x, model_y, lane_y, d_prob, cfg):
++  """Signed sidestep removed by lane mode: d_prob * (model_y - lane_y) on the same
++  samples. Returns (value, reason); value None when not a single-direction sidestep."""
++  if cfg.candidate_x_m is None or cfg.candidate_deadband_m is None:
++    return None, 'candidate_unapproved'
++  try:
++    x = np.asarray(path_x, dtype=float)
++    my = np.asarray(model_y, dtype=float)
++    ly = np.asarray(lane_y, dtype=float)
++  except (TypeError, ValueError):
++    return None, 'candidate_bad_input'
++  if x.ndim != 1 or x.shape != my.shape or x.shape != ly.shape or x.size < 2:
++    return None, 'candidate_shape'
++  if not (_finite(d_prob) and 0.0 <= d_prob <= 1.0):
++    return None, 'candidate_d_prob'
++  if not (np.all(np.isfinite(x)) and np.all(np.isfinite(my)) and np.all(np.isfinite(ly))):
++    return None, 'candidate_nonfinite'
++  if np.any(np.diff(x) < 0.0):
++    return None, 'candidate_x_not_monotonic'
++  sel = (x >= cfg.candidate_x_m[0]) & (x <= cfg.candidate_x_m[1])
++  if not np.any(sel):
++    return None, 'candidate_empty_region'
++  comp = d_prob * (my[sel] - ly[sel])
++  peak = float(comp[np.argmax(np.abs(comp))])
++  if abs(peak) < cfg.candidate_deadband_m:
++    return None, 'candidate_below_deadband'
++  significant = comp[np.abs(comp) >= cfg.candidate_deadband_m]
++  if np.any(np.sign(significant) != np.sign(peak)):
++    return None, 'candidate_mixed_direction'
++  return peak, ''
++
++
++def road_edge_allowance(path_x, base_y, edge_x, edge_y, edge_std, edge_age_s, side, cfg):
++  """Lateral room (m) toward `side` beyond body half width and approved margin,
++  measured from the lane-mode base path over the WHOLE consumed path (v3.1): every
++  path point, every segment between points and the body front beyond the last point.
++  Path and edge are piecewise linear, so their distance is minimal at a knot of either;
++  all knots in range are checked. The edge must be observed over the whole span (no
++  extrapolation). Returns (state, allowance). roadEdges is a model estimate, not a
++  guardrail sensor."""
++  ages = cfg.max_age_s if isinstance(cfg.max_age_s, dict) else {}
++  max_age = ages.get('road_edge')
++  if not _finite(cfg.vehicle_half_width_m, cfg.road_edge_margin_m, cfg.road_edge_std_max_m, max_age,
++                 cfg.vehicle_front_m):
++    return UNKNOWN, 0.0
++  if not (_finite(edge_std, edge_age_s) and 0.0 <= edge_age_s <= max_age and edge_std <= cfg.road_edge_std_max_m):
++    return UNKNOWN, 0.0
++  arrays = _path_arrays(path_x, base_y)
++  try:
++    ex = np.asarray(edge_x, dtype=float)
++    ey = np.asarray(edge_y, dtype=float)
++  except (TypeError, ValueError):
++    return UNKNOWN, 0.0
++  if arrays is None or ex.shape != ey.shape or ex.ndim != 1 or ex.size < 2:
++    return UNKNOWN, 0.0
++  x, by = arrays
++  if not (np.all(np.isfinite(ex)) and np.all(np.isfinite(ey))) or np.any(np.diff(ex) <= 0.0):
++    return UNKNOWN, 0.0
++  x_end = float(x[-1]) + cfg.vehicle_front_m
++  # no extrapolation: the edge must be observed over the whole consumed span
++  if x[0] < ex[0] or x_end > ex[-1]:
++    return UNKNOWN, 0.0
++  knots = np.union1d(np.append(x, x_end), ex[(ex >= x[0]) & (ex <= x_end)])
++  # beyond the last point the body front is taken at the last path y (body geometry model)
++  path_at = np.interp(knots, x, by)
++  edge_at = np.interp(knots, ex, ey)
++  dist = SIDE_SIGN[side] * (edge_at - path_at)
++  allowance = float(np.min(dist)) - cfg.vehicle_half_width_m - cfg.road_edge_margin_m
++  if allowance <= 0.0:
++    return OCCUPIED, 0.0
++  return CLEAR, allowance
++
++
++@dataclass
++class AvoidInputs:
++  t: float | None                       # s, evaluation time (monotonic clock shared with model_t)
++  center_valid: bool                    # lane-mode base path is in use and valid
++  path_x: object = None
++  model_y: object = None                # laneless path y before lane blending
++  lane_y: object = None                 # lane path y on the same samples (None if not used)
++  base_y: object = None                 # lane-mode path y before this offset (centre reference)
++  d_prob: float | None = None
++  model_valid: bool = False
++  model_age_s: float | None = None      # s, builder's t - model_t; checked together with model_t
++  lane_change_active: bool = True       # desire / lane change / ATC
++  driver_steering: bool = True
++  measured_curvature: float | None = None
++  side_readings: dict = field(default_factory=dict)   # {side: {source: SourceReading}}
++  road_edges: dict = field(default_factory=dict)      # {side: (edge_x, edge_y, std, age_s)}
++  model_t: float | None = None          # s, modelV2 message time on the same clock as t
++  clock_verified: bool = False          # t and every message time come from one verified clock
++
++
++@dataclass
++class AvoidOutput:
++  state: str = DISABLED
++  permitted: bool = False               # new avoidance start/hold/expand allowed this frame
++  target: float = 0.0                   # new-avoidance target (model y, m)
++  applied: float = 0.0                  # offset actually added to the consumed path (model y, m)
++  rate: float = 0.0                     # m/s, (applied - previous applied) / dt of this frame
++  return_move_permitted: bool = False
++  avoid_side: str | None = None
++  candidate: float | None = None
++  edge_allowance: float | None = None
++  edge_room: dict = field(default_factory=dict)       # {side: room m, 0.0 occupied, None unknown}
++  required_space: dict = field(default_factory=dict)  # {side: RequiredSpace or None}
++  conflict: tuple = ()
++  reasons: tuple = ()
++  side_state: dict = field(default_factory=dict)      # {side: state}
++  source_state: dict = field(default_factory=dict)    # {side: {source: state}}
++  edge_state: dict = field(default_factory=dict)      # {side: state}
++  blockers: tuple = ()
++
++
++class LaneAvoidController:
++  """State ownership: applied, rate, motion_sign, avoid_side, confirm, last_t and state
++  belong to one lane-mode episode. reset() clears them on any approval or config change
++  (refresh) and whenever the lane-mode path is not consumed (mode_inactive). revoked_t
++  (start of the re-entry wait) is kept across those resets so leaving and re-entering
++  does not skip the wait. last_model_t belongs to the model message stream and survives
++  resets, so an old message is never reused after one."""
++
++  def __init__(self, cfg=None):
++    self.cfg = cfg if cfg is not None else LaneAvoidConfig()
++    self._cfg_seen = self.cfg
++    self.blockers = tuple(self.cfg.blockers())
++    self.active = not self.blockers
++    self.last_model_t = None
++    self.note = ()
++    self.reset()
++
++  def reset(self):
++    self.state = STANDBY if self.active else DISABLED
++    self.applied = 0.0
++    self.rate = 0.0
++    self.motion_sign = 0.0
++    self.avoid_side = None
++    self.last_t = None
++    self.confirm = 0
++    self.revoked_t = None
++
++  def refresh(self):
++    """Re-validate approval now instead of reusing the construction-time result. Any
++    change of the config object or of its blockers resets all avoidance state, so a
++    re-activated controller starts at zero offset and needs new permission."""
++    blockers = tuple(self.cfg.blockers())
++    if self.cfg is not self._cfg_seen or blockers != self.blockers:
++      residual = self.applied != 0.0 or self.rate != 0.0
++      engaged = self.state not in (STANDBY, DISABLED) or residual
++      # the re-entry wait survives the reset (counted from the change if engaged)
++      revoked = self.last_t if engaged and self.last_t is not None else self.revoked_t
++      self._cfg_seen, self.blockers = self.cfg, blockers
++      self.active = not blockers
++      self.reset()
++      self.revoked_t = revoked
++      # Dropping a residual at runtime deactivation is not an approved safety action;
++      # the reason is reported on the next active frame (and blocks that frame). Notes
++      # accumulate so a later change (e.g. re-enable) cannot hide an earlier residual drop.
++      new = ('approval_changed_reset',) + (('approval_change_with_residual_unverified',) if residual else ())
++      self.note = self.note + tuple(n for n in new if n not in self.note)
++    return self.active
++
++  def radar_region_x(self, path_x):
++    """x range for radar_side_reading: the fixed region united with the dynamic span."""
++    fixed = self.cfg.required_region_x_m
++    dyn = required_x_range(path_x, self.cfg)
++    if not (isinstance(fixed, tuple) and len(fixed) == 2 and _finite(*fixed)) or dyn is None:
++      return None
++    return min(fixed[0], dyn[0]), max(fixed[1], dyn[1])
++
++  def mode_inactive(self, t):
++    """The lane-mode path is not consumed this frame, so the offset's episode ends.
++    Re-entry starts at zero offset and needs new observations, confirmation and, after
++    any engagement, the re-entry wait. This resets state; it is not a steering command,
++    and the transition of a non-zero residual is not validated (reported reason)."""
++    engaged = self.state not in (STANDBY, DISABLED) or self.applied != 0.0 or self.rate != 0.0
++    residual = self.applied != 0.0 or self.rate != 0.0
++    revoked = self.revoked_t
++    self.reset()
++    # keep the re-entry wait across repeated inactive frames (reset() clears revoked_t)
++    self.revoked_t = t if engaged and _finite(t) else revoked
++    reasons = ('lane_mode_inactive_reset',) + (('mode_exit_with_residual_unverified',) if residual else ())
++    return AvoidOutput(state=self.state, blockers=self.blockers, reasons=reasons)
++
++  def update(self, inp):
++    if not self.refresh():
++      return AvoidOutput(blockers=self.blockers)
++    cfg = self.cfg
++    out = AvoidOutput(blockers=self.blockers)
++    reasons = list(self.note)
++    self.note = ()
++
++    # evaluation time: reversal, duplicate or gap revokes permission; no motion this frame
++    dt = None
++    if not _finite(inp.t):
++      reasons.append('time_invalid')
++    elif self.last_t is not None and inp.t <= self.last_t:
++      reasons.append('time_not_increasing')
++    elif self.last_t is not None and inp.t - self.last_t > cfg.max_input_gap_s:
++      reasons.append('time_gap')
++    elif self.last_t is not None:
++      dt = inp.t - self.last_t
++    if _finite(inp.t):
++      self.last_t = inp.t if self.last_t is None else max(self.last_t, inp.t)
++
++    # message time: a new model message on the verified clock, never from the future
++    if not inp.clock_verified:
++      reasons.append('clock_unverified')
++    if not _finite(inp.model_t):
++      reasons.append('model_time_invalid')
++    else:
++      if self.last_model_t is not None and inp.model_t <= self.last_model_t:
++        reasons.append('model_not_new')
++      if _finite(inp.t) and inp.model_t > inp.t:
++        reasons.append('model_time_future')
++      self.last_model_t = inp.model_t if self.last_model_t is None else max(self.last_model_t, inp.model_t)
++
++    if not inp.center_valid:
++      # No safe reference to return to; this is handed to the (unapproved) centre-invalid
++      # policy. Lane mode not in use resets the episode instead (mode_inactive).
++      reasons.append('center_invalid')
++
++    candidate, why = (None, 'no_lane_path')
++    if inp.lane_y is not None and inp.model_y is not None:
++      candidate, why = avoid_candidate(inp.path_x, inp.model_y, inp.lane_y, inp.d_prob, cfg)
++    out.candidate = candidate
++    if why:
++      reasons.append(why)
++    want_side = None if candidate is None else (RIGHT if candidate > 0.0 else LEFT)
++
++    # road edges over the whole consumed path; room is how far the uniform offset may go
++    edges, room = {}, {}
++    for side in (LEFT, RIGHT):
++      e = inp.road_edges.get(side)
++      if e is None or inp.base_y is None:
++        edges[side], room[side] = UNKNOWN, 0.0
++      else:
++        edges[side], room[side] = road_edge_allowance(inp.path_x, inp.base_y, e[0], e[1], e[2], e[3], side, cfg)
++    out.edge_state = edges
++    out.edge_room = {s: room[s] if edges[s] == CLEAR else (0.0 if edges[s] == OCCUPIED else None) for s in room}
++    cap = {s: min(cfg.max_offset_m, room[s]) if edges[s] == CLEAR else 0.0 for s in room}
++    mag = min(abs(candidate), cfg.max_offset_m, room[want_side]) if want_side is not None else 0.0
++
++    # side space for every offset this frame may command: 0, the current one, the target
++    offsets = [0.0, self.applied] + ([SIDE_SIGN[want_side] * mag] if want_side is not None else [])
++    spaces = {s: required_space(inp.path_x, inp.base_y, offsets, s, cfg) for s in (LEFT, RIGHT)}
++    out.required_space = spaces
++    if any(sp is None for sp in spaces.values()):
++      reasons.append('required_space_unavailable')
++    sides, sources = {}, {}
++    for side in (LEFT, RIGHT):
++      sides[side], sources[side] = evaluate_side(inp.side_readings.get(side, {}), side, cfg, (spaces[side],))
++    out.side_state, out.source_state = sides, sources
++
++    max_model = cfg.max_age_s['model_path']
++    model_ok = (inp.model_valid and _finite(inp.model_age_s, inp.t, inp.model_t) and
++                0.0 <= inp.model_age_s <= max_model and 0.0 <= inp.t - inp.model_t <= max_model)
++    if not model_ok:
++      reasons.append('model_invalid_or_stale')
++    if inp.lane_change_active:
++      reasons.append('lane_change_or_desire')
++    if inp.driver_steering:
++      reasons.append('driver_steering')
++    if not (_finite(inp.measured_curvature) and abs(inp.measured_curvature) <= cfg.max_abs_curvature):
++      reasons.append('curve_not_separable')
++
++    # direction: a shift toward side S is avoidance only with positive evidence of an
++    # obstacle on the other side and observed-clear space on S
++    if want_side is not None:
++      if self.avoid_side is not None and want_side != self.avoid_side:
++        reasons.append('direction_reversal')
++      if sides[other_side(want_side)] != OCCUPIED:
++        reasons.append('no_obstacle_evidence_opposite')
++      if sides[want_side] != CLEAR:
++        reasons.append(f'avoid_side_{sides[want_side]}')
++      if edges[want_side] != CLEAR:
++        reasons.append(f'avoid_side_edge_{edges[want_side]}')
++    if self.revoked_t is not None and self.state == STANDBY and (
++        dt is None or self.last_t - self.revoked_t < cfg.reentry_wait_s):
++      reasons.append('reentry_wait')
++
++    gate_ok = not reasons
++    self.confirm = self.confirm + 1 if gate_ok else 0
++
++    permitted = False
++    target = 0.0
++    if gate_ok and (self.state == AVOID or self.confirm >= cfg.entry_confirm_frames) and \
++       self.state in (STANDBY, AVOID):
++      permitted = True
++      target = SIDE_SIGN[want_side] * mag
++      self.avoid_side = want_side
++      self.state = AVOID
++    elif self.state == AVOID:
++      self.state = RETURN
++      self.revoked_t = self.last_t
++
++    # return side = where the original obstacle was; its space and edge must be
++    # observed clear for any movement that reduces |applied|. The avoid side is
++    # still evaluated and reported every frame.
++    return_ok = False
++    if self.avoid_side is not None:
++      ret = other_side(self.avoid_side)
++      return_ok = sides[ret] == CLEAR and edges[ret] == CLEAR and inp.center_valid and dt is not None
++
++    s = self.motion_sign
++    if s != 0.0 and max(s * target, 0.0) < s * self.applied and not return_ok:
++      # Reducing |applied| would move toward the original obstacle side without
++      # observed-clear space. The approved risk policy would act here; none is
++      # approved, so blockers() keeps the controller disabled. Permission is revoked
++      # and _step refuses the reduction; this is not an approved hold.
++      if self.state == AVOID:
++        self.revoked_t = self.last_t
++      self.state = RETURN_RISK
++      permitted, target = False, 0.0
++      reasons.append('return_risk_policy_unapproved')
++    elif self.state in (RETURN_RISK, CONFLICT):
++      self.state = RETURN
++
++    conflict = ()
++    if dt is None:
++      new_applied = self.applied
++      if self.rate != 0.0:
++        conflict = ('time_fault_during_motion',)
++    else:
++      new_applied, conflict = self._step(target, dt, permitted, return_ok, cap)
++    if conflict:
++      # No offset satisfies every constraint this frame. The response belongs to the
++      # unapproved constraint_conflict_policy (blockers() keeps production disabled).
++      # This placeholder only refuses movement; it is not an approved hold and breaks
++      # the continuity limit whenever the rate was non-zero.
++      if self.state == AVOID:
++        self.revoked_t = self.last_t
++      self.state = CONFLICT
++      permitted, target = False, 0.0
++      new_applied = self.applied
++      reasons.append('constraint_conflict_policy_unapproved')
++      reasons.extend(conflict)
++    new_rate = (new_applied - self.applied) / dt if dt is not None else 0.0
++    out.return_move_permitted = abs(new_applied) < abs(self.applied) and return_ok
++    self.applied, self.rate = new_applied, new_rate
++    if new_applied != 0.0:
++      self.motion_sign = math.copysign(1.0, new_applied)
++    elif new_rate == 0.0:
++      self.motion_sign = 0.0
++
++    if self.state in (RETURN, RETURN_RISK, CONFLICT) and self.applied == 0.0 and self.rate == 0.0:
++      self.state = STANDBY
++      self.avoid_side = None
++      self.motion_sign = 0.0
++      self.confirm = 0
++
++    out.state = self.state
++    out.permitted = permitted
++    out.target = target
++    out.applied = self.applied
++    out.rate = self.rate
++    out.avoid_side = self.avoid_side
++    out.conflict = conflict
++    out.edge_allowance = room.get(want_side) if want_side else None
++    out.reasons = tuple(reasons)
++    return out
++
++  def _step(self, target, dt, permitted, return_ok, cap):
++    """Choose this frame's applied offset inside the intersection of every constraint,
++    on the magnitude m = s * applied along the motion side s (u = actual dm/dt):
++      continuity   |u - u_prev| <= max_rate_change_mps2 * dt
++      rates        -return_rate_mps <= u <= entry_rate_mps
++      room         m + u*dt <= cap (min(max_offset, observed edge room); 0 if not observed)
++      no crossing  m + u*dt >= 0
++      permission   u <= 0 unless permitted; u >= 0 unless return_ok
++    The desired rate follows a discrete braking profile, so at uniform dt a target is
++    reached with a rate the next frame can bring back to 0. No constraint is skipped and
++    no rate is forced to 0. Returns (applied, conflict); conflict names the binding
++    lower/upper constraints when the intersection is empty."""
++    cfg = self.cfg
++    s = self.motion_sign
++    if s == 0.0:
++      if target == 0.0:
++        return 0.0, ()
++      s = math.copysign(1.0, target)
++    m, u_prev = s * self.applied, s * self.rate
++    m_t = max(s * target, 0.0)
++    m_cap = cap[RIGHT if s > 0.0 else LEFT]
++    d = cfg.max_rate_change_mps2 * dt
++    lower = {'continuity': u_prev - d, 'return_rate': -cfg.return_rate_mps, 'no_side_crossing': -m / dt}
++    upper = {'continuity': u_prev + d, 'entry_rate': cfg.entry_rate_mps, 'edge_room_or_max_offset': (m_cap - m) / dt}
++    if not permitted:
++      upper['no_growth_without_permission'] = 0.0
++    if not return_ok:
++      lower['no_return_without_clear_return_side'] = 0.0
++    lo_name = max(lower, key=lower.get)
++    hi_name = min(upper, key=upper.get)
++    lo, hi = lower[lo_name], upper[hi_name]
++    if lo > hi:
++      return self.applied, (f'conflict_{lo_name}_vs_{hi_name}',)
++    e = m_t - m
++    land = abs(e) <= d * dt
++    if land:
++      u_des = e / dt  # final step: |u_des| <= d, so the next frame can return the rate to 0
++    else:
++      lim = cfg.entry_rate_mps if e > 0.0 else cfg.return_rate_mps
++      # largest rate whose discrete stopping distance (steps of d) still fits in |e|;
++      # d*dt/8 covers the gap between the discrete sum and its continuous bound
++      brake = d * (math.sqrt(0.25 + 2.0 * (abs(e) - d * dt / 8.0) / (d * dt)) - 0.5)
++      u_des = math.copysign(min(lim, brake), e)
++    u = min(max(u_des, lo), hi)
++    nxt = m_t if (land and u == u_des) else m + u * dt
++    # float rounding only: the bounds above already keep 0 <= nxt <= m_cap
++    nxt = min(max(nxt, 0.0), m_cap)
++    return s * nxt, ()
++
++
+diff --git a/openpilot/selfdrive/controls/lib/lane_avoid_audit.py b/openpilot/selfdrive/controls/lib/lane_avoid_audit.py
+new file mode 100644
+index 00000000..3c602aec
+--- /dev/null
++++ b/openpilot/selfdrive/controls/lib/lane_avoid_audit.py
+@@ -0,0 +1,174 @@
++"""Frame-level strict safety audit for lane_avoid traces (prompt v3 §3, §6.2-5/5-1).
++
++Every frame is audited, including RETURN and RETURN_RISK frames; a residual offset
++tag never exempts a frame. One violation makes the result 'fail'. Without an
++approved configuration, or with frames missing required fields, the result is
++'not_evaluable' (never a pass). There is no 'pass'/'improved' outcome here:
++improvement needs the separately approved replay evaluation.
++
++v3.1: the offset rate is the actual difference of consecutive applied values over the
++actual interval, and its change is checked on every frame (target reached, zero,
++revocation, mode change, edge shrink included). An optional 'rate' field (the
++controller's own value) must match that difference and supplies the initial rate of
++the first interval only. Intervals that cannot be differentiated (first sample without
++'rate', time gap, invalid neighbour) are listed, never dropped, and keep the result
++not_evaluable. 'max_rate_change_mps2' is the second time derivative of the offset; it
++is NOT a steering-command, curvature or lateral-acceleration jerk, which this trace
++does not contain (FINAL_COMMAND_SIGNALS_UNVERIFIED).
++"""
++import math
++
++from openpilot.selfdrive.controls.lib.lane_avoid import CLEAR, LEFT, RIGHT, other_side
++
++REQUIRED_FIELDS = ('t', 'state', 'permitted', 'target', 'applied', 'avoid_side', 'side_state', 'edge_state')
++RATE_TOL = 1e-9
++
++# Consumed downstream of the offset; each needs its own definition, unit, clock, consumer
++# and approved limit before its rate/rate-change can be judged. Not evaluated here.
++FINAL_COMMAND_SIGNALS_UNVERIFIED = (
++  'lateralPlan.curvatures (1/m, plannerd, per model frame; lateral_planner.publish)',
++  'lateralPlan.curvatureRates (1/(m s), plannerd)',
++  'controlsd desired_curvature after clip_curvature (1/m, DT_CTRL; controlsd.py:291)',
++  'carControl.actuators.curvature (1/m, DT_CTRL; controlsd.py:293)',
++  'lateral acceleration v^2 * curvature (m/s^2)',
++  'steering angle/torque command (carcontroller, brand-specific)',
++)
++
++
++def _side_of(value):
++  if value > 0.0:
++    return RIGHT
++  if value < 0.0:
++    return LEFT
++  return None
++
++
++def _num(v):
++  return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
++
++
++def audit_frames(frames, cfg):
++  violations = []
++  missing = []
++  non_diff = []
++  counts = {}
++  prev = None
++  prev_rate = None  # actual rate of the previous interval (or the first frame's 'rate')
++  gap = cfg.max_input_gap_s if _num(cfg.max_input_gap_s) else None
++  jmax = cfg.max_rate_change_mps2 if _num(cfg.max_rate_change_mps2) else None
++  for i, f in enumerate(frames):
++    if not all(k in f for k in REQUIRED_FIELDS) or not all(
++        isinstance(v, (int, float)) and math.isfinite(v) for v in (f.get('t'), f.get('applied'), f.get('target'))):
++      missing.append(i)
++      if i > 0:
++        non_diff.append({'frame': i, 'why': 'invalid_frame'})
++      prev = None
++      prev_rate = None
++      continue
++    key = (f['state'], f['avoid_side'])
++    counts[key] = counts.get(key, 0) + 1
++
++    def fail(rule, **raw):
++      violations.append({'frame': i, 'rule': rule, 'state': f['state'], 'avoid_side': f['avoid_side'], **raw})
++
++    applied, target = f['applied'], f['target']
++    move_side = _side_of(target) or _side_of(applied) or f['avoid_side']
++    if f['permitted']:
++      if move_side is None:
++        fail('permitted_without_direction')
++      else:
++        if f['side_state'].get(move_side) != CLEAR:
++          fail('permitted_avoid_side_not_clear', side=move_side, side_state=f['side_state'].get(move_side))
++        if f['edge_state'].get(move_side) != CLEAR:
++          fail('permitted_avoid_edge_not_clear', side=move_side, edge_state=f['edge_state'].get(move_side))
++    if target != 0.0 and not f['permitted']:
++      fail('target_without_permission', target=target)
++    if isinstance(cfg.max_offset_m, (int, float)) and abs(applied) > cfg.max_offset_m:
++      fail('offset_above_limit', applied=applied, limit=cfg.max_offset_m)
++    # v3.1: every frame's applied offset (residual included) must fit the observed edge room
++    side_now = _side_of(applied)
++    if side_now is not None:
++      room = f.get('edge_room')
++      if isinstance(room, dict):
++        r = room.get(side_now)
++        if not _num(r) or abs(applied) > r + 1e-12:
++          fail('applied_exceeds_edge_room', side=side_now, applied=applied, room=r)
++      elif f['edge_state'].get(side_now) != CLEAR:
++        fail('applied_toward_unobserved_edge', side=side_now, applied=applied,
++             edge_state=f['edge_state'].get(side_now))
++    if 'consumed' in f and not (_num(f['consumed']) and abs(f['consumed'] - applied) <= RATE_TOL):
++      fail('consumed_differs_from_applied', applied=applied, consumed=f['consumed'])
++
++    if prev is None:
++      # first sample (or after an invalid frame): only the frame's own rate can seed continuity
++      prev_rate = f['rate'] if _num(f.get('rate')) else None
++    else:
++      dt = f['t'] - prev['t']
++      a0 = prev['applied']
++      if dt <= 0.0:
++        if applied != a0:
++          fail('offset_changed_without_time', dt=dt, before=a0, after=applied)
++        non_diff.append({'frame': i, 'why': 'time_not_increasing', 'dt': dt})
++        prev_rate = None
++      else:
++        r = (applied - a0) / dt
++        if _num(f.get('rate')) and abs(f['rate'] - r) > RATE_TOL:
++          fail('reported_rate_mismatch', reported=f['rate'], actual=r)
++        if gap is not None and dt > gap:
++          non_diff.append({'frame': i, 'why': 'time_gap', 'dt': dt})
++          r_next = None
++        else:
++          r_next = r
++          if prev_rate is None:
++            non_diff.append({'frame': i, 'why': 'no_previous_rate'})
++          elif jmax is None:
++            if r != prev_rate:
++              fail('rate_change_limit_unapproved', rate_before=prev_rate, rate_after=r)
++          elif abs(r - prev_rate) > jmax * dt + RATE_TOL:
++            fail('rate_change_above_limit', rate_before=prev_rate, rate_after=r, change=abs(r - prev_rate),
++                 limit=jmax * dt, dt=dt)
++        prev_rate = r_next
++        if a0 * applied < 0.0:
++          fail('offset_crossed_sides', before=a0, after=applied)
++        grew = abs(applied) > abs(a0)
++        shrank = abs(applied) < abs(a0)
++        side = _side_of(applied) or _side_of(a0)
++        if grew:
++          if not f['permitted']:
++            fail('growth_without_permission', before=a0, after=applied)
++          if f['side_state'].get(side) != CLEAR or f['edge_state'].get(side) != CLEAR:
++            fail('growth_toward_unclear_side', side=side, side_state=f['side_state'].get(side),
++                 edge_state=f['edge_state'].get(side))
++          rate = cfg.entry_rate_mps
++        else:
++          rate = cfg.return_rate_mps
++        if shrank:
++          ret = other_side(side)
++          if f['side_state'].get(ret) != CLEAR or f['edge_state'].get(ret) != CLEAR:
++            fail('return_move_without_clear_return_side', side=ret, side_state=f['side_state'].get(ret),
++                 edge_state=f['edge_state'].get(ret), before=a0, after=applied)
++        if isinstance(rate, (int, float)) and abs(applied - a0) > rate * dt + 1e-12:
++          fail('rate_above_limit', rate=abs(applied - a0) / dt, limit=rate)
++        elif not isinstance(rate, (int, float)) and (grew or shrank):
++          fail('rate_limit_unapproved', before=a0, after=applied)
++    prev = f
++
++  blockers = list(cfg.blockers())
++  if violations:
++    result = 'fail'
++  elif blockers or missing or not frames or non_diff:
++    result = 'not_evaluable'
++  else:
++    # still not a pass: return-side proximity, risk-policy and coverage evidence are
++    # evaluated by the approved replay tool, not by this trace check
++    result = 'no_violation_found'
++  return {
++    'result': result,
++    'violations': violations,
++    'frames': len(frames),
++    'invalid_frames': missing,
++    'non_differentiable': non_diff,
++    'counts_by_state_side': counts,
++    'blockers': blockers,
++    'final_command_signals_unverified': FINAL_COMMAND_SIGNALS_UNVERIFIED,
++  }
+diff --git a/openpilot/selfdrive/controls/lib/lane_planner_2.py b/openpilot/selfdrive/controls/lib/lane_planner_2.py
+index 0413010b..1f5eff96 100644
+--- a/openpilot/selfdrive/controls/lib/lane_planner_2.py
++++ b/openpilot/selfdrive/controls/lib/lane_planner_2.py
+@@ -231,6 +231,11 @@ class LanePlanner:
+     #  self.lane_width_left_filtered.x, self.lane_width, self.lane_width_right_filtered.x)
+ 
+     adjustLaneTime = self.params.get_float("LatMpcInputOffset") * 0.01 # 0.06 
++    # lane_avoid: the blend below overwrites path_xyz in place, so keep the laneless y
++    # and the lane y it is mixed with (same samples). Copies only; no effect on the path.
++    self.model_path_y = path_xyz[:, 1].copy()
++    self.lane_path_y = None
++    self.blend_d_prob = self.d_prob
+     laneline_active = False
+     self.d_prob_count = self.d_prob_count + 1 if self.d_prob > 0.3 else 0
+     if self.lanefull_mode and self.d_prob_count > int(1 / DT_MDL):
+@@ -244,6 +249,7 @@ class LanePlanner:
+         if safe_idxs[0]:
+           lane_path_y_interp = np.interp(path_t * (1.0 + adjustLaneTime), self.ll_t[safe_idxs], lane_path_y[safe_idxs])
+           path_xyz[:,1] = self.d_prob * lane_path_y_interp + (1.0 - self.d_prob) * path_xyz[:,1]
++          self.lane_path_y = lane_path_y_interp
+ 
+ 
+     path_xyz[:, 1] += (CAMERA_OFFSET + self.lane_offset_filtered.x)
+diff --git a/openpilot/selfdrive/controls/lib/lateral_planner.py b/openpilot/selfdrive/controls/lib/lateral_planner.py
+index c0e5a1c4..3fdcce7e 100644
+--- a/openpilot/selfdrive/controls/lib/lateral_planner.py
++++ b/openpilot/selfdrive/controls/lib/lateral_planner.py
+@@ -13,6 +13,8 @@ from openpilot.common.params import Params
+ #from openpilot.selfdrive.controls.lib.lane_planner import LanePlanner
+ from openpilot.selfdrive.controls.lib.lane_planner_2 import LanePlanner
+ from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
++from openpilot.selfdrive.controls.lib.lane_avoid import (LaneAvoidController, AvoidInputs, SourceReading, LEFT, RIGHT,
++                                                        radar_side_reading)
+ from collections import deque
+ 
+ TRAJECTORY_SIZE = 33
+@@ -74,6 +76,12 @@ class LateralPlanner:
+     self.curve_speed = 0
+     self.lane_model_speed_guard = LaneModelSpeedGuard(recovery_frames=int(1 / DT_MDL))
+     self.laneless_only = True
++    # default config is unapproved -> controller inactive, offset never applied
++    self.lane_avoid = LaneAvoidController()
++    self.lane_avoid_out = None
++    # evaluation clock for lane_avoid ages: the same time.monotonic() that stamps
++    # logMonoTime (cereal/messaging/__init__.py:45) and SubMaster recv_time (:252)
++    self.lane_avoid_clock = time.monotonic
+ 
+   def reset_mpc(self, x0=None):
+     if x0 is None:
+@@ -161,6 +169,18 @@ class LateralPlanner:
+ 
+     self.path_xyz[:, 1] += self.pathOffset
+ 
++    # approval is re-validated every frame (refresh), not taken from construction time
++    if self.lane_avoid.refresh():
++      if self.lanelines_active:
++        self.lane_avoid_out = self.lane_avoid.update(self.lane_avoid_inputs(sm, carrot, md, model_active))
++        # uniform shift of every consumed point: plan_yaw/plan_yaw_rate stay consistent
++        self.path_xyz[:, 1] += self.lane_avoid_out.applied
++      else:
++        # lane-mode path not consumed: the offset episode ends; re-entry starts from 0
++        self.lane_avoid_out = self.lane_avoid.mode_inactive(self.lane_avoid_clock())
++    else:
++      self.lane_avoid_out = None
++
+     self.lat_mpc.set_weights(self.lateralPathCost, self.lateralMotionCost,
+                              LATERAL_ACCEL_COST, LATERAL_JERK_COST,
+                              STEERING_RATE_COST)
+@@ -203,6 +223,64 @@ class LateralPlanner:
+   
+     self.x_sol = self.lat_mpc.x_sol
+ 
++  def lane_avoid_inputs(self, sm, carrot, md, model_active):
++    # Only called while lane_avoid is active (never with the unapproved default config).
++    cs = sm['carState']
++    rs = sm['radarState']
++    # Ages = evaluation time - message logMonoTime (publish time, set by new_message at
++    # cereal/messaging/__init__.py:45 on the same monotonic clock as lane_avoid_clock).
++    # Sensor capture is earlier than publish; that extra latency is not measured here.
++    # A never-received service (logMonoTime 0) has no time, never age 0; a time ahead
++    # of now gives a negative age, which every freshness check rejects.
++    now = self.lane_avoid_clock()
++    model_t = sm.logMonoTime['modelV2'] * 1e-9 if sm.logMonoTime['modelV2'] > 0 else None
++    radar_t = sm.logMonoTime['radarState'] * 1e-9 if sm.logMonoTime['radarState'] > 0 else None
++    model_age = None if model_t is None else now - model_t
++    radar_age = None if radar_t is None else now - radar_t
++    errs = rs.radarErrors
++    radar_valid = bool(sm.valid['radarState'] and not (errs.canError or errs.radarFault or errs.wrongConfig or
++                                                       errs.radarUnavailableTemporary))
++    # whole consumed path span (body rear .. last point + body front) united with the fixed region
++    region_x = self.lane_avoid.radar_region_x(self.path_xyz[:, 0])
++    side_readings = {}
++    for side, bsd, lead, leads in ((LEFT, cs.leftBlindspot, rs.leadLeft, rs.leadsLeft),
++                                   (RIGHT, cs.rightBlindspot, rs.leadRight, rs.leadsRight)):
++      side_readings[side] = {
++        # carState BSD is OEM OR vision (the Oem/Onnx split Bools carry no validity or
++        # age); False cannot be told apart from an invalid, stale or unsupported
++        # source -> never clear. True is always a veto.
++        'bsd': SourceReading(supported=None, valid=None, age_s=None, detected=True if bsd else None),
++        'radar': radar_side_reading([lead] + list(leads), radar_valid, radar_age, region_x),
++        # no independent model side-object output exists (leadsV3 is ego-lane only)
++        'model': SourceReading(supported=False),
++      }
++    road_edges = {}
++    if len(md.roadEdges) >= 2 and len(md.roadEdgeStds) >= 2:
++      for i, side in ((0, LEFT), (1, RIGHT)):
++        # edges ride in the model message: they inherit its age; samples are checked separately
++        road_edges[side] = (md.roadEdges[i].x, md.roadEdges[i].y, md.roadEdgeStds[i],
++                            model_age if model_active else None)
++    lane_y = getattr(self.LP, 'lane_path_y', None)
++    return AvoidInputs(
++      t=now,
++      model_t=model_t,
++      clock_verified=True,  # now and every logMonoTime above come from time.monotonic()
++      center_valid=bool(self.lanelines_active and lane_y is not None),
++      path_x=self.path_xyz[:, 0],
++      model_y=getattr(self.LP, 'model_path_y', None),
++      lane_y=lane_y,
++      base_y=self.path_xyz[:, 1],
++      d_prob=getattr(self.LP, 'blend_d_prob', None),
++      model_valid=bool(model_active and sm.valid['modelV2']),
++      model_age_s=model_age if model_active else None,
++      lane_change_active=bool(md.meta.desire != log.Desire.none or carrot.atc_active or
++                              md.meta.laneChangeState != log.LaneChangeState.off),
++      driver_steering=bool(cs.steeringPressed),
++      measured_curvature=sm['controlsState'].curvature,
++      side_readings=side_readings,
++      road_edges=road_edges,
++    )
++
+   def publish(self, sm, pm, carrot):
+     plan_solution_valid = self.solution_invalid_cnt < 2
+     plan_send = messaging.new_message('lateralPlan')
+diff --git a/openpilot/selfdrive/controls/tests/test_lane_avoid.py b/openpilot/selfdrive/controls/tests/test_lane_avoid.py
+new file mode 100644
+index 00000000..00492187
+--- /dev/null
++++ b/openpilot/selfdrive/controls/tests/test_lane_avoid.py
+@@ -0,0 +1,1216 @@
++"""lane_avoid gate/return/audit tests (prompt v3 §5). Written for review; NOT executed.
++
++TEST_CFG values are synthetic fixtures for exercising the gate logic only. They are
++not approved settings and must not be copied into LaneAvoidConfig defaults. The
++return-risk/centre-invalid policy tuples are monkeypatched with a test sentinel;
++production keeps them empty, so the production controller stays disabled.
++"""
++import ast
++import math
++from pathlib import Path
++from types import SimpleNamespace
++
++import numpy as np
++import pytest
++
++import openpilot.selfdrive.controls.lib.lane_avoid as la
++from openpilot.common.filter_simple import FirstOrderFilter
++from openpilot.selfdrive.controls.lib.lane_avoid import (
++  AVOID, CLEAR, DISABLED, LEFT, OCCUPIED, RETURN, RETURN_RISK, RIGHT, STANDBY, UNKNOWN,
++  AvoidInputs, Coverage, LaneAvoidConfig, LaneAvoidController, SourceReading,
++  avoid_candidate, evaluate_side, evaluate_source, radar_side_reading, region_covered, road_edge_allowance)
++from openpilot.selfdrive.controls.lib.lane_avoid_audit import audit_frames
++from openpilot.selfdrive.controls.tests.test_lane_model_speed_planner import inputs as planner_inputs
++from openpilot.selfdrive.controls.tests.test_lane_model_speed_planner import make_planner
++
++DT = 0.05
++N = 33
++X = np.linspace(0.0, 100.0, N)
++TEST_POLICY = 'test_only_not_approved'
++
++# v3.1 fixture update: the required space spans the whole consumed path (body rear ..
++# last point + body front = -1 .. 104 m here), so the synthetic coverage and road-edge
++# samples must span it too. Previously (-15, 40) and X; see REVIEW.md "fixture conflicts".
++FULL_COV = Coverage(-15.0, 115.0, 0.0, 5.0)
++EDGE_X = np.linspace(0.0, 110.0, N)
++TEST_CFG = LaneAvoidConfig(
++  enabled=True, max_offset_m=0.5, entry_rate_mps=0.3, return_rate_mps=0.2, max_rate_change_mps2=2.0,
++  candidate_x_m=(5.0, 60.0), candidate_deadband_m=0.05, max_abs_curvature=0.01, vehicle_half_width_m=0.95,
++  road_edge_margin_m=0.5, road_edge_std_max_m=1.0, required_region_x_m=(-10.0, 30.0),
++  required_region_lat_m=(0.0, 4.0),
++  coverage={(s, side): FULL_COV for s in la.REQUIRED_SOURCES for side in (LEFT, RIGHT)},
++  max_age_s={'bsd': 0.2, 'radar': 0.2, 'model': 0.2, 'road_edge': 0.2, 'model_path': 0.2},
++  max_input_gap_s=0.2, entry_confirm_frames=2, reentry_wait_s=1.0,
++  return_risk_policy=TEST_POLICY, center_invalid_policy=TEST_POLICY,
++  vehicle_front_m=4.0, vehicle_rear_m=1.0, side_clearance_m=0.3,
++  occupancy_prediction_policy=TEST_POLICY, body_geometry_model=TEST_POLICY, constraint_conflict_policy=TEST_POLICY)
++
++POLICY_TUPLES = ('APPROVED_RETURN_RISK_POLICIES', 'APPROVED_CENTER_INVALID_POLICIES',
++                 'APPROVED_OCCUPANCY_PREDICTION_POLICIES', 'APPROVED_BODY_GEOMETRY_MODELS',
++                 'APPROVED_CONSTRAINT_CONFLICT_POLICIES')
++
++
++@pytest.fixture
++def approved_policies(monkeypatch):
++  for name in POLICY_TUPLES:
++    monkeypatch.setattr(la, name, (TEST_POLICY,))
++
++
++def clear():
++  return SourceReading(supported=True, valid=True, age_s=0.0, detected=False)
++
++
++def occ():
++  return SourceReading(supported=True, valid=True, age_s=0.0, detected=True)
++
++
++def side(bsd=None, radar=None, model=None):
++  return {'bsd': bsd or clear(), 'radar': radar or clear(), 'model': model or clear()}
++
++
++def edges(left_y=-5.0, right_y=5.0, std=0.1, age=0.0):
++  return {LEFT: (EDGE_X, np.full(N, left_y), std, age), RIGHT: (EDGE_X, np.full(N, right_y), std, age)}
++
++
++def inp(t, shift, left=None, right=None, road=None, **kw):
++  lane_y = np.zeros(N)
++  # v3.1: a new model message stamped at t on the verified clock (age 0) each frame
++  args = dict(t=t, center_valid=True, path_x=X, model_y=lane_y + shift, lane_y=lane_y, base_y=np.zeros(N),
++              d_prob=1.0, model_valid=True, model_age_s=0.0, lane_change_active=False, driver_steering=False,
++              measured_curvature=0.0, side_readings={LEFT: left or side(), RIGHT: right or side()},
++              road_edges=road if road is not None else edges(), model_t=t, clock_verified=True)
++  args.update(kw)
++  return AvoidInputs(**args)
++
++
++def mirror(direction):
++  """direction LEFT: obstacle right, model shifts left (negative y). RIGHT: mirror."""
++  if direction == LEFT:
++    return -0.3, side(), side(radar=occ())
++  return 0.3, side(radar=occ()), side()
++
++
++def frame(out, t):
++  return {'t': t, 'state': out.state, 'permitted': out.permitted, 'target': out.target, 'applied': out.applied,
++          'avoid_side': out.avoid_side, 'side_state': dict(out.side_state), 'edge_state': dict(out.edge_state),
++          # v3.1: the controller's rate seeds the first interval; edge room bounds every applied value
++          'rate': out.rate, 'edge_room': dict(out.edge_room)}
++
++
++def run(ctrl, seq, t0=0.0):
++  outs, frames = [], []
++  for i, kw in enumerate(seq):
++    t = t0 + i * DT
++    o = ctrl.update(inp(t, **kw))
++    outs.append(o)
++    frames.append(frame(o, t))
++  return outs, frames
++
++
++# ---------------------------------------------------------------- configuration / disabled
++
++
++def test_default_config_is_disabled_with_every_blocker():
++  cfg = LaneAvoidConfig()
++  b = cfg.blockers()
++  for name in ('feature_disabled', 'max_offset_m_unapproved', 'entry_rate_mps_unapproved', 'return_rate_mps_unapproved',
++               'road_edge_margin_m_unapproved', 'required_region_x_m_unapproved', 'coverage_unapproved',
++               'max_age_bsd_unapproved', 'max_age_road_edge_unapproved', 'return_risk_policy_unapproved',
++               'center_invalid_policy_unapproved', 'entry_confirm_frames_unapproved'):
++    assert name in b
++  ctrl = LaneAvoidController()
++  assert not ctrl.active and ctrl.state == DISABLED
++  shift, left, right = mirror(LEFT)
++  for i in range(40):
++    o = ctrl.update(inp(i * DT, shift, left, right))
++    assert o.applied == 0.0 and o.target == 0.0 and not o.permitted and o.state == DISABLED
++
++
++def test_numeric_values_without_approved_return_policy_stay_disabled():
++  # production tuples are empty: even a fully numeric config cannot activate
++  assert la.APPROVED_RETURN_RISK_POLICIES == ()
++  assert la.APPROVED_CENTER_INVALID_POLICIES == ()
++  b = TEST_CFG.blockers()
++  assert 'return_risk_policy_unapproved' in b and 'center_invalid_policy_unapproved' in b
++  assert not LaneAvoidController(TEST_CFG).active
++
++
++@pytest.mark.parametrize('field,value', [
++  ('max_offset_m', float('nan')), ('max_offset_m', float('inf')), ('max_offset_m', -0.1), ('max_offset_m', 0.0),
++  ('max_offset_m', True), ('entry_rate_mps', None), ('candidate_x_m', (60.0, 5.0)), ('candidate_x_m', (5.0,)),
++  ('required_region_lat_m', (0.0, float('nan'))), ('entry_confirm_frames', 0), ('entry_confirm_frames', 1.5),
++  ('coverage', {}), ('max_age_s', {'bsd': 0.2}), ('enabled', False),
++])
++def test_invalid_or_missing_settings_block(approved_policies, field, value):
++  cfg = LaneAvoidConfig(**{**TEST_CFG.__dict__, field: value})
++  assert cfg.blockers()
++  assert not LaneAvoidController(cfg).active
++
++
++def test_fixture_config_activates_only_with_patched_policies(approved_policies):
++  assert TEST_CFG.blockers() == []
++  assert LaneAvoidController(TEST_CFG).active
++
++
++# ---------------------------------------------------------------- start gate, symmetry
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_symmetric_avoidance_moves_away_from_obstacle(approved_policies, direction):
++  shift, left, right = mirror(direction)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, frames = run(ctrl, [dict(shift=shift, left=left, right=right)] * 40)
++  assert not outs[0].permitted  # entry confirmation
++  assert outs[-1].state == AVOID and outs[-1].permitted and outs[-1].avoid_side == direction
++  sign = la.SIDE_SIGN[direction]
++  assert all(o.applied * sign >= 0.0 for o in outs)
++  assert outs[-1].applied * sign > 0.0
++  assert abs(outs[-1].applied) <= 0.3 + 1e-12
++  assert audit_frames(frames, TEST_CFG)['result'] == 'no_violation_found'
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_shift_toward_obstacle_side_is_not_avoidance(approved_policies, direction):
++  shift, left, right = mirror(direction)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=-shift, left=left, right=right)] * 30)
++  assert not any(o.permitted for o in outs)
++  assert all(o.applied == 0.0 for o in outs)
++
++
++def test_model_bias_without_obstacle_evidence_is_not_avoidance(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=-0.3)] * 30)
++  assert not any(o.permitted for o in outs)
++  assert 'no_obstacle_evidence_opposite' in outs[-1].reasons
++
++
++AVOID_SIDE_CASES = {
++  'bsd_only': dict(bsd=occ()),
++  'radar_only': dict(radar=occ()),
++  'model_only': dict(model=occ()),
++  'bsd_and_radar': dict(bsd=occ(), radar=occ()),
++  'all': dict(bsd=occ(), radar=occ(), model=occ()),
++}
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++@pytest.mark.parametrize('case', sorted(AVOID_SIDE_CASES))
++def test_any_occupied_source_on_avoid_side_blocks_start(approved_policies, direction, case):
++  shift, left, right = mirror(direction)
++  blocked = side(**AVOID_SIDE_CASES[case])
++  if direction == LEFT:
++    left = blocked
++  else:
++    right = blocked
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, frames = run(ctrl, [dict(shift=shift, left=left, right=right)] * 30)
++  assert sum(o.permitted for o in outs) == 0
++  assert all(o.applied == 0.0 for o in outs)
++  assert audit_frames(frames, TEST_CFG)['violations'] == []
++
++
++def test_bsd_only_on_obstacle_side_is_evidence_not_veto_of_avoid_side(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=-0.3, left=side(), right=side(bsd=occ()))] * 30)
++  assert outs[-1].permitted and outs[-1].avoid_side == LEFT
++
++
++def test_bsd_true_is_veto_whatever_its_metadata():
++  for r in (SourceReading(supported=False, valid=False, age_s=None, detected=True),
++            SourceReading(supported=None, valid=None, age_s=99.0, detected=True)):
++    assert evaluate_source(r, 0.2) == OCCUPIED
++
++
++# ---------------------------------------------------------------- unknown is not clear
++
++
++UNKNOWN_READINGS = {
++  'bool_false_unsupported': SourceReading(supported=None, valid=None, age_s=None, detected=False),
++  'sensor_off': SourceReading(supported=False, valid=True, age_s=0.0, detected=False),
++  'invalid_vision_false': SourceReading(supported=True, valid=False, age_s=0.0, detected=False),
++  'age_unknown': SourceReading(supported=True, valid=True, age_s=None, detected=False),
++  'stale': SourceReading(supported=True, valid=True, age_s=0.5, detected=False),
++  'negative_age': SourceReading(supported=True, valid=True, age_s=-0.01, detected=False),
++  'nan_age': SourceReading(supported=True, valid=True, age_s=float('nan'), detected=False),
++  'detection_unknown': SourceReading(supported=True, valid=True, age_s=0.0, detected=None),
++}
++
++
++@pytest.mark.parametrize('src', la.REQUIRED_SOURCES)
++@pytest.mark.parametrize('case', sorted(UNKNOWN_READINGS))
++def test_unknown_reading_on_avoid_side_blocks(approved_policies, src, case):
++  left = side(**{src: UNKNOWN_READINGS[case]})
++  state, per = evaluate_side(left, LEFT, TEST_CFG)
++  assert state == UNKNOWN and per[src] == UNKNOWN
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=-0.3, left=left, right=side(radar=occ()))] * 30)
++  assert not any(o.permitted for o in outs)
++
++
++def test_missing_source_entry_is_unknown(approved_policies):
++  left = side()
++  del left['model']
++  assert evaluate_side(left, LEFT, TEST_CFG)[0] == UNKNOWN
++  assert evaluate_side({}, LEFT, TEST_CFG)[0] == UNKNOWN
++
++
++def test_partial_coverage_rear_blind_zone_is_unknown(approved_policies):
++  front_only = Coverage(0.0, 40.0, 0.0, 5.0)
++  cov = {(s, sd): front_only for s in la.REQUIRED_SOURCES for sd in (LEFT, RIGHT)}
++  cfg = LaneAvoidConfig(**{**TEST_CFG.__dict__, 'coverage': cov})
++  assert evaluate_side(side(), LEFT, cfg)[0] == UNKNOWN
++  # union of sources may cover: BSD rear + radar front
++  cov2 = dict(cov)
++  cov2[('bsd', LEFT)] = Coverage(-12.0, 1.0, 0.0, 5.0)
++  cfg2 = LaneAvoidConfig(**{**TEST_CFG.__dict__, 'coverage': cov2})
++  assert evaluate_side(side(), LEFT, cfg2)[0] == CLEAR
++
++
++def test_region_coverage_requires_lateral_span_and_no_gaps():
++  assert region_covered([Coverage(-10, 0, 0, 4), Coverage(0, 30, 0, 4)], (-10, 30), (0, 4))
++  assert not region_covered([Coverage(-10, -1, 0, 4), Coverage(0, 30, 0, 4)], (-10, 30), (0, 4))
++  assert not region_covered([Coverage(-10, 30, 0, 3)], (-10, 30), (0, 4))
++  assert not region_covered([], (-10, 30), (0, 4))
++  assert not region_covered([Coverage(-10, 30, 0, 4)], None, (0, 4))
++
++
++def test_radar_lists_are_not_counted_as_model_evidence(approved_policies):
++  # planner builder: radar side list may be clear, model source is unsupported
++  readings = {'bsd': clear(), 'radar': clear(), 'model': SourceReading(supported=False)}
++  state, per = evaluate_side(readings, LEFT, TEST_CFG)
++  assert state == UNKNOWN and per['model'] == UNKNOWN
++
++
++def test_radar_reading_detection_and_invalid_values():
++  lead = lambda status, d: SimpleNamespace(status=status, dRel=d)  # noqa: E731
++  assert radar_side_reading([lead(True, 5.0)], True, 0.0, (-10, 30)).detected is True
++  assert radar_side_reading([lead(True, 80.0)], True, 0.0, (-10, 30)).detected is False
++  assert radar_side_reading([lead(False, 5.0)], True, 0.0, (-10, 30)).detected is False
++  assert radar_side_reading([lead(True, float('nan'))], True, 0.0, (-10, 30)).detected is None
++  assert radar_side_reading(None, True, 0.0, (-10, 30)).detected is None
++  assert radar_side_reading([], True, 0.0, None).detected is None
++  # an empty list is "no detection", still unknown unless valid/fresh/covered
++  assert evaluate_source(radar_side_reading([], None, 0.0, (-10, 30)), 0.2) == UNKNOWN
++
++
++# ---------------------------------------------------------------- road edge (v3)
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_close_road_edge_on_avoid_side_blocks(approved_policies, direction):
++  shift, left, right = mirror(direction)
++  road = edges(left_y=-1.4) if direction == LEFT else edges(right_y=1.4)  # 1.4 < 0.95 + 0.5
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, frames = run(ctrl, [dict(shift=shift, left=left, right=right, road=road)] * 30)
++  assert not any(o.permitted for o in outs)
++  assert outs[-1].edge_state[direction] == OCCUPIED
++  assert audit_frames(frames, TEST_CFG)['violations'] == []
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++@pytest.mark.parametrize('road_kw', [dict(std=2.0), dict(age=None), dict(age=1.0), dict(std=float('nan'))])
++def test_uncertain_or_stale_road_edge_is_unknown(approved_policies, direction, road_kw):
++  shift, left, right = mirror(direction)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=shift, left=left, right=right, road=edges(**road_kw))] * 30)
++  assert not any(o.permitted for o in outs)
++  assert outs[-1].edge_state[direction] == UNKNOWN
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_missing_road_edges_block(approved_policies, direction):
++  shift, left, right = mirror(direction)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=shift, left=left, right=right, road={})] * 30)
++  assert not any(o.permitted for o in outs)
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_avoid_amount_is_clipped_to_road_edge_room(approved_policies, direction):
++  shift, left, right = mirror(direction)
++  road = edges(left_y=-1.6) if direction == LEFT else edges(right_y=1.6)  # room 1.6 - 1.45 = 0.15
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=shift, left=left, right=right, road=road)] * 80)
++  assert outs[-1].permitted
++  assert abs(outs[-1].target) == pytest.approx(0.15)
++  assert max(abs(o.applied) for o in outs) <= 0.15 + 1e-12
++
++
++def test_road_edge_not_extrapolated_and_shape_checked(approved_policies):
++  short_x = np.linspace(0.0, 20.0, N)
++  assert road_edge_allowance(X, np.zeros(N), short_x, np.full(N, -5.0), 0.1, 0.0, LEFT, TEST_CFG)[0] == UNKNOWN
++  assert road_edge_allowance(X, np.zeros(N), X[:10], np.full(N, -5.0), 0.1, 0.0, LEFT, TEST_CFG)[0] == UNKNOWN
++  bad = np.full(N, -5.0)
++  bad[3] = np.nan
++  assert road_edge_allowance(X, np.zeros(N), X, bad, 0.1, 0.0, LEFT, TEST_CFG)[0] == UNKNOWN
++  assert road_edge_allowance(X, np.zeros(N), X, np.full(N, -5.0), 0.1, 0.0, LEFT, LaneAvoidConfig())[0] == UNKNOWN
++
++
++# ---------------------------------------------------------------- in-progress block and return
++
++
++def avoid_then(ctrl, direction, n=30):
++  shift, left, right = mirror(direction)
++  outs, frames = run(ctrl, [dict(shift=shift, left=left, right=right)] * n)
++  assert outs[-1].state == AVOID
++  return shift, left, right, outs, frames
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_new_avoid_side_detection_revokes_and_never_grows(approved_policies, direction):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, frames = avoid_then(ctrl, direction, n=12)  # still growing, rate > 0
++  assert ctrl.rate != 0.0
++  blocked = side(bsd=occ())
++  seq_l, seq_r = (blocked, right) if direction == LEFT else (left, blocked)
++  before = outs[-1].applied
++  outs2, frames2 = run(ctrl, [dict(shift=shift, left=seq_l, right=seq_r)] * 20, t0=12 * DT)
++  assert not outs2[0].permitted and outs2[0].target == 0.0
++  # the original obstacle is still there -> no return movement, never further out
++  assert all(abs(o.applied) <= abs(before) for o in outs2)
++  assert all(o.applied == before for o in outs2)  # no movement toward the remaining obstacle either
++  assert all(o.state in (RETURN, RETURN_RISK) and not o.permitted for o in outs2)
++  assert outs2[-1].state == RETURN_RISK
++  assert audit_frames(frames + frames2, TEST_CFG)['violations'] == []
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_return_only_when_return_side_clear_at_bounded_rate(approved_policies, direction):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, frames = avoid_then(ctrl, direction, n=40)
++  peak = outs[-1].applied
++  # obstacle passed: both sides clear, model back to centre
++  outs2, frames2 = run(ctrl, [dict(shift=0.0)] * 120, t0=40 * DT)
++  assert outs2[0].state in (RETURN, STANDBY) and not outs2[0].permitted
++  steps = [abs(b.applied - a.applied) for a, b in zip([outs[-1]] + outs2[:-1], outs2)]
++  assert max(steps) <= TEST_CFG.return_rate_mps * DT + 1e-12
++  assert all(o.applied * peak >= 0.0 for o in outs2)  # never crosses to the other side
++  assert outs2[-1].applied == 0.0 and outs2[-1].state == STANDBY
++  assert audit_frames(frames + frames2, TEST_CFG)['result'] == 'no_violation_found'
++
++
++RETURN_RISKS = {
++  'obstacle_remains': lambda: side(radar=occ()),
++  'return_side_bsd': lambda: side(bsd=occ()),
++  'new_vehicle_model': lambda: side(model=occ()),
++  'return_side_stale': lambda: side(radar=UNKNOWN_READINGS['stale']),
++}
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++@pytest.mark.parametrize('case', sorted(RETURN_RISKS))
++def test_return_risk_refuses_movement_toward_centre(approved_policies, direction, case):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, frames = avoid_then(ctrl, direction, n=40)
++  risky = RETURN_RISKS[case]()
++  seq = dict(shift=0.0, left=risky, right=side()) if direction == RIGHT else dict(shift=0.0, left=side(), right=risky)
++  outs2, frames2 = run(ctrl, [seq] * 20, t0=40 * DT)
++  assert all(o.applied == outs[-1].applied for o in outs2)
++  assert all(o.state == RETURN_RISK and not o.permitted and o.target == 0.0 for o in outs2)
++  assert 'return_risk_policy_unapproved' in outs2[-1].reasons
++  assert audit_frames(frames + frames2, TEST_CFG)['violations'] == []
++
++
++def test_both_sides_occupied_during_return(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  _, _, _, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  outs2, _ = run(ctrl, [dict(shift=-0.3, left=side(radar=occ()), right=side(radar=occ()))] * 20, t0=40 * DT)
++  assert all(o.applied == outs[-1].applied and not o.permitted for o in outs2)
++
++
++def test_return_side_road_edge_blocks_return(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  _, _, _, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  outs2, _ = run(ctrl, [dict(shift=0.0, road=edges(right_y=1.2))] * 10, t0=40 * DT)
++  assert all(o.applied == outs[-1].applied for o in outs2)
++
++
++def test_centre_reference_invalid_does_not_move_or_permit(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  _, _, _, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  outs2, _ = run(ctrl, [dict(shift=-0.3, left=side(), right=side(radar=occ()), center_valid=False)] * 10, t0=40 * DT)
++  assert all(not o.permitted and o.applied == outs[-1].applied for o in outs2)
++  assert 'center_invalid' in outs2[-1].reasons
++
++
++def test_no_automatic_opposite_reavoid_and_reentry_wait(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  _, _, _, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  # obstacle switches sides at once: model shifts right with left occupied
++  outs2, _ = run(ctrl, [dict(shift=0.3, left=side(radar=occ()), right=side())] * 200, t0=40 * DT)
++  assert not outs2[0].permitted and 'direction_reversal' in outs2[0].reasons
++  first_permit = next((i for i, o in enumerate(outs2) if o.permitted), None)
++  end = len(outs2) if first_permit is None else first_permit
++  # until the left offset has fully returned, nothing toward the right is permitted
++  assert all(o.applied <= 0.0 for o in outs2[:end])
++  if first_permit is not None:
++    prev = outs2[first_permit - 1]
++    assert prev.state == STANDBY and prev.applied == 0.0
++    # revoked at outs2[0]; re-entry needs the full wait from that frame
++    assert first_permit * DT >= TEST_CFG.reentry_wait_s - 1e-9
++
++
++def test_alternating_sides_never_permit_toward_detection(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  seq = []
++  for i in range(200):
++    if (i // 7) % 2:
++      seq.append(dict(shift=-0.3, left=side(bsd=occ()), right=side(radar=occ())))
++    else:
++      seq.append(dict(shift=0.3, left=side(radar=occ()), right=side(bsd=occ())))
++  outs, frames = run(ctrl, seq)
++  assert not any(o.permitted for o in outs)
++  assert audit_frames(frames, TEST_CFG)['violations'] == []
++
++
++# ---------------------------------------------------------------- time base and inputs
++
++
++@pytest.mark.parametrize('bad_t', [float('nan'), None, 'reverse', 'repeat', 'gap'])
++def test_time_faults_revoke_and_freeze(approved_policies, bad_t):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, _ = avoid_then(ctrl, LEFT, n=12)
++  last_t = 11 * DT
++  t = {'reverse': last_t - 1.0, 'repeat': last_t, 'gap': last_t + 1.0}.get(bad_t, bad_t)
++  o = ctrl.update(inp(t, shift, left, right))
++  assert not o.permitted and o.target == 0.0
++  assert o.applied == outs[-1].applied
++
++
++@pytest.mark.parametrize('kw,reason', [
++  (dict(lane_change_active=True), 'lane_change_or_desire'),
++  (dict(driver_steering=True), 'driver_steering'),
++  (dict(measured_curvature=0.02), 'curve_not_separable'),
++  (dict(measured_curvature=float('nan')), 'curve_not_separable'),
++  (dict(model_valid=False), 'model_invalid_or_stale'),
++  (dict(model_age_s=1.0), 'model_invalid_or_stale'),
++  (dict(model_age_s=None), 'model_invalid_or_stale'),
++  (dict(lane_y=None), 'no_lane_path'),
++  (dict(d_prob=float('nan')), 'candidate_d_prob'),
++  (dict(d_prob=1.5), 'candidate_d_prob'),
++])
++def test_input_conditions_block_start(approved_policies, kw, reason):
++  shift, left, right = mirror(LEFT)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs = [ctrl.update(inp(i * DT, shift, left, right, **kw)) for i in range(30)]
++  assert not any(o.permitted for o in outs)
++  assert reason in outs[-1].reasons
++
++
++def test_candidate_rejections():
++  y0 = np.zeros(N)
++  assert avoid_candidate(X, y0 - 0.3, y0, 1.0, TEST_CFG)[0] == pytest.approx(-0.3)
++  assert avoid_candidate(X, y0 - 0.3, y0, 0.5, TEST_CFG)[0] == pytest.approx(-0.15)  # (1-d_prob) part not re-added
++  assert avoid_candidate(X, y0 + 0.01, y0, 1.0, TEST_CFG)[1] == 'candidate_below_deadband'
++  mixed = y0.copy()
++  mixed[5], mixed[10] = -0.3, 0.2
++  assert avoid_candidate(X, mixed, y0, 1.0, TEST_CFG)[1] == 'candidate_mixed_direction'
++  nan = y0.copy()
++  nan[4] = np.inf
++  assert avoid_candidate(X, nan, y0, 1.0, TEST_CFG)[1] == 'candidate_nonfinite'
++  assert avoid_candidate(X, y0[:10], y0, 1.0, TEST_CFG)[1] == 'candidate_shape'
++  assert avoid_candidate(X[::-1], y0, y0, 1.0, TEST_CFG)[1] == 'candidate_x_not_monotonic'
++  assert avoid_candidate(X, y0, y0, 1.0, LaneAvoidConfig())[1] == 'candidate_unapproved'
++  far = LaneAvoidConfig(**{**TEST_CFG.__dict__, 'candidate_x_m': (200.0, 300.0)})
++  assert avoid_candidate(X, y0 - 0.3, y0, 1.0, far)[1] == 'candidate_empty_region'
++
++
++def test_normal_curve_common_to_model_and_lane_is_not_a_candidate():
++  curve = 0.002 * X ** 2
++  assert avoid_candidate(X, curve, curve, 1.0, TEST_CFG)[0] is None
++
++
++def test_candidate_does_not_mutate_inputs():
++  my, ly = np.full(N, -0.3), np.zeros(N)
++  my0, ly0 = my.copy(), ly.copy()
++  avoid_candidate(X, my, ly, 1.0, TEST_CFG)
++  assert np.array_equal(my, my0) and np.array_equal(ly, ly0)
++
++
++def test_offset_never_exceeds_max_or_rate_limits(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, _ = run(ctrl, [dict(shift=-2.0, left=side(), right=side(radar=occ()))] * 200)
++  assert max(abs(o.applied) for o in outs) <= TEST_CFG.max_offset_m + 1e-12
++  steps = [abs(b.applied - a.applied) for a, b in zip(outs, outs[1:])]
++  assert max(steps) <= TEST_CFG.entry_rate_mps * DT + 1e-12
++  rates = [(b.applied - a.applied) / DT for a, b in zip(outs, outs[1:])]
++  # continuity holds except where the offset snaps onto its target (documented exception)
++  jumps = [abs(rates[k] - rates[k - 1]) for k in range(1, len(rates))
++           if outs[k].applied != outs[k].target and outs[k + 1].applied != outs[k + 1].target]
++  assert jumps and max(jumps) <= TEST_CFG.max_rate_change_mps2 * DT + 1e-9
++  assert outs[-1].applied == pytest.approx(-TEST_CFG.max_offset_m)
++
++
++# ---------------------------------------------------------------- audit (strict failure)
++
++
++def af(t, state, applied, permitted=False, target=0.0, avoid_side=LEFT, left=CLEAR, right=CLEAR, el=CLEAR, er=CLEAR):
++  return {'t': t, 'state': state, 'permitted': permitted, 'target': target, 'applied': applied,
++          'avoid_side': avoid_side, 'side_state': {LEFT: left, RIGHT: right}, 'edge_state': {LEFT: el, RIGHT: er}}
++
++
++def test_audit_counts_return_frames_and_exclusion_gives_false_pass(approved_policies):
++  frames = [af(0.0, AVOID, -0.20, True, -0.2, right=OCCUPIED),
++            af(0.05, RETURN, -0.19, right=OCCUPIED)]  # residual moves toward the occupied side
++  full = audit_frames(frames, TEST_CFG)
++  assert full['result'] == 'fail'
++  assert full['violations'][0]['rule'] == 'return_move_without_clear_return_side'
++  filtered = audit_frames([f for f in frames if f['state'] not in (RETURN, RETURN_RISK)], TEST_CFG)
++  assert filtered['result'] != 'fail'  # demonstrates why return frames must never be excluded
++
++
++def test_audit_single_frame_violations(approved_policies):
++  base = af(0.0, AVOID, -0.20, True, -0.2, right=OCCUPIED)
++  cases = {
++    'growth_without_permission': af(0.05, RETURN, -0.21, right=OCCUPIED),
++    'permitted_avoid_side_not_clear': af(0.05, AVOID, -0.21, True, -0.3, left=UNKNOWN, right=OCCUPIED),
++    'permitted_avoid_edge_not_clear': af(0.05, AVOID, -0.21, True, -0.3, el=UNKNOWN, right=OCCUPIED),
++    'rate_above_limit': af(0.05, AVOID, -0.30, True, -0.3, right=OCCUPIED),
++    'offset_crossed_sides': af(0.05, RETURN, 0.001),
++    'offset_changed_without_time': af(0.0, AVOID, -0.21, True, -0.3, right=OCCUPIED),
++    'target_without_permission': af(0.05, RETURN, -0.20, target=-0.2, right=OCCUPIED),
++    'offset_above_limit': af(0.05, RETURN_RISK, -0.6, right=OCCUPIED),
++  }
++  for rule, f in cases.items():
++    res = audit_frames([base, f], TEST_CFG)
++    assert res['result'] == 'fail', rule
++    assert rule in [v['rule'] for v in res['violations']], rule
++
++
++def test_audit_not_evaluable_without_approval_or_frames():
++  frames = [af(0.0, STANDBY, 0.0, avoid_side=None)]
++  assert audit_frames(frames, LaneAvoidConfig())['result'] == 'not_evaluable'
++  assert audit_frames([], TEST_CFG)['result'] == 'not_evaluable'
++
++
++def test_audit_invalid_frames_are_counted_not_zero_filled(approved_policies):
++  frames = [af(0.0, STANDBY, 0.0, avoid_side=None), {'t': 0.05}, af(0.1, STANDBY, float('nan'), avoid_side=None)]
++  res = audit_frames(frames, TEST_CFG)
++  assert res['invalid_frames'] == [1, 2]
++  assert res['result'] == 'not_evaluable'
++
++
++def test_audit_violation_is_kept_even_if_other_frames_are_fine(approved_policies):
++  ok = [af(i * DT, STANDBY, 0.0, avoid_side=None) for i in range(50)]
++  bad = ok + [af(50 * DT, RETURN, 0.01, avoid_side=RIGHT)]
++  assert audit_frames(bad, TEST_CFG)['result'] == 'fail'
++
++
++# ---------------------------------------------------------------- planner / lane planner wiring
++
++
++def test_planner_default_disabled_preserves_path_exactly():
++  planner = make_planner()
++  assert not planner.lane_avoid.active
++  for _ in range(30):
++    sm = planner_inputs()
++    planner.update(sm, SimpleNamespace(atc_active=False))
++    assert planner.lane_avoid_out is None
++    # stub lane planner returns the model path; only PathOffset (stub param 1 -> 0.01 m) is added
++    assert np.array_equal(planner.path_xyz[:, 1], np.asarray(sm['modelV2'].position.y) + 0.01)
++
++
++class SM(dict):
++  pass
++
++
++def lead(status=False, d_rel=0.0):
++  return SimpleNamespace(status=status, dRel=d_rel)
++
++
++def planner_sm(frame, left_bsd=False):
++  sm = SM(planner_inputs())
++  t_ns = int(1e9 + frame * DT * 1e9)
++  sm.logMonoTime = {'modelV2': t_ns, 'radarState': t_ns}
++  sm.valid = {'modelV2': True, 'radarState': True}
++  sm['carState'].leftBlindspot, sm['carState'].rightBlindspot = left_bsd, False
++  sm['carState'].steeringPressed = False
++  sm['radarState'] = SimpleNamespace(
++    radarErrors=SimpleNamespace(canError=False, radarFault=False, wrongConfig=False, radarUnavailableTemporary=False),
++    leadLeft=lead(), leadsLeft=[], leadRight=lead(), leadsRight=[lead(True, 3.0)])
++  md = sm['modelV2']
++  md.roadEdges = [SimpleNamespace(x=X, y=np.full(N, -5.0)), SimpleNamespace(x=X, y=np.full(N, 5.0))]
++  md.roadEdgeStds = [0.1, 0.1]
++  md.meta.laneChangeState = 0
++  return sm
++
++
++@pytest.mark.parametrize('left_bsd', [False, True])
++def test_planner_builder_cannot_clear_with_current_signals(approved_policies, left_bsd):
++  planner = make_planner()
++  g = type(planner).update.__globals__  # exec namespace of the compiled production class
++  g.update({'AvoidInputs': AvoidInputs, 'SourceReading': SourceReading, 'LEFT': LEFT, 'RIGHT': RIGHT,
++            'radar_side_reading': radar_side_reading,
++            'log': SimpleNamespace(Desire=SimpleNamespace(none=0), LaneChangeState=SimpleNamespace(off=0))})
++  planner.lane_avoid = LaneAvoidController(TEST_CFG)
++  planner.LP.model_path_y = np.full(N, -0.3)  # model sidesteps left of a right-side radar object
++  planner.LP.lane_path_y = np.zeros(N)
++  planner.LP.blend_d_prob = 1.0
++  for i in range(40):
++    sm = planner_sm(i, left_bsd)
++    planner.update(sm, SimpleNamespace(atc_active=False))
++    o = planner.lane_avoid_out
++    assert not o.permitted and o.applied == 0.0
++    assert np.array_equal(planner.path_xyz[:, 1], np.asarray(sm['modelV2'].position.y) + 0.01)
++  assert o.side_state[RIGHT] == OCCUPIED
++  assert o.source_state[LEFT]['model'] == UNKNOWN  # no independent model side observation
++  assert o.source_state[LEFT]['bsd'] == (OCCUPIED if left_bsd else UNKNOWN)  # BSD False is not clear
++  assert o.side_state[LEFT] == (OCCUPIED if left_bsd else UNKNOWN)
++
++
++def make_lane_planner():
++  source = Path(__file__).parents[1] / 'lib/lane_planner_2.py'
++  tree = ast.parse(source.read_text(encoding='utf8'))
++  params = SimpleNamespace(get_int=lambda _: 0, get_float=lambda _: 0.0)
++  namespace = {'np': np, 'math': math, 'FirstOrderFilter': FirstOrderFilter, 'DT_MDL': 0.05,
++               'TRAJECTORY_SIZE': N, 'CAMERA_OFFSET': 0, 'Params': lambda: params}
++  exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'LanePlanner'],
++                          type_ignores=[]), str(source), 'exec'), namespace)
++  lp = namespace['LanePlanner']()
++  t = np.linspace(0.0, 10.0, N)
++  lp.ll_t, lp.ll_x = t, X
++  lp.lll_y, lp.rll_y = np.full(N, -1.75), np.full(N, 1.75)
++  lp.lll_prob = lp.rll_prob = 0.9
++  lp.lll_std = lp.rll_std = 0.1
++  return lp, t
++
++
++@pytest.mark.parametrize('lanefull', [True, False])
++def test_lane_planner_copies_do_not_change_blend(lanefull):
++  lp, t = make_lane_planner()
++  lp.lanefull_mode = lanefull
++  for _ in range(30):
++    model = np.column_stack([X, np.full(N, 0.4), np.zeros(N)])
++    original = model[:, 1].copy()
++    out, active = lp.get_d_path(None, 25.0, t, model, 0.0)
++    assert np.array_equal(lp.model_path_y, original)
++    assert not np.shares_memory(lp.model_path_y, out)
++    offset = 0 + lp.lane_offset_filtered.x
++    if active:
++      expect = lp.blend_d_prob * lp.lane_path_y + (1.0 - lp.blend_d_prob) * original + offset
++    else:
++      assert lp.lane_path_y is None
++      expect = original + offset
++    assert np.array_equal(out[:, 1], expect)
++  assert active == lanefull
++
++
++# ================================================================ v3.1 (lanemode_avoid_prompt_v3_1)
++# Written for review; NOT executed. All numbers are synthetic fixture inputs.
++
++
++def run_t(ctrl, times, make):
++  outs, frames = [], []
++  for i, t in enumerate(times):
++    o = ctrl.update(make(i, t))
++    outs.append(o)
++    frames.append(frame(o, t))
++  return outs, frames
++
++
++def rules(res):
++  return [v['rule'] for v in res['violations']]
++
++
++def cfg_with(**kw):
++  return LaneAvoidConfig(**{**TEST_CFG.__dict__, **kw})
++
++
++def road_on(direction, x, y_out):
++  """road edge on `direction` at outward distance y_out (array over x); the other side at 5 m."""
++  road = edges()
++  road[direction] = (x, la.SIDE_SIGN[direction] * np.asarray(y_out, dtype=float), 0.1, 0.0)
++  return road
++
++
++def patch_planner_globals(planner):
++  g = type(planner).update.__globals__  # exec namespace of the compiled production class
++  g.update({'AvoidInputs': AvoidInputs, 'SourceReading': SourceReading, 'LEFT': LEFT, 'RIGHT': RIGHT,
++            'radar_side_reading': radar_side_reading,
++            'log': SimpleNamespace(Desire=SimpleNamespace(none=0), LaneChangeState=SimpleNamespace(off=0))})
++
++
++# ---------------------------------------------------------------- hold 1: whole consumed path
++
++
++def test_required_span_covers_body_and_whole_path():
++  assert la.required_x_range(X, TEST_CFG) == (-1.0, 104.0)  # rear at ego .. front beyond the last point
++  assert la.required_x_range(X, LaneAvoidConfig()) is None
++  assert la.required_x_range(X[::-1], TEST_CFG) is None
++  sp = la.required_space(X, np.zeros(N), [0.0, -0.3], LEFT, TEST_CFG)
++  assert (sp.x_min, sp.x_max, sp.lat_min) == (-1.0, 104.0, 0.0)
++  assert sp.lat_max == pytest.approx(0.3 + 0.95 + 0.3)  # offset + half width + clearance
++  # the base path's own lateral excursion counts too (not only the offset)
++  bend = np.where(X > 70.0, -0.8, 0.0)
++  assert la.required_space(X, bend, [0.0], LEFT, TEST_CFG).lat_max == pytest.approx(0.8 + 1.25)
++  assert la.required_space(X, np.zeros(N), [float('nan')], LEFT, TEST_CFG) is None
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_far_path_point_edge_intrusion_outside_candidate_blocks(approved_policies, direction):
++  # candidate range (5, 60) is wide; the edge closes in only at x > 80 on the consumed path
++  road = road_on(direction, EDGE_X, np.where(EDGE_X > 80.0, 1.4, 5.0))
++  state, _ = road_edge_allowance(X, np.zeros(N), *road[direction], direction, TEST_CFG)
++  assert state == OCCUPIED
++  shift, left, right = mirror(direction)
++  outs, frames = run(LaneAvoidController(TEST_CFG), [dict(shift=shift, left=left, right=right, road=road)] * 30)
++  assert not any(o.permitted for o in outs) and all(o.applied == 0.0 for o in outs)
++  assert outs[-1].edge_state[direction] == OCCUPIED
++  assert audit_frames(frames, TEST_CFG)['violations'] == []
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_edge_narrowing_between_path_points_and_beyond_last_point(direction):
++  dense = np.linspace(0.0, 110.0, 221)  # 0.5 m knots; 51.5 m lies between path points 50.0 and 53.125
++  y = np.full(dense.size, 5.0)
++  y[np.isclose(dense, 51.5)] = 1.0
++  road = road_on(direction, dense, y)
++  assert road_edge_allowance(X, np.zeros(N), *road[direction], direction, TEST_CFG)[0] == OCCUPIED
++  # narrowing ahead of the last path point, inside the body front (100 .. 104 m)
++  y2 = np.where(dense > 102.0, 1.0, 5.0)
++  road2 = road_on(direction, dense, y2)
++  assert road_edge_allowance(X, np.zeros(N), *road2[direction], direction, TEST_CFG)[0] == OCCUPIED
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_edge_partial_observation_is_unknown_never_extrapolated(direction):
++  for ex in (np.linspace(1.0, 110.0, N),     # starts after the current position
++             np.linspace(0.0, 102.0, N)):    # ends before the body front at 104 m
++    road = road_on(direction, ex, np.full(N, 5.0))
++    assert road_edge_allowance(X, np.zeros(N), *road[direction], direction, TEST_CFG)[0] == UNKNOWN
++  full = road_on(direction, EDGE_X, np.full(N, 5.0))
++  state, room = road_edge_allowance(X, np.zeros(N), *full[direction], direction, TEST_CFG)
++  assert state == CLEAR and room == pytest.approx(5.0 - 0.95 - 0.5)
++
++
++def test_body_width_and_clearance_alone_make_coverage_insufficient(approved_policies):
++  cfg = cfg_with(required_region_lat_m=(0.0, 1.0))  # fixed region is satisfied by 1.5 m coverage
++  sp = la.required_space(X, np.zeros(N), [0.0, -0.3], LEFT, cfg)  # needs 1.55 m
++  narrow = {k: Coverage(-15.0, 115.0, 0.0, 1.5) for k in cfg.coverage}
++  wide = {k: Coverage(-15.0, 115.0, 0.0, 1.6) for k in cfg.coverage}
++  assert evaluate_side(side(), LEFT, cfg_with(required_region_lat_m=(0.0, 1.0), coverage=narrow))[0] == CLEAR
++  assert evaluate_side(side(), LEFT, cfg_with(required_region_lat_m=(0.0, 1.0), coverage=narrow), (sp,))[0] == UNKNOWN
++  assert evaluate_side(side(), LEFT, cfg_with(required_region_lat_m=(0.0, 1.0), coverage=wide), (sp,))[0] == CLEAR
++  assert evaluate_side(side(), LEFT, TEST_CFG, (None,))[0] == UNKNOWN  # not computable is never clear
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_coverage_of_fixed_region_only_is_unknown_for_the_path(approved_policies, direction):
++  short = {k: Coverage(-15.0, 40.0, 0.0, 5.0) for k in TEST_CFG.coverage}  # spans the fixed region only
++  cfg = cfg_with(coverage=short)
++  assert evaluate_side(side(), direction, cfg)[0] == CLEAR
++  shift, left, right = mirror(direction)
++  outs, _ = run(LaneAvoidController(cfg), [dict(shift=shift, left=left, right=right)] * 30)
++  assert not any(o.permitted for o in outs)
++  assert outs[-1].side_state[direction] == UNKNOWN and f'avoid_side_{UNKNOWN}' in outs[-1].reasons
++
++
++def test_radar_object_outside_fixed_region_but_on_path_is_detected(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  region = ctrl.radar_region_x(X)
++  assert region == (-10.0, 104.0)  # fixed (-10, 30) united with the dynamic span
++  far = [SimpleNamespace(status=True, dRel=80.0)]
++  assert radar_side_reading(far, True, 0.0, TEST_CFG.required_region_x_m).detected is False  # the v3 gap
++  assert radar_side_reading(far, True, 0.0, region).detected is True
++  assert ctrl.radar_region_x(X[::-1]) is None
++  assert LaneAvoidController(LaneAvoidConfig()).radar_region_x(X) is None
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_return_space_is_part_of_every_frame(approved_policies, direction):
++  ctrl = LaneAvoidController(TEST_CFG)
++  _, _, _, outs, _ = avoid_then(ctrl, direction, n=40)
++  ret = la.other_side(direction)
++  sp = outs[-1].required_space[ret]
++  # the return side's space includes the body at offset 0 over the whole path
++  assert (sp.x_min, sp.x_max) == (-1.0, 104.0) and sp.lat_max == pytest.approx(0.95 + 0.3)
++  # only the return space occupied (avoid side clear): no return movement, no growth
++  risky = side(model=occ())
++  seq = dict(shift=0.0, left=risky, right=side()) if ret == LEFT else dict(shift=0.0, left=side(), right=risky)
++  outs2, frames2 = run(ctrl, [seq] * 10, t0=40 * DT)
++  assert all(o.applied == outs[-1].applied and not o.permitted for o in outs2)
++
++
++def test_planner_consumes_exactly_the_controller_offset(approved_policies):
++  # final consumption: the published path is the base path plus out.applied, nothing else
++  planner = make_planner()
++  planner.lane_avoid = LaneAvoidController(TEST_CFG)
++  shift, left, right = mirror(LEFT)
++  n = [0]
++
++  def fake_inputs(sm, carrot, md, model_active):
++    n[0] += 1
++    return inp(1.0 + n[0] * DT, shift, left, right)
++  planner.lane_avoid_inputs = fake_inputs
++  seen = []
++  for _ in range(40):
++    sm = planner_inputs()
++    planner.update(sm, SimpleNamespace(atc_active=False))
++    o = planner.lane_avoid_out
++    assert planner.lanelines_active and o is not None
++    assert np.array_equal(planner.path_xyz[:, 1], np.asarray(sm['modelV2'].position.y) + 0.01 + o.applied)
++    seen.append(o.applied)
++  assert min(seen) < 0.0
++
++
++# ---------------------------------------------------------------- hold 2: message-time freshness
++
++
++def test_same_message_with_advancing_evaluation_time_goes_stale(approved_policies):
++  shift, left, right = mirror(LEFT)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs = [ctrl.update(inp(i * DT, shift, left, right, model_t=0.0, model_age_s=i * DT)) for i in range(30)]
++  assert not any(o.permitted for o in outs) and all(o.applied == 0.0 for o in outs)
++  assert 'model_not_new' in outs[1].reasons
++  assert 'model_invalid_or_stale' in outs[-1].reasons
++
++
++def test_builder_reported_age_zero_cannot_hide_old_message_time(approved_policies):
++  shift, left, right = mirror(LEFT)
++  ctrl = LaneAvoidController(TEST_CFG)
++  # new message each frame but stamped 1 s before evaluation; builder claims age 0
++  outs = [ctrl.update(inp(1.0 + i * DT, shift, left, right, model_t=i * DT, model_age_s=0.0)) for i in range(30)]
++  assert not any(o.permitted for o in outs)
++  assert 'model_invalid_or_stale' in outs[-1].reasons
++
++
++MSG_TIME_FAULTS = {
++  'missing': (lambda t: dict(model_t=None), 'model_time_invalid'),
++  'nan': (lambda t: dict(model_t=float('nan')), 'model_time_invalid'),
++  'future': (lambda t: dict(model_t=t + 0.01), 'model_time_future'),
++  'reversed': (lambda t: dict(model_t=10.0 - t), 'model_not_new'),
++  'repeated': (lambda t: dict(model_t=0.0), 'model_not_new'),
++  'clock_unverified': (lambda t: dict(clock_verified=False), 'clock_unverified'),
++}
++
++
++@pytest.mark.parametrize('case', sorted(MSG_TIME_FAULTS))
++def test_message_time_faults_block_start(approved_policies, case):
++  make, reason = MSG_TIME_FAULTS[case]
++  shift, left, right = mirror(LEFT)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs = [ctrl.update(inp(i * DT, shift, left, right, **make(i * DT))) for i in range(30)]
++  assert not any(o.permitted for o in outs)
++  assert reason in outs[-1].reasons
++
++
++@pytest.mark.parametrize('case', sorted(MSG_TIME_FAULTS))
++def test_message_time_faults_revoke_in_progress_without_reusing_permission(approved_policies, case):
++  make, reason = MSG_TIME_FAULTS[case]
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  before = outs[-1].applied
++  outs2 = []
++  for i in range(10):
++    t = (40 + i) * DT
++    kw = make(t) if case != 'repeated' else dict(model_t=39 * DT)  # the last accepted message again
++    outs2.append(ctrl.update(inp(t, shift, left, right, **kw)))
++  assert all(not o.permitted and o.target == 0.0 for o in outs2)
++  assert all(abs(o.applied) <= abs(before) for o in outs2)
++  assert any(reason in o.reasons for o in outs2)  # 'reversed' shows as future first, then not new
++
++
++def test_freshness_boundary_both_sides(approved_policies):
++  shift, left, right = mirror(LEFT)
++  ok = LaneAvoidController(TEST_CFG).update(inp(1.0, shift, left, right, model_t=0.8125, model_age_s=0.1875))
++  assert 'model_invalid_or_stale' not in ok.reasons
++  late = LaneAvoidController(TEST_CFG).update(inp(1.0, shift, left, right, model_t=0.75, model_age_s=0.25))
++  assert 'model_invalid_or_stale' in late.reasons
++  # an unapproved freshness limit is a blocker, not age 0
++  assert 'max_age_model_path_unapproved' in LaneAvoidConfig(max_age_s={'bsd': 0.2}).blockers()
++
++
++def test_builder_ages_come_from_message_times(approved_policies):
++  planner = make_planner()
++  patch_planner_globals(planner)
++  planner.lane_avoid = LaneAvoidController(TEST_CFG)
++  planner.path_xyz = np.column_stack([X, np.zeros(N), np.zeros(N)])
++  planner.lanelines_active = True
++  planner.LP.model_path_y, planner.LP.lane_path_y, planner.LP.blend_d_prob = np.full(N, -0.3), np.zeros(N), 1.0
++  carrot = SimpleNamespace(atc_active=False)
++  sm = planner_sm(0)
++  sm.logMonoTime = {'modelV2': int(2.9e9), 'radarState': int(1.0e9)}
++  planner.lane_avoid_clock = lambda: 3.0
++  a = planner.lane_avoid_inputs(sm, carrot, sm['modelV2'], True)
++  assert a.t == 3.0 and a.model_t == pytest.approx(2.9) and a.model_age_s == pytest.approx(0.1)
++  assert a.road_edges[LEFT][3] == a.model_age_s  # edges inherit the age of the model message carrying them
++  assert a.side_readings[LEFT]['radar'].age_s == pytest.approx(2.0)  # only the radar is old
++  assert evaluate_source(a.side_readings[LEFT]['radar'], 0.2) == UNKNOWN
++  assert evaluate_source(a.side_readings[RIGHT]['radar'], 0.2) == OCCUPIED  # detection stays a veto
++  # unchanged messages, later evaluation: the age grows, it is never reset to 0
++  planner.lane_avoid_clock = lambda: 3.5
++  b = planner.lane_avoid_inputs(sm, carrot, sm['modelV2'], True)
++  assert b.model_t == a.model_t and b.model_age_s == pytest.approx(0.6)
++  # a message stamped after the evaluation time gives a negative age (rejected downstream)
++  sm.logMonoTime = {'modelV2': int(3.6e9), 'radarState': int(3.6e9)}
++  assert planner.lane_avoid_inputs(sm, carrot, sm['modelV2'], True).model_age_s < 0.0
++  # never received: no time at all, not age 0
++  sm.logMonoTime = {'modelV2': 0, 'radarState': 0}
++  c = planner.lane_avoid_inputs(sm, carrot, sm['modelV2'], True)
++  assert c.model_t is None and c.model_age_s is None and c.side_readings[LEFT]['radar'].age_s is None
++  # model output not active: edges get no age
++  assert planner.lane_avoid_inputs(sm, carrot, sm['modelV2'], False).road_edges[LEFT][3] is None
++
++
++# ---------------------------------------------------------------- hold 3: consumed offset inside edge room
++
++
++def test_edge_shrink_inside_continuity_keeps_applied_within_room(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  _, _, _, outs, frames = avoid_then(ctrl, LEFT, n=40)
++  assert outs[-1].applied == pytest.approx(-0.3) and ctrl.rate == 0.0
++  # obstacle passed (return side clear) while the left room shrinks to ~0.298 < |applied|
++  outs2, frames2 = run(ctrl, [dict(shift=0.0, road=edges(left_y=-1.748))] * 60, t0=40 * DT)
++  for o in outs2:
++    assert o.state != la.CONFLICT and not o.conflict
++    assert abs(o.applied) <= o.edge_room[LEFT] + 1e-12
++  assert outs2[-1].applied == 0.0
++  assert audit_frames(frames + frames2, TEST_CFG)['violations'] == []
++
++
++EDGE_SHRINK = {
++  'room_small': lambda: edges(left_y=-1.6),     # room 0.15 < 0.3, cannot shrink 0.15 m in one frame
++  'room_zero': lambda: edges(left_y=-1.45),
++  'edge_unknown': lambda: edges(std=2.0),
++  'edge_direction': lambda: edges(left_y=1.0),  # "left" edge reported right of the path
++}
++
++
++@pytest.mark.parametrize('case', sorted(EDGE_SHRINK))
++@pytest.mark.parametrize('return_clear', [False, True])
++def test_edge_shrink_without_feasible_offset_is_conflict_and_blocked(approved_policies, case, return_clear):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, frames = avoid_then(ctrl, LEFT, n=40)
++  seq = dict(shift=0.0) if return_clear else dict(shift=shift, left=left, right=right)
++  outs2, frames2 = run(ctrl, [dict(seq, road=EDGE_SHRINK[case]())] * 5, t0=40 * DT)
++  o = outs2[0]
++  assert o.state == la.CONFLICT and o.conflict and not o.permitted and o.target == 0.0
++  assert 'constraint_conflict_policy_unapproved' in o.reasons
++  # the refusal is visible: the audit fails on the out-of-room frame (never hidden as a residual)
++  assert 'applied_exceeds_edge_room' in rules(audit_frames(frames + frames2, TEST_CFG))
++  # production: the conflict policy is unapproved, so the controller cannot be active at all
++  assert 'constraint_conflict_policy_unapproved' in LaneAvoidConfig().blockers()
++
++
++def test_production_policy_tuples_stay_empty_and_block():
++  for name in POLICY_TUPLES:
++    assert getattr(la, name) == ()
++  b = TEST_CFG.blockers()
++  for k in ('return_risk_policy_unapproved', 'center_invalid_policy_unapproved',
++            'occupancy_prediction_policy_unapproved', 'body_geometry_model_unapproved',
++            'constraint_conflict_policy_unapproved'):
++    assert k in b
++  assert not LaneAvoidController(TEST_CFG).active
++  d = LaneAvoidConfig().blockers()
++  for k in ('vehicle_front_m_unapproved', 'vehicle_rear_m_unapproved', 'side_clearance_m_unapproved',
++            'max_age_model_path_unapproved', 'max_input_gap_s_unapproved'):
++    assert k in d
++
++
++# ---------------------------------------------------------------- hold 4: continuity on every sample
++
++
++def test_continuity_holds_on_every_sample_including_target_reached(approved_policies):
++  # stronger companion of test_offset_never_exceeds_max_or_rate_limits: no sample is excluded
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, frames = run(ctrl, [dict(shift=-2.0, left=side(), right=side(radar=occ()))] * 200)
++  applied = [0.0] + [o.applied for o in outs]  # starts at 0 with rate 0
++  rates = [0.0] + [(b - a) / DT for a, b in zip(applied, applied[1:])]
++  assert max(abs(b - a) for a, b in zip(rates, rates[1:])) <= TEST_CFG.max_rate_change_mps2 * DT + 1e-9
++  assert all(abs(o.rate - r) <= 1e-9 for o, r in zip(outs, rates[1:]))
++  assert any(o.applied == o.target != 0.0 for o in outs)  # reached frames are in the sample
++  res = audit_frames(frames, TEST_CFG)
++  assert res['result'] == 'no_violation_found' and res['non_differentiable'] == []
++
++
++def test_continuity_with_non_uniform_intervals_and_transitions(approved_policies):
++  steps = [0.04, 0.06, 0.05, 0.03, 0.07]
++  times = np.cumsum([0.0] + [steps[i % 5] for i in range(299)])
++  shift, left, right = mirror(LEFT)
++
++  def make(i, t):
++    if i < 60:
++      return inp(t, shift, left, right)                    # avoid left, reach target, hold
++    if i < 70:
++      return inp(t, shift, side(bsd=occ()), right)         # detection on the avoid side revokes
++    if i < 200:
++      return inp(t, 0.0)                                    # obstacle passed: return to 0
++    return inp(t, -shift, side(radar=occ()), side())       # opposite avoidance (sign change via 0)
++  ctrl = LaneAvoidController(TEST_CFG)
++  outs, frames = run_t(ctrl, times, make)
++  res = audit_frames(frames, TEST_CFG)
++  assert res['frames'] == len(outs) and res['non_differentiable'] == []
++  assert any(o.applied < 0.0 for o in outs) and any(o.applied > 0.0 for o in outs)
++  # any violation may only appear on a CONFLICT frame, which production cannot reach
++  assert all(outs[v['frame']].state == la.CONFLICT for v in res['violations'])
++  assert all(o.state != la.CONFLICT or 'constraint_conflict_policy_unapproved' in o.reasons for o in outs)
++
++
++@pytest.mark.parametrize('direction', [LEFT, RIGHT])
++def test_return_risk_while_moving_is_reported_conflict_not_hidden(approved_policies, direction):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, frames = avoid_then(ctrl, direction, n=12)  # still growing
++  rate0 = ctrl.rate
++  assert abs(rate0) > TEST_CFG.max_rate_change_mps2 * DT
++  blocked = side(bsd=occ())
++  l2, r2 = (blocked, right) if direction == LEFT else (left, blocked)
++  outs2, frames2 = run(ctrl, [dict(shift=shift, left=l2, right=r2)] * 10, t0=12 * DT)
++  # neither growth (avoid side occupied) nor return (obstacle remains) is allowed, and the
++  # rate cannot reach 0 within the continuity limit in one frame -> empty intersection.
++  # NOTE: conflicts with the kept v3 assert `state in (RETURN, RETURN_RISK)` in
++  # test_new_avoid_side_detection_revokes_and_never_grows (REVIEW.md, fixture conflicts).
++  assert outs2[0].state == la.CONFLICT and 'constraint_conflict_policy_unapproved' in outs2[0].reasons
++  assert any(c.startswith('conflict_') for c in outs2[0].conflict)
++  res = audit_frames(frames + frames2, TEST_CFG)
++  all_outs = outs + outs2
++  assert res['violations'] and all(all_outs[v['frame']].state == la.CONFLICT for v in res['violations'])
++
++
++def test_audit_checks_rate_change_on_target_reached_frame(approved_policies):
++  frames = [dict(af(0.0, AVOID, -0.2000, True, -0.2125, right=OCCUPIED), rate=-0.25),
++            dict(af(0.05, AVOID, -0.2125, True, -0.2125, right=OCCUPIED), rate=-0.25),
++            dict(af(0.10, AVOID, -0.2125, True, -0.2125, right=OCCUPIED), rate=0.0)]  # reached: -0.25 -> 0
++  res = audit_frames(frames, TEST_CFG)
++  assert [v['frame'] for v in res['violations'] if v['rule'] == 'rate_change_above_limit'] == [2]
++  assert res['result'] == 'fail'
++
++
++def test_audit_first_sample_gap_and_mismatch_are_listed_not_dropped(approved_policies):
++  a = [af(0.0, STANDBY, 0.0, avoid_side=None), af(0.05, STANDBY, 0.0, avoid_side=None)]
++  res = audit_frames(a, TEST_CFG)
++  assert res['result'] == 'not_evaluable' and res['non_differentiable'][0]['why'] == 'no_previous_rate'
++  b = [dict(f, rate=0.0) for f in a] + [dict(af(1.0, STANDBY, 0.0, avoid_side=None), rate=0.0)]
++  res = audit_frames(b, TEST_CFG)
++  assert [d['why'] for d in res['non_differentiable']] == ['time_gap'] and res['result'] == 'not_evaluable'
++  c = [dict(a[0], rate=0.0), dict(a[1], rate=0.3)]
++  assert 'reported_rate_mismatch' in rules(audit_frames(c, TEST_CFG))
++  d = [dict(a[0], rate=0.0), dict(a[1], rate=0.0, consumed=0.01)]
++  assert 'consumed_differs_from_applied' in rules(audit_frames(d, TEST_CFG))
++
++
++def test_audit_names_final_command_signals_as_unverified():
++  res = audit_frames([], TEST_CFG)
++  assert res['final_command_signals_unverified'] and res['result'] == 'not_evaluable'
++
++
++# ---------------------------------------------------------------- hold 5: approval and re-entry
++
++
++def test_mode_exit_and_reentry_start_from_zero_with_new_permission(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  assert outs[-1].applied != 0.0
++  t0 = 40 * DT
++  o = ctrl.mode_inactive(t0)
++  assert o.applied == 0.0 and o.rate == 0.0 and not o.permitted
++  assert 'mode_exit_with_residual_unverified' in o.reasons
++  for k in range(1, 10):  # several inactive frames
++    o = ctrl.mode_inactive(t0 + k * DT)
++    assert o.applied == 0.0 and 'mode_exit_with_residual_unverified' not in o.reasons
++  assert (ctrl.applied, ctrl.rate, ctrl.motion_sign, ctrl.avoid_side, ctrl.confirm, ctrl.state) == \
++         (0.0, 0.0, 0.0, None, 0, STANDBY)
++  assert ctrl.revoked_t == t0  # re-entry wait survives the repeated resets
++  times = [t0 + (10 + i) * DT for i in range(60)]
++  outs2 = [ctrl.update(inp(t, shift, left, right)) for t in times]
++  assert outs2[0].applied == 0.0 and not outs2[0].permitted
++  first = next(i for i, o in enumerate(outs2) if o.permitted)
++  assert all(o.applied == 0.0 for o in outs2[:first])
++  # the first permitted frame grows from 0 inside the continuity limit (rate 0 -> <= d)
++  assert abs(outs2[first].applied) <= TEST_CFG.max_rate_change_mps2 * DT * DT + 1e-12
++  assert times[first] - t0 >= TEST_CFG.reentry_wait_s - 1e-9
++
++
++def test_repeated_mode_toggles_never_carry_offset(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right = mirror(LEFT)
++  t = 0.0
++  for _cycle in range(4):
++    outs = []
++    for _ in range(40):
++      outs.append(ctrl.update(inp(t, shift, left, right)))
++      t += DT
++    assert outs[0].applied == 0.0
++    assert ctrl.mode_inactive(t).applied == 0.0
++    t += 3 * DT
++
++
++def test_planner_mode_toggle_drops_residual_from_published_path(approved_policies):
++  planner = make_planner()
++  planner.lane_avoid = LaneAvoidController(TEST_CFG)
++  shift, left, right = mirror(LEFT)
++  n = [0]
++
++  def fake_inputs(sm, carrot, md, model_active):
++    n[0] += 1
++    return inp(1.0 + n[0] * DT, shift, left, right)
++  planner.lane_avoid_inputs = fake_inputs
++  lane = [True]
++  planner.LP.get_d_path = lambda cs, speed, t, path, curve_speed: (path, lane[0])
++  planner.lane_avoid_clock = lambda: 1.0 + n[0] * DT
++  for _ in range(40):
++    planner.update(planner_inputs(), SimpleNamespace(atc_active=False))
++  assert planner.lane_avoid_out.applied != 0.0
++  lane[0] = False
++  for _ in range(5):
++    sm = planner_inputs()
++    planner.update(sm, SimpleNamespace(atc_active=False))
++    n[0] += 1
++    assert planner.lane_avoid_out.applied == 0.0 and planner.lane_avoid.applied == 0.0
++    assert np.array_equal(planner.path_xyz[:, 1], np.asarray(sm['modelV2'].position.y) + 0.01)
++  lane[0] = True
++  sm = planner_inputs()
++  planner.update(sm, SimpleNamespace(atc_active=False))
++  assert planner.lane_avoid_out.applied == 0.0 and not planner.lane_avoid_out.permitted
++  assert np.array_equal(planner.path_xyz[:, 1], np.asarray(sm['modelV2'].position.y) + 0.01)
++
++
++def test_config_disable_and_reenable_revalidates_and_starts_from_zero(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  ctrl.cfg = cfg_with(enabled=False)
++  o = ctrl.update(inp(40 * DT, shift, left, right))
++  assert not ctrl.active and o.state == DISABLED and o.applied == 0.0 and not o.permitted
++  ctrl.cfg = TEST_CFG
++  times = [(41 + i) * DT for i in range(60)]
++  outs2 = [ctrl.update(inp(t, shift, left, right)) for t in times]
++  assert outs2[0].applied == 0.0 and not outs2[0].permitted
++  # the residual dropped at the disable is still reported after the re-enable
++  assert 'approval_change_with_residual_unverified' in outs2[0].reasons
++  first = next(i for i, o in enumerate(outs2) if o.permitted)
++  assert all(o.applied == 0.0 for o in outs2[:first])
++  assert abs(outs2[first].applied) <= TEST_CFG.max_rate_change_mps2 * DT * DT + 1e-12
++  assert times[first] - 39 * DT >= TEST_CFG.reentry_wait_s - 1e-9
++
++
++def test_policy_withdrawn_at_runtime_deactivates(approved_policies, monkeypatch):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, _, _ = avoid_then(ctrl, LEFT, n=40)
++  monkeypatch.setattr(la, 'APPROVED_CONSTRAINT_CONFLICT_POLICIES', ())
++  o = ctrl.update(inp(40 * DT, shift, left, right))
++  assert not ctrl.active and o.state == DISABLED and o.applied == 0.0
++  assert 'constraint_conflict_policy_unapproved' in o.blockers
++  monkeypatch.setattr(la, 'APPROVED_CONSTRAINT_CONFLICT_POLICIES', (TEST_POLICY,))
++  o = ctrl.update(inp(41 * DT, shift, left, right))
++  assert ctrl.active and o.applied == 0.0 and not o.permitted
++
++
++def test_time_gap_recovery_does_not_reuse_old_permission(approved_policies):
++  ctrl = LaneAvoidController(TEST_CFG)
++  shift, left, right, outs, _ = avoid_then(ctrl, LEFT, n=40)
++  before = outs[-1].applied
++  t = 39 * DT + 1.0  # gap
++  outs2 = [ctrl.update(inp(t + i * DT, shift, left, right)) for i in range(30)]
++  assert 'time_gap' in outs2[0].reasons
++  assert not any(o.permitted for o in outs2)  # residual must return to 0 before any new permission
++  assert all(abs(o.applied) <= abs(before) for o in outs2)
++
++
++def test_numbers_filled_but_policies_unapproved_stay_disabled():
++  planner = make_planner()
++  planner.lane_avoid = LaneAvoidController(TEST_CFG)  # production tuples empty
++  for _ in range(10):
++    sm = planner_inputs()
++    planner.update(sm, SimpleNamespace(atc_active=False))
++    assert planner.lane_avoid_out is None
++    assert np.array_equal(planner.path_xyz[:, 1], np.asarray(sm['modelV2'].position.y) + 0.01)
+diff --git a/openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py b/openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py
+index 273bda16..53e2ca7a 100644
+--- a/openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py
++++ b/openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py
+@@ -7,6 +7,7 @@ from types import SimpleNamespace
+ import numpy as np
+ 
+ from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
++from openpilot.selfdrive.controls.lib.lane_avoid import LaneAvoidController
+ 
+ 
+ class StubMpc:
+@@ -50,6 +51,7 @@ def make_planner():
+     'LateralMpc': StubMpc,
+     'LanePlanner': StubLanePlanner,
+     'LaneModelSpeedGuard': LaneModelSpeedGuard,
++    'LaneAvoidController': LaneAvoidController,
+     'time': SimpleNamespace(monotonic=lambda: 0),
+     'log': SimpleNamespace(Desire=SimpleNamespace(none=0)),
+     'yaw_from_path_no_scipy': lambda *a, **k: (np.zeros(33), np.zeros(33)),

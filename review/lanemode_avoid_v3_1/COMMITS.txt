@@ -1,0 +1,3 @@
+137afb0ddea56a195bb6d0cea596e03752afa7da lane mode avoid v3.1: hold 1-5 tests, re-entry wait kept across resets
+6b57d2430f978e111c3243cb4ff1bebf780754c0 WIP 보존: 회피 3.1 1차 실행 시간초과(17:59:26) 시점 수정분
+5e4574ce0d71c579b783c34ceb67550a87f62f5b lane mode avoid v3.1: port v3 code commit 7361cb5 onto 0e117698
