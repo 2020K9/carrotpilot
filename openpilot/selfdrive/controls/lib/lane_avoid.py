@@ -82,6 +82,10 @@ RETURN = 'return'          # new-avoidance target 0, residual offset remains
 RETURN_RISK = 'return_risk'
 CONFLICT = 'constraint_conflict'  # no offset satisfies every constraint this frame
 
+# m: float rounding margin for landing exactly on the target magnitude (not a tolerance
+# on any constraint; the final re-check still uses its own tol)
+ROUNDING_EPS = 1e-12
+
 # Return-risk policies (hold / decelerate / driver warning ...) are not approved.
 # The empty tuple keeps validate() failing until a reviewed policy is added here.
 APPROVED_RETURN_RISK_POLICIES: tuple = ()
@@ -940,6 +944,11 @@ class LaneAvoidController:
       u_des = math.copysign(min(lim, brake), e)
     u = min(max(u_des, lo), hi)
     nxt = m_t if (land and u == u_des) else m + u * dt
+    # float rounding only: a step that reaches the target exactly in real arithmetic
+    # (e.g. forced by the continuity bound) must not land past it by one ulp, which the
+    # next frame would read as target < applied (return risk) while the rate is non-zero
+    if abs(nxt - m_t) <= ROUNDING_EPS:
+      nxt = m_t
     # float rounding only: the bounds above already keep 0 <= nxt <= m_cap
     nxt = min(max(nxt, 0.0), m_cap)
     return s * nxt, ()

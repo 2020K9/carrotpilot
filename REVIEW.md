@@ -86,3 +86,20 @@ v3.1 보고서 원문은 기준 커밋 `9bd8d65b`의 REVIEW.md(git 이력)에 �
 - 전체 소스 사본·SHA256SUMS·최종 지문은 이 작성 단계에서 만들지 않았다(부모가 회수 시 준비).
 
 향후 검사 명령과 의존성은 RUN_AFTER_REVIEW.md에 적었다.
+
+## 9. 시험 실패 수정 1회 (회장님 승인 범위, 2026-10-10)
+
+초회 격리 실행(부모 기록 tests_run/isolated_pytest.txt): 220 통과 6 실패. `--noconftest` 격리 실행이며 전체 통합시험 통과가 아니다(일반 pytest는 msgq.ipc_pyx 부재로 준비 단계 실패).
+
+명령(부모 tests_run/isolated_command.txt와 동일):
+`PYTHONDONTWRITEBYTECODE=1 /home/ssm-user/work/py312_ctl/bin/python -m pytest --noconftest -o addopts= -p no:cacheprovider -q openpilot/selfdrive/controls/tests/test_lane_avoid.py openpilot/selfdrive/controls/tests/test_lane_avoid_v3_2.py openpilot/selfdrive/controls/tests/test_lane_model_speed_planner.py`
+수정 후: **223 통과 4 실패, 종료코드 비0**(pytest 실패 종료).
+
+수정:
+- `lane_avoid.py` `_step`: 연속성 하한이 강제한 걸음이 실수 연산상 목표에 정확히 닿는데 부동소수 반올림으로 목표를 1ulp 넘는 경우(-0.2952000000000001 + -0.12×0.04 = -0.3000000000000001)가 있었다. 그러면 다음 프레임이 target < applied(복귀 위험)로 읽어 비영 속도에서 허가를 철회하고 거짓 constraint_conflict(무효 출력)를 냈다. |nxt − m_t| ≤ ROUNDING_EPS(1e-12)이면 m_t로 맞춘다. 제약 판정·허용오차는 바꾸지 않았다. 재현 시험 `test_continuity_forced_landing_does_not_round_past_target` 추가.
+  → `test_cancel_after_hold_with_return_side_clear_is_valid_on_every_frame`(새 시험, 비균일 간격) 통과.
+- `test_planner_refuses_to_consume_invalid_output`(새 시험) 준비 자료: LaneModelSpeedGuard가 약 1초 프레임 후에야 레인모드를 켜서 41 프레임으로는 n>40 무효 프레임에 도달하지 못했다. 입력 41회가 될 때까지 실행하도록 고치고 도달 단언을 추가했다. 기존 단언은 그대로다.
+
+남은 실패 4건(기존 시험, 원문 보존, 미해결):
+- `test_new_avoid_side_detection_revokes_and_never_grows[left/right]`, `test_planner_consumes_exactly_the_controller_offset`: 기준 9bd8d65 격리 실행(baseline_tests)에서도 실패하던 기존 실패. 앞의 것은 아직 증가 중(rate≠0)인데 applied 고정과 RETURN/RETURN_RISK 상태를 함께 요구한다. 연속성·무증가가 동시에 성립할 수 없어(§9 위 새 시험 주석의 GROWING 불가능 사례) 논리 모순이고, 응답은 사람 결정이다. 뒤의 것은 첫 플래너 프레임에서 lanelines_active를 단언하지만 LaneModelSpeedGuard 예열 전이라 거짓이다. 기존 시험 준비 자료 수정은 이번 허용 범위(새 시험) 밖이라 고치지 않았다.
+- `test_required_span_covers_body_and_whole_path`(:779): v3.2 이후 실패. 계단 모양 경로(-0.8 m)에서 lat_max가 0.8+1.25로 정확히 같기를 요구하는데, v3.2 지시문이 요구하는 heading 회전 모서리(lanemode_avoid_prompt_v3_2.md:49 "모서리 회전에 의한 침범")를 쓰면 2.550이 된다. 회전을 무시해야만 성립하는 기대값이라 v3.2 요구와 모순된다. 원문을 보존하고 미해결로 둔다(차체 기하 모델은 미승인 상태).

@@ -102,9 +102,15 @@ def test_planner_refuses_to_consume_invalid_output(approved_policies):
     n[0] += 1
     return inp(1.0 + n[0] * DT, shift, left, right, road=edges(left_y=-1.2) if n[0] > 40 else None)
   planner.lane_avoid_inputs = fake_inputs
-  for _ in range(41):
+  # fixture fix (failure-repair 1): LaneModelSpeedGuard needs ~1 s of planner frames
+  # before lane mode is active, so run until the controller has seen 41 inputs
+  # (previously range(41) planner frames, which never reached the invalid frame n > 40)
+  for _ in range(200):
     sm = planner_inputs()
     planner.update(sm, SimpleNamespace(atc_active=False))
+    if n[0] >= 41:
+      break
+  assert n[0] == 41 and planner.lanelines_active
   o = planner.lane_avoid_out
   assert not o.valid and o.applied != 0.0
   # the invalid value is not consumed as an avoidance command. What is commanded
@@ -396,6 +402,18 @@ def test_cancel_after_hold_with_return_side_clear_is_valid_on_every_frame(approv
     assert all(o.valid for o in outs)
     assert outs[-1].applied == 0.0
     assert audit_frames(frames, TEST_CFG)['violations'] == []
+
+
+def test_continuity_forced_landing_does_not_round_past_target():
+  # failure-repair 1 reproduction (dt 0.04 frame of the non-uniform run above): the
+  # continuity lower bound forces u = 0.12, which reaches -0.3 exactly in real arithmetic
+  # but -0.2952000000000001 + -0.12 * 0.04 rounds to -0.3000000000000001
+  ctrl = LaneAvoidController(TEST_CFG)
+  ctrl.applied, ctrl.rate, ctrl.motion_sign = -0.2952000000000001, -0.2, -1.0
+  assert abs(-0.2952000000000001 + -0.12 * 0.04) > 0.3  # the float hazard exists
+  new, conflict = ctrl._step(-0.3, 0.04, True, True, {LEFT: 0.5, RIGHT: 0.5})
+  assert conflict == () and new == -0.3
+  assert ctrl._violations(new, 0.04, True, True, {LEFT: 0.5, RIGHT: 0.5}) == []
 
 
 def test_nonfinite_edge_alone_flips_full_range_observation():
