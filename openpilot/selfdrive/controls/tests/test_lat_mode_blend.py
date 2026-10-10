@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from openpilot.cereal import car, log
+from openpilot.selfdrive.controls.lib.laneless_center import LanelessCenterCorrection
 from openpilot.selfdrive.controls.lib.lat_mode_blend import (LAT_MODE_BLEND_SECONDS, blend_lat_mode,
                                                              lat_mode_blend_target, update_lat_mode_blend)
 
@@ -130,6 +131,8 @@ def make_controls(*, lanefull=True, has_curvatures=True, lat_active=True):
   # Startup gate already passed and first activation already seeded, so only the blend is under test.
   controls.lateral_startup = SimpleNamespace(update=lambda *_args: True)
   controls.lateral_started = True
+  # Production default: no LanelessCenterConfig -> disabled, never operational.
+  controls.laneless_center = LanelessCenterCorrection(None)
 
   curvatures = [LANE_CURVATURE] * 17 if has_curvatures else []
   controls.sm = FakeSubMaster({

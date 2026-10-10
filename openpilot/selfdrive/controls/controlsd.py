@@ -27,6 +27,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.controls.lib.path_verifier import PathVerifier
 from openpilot.selfdrive.controls.lib.laneless_center import LanelessCenterCorrection
+from openpilot.selfdrive.controls.lib.lateral_feature_settings import (laneless_center_config_from_params,
+                                                                       updated_laneless_center)
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
 
@@ -92,8 +94,9 @@ class Controls:
     # 레인리스 경로검증기 (기본 꺼짐). 1Hz로만 파라미터 IO.
     self.path_verifier = PathVerifier()
     self.path_verifier_enabled = self.params.get_int("PathVerifier") > 0
-    # 레인리스 중앙 보정 (승인값 없음 -> 항상 꺼짐, 기존 경로 그대로).
+    # 레인리스 중앙 보정 (기본 꺼짐). 설정값이 유효해도 operational은 안전계약/잔여정책 승인 전까지 False.
     self.laneless_center = LanelessCenterCorrection()
+    self.laneless_center = updated_laneless_center(self.laneless_center, laneless_center_config_from_params(self.params))
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -116,6 +119,9 @@ class Controls:
 
   def update(self):
     self.sm.update(15)
+    if self.sm.frame % 100 == 0:  # 1Hz로만 파라미터 IO; 설정이 바뀐 경우에만 새 객체
+      self.laneless_center = updated_laneless_center(self.laneless_center,
+                                                     laneless_center_config_from_params(self.params))
     if self.sm.updated["liveCalibration"]:
       self.pose_calibrator.feed_live_calib(self.sm['liveCalibration'])
     if self.sm.updated["livePose"]:

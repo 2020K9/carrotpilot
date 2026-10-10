@@ -8,6 +8,7 @@ import numpy as np
 
 from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
 from openpilot.selfdrive.controls.lib.lane_avoid import LaneAvoidController
+from openpilot.selfdrive.controls.lib.lateral_feature_settings import lane_avoid_config_from_params
 
 
 class StubMpc:
@@ -52,6 +53,7 @@ def make_planner():
     'LanePlanner': StubLanePlanner,
     'LaneModelSpeedGuard': LaneModelSpeedGuard,
     'LaneAvoidController': LaneAvoidController,
+    'lane_avoid_config_from_params': lane_avoid_config_from_params,
     'time': SimpleNamespace(monotonic=lambda: 0),
     'log': SimpleNamespace(Desire=SimpleNamespace(none=0)),
     'yaw_from_path_no_scipy': lambda *a, **k: (np.zeros(33), np.zeros(33)),

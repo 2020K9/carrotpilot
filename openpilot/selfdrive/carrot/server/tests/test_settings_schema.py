@@ -99,7 +99,10 @@ def test_onnx_vision_toggle_uses_existing_runtime_flag_and_first_steering_sectio
   assert '{"ShareData", {PERSISTENT, INT, "0"}}' in PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
   steering = next(group for group in driving["groups"] if group["id"] == "STEER")
-  onnx = steering["groups"][0]
+  # The lane-avoid / laneless-centring sections were placed above it on request (2026-10-11);
+  # ONNX stays the first of the pre-existing steering sections.
+  assert [group["id"] for group in steering["groups"][:3]] == ["STEER_LANE_AVOID", "STEER_LANELESS_CENTER", "STEER_ONNX"]
+  onnx = steering["groups"][2]
   lane_change = next(group for group in steering["groups"] if group["id"] == "STEER_LANECHANGE")
   assert onnx["id"] == "STEER_ONNX"
   detail_names = [

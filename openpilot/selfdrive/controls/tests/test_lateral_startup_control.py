@@ -18,6 +18,7 @@ from openpilot.selfdrive.controls.lib.lat_mode_blend import (LAT_MODE_BLEND_SECO
                                                              lat_mode_blend_target, update_lat_mode_blend)
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
+from openpilot.selfdrive.controls.lib.laneless_center import LanelessCenterCorrection
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 from openpilot.selfdrive.controls.tests.test_lateral_readiness import Messages
@@ -69,7 +70,8 @@ def control_fixture():
                carrot_controls=NS(lat_suspend_control=lambda cs, active: active), is_vw_meb=False,
                desired_curvature=0.0, lateral_startup=LateralStartupGate(), lateral_started=False,
                steer_limited_by_safety=False, lat_mode_blend=0.0,
-               path_verifier_enabled=False, path_verifier_curvature=lambda *args: pytest.fail('PathVerifier used'))
+               path_verifier_enabled=False, path_verifier_curvature=lambda *args: pytest.fail('PathVerifier used'),
+               laneless_center=LanelessCenterCorrection(None))  # production default: disabled
   return control, lambda: ns['state_control'](control)
 
 

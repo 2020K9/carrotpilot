@@ -15,6 +15,7 @@ from openpilot.selfdrive.controls.lib.lane_planner_2 import LanePlanner
 from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
 from openpilot.selfdrive.controls.lib.lane_avoid import (LaneAvoidController, AvoidInputs, SourceReading, LEFT, RIGHT,
                                                         radar_side_reading)
+from openpilot.selfdrive.controls.lib.lateral_feature_settings import lane_avoid_config_from_params
 from collections import deque
 
 TRAJECTORY_SIZE = 33
@@ -79,6 +80,7 @@ class LateralPlanner:
     # default config is unapproved -> controller inactive, offset never applied
     self.lane_avoid = LaneAvoidController()
     self.lane_avoid_out = None
+    self.lane_avoid_settings_cfg = self.lane_avoid.cfg  # last config read from the settings (default: disabled)
     # evaluation clock for lane_avoid ages: the same time.monotonic() that stamps
     # logMonoTime (cereal/messaging/__init__.py:45) and SubMaster recv_time (:252)
     self.lane_avoid_clock = time.monotonic
@@ -101,6 +103,11 @@ class LateralPlanner:
       LATERAL_ACCEL_COST = self.params.get_float("LatMpcAccelCost") * 0.01
       LATERAL_JERK_COST = self.params.get_float("LatMpcJerkCost") * 0.01
       STEERING_RATE_COST = self.params.get_float("LatMpcSteeringRateCost")
+      # default/unreadable settings -> disabled config. Only a changed setting replaces the
+      # config; refresh() below then resets all avoidance state.
+      lane_avoid_cfg = lane_avoid_config_from_params(self.params)
+      if lane_avoid_cfg != self.lane_avoid_settings_cfg:
+        self.lane_avoid_settings_cfg = self.lane_avoid.cfg = lane_avoid_cfg
 
     # clip speed , lateral planning is not possible at 0 speed
     measured_curvature = sm['controlsState'].curvature

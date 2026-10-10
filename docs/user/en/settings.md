@@ -105,18 +105,18 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **187 parameters**. One driver-monitoring exception is search only; the remaining entries appear in these menus:
+The current `carrot_settings.json` contains **255 parameters**. One driver-monitoring exception is search only; the remaining entries appear in these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 123 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Driving control | 191 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
 | Vehicle and hardware | 17 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 34 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
 
 ## Driving control
 
-These 123 settings can affect vehicle motion. Change one item at a time.
+These 191 settings can affect vehicle motion. Change one item at a time.
 
 <a id="start-auto"></a>
 ### Startup and auto — 9 settings
@@ -148,10 +148,12 @@ The result depends heavily on whether the car uses stock SCC and which button me
 Volkswagen's separate `SET` button sets current speed and `RES` restores the previous set speed, while `+`/`-` follow the button mode, speed units, and long-press setting. Manual engagement with openpilot longitudinal control remains tied to the physical `SET`/`RES` buttons.
 
 <a id="vehicle-steering"></a>
-### Vehicle steering — 37 top-level + 5 ONNX detail settings
+### Vehicle steering — 105 top-level + 5 ONNX detail settings
 
 | Section | Parameters | Purpose |
 |---|---|---|
+| Lane-mode avoidance | `LaneAvoidEnabled` and 56 more (`LaneAvoid*`) | Switch and values for the bounded lane-mode avoidance offset. Default off |
+| Laneless centring | `LanelessCenterEnabled` and 10 more (`LanelessCenter*`) | Switch and values for the laneless curvature centring correction. Default off |
 | ONNX Lane and BSD | `ShareData`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | On-device lane-type and camera BSD detection, source display, and tuning |
 | Centering | `PathOffset`, `CameraYawTrimDeg` | Path position and camera-yaw trim |
 | Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | Timing, smoothing, suspension angle, and steering ratio |
@@ -159,6 +161,10 @@ Volkswagen's separate `SET` button sets current speed and `RES` restores the pre
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
 | Advanced torque | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
 | Steering limits | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | Maximum torque and torque-rate limits |
+
+`Lane-mode avoidance` (`LaneAvoidEnabled`) and `Laneless centring` (`LanelessCenterEnabled`) are at the top of the steering menu and are off (0) by default. Detail values are stored as integers and `0` means **unset**, not the number zero; a range that should start at exactly 0 must use the smallest step (for example 1 cm) or, where lateral/rear coordinates are signed, a negative value. Each description states its unit (cm, ms, % or 0.00001 1/m). The on-screen minimum and maximum are input representation ranges, not approved safety limits; only the probability/fraction items match the code range (0-1). If a feature is switched on with an empty, invalid or unreadable value it stays inactive and its offset is 0. Settings are re-read while driving about every 0.5 s (lane-mode avoidance) or 1 s (laneless centring); existing avoidance/correction state is discarded only when a value actually changes.
+
+Even with every number valid, **steering does not change today.** Lane-mode avoidance additionally needs approved and implemented return-risk, centre-invalid, occupancy-prediction, body-geometry and constraint-conflict policies, and no policy is approved (body model 1 is implemented but unapproved). Laneless centring only becomes computable; applying it to steering needs a separate safety contract and an approved residual policy. Neither feature has been validated on a vehicle.
 
 `ONNX Lane and BSD Detection` (`ShareData`) runs solid/dashed classification and camera BSD on the device. BSD alternates across configured sides whose model-estimated lane width is at least 2 m; speed and lane-change direction do not gate evaluation. The three-class model distinguishes a blind-spot threat from no nearby vehicle and a distant/rear vehicle. Its detail screen keeps the feature toggle at the top and shows the BSD detection-area editor in a separate card directly below it, with only side selection, image refresh, point undo/reset, and area save in the primary view. The basic rectangular point picker at the image's upper left uses `1(L)` and `1(R)` labels; tapping empty space adds a point whenever none is selected. Zoom, viewport panning, and whole-area dragging are omitted so only the selected point moves. Two equal-width buttons directly below the four editing actions open the road- and wide-camera images in pop-up dialogs. Runtime state, confidence, performance, diagnostics, and five persistent tuning values open from the lower-right **Expand/Collapse advanced settings** text and are collapsed by default. The editor retains one last camera frame and shows a dim default road example when no frame is available. An area can be saved only after receiving a real camera image in the current session. It defaults to off, and saved tuning values survive a service restart. The update includes OpenCV, prepared automatically during normal startup. When enabled, the service starts after onroad initialization and model/CAN/Panda readiness have settled for 0.5 seconds. Engaging cruise is not required. It stops offroad and waits again at the next onroad start. See [conditions and detailed values](lane-change.md#sharedata--onnx-lane-and-bsd-detection).
 
