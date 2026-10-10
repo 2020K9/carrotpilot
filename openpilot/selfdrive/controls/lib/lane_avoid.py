@@ -415,10 +415,11 @@ class AvoidOutput:
 
 
 class LaneAvoidController:
-  """State ownership: applied, rate, motion_sign, avoid_side, confirm, last_t, revoked_t
-  and state belong to one lane-mode episode. reset() clears them on any approval or
-  config change (refresh) and whenever the lane-mode path is not consumed
-  (mode_inactive). last_model_t belongs to the model message stream and survives
+  """State ownership: applied, rate, motion_sign, avoid_side, confirm, last_t and state
+  belong to one lane-mode episode. reset() clears them on any approval or config change
+  (refresh) and whenever the lane-mode path is not consumed (mode_inactive). revoked_t
+  (start of the re-entry wait) is kept across those resets so leaving and re-entering
+  does not skip the wait. last_model_t belongs to the model message stream and survives
   resets, so an old message is never reused after one."""
 
   def __init__(self, cfg=None):
@@ -447,12 +448,18 @@ class LaneAvoidController:
     blockers = tuple(self.cfg.blockers())
     if self.cfg is not self._cfg_seen or blockers != self.blockers:
       residual = self.applied != 0.0 or self.rate != 0.0
+      engaged = self.state not in (STANDBY, DISABLED) or residual
+      # the re-entry wait survives the reset (counted from the change if engaged)
+      revoked = self.last_t if engaged and self.last_t is not None else self.revoked_t
       self._cfg_seen, self.blockers = self.cfg, blockers
       self.active = not blockers
       self.reset()
+      self.revoked_t = revoked
       # Dropping a residual at runtime deactivation is not an approved safety action;
-      # the reason is reported on the next active frame (and blocks that frame).
-      self.note = ('approval_changed_reset',) + (('approval_change_with_residual_unverified',) if residual else ())
+      # the reason is reported on the next active frame (and blocks that frame). Notes
+      # accumulate so a later change (e.g. re-enable) cannot hide an earlier residual drop.
+      new = ('approval_changed_reset',) + (('approval_change_with_residual_unverified',) if residual else ())
+      self.note = self.note + tuple(n for n in new if n not in self.note)
     return self.active
 
   def radar_region_x(self, path_x):
@@ -470,9 +477,10 @@ class LaneAvoidController:
     and the transition of a non-zero residual is not validated (reported reason)."""
     engaged = self.state not in (STANDBY, DISABLED) or self.applied != 0.0 or self.rate != 0.0
     residual = self.applied != 0.0 or self.rate != 0.0
+    revoked = self.revoked_t
     self.reset()
-    if engaged and _finite(t):
-      self.revoked_t = t
+    # keep the re-entry wait across repeated inactive frames (reset() clears revoked_t)
+    self.revoked_t = t if engaged and _finite(t) else revoked
     reasons = ('lane_mode_inactive_reset',) + (('mode_exit_with_residual_unverified',) if residual else ())
     return AvoidOutput(state=self.state, blockers=self.blockers, reasons=reasons)
 
