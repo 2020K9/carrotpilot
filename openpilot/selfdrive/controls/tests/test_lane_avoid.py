@@ -776,7 +776,17 @@ def test_required_span_covers_body_and_whole_path():
   assert sp.lat_max == pytest.approx(0.3 + 0.95 + 0.3)  # offset + half width + clearance
   # the base path's own lateral excursion counts too (not only the offset)
   bend = np.where(X > 70.0, -0.8, 0.0)
-  assert la.required_space(X, bend, [0.0], LEFT, TEST_CFG).lat_max == pytest.approx(0.8 + 1.25)
+  # repair 2 (human decision 2026-10-10): the wider, more conservative rotated-corner model
+  # replaces the band expectation 0.8 + 1.25 = 2.05. Independent derivation: X spacing
+  # h = 100/32 = 3.125; the step lies between X[22] = 68.75 and X[23] = 71.875, so the
+  # central-difference slope at X[23] is k = -0.8 / (2h) = -0.128 and its heading has
+  # sin = -0.128/sqrt(1+k^2), cos = 1/sqrt(1+k^2). The outermost LEFT (-y) corner of that
+  # pose is the body front (4.0 m) at the left half width (0.95 m):
+  #   lat_max = 0.8 + (4.0 * 0.128 + 0.95) / sqrt(1 + 0.128^2) + 0.3 (side clearance)
+  #           = 2.550168484768921 (band alone: 0.8 + 0.95 + 0.3 = 2.05 is smaller)
+  k = 0.8 / (2.0 * (100.0 / 32.0))
+  assert la.required_space(X, bend, [0.0], LEFT, TEST_CFG).lat_max == pytest.approx(
+    0.8 + (4.0 * k + 0.95) / math.sqrt(1.0 + k * k) + 0.3)
   assert la.required_space(X, np.zeros(N), [float('nan')], LEFT, TEST_CFG) is None
 
 
@@ -877,6 +887,13 @@ def test_planner_consumes_exactly_the_controller_offset(approved_policies):
     n[0] += 1
     return inp(1.0 + n[0] * DT, shift, left, right)
   planner.lane_avoid_inputs = fake_inputs
+  # repair 2 (human decision 2026-10-10): LaneModelSpeedGuard's readiness time is intended;
+  # advance planner frames until lane mode is active, then check the unchanged asserts
+  for _ in range(200):
+    planner.update(planner_inputs(), SimpleNamespace(atc_active=False))
+    if planner.lanelines_active:
+      break
+  assert planner.lanelines_active
   seen = []
   for _ in range(40):
     sm = planner_inputs()
@@ -1090,15 +1107,17 @@ def test_return_risk_while_moving_is_reported_conflict_not_hidden(approved_polic
   blocked = side(bsd=occ())
   l2, r2 = (blocked, right) if direction == LEFT else (left, blocked)
   outs2, frames2 = run(ctrl, [dict(shift=shift, left=l2, right=r2)] * 10, t0=12 * DT)
-  # neither growth (avoid side occupied) nor return (obstacle remains) is allowed, and the
-  # rate cannot reach 0 within the continuity limit in one frame -> empty intersection.
-  # NOTE: conflicts with the kept v3 assert `state in (RETURN, RETURN_RISK)` in
-  # test_new_avoid_side_detection_revokes_and_never_grows (REVIEW.md, fixture conflicts).
-  assert outs2[0].state == la.CONFLICT and 'constraint_conflict_policy_unapproved' in outs2[0].reasons
-  assert any(c.startswith('conflict_') for c in outs2[0].conflict)
+  # neither growth (avoid side occupied) nor return (obstacle remains) is allowed.
+  # repair 2 (human decision 2026-10-10): blocking movement has priority and continuity is
+  # relaxed only toward stopping the growth, so the rate drops to 0 at once and this is no
+  # longer an empty intersection; the risk is still reported (not hidden). Previously:
+  #   assert outs2[0].state == la.CONFLICT and 'constraint_conflict_policy_unapproved' in outs2[0].reasons
+  #   assert any(c.startswith('conflict_') for c in outs2[0].conflict)
+  #   assert res['violations'] and all(all_outs[v['frame']].state == la.CONFLICT for v in res['violations'])
+  assert outs2[0].state == la.RETURN_RISK and 'return_risk_policy_unapproved' in outs2[0].reasons
+  assert outs2[0].conflict == () and all(o.valid for o in outs2)
   res = audit_frames(frames + frames2, TEST_CFG)
-  all_outs = outs + outs2
-  assert res['violations'] and all(all_outs[v['frame']].state == la.CONFLICT for v in res['violations'])
+  assert res['violations'] == []
 
 
 def test_audit_checks_rate_change_on_target_reached_frame(approved_policies):

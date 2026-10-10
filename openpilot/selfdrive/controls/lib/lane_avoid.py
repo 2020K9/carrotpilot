@@ -51,6 +51,12 @@ v3.2 (lanemode_avoid_prompt_v3_2):
   time-stamped objects; missing/stale/bad results are UNKNOWN.
 - Mode exit / approval-change resets report the dropped residual (residual_dropped) so
   the consumed-signal discontinuity is visible; its handling is not decided.
+
+Repair 2 (human decision 2026-10-10): when permission is revoked while |applied| is
+growing, blocking movement has priority over continuity. |applied| never grows after the
+revocation; the rate may drop to 0 at once (one-sided continuity exception), and any
+decrease toward 0 then obeys the normal rate-change and return-rate limits. With the
+return side also blocked the offset is held; it is never forced toward the obstacle.
 """
 import math
 from dataclasses import dataclass, field
@@ -882,8 +888,11 @@ class LaneAvoidController:
     m, u_prev, m_new = s * self.applied, s * self.rate, s * new_applied
     u = (m_new - m) / dt
     m_cap = cap[RIGHT if s > 0.0 else LEFT]
+    d = cfg.max_rate_change_mps2 * dt
+    # repair 2: without permission, growth may stop at once (lower bound min(u_prev - d, 0))
+    lo_cont = min(u_prev - d, 0.0) if not permitted else u_prev - d
     bad = []
-    if abs(u - u_prev) > cfg.max_rate_change_mps2 * dt + tol:
+    if u < lo_cont - tol or u > u_prev + d + tol:
       bad.append('continuity')
     if u > cfg.entry_rate_mps + tol:
       bad.append('entry_rate')
@@ -902,7 +911,8 @@ class LaneAvoidController:
   def _step(self, target, dt, permitted, return_ok, cap):
     """Choose this frame's applied offset inside the intersection of every constraint,
     on the magnitude m = s * applied along the motion side s (u = actual dm/dt):
-      continuity   |u - u_prev| <= max_rate_change_mps2 * dt
+      continuity   |u - u_prev| <= max_rate_change_mps2 * dt; without permission the
+                   lower bound is min(u_prev - d, 0) (growth stops at once, repair 2)
       rates        -return_rate_mps <= u <= entry_rate_mps
       room         m + u*dt <= cap (min(max_offset, observed edge room); 0 if not observed)
       no crossing  m + u*dt >= 0
@@ -921,7 +931,12 @@ class LaneAvoidController:
     m_t = max(s * target, 0.0)
     m_cap = cap[RIGHT if s > 0.0 else LEFT]
     d = cfg.max_rate_change_mps2 * dt
-    lower = {'continuity': u_prev - d, 'return_rate': -cfg.return_rate_mps, 'no_side_crossing': -m / dt}
+    # repair 2 (human decision 2026-10-10): blocking movement has priority. Without
+    # permission a growing |applied| stops in this frame (u = 0 allowed whatever u_prev);
+    # continuity is relaxed only toward that stop, never below 0, so any decrease toward
+    # 0 still changes the rate by at most d per frame.
+    lo_cont = min(u_prev - d, 0.0) if not permitted else u_prev - d
+    lower = {'continuity': lo_cont, 'return_rate': -cfg.return_rate_mps, 'no_side_crossing': -m / dt}
     upper = {'continuity': u_prev + d, 'entry_rate': cfg.entry_rate_mps, 'edge_room_or_max_offset': (m_cap - m) / dt}
     if not permitted:
       upper['no_growth_without_permission'] = 0.0

@@ -376,14 +376,20 @@ def test_in_progress_cancel_conflict_is_detected_and_invalid(approved_policies, 
   blocked = side(bsd=occ())
   l2, r2 = (blocked, right) if direction == LEFT else (left, blocked)
   outs2, frames2 = run(ctrl, [dict(shift=shift, left=l2, right=r2)] * 3, t0=12 * DT)
-  assert outs2[0].state == la.CONFLICT and not outs2[0].valid
-  assert 'output_invalid' in rules(audit_frames(frames + frames2, TEST_CFG))
+  # repair 2 (human decision 2026-10-10): blocking movement has priority; continuity is
+  # relaxed only toward stopping the growth, so this is no longer a conflict. The offset
+  # is held (both sides blocked) and every frame is valid. Previously:
+  #   assert outs2[0].state == la.CONFLICT and not outs2[0].valid
+  #   assert 'output_invalid' in rules(audit_frames(frames + frames2, TEST_CFG))
+  assert outs2[0].state == la.RETURN_RISK and outs2[0].valid and outs2[0].conflict == ()
+  assert all(o.applied == frames[-1]['applied'] for o in outs2)
+  assert audit_frames(frames + frames2, TEST_CFG)['violations'] == []
 
 
 def test_cancel_after_hold_with_return_side_clear_is_valid_on_every_frame(approved_policies):
   # acceptance (held, rate 0): avoid side becomes occupied, return side clear -> a feasible
   # return exists on every frame, uniform and non-uniform intervals. The GROWING case is
-  # infeasible by construction (no growth + continuity, see the test above): human decision.
+  # covered by the repair-2 one-sided continuity rule (see the tests above/below).
   for steps in ([DT], [0.04, 0.06, 0.05]):
     ctrl = LaneAvoidController(TEST_CFG)
     shift, left, right = mirror(LEFT)
@@ -402,6 +408,65 @@ def test_cancel_after_hold_with_return_side_clear_is_valid_on_every_frame(approv
     assert all(o.valid for o in outs)
     assert outs[-1].applied == 0.0
     assert audit_frames(frames, TEST_CFG)['violations'] == []
+
+
+@pytest.mark.parametrize('direction', [LEFT, RIGHT])
+@pytest.mark.parametrize('return_clear', [False, True])
+@pytest.mark.parametrize('steps', [[DT], [0.04, 0.06, 0.05]])
+def test_revocation_while_growing_never_grows_and_safe_return_obeys_rate_limits(approved_policies, direction,
+                                                                                return_clear, steps):
+  # repair 2 regression: right after the avoid side becomes occupied while |applied| grows,
+  # |applied| is non-increasing on every frame. Return side blocked -> held (never forced
+  # toward the obstacle). Return side clear -> the growth stops at once, then the decrease
+  # obeys the rate-change limit from rate 0 and the return rate on every later frame.
+  ctrl = LaneAvoidController(TEST_CFG)
+  shift, left, right, outs, frames = avoid_then(ctrl, direction, n=12)
+  assert ctrl.rate * la.SIDE_SIGN[direction] > TEST_CFG.max_rate_change_mps2 * DT  # growing faster than d
+  blocked = side(bsd=occ())
+  ret_side = right if direction == LEFT else left
+  if return_clear:
+    ret_side = side()
+  l2, r2 = (blocked, ret_side) if direction == LEFT else (ret_side, blocked)
+  t, prev = 12 * DT, outs[-1]
+  outs2 = []
+  for i in range(120):
+    o = ctrl.update(inp(t, 0.0 if return_clear else shift, l2, r2))
+    dt = t - frames[-1]['t']
+    frames.append({'t': t, 'state': o.state, 'permitted': o.permitted, 'target': o.target, 'applied': o.applied,
+                   'avoid_side': o.avoid_side, 'side_state': dict(o.side_state), 'edge_state': dict(o.edge_state),
+                   'rate': o.rate, 'edge_room': dict(o.edge_room), 'valid': o.valid})
+    assert o.valid and not o.permitted
+    assert abs(o.applied) <= abs(prev.applied)  # never grows, not even for one frame
+    assert o.applied * prev.applied >= 0.0
+    if i == 0:
+      assert o.rate == 0.0  # the growth stops in the first revoked frame
+    else:
+      assert abs(o.rate - prev.rate) <= TEST_CFG.max_rate_change_mps2 * dt + 1e-9
+      assert abs(o.rate) <= TEST_CFG.return_rate_mps + 1e-9
+    outs2.append(o)
+    prev = o
+    t += steps[i % len(steps)]
+  if return_clear:
+    assert outs2[-1].applied == 0.0 and outs2[-1].state == la.STANDBY
+  else:
+    assert all(o.applied == outs[-1].applied for o in outs2)
+  assert audit_frames(frames, TEST_CFG)['violations'] == []
+
+
+def test_audit_exempts_only_the_unpermitted_stop_of_growth():
+  # repair 2: the shared checker accepts a growth stop (rate -> 0) on an unpermitted frame,
+  # but not on a permitted frame and not a jump past 0 into a return
+  def f(t, applied, a0, permitted):
+    return {'t': t, 'state': 'x', 'permitted': permitted, 'target': -0.3 if permitted else 0.0, 'applied': applied,
+            'avoid_side': LEFT, 'side_state': {LEFT: CLEAR, RIGHT: CLEAR}, 'edge_state': {LEFT: CLEAR, RIGHT: CLEAR},
+            'rate': (applied - a0) / DT, 'edge_room': {LEFT: 1.0, RIGHT: 1.0}}
+  head = [f(0.0, -0.10, -0.085, True), f(DT, -0.115, -0.10, True)]
+  stop = audit_frames(head + [f(2 * DT, -0.115, -0.115, False)], TEST_CFG)
+  assert 'rate_change_above_limit' not in rules(stop)
+  stop_permitted = audit_frames(head + [f(2 * DT, -0.115, -0.115, True)], TEST_CFG)
+  assert 'rate_change_above_limit' in rules(stop_permitted)
+  past_zero = audit_frames(head + [f(2 * DT, -0.11, -0.115, False)], TEST_CFG)
+  assert 'rate_change_above_limit' in rules(past_zero)
 
 
 def test_continuity_forced_landing_does_not_round_past_target():

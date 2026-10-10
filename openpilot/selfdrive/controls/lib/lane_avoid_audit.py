@@ -15,6 +15,9 @@ the first interval only. Intervals that cannot be differentiated (first sample w
 not_evaluable. 'max_rate_change_mps2' is the second time derivative of the offset; it
 is NOT a steering-command, curvature or lateral-acceleration jerk, which this trace
 does not contain (FINAL_COMMAND_SIGNALS_UNVERIFIED).
+
+Repair 2: on an unpermitted frame a growing |offset| may stop at once (rate to 0); this
+one-sided exception matches the controller and covers nothing below rate 0.
 """
 import math
 
@@ -127,9 +130,17 @@ def audit_frames(frames, cfg):
           elif jmax is None:
             if r != prev_rate:
               fail('rate_change_limit_unapproved', rate_before=prev_rate, rate_after=r)
-          elif abs(r - prev_rate) > jmax * dt + RATE_TOL:
-            fail('rate_change_above_limit', rate_before=prev_rate, rate_after=r, change=abs(r - prev_rate),
-                 limit=jmax * dt, dt=dt)
+          else:
+            # repair 2 (human decision 2026-10-10): without permission a growing |offset| may
+            # stop at once; on the magnitude axis the lower bound is min(u_prev - d, 0), so
+            # only the drop to 0 is exempt and any decrease still obeys the limit
+            s = -1.0 if (a0 < 0.0 or (a0 == 0.0 and applied < 0.0)) else 1.0
+            lo = s * prev_rate - jmax * dt
+            if not f['permitted']:
+              lo = min(lo, 0.0)
+            if s * r < lo - RATE_TOL or s * r > s * prev_rate + jmax * dt + RATE_TOL:
+              fail('rate_change_above_limit', rate_before=prev_rate, rate_after=r, change=abs(r - prev_rate),
+                   limit=jmax * dt, dt=dt)
         prev_rate = r_next
         if a0 * applied < 0.0:
           fail('offset_crossed_sides', before=a0, after=applied)
