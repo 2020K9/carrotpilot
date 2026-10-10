@@ -79,6 +79,9 @@ class LateralPlanner:
     # default config is unapproved -> controller inactive, offset never applied
     self.lane_avoid = LaneAvoidController()
     self.lane_avoid_out = None
+    # evaluation clock for lane_avoid ages: the same time.monotonic() that stamps
+    # logMonoTime (cereal/messaging/__init__.py:45) and SubMaster recv_time (:252)
+    self.lane_avoid_clock = time.monotonic
 
   def reset_mpc(self, x0=None):
     if x0 is None:
@@ -166,11 +169,17 @@ class LateralPlanner:
 
     self.path_xyz[:, 1] += self.pathOffset
 
-    if self.lane_avoid.active:
-      self.lane_avoid_out = self.lane_avoid.update(self.lane_avoid_inputs(sm, carrot, md, model_active))
+    # approval is re-validated every frame (refresh), not taken from construction time
+    if self.lane_avoid.refresh():
       if self.lanelines_active:
-        # uniform shift: plan_yaw/plan_yaw_rate stay consistent with the path
+        self.lane_avoid_out = self.lane_avoid.update(self.lane_avoid_inputs(sm, carrot, md, model_active))
+        # uniform shift of every consumed point: plan_yaw/plan_yaw_rate stay consistent
         self.path_xyz[:, 1] += self.lane_avoid_out.applied
+      else:
+        # lane-mode path not consumed: the offset episode ends; re-entry starts from 0
+        self.lane_avoid_out = self.lane_avoid.mode_inactive(self.lane_avoid_clock())
+    else:
+      self.lane_avoid_out = None
 
     self.lat_mpc.set_weights(self.lateralPathCost, self.lateralMotionCost,
                              LATERAL_ACCEL_COST, LATERAL_JERK_COST,
@@ -218,12 +227,21 @@ class LateralPlanner:
     # Only called while lane_avoid is active (never with the unapproved default config).
     cs = sm['carState']
     rs = sm['radarState']
-    model_t = sm.logMonoTime['modelV2'] * 1e-9
-    radar_age = model_t - sm.logMonoTime['radarState'] * 1e-9
+    # Ages = evaluation time - message logMonoTime (publish time, set by new_message at
+    # cereal/messaging/__init__.py:45 on the same monotonic clock as lane_avoid_clock).
+    # Sensor capture is earlier than publish; that extra latency is not measured here.
+    # A never-received service (logMonoTime 0) has no time, never age 0; a time ahead
+    # of now gives a negative age, which every freshness check rejects.
+    now = self.lane_avoid_clock()
+    model_t = sm.logMonoTime['modelV2'] * 1e-9 if sm.logMonoTime['modelV2'] > 0 else None
+    radar_t = sm.logMonoTime['radarState'] * 1e-9 if sm.logMonoTime['radarState'] > 0 else None
+    model_age = None if model_t is None else now - model_t
+    radar_age = None if radar_t is None else now - radar_t
     errs = rs.radarErrors
     radar_valid = bool(sm.valid['radarState'] and not (errs.canError or errs.radarFault or errs.wrongConfig or
                                                        errs.radarUnavailableTemporary))
-    region_x = self.lane_avoid.cfg.required_region_x_m
+    # whole consumed path span (body rear .. last point + body front) united with the fixed region
+    region_x = self.lane_avoid.radar_region_x(self.path_xyz[:, 0])
     side_readings = {}
     for side, bsd, lead, leads in ((LEFT, cs.leftBlindspot, rs.leadLeft, rs.leadsLeft),
                                    (RIGHT, cs.rightBlindspot, rs.leadRight, rs.leadsRight)):
@@ -239,10 +257,14 @@ class LateralPlanner:
     road_edges = {}
     if len(md.roadEdges) >= 2 and len(md.roadEdgeStds) >= 2:
       for i, side in ((0, LEFT), (1, RIGHT)):
-        road_edges[side] = (md.roadEdges[i].x, md.roadEdges[i].y, md.roadEdgeStds[i], 0.0 if model_active else None)
+        # edges ride in the model message: they inherit its age; samples are checked separately
+        road_edges[side] = (md.roadEdges[i].x, md.roadEdges[i].y, md.roadEdgeStds[i],
+                            model_age if model_active else None)
     lane_y = getattr(self.LP, 'lane_path_y', None)
     return AvoidInputs(
-      t=model_t,
+      t=now,
+      model_t=model_t,
+      clock_verified=True,  # now and every logMonoTime above come from time.monotonic()
       center_valid=bool(self.lanelines_active and lane_y is not None),
       path_x=self.path_xyz[:, 0],
       model_y=getattr(self.LP, 'model_path_y', None),
@@ -250,7 +272,7 @@ class LateralPlanner:
       base_y=self.path_xyz[:, 1],
       d_prob=getattr(self.LP, 'blend_d_prob', None),
       model_valid=bool(model_active and sm.valid['modelV2']),
-      model_age_s=0.0 if model_active else None,
+      model_age_s=model_age if model_active else None,
       lane_change_active=bool(md.meta.desire != log.Desire.none or carrot.atc_active or
                               md.meta.laneChangeState != log.LaneChangeState.off),
       driver_steering=bool(cs.steeringPressed),
