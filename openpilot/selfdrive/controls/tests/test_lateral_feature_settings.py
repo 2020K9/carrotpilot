@@ -498,3 +498,17 @@ def test_lane_avoid_config_fields_are_all_exposed():
   assert {ss for ss, _ in fs.LANE_AVOID_COVERAGE} == {(s, side) for s in la.REQUIRED_SOURCES for side in (la.LEFT, la.RIGHT)}
   assert {n for n, *_ in fs.LANE_AVOID_AGES} == set(la.REQUIRED_SOURCES) | {"road_edge", "model_path"}
   assert {f for _, f, *_ in fs.LANELESS_CENTER_SCALARS} == {f.name for f in dataclasses.fields(LanelessCenterConfig)}
+
+
+@pytest.mark.parametrize("lanefull", [True, False])
+def test_valid_laneless_settings_leave_controlsd_output_bit_identical(lanefull):
+  # Enabled (numerically valid) but not operational: state_control must consume exactly
+  # what it consumes with the production default (disabled) correction.
+  from openpilot.selfdrive.controls.tests.test_lat_mode_blend import make_controls, run_cycles
+  default, default_out = make_controls(lanefull=lanefull)
+  enabled, enabled_out = make_controls(lanefull=lanefull)
+  enabled.laneless_center = fs.updated_laneless_center(enabled.laneless_center,
+                                                       fs.laneless_center_config_from_params(valid_params()))
+  assert enabled.laneless_center.enabled and not enabled.laneless_center.operational
+  assert run_cycles(default, default_out, 150) == run_cycles(enabled, enabled_out, 150)
+  assert default.desired_curvature == enabled.desired_curvature
