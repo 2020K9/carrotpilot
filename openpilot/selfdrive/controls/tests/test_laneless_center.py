@@ -226,6 +226,18 @@ def test_every_point_and_interpolated_point_stays_between_path_and_center(case):
   assert consumed_within_bounds(xm, bm, cm, delta)
 
 
+def test_interval_endpoints_reconstruct_inside_bounds_despite_rounding():
+  # Regression: 0.4*2/x^2 reconstructed as dk*x^2/2 used to exceed 0.4 by one ulp.
+  xm = X[(X >= TEST_CFG.check_x_min) & (X <= TEST_CFG.check_x_max)]
+  for b, c in ((np.zeros_like(xm), np.full_like(xm, 0.4)), (np.zeros_like(xm), np.full_like(xm, -0.4))):
+    lo, hi = curvature_delta_interval(xm, b, c)
+    for dk in (lo, hi):
+      y = b + reconstructed_offsets(xm, dk)
+      assert np.all(y >= np.minimum(b, c)) and np.all(y <= np.maximum(b, c))
+      assert consumed_within_bounds(xm, b, c, dk)
+    assert (hi > 0.0) if c[0] > 0 else (lo < 0.0)
+
+
 def test_filter_residual_beyond_new_interval_is_detected():
   corr, delta = run()
   assert delta > 0.0

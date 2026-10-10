@@ -295,7 +295,19 @@ def curvature_delta_interval(x: np.ndarray, b: np.ndarray, c: np.ndarray) -> Tup
   xs, bs, cs = _densify(x, b, c)
   k = 2.0 / np.maximum(xs * xs, 1e-6)
   d = cs - bs
-  return float(np.max(np.minimum(d, 0.0) * k)), float(np.min(np.maximum(d, 0.0) * k))
+  lo = float(np.max(np.minimum(d, 0.0) * k))
+  hi = float(np.min(np.maximum(d, 0.0) * k))
+  return _inside_bounds(xs, bs, cs, lo), _inside_bounds(xs, bs, cs, hi)
+
+
+def _inside_bounds(xs: np.ndarray, bs: np.ndarray, cs: np.ndarray, dk: float) -> float:
+  # d*2/x^2 reconstructed as dk*x^2/2 can round one ulp past c; step toward 0
+  # until the exact reconstruction is inside, falling back to 0 (always inside).
+  for _ in range(64):
+    if dk == 0.0 or within_center_bounds(bs, cs, bs + reconstructed_offsets(xs, dk)):
+      return dk
+    dk = float(np.nextafter(dk, 0.0))
+  return 0.0
 
 
 def reconstructed_offsets(x: np.ndarray, dk: float) -> np.ndarray:
@@ -470,6 +482,11 @@ class LanelessCenterCorrection:
       if not reason:
         xm, cm = x[m], c[m]
         bm = np.interp(xm, px, py)
+        # The float midpoint (and lines built as centre -/+ w/2) can sit an ulp
+        # beyond the real centre; pull it toward the path by that bound, never past.
+        tol = 4.0 * np.finfo(float).eps * (np.abs(_arr(lll_y)[m]) + np.abs(_arr(rll_y)[m]))
+        d = cm - bm
+        cm = bm + np.sign(d) * np.maximum(np.abs(d) - tol, 0.0)
         plan_k = _poly_curvature(_poly_fit(px, py, 0.0, cfg.check_x_max), cfg.eval_x)
         if plan_k is None or abs(plan_k - model_curvature) > cfg.max_path_direct_mismatch:
           reason = BLOCK_MISMATCH

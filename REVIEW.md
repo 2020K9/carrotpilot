@@ -114,4 +114,15 @@ v3 §8 절차를 따른다. 코드리뷰·별도 실행 승인 → 입력·시�
 4. cereal 기록, 전송 직전 명령, 차량 응답.
 5. latActive 해제 시 잔류는 기존 clip 경사로 처리한다(래치 대상 아님).
 6. 지시문 §8.2의 전체 소스 사본·지문 목록(SHA256SUMS)은 이 사본에서 만들지 않았다(부모가 회수 단계에서 준비).
-7. 작성 시험의 실행 결과는 없다.
+7. 작성 시험의 실행 결과는 없다. → §10 격리 실행 결과로 대체(통합시험 아님).
+
+## 10. 시험 실패 수정 1회(회장님 승인 범위, 2026-10-10)
+
+- 부모 초회 격리 실행(`--noconftest`): 251통과 1실패. 실패는 `test_laneless_center.py::test_every_point_and_interpolated_point_stays_between_path_and_center[straight]`이며, 마지막 점(x=40)의 재구성 오프셋이 0.4를 1ulp가량 넘었다.
+- 원인: 모듈은 차선선 중점 `0.5·(ly+ry)`로 중앙을 구한다. 시험 입력(0.4∓1.8)의 중점은 0.40000000000000013이라 실제 중앙보다 ulp만큼 바깥이고, 그 위에서 계산한 상한 `d·2/x²`를 `dk·x²/2`로 재구성할 때도 반올림 초과가 생길 수 있다.
+- 수정(보수적으로만 좁힘, 정책·허용오차·활성화 변경 없음):
+  - `update`: 검사 구간 중앙을 경로 쪽으로 `4·eps·(|ly|+|ry|)`만큼 당기며 경로를 넘지 않는다(약 1e-15 m).
+  - `curvature_delta_interval`: 양 끝값을 정확한 재구성이 경계 안에 들어올 때까지 `nextafter`로 0 쪽으로 옮기며, 최대 64회 뒤에는 0으로 둔다.
+  - 새 재현 시험 `test_interval_endpoints_reconstruct_inside_bounds_despite_rounding`. 기존 단언은 바꾸지 않았다.
+- 재실행: `PYTHONDONTWRITEBYTECODE=1 /home/ssm-user/work/py312_ctl/bin/python -m pytest --noconftest -o addopts= -p no:cacheprovider -q openpilot/selfdrive/controls/tests/test_laneless_center.py openpilot/selfdrive/controls/tests/test_laneless_center_v4.py openpilot/selfdrive/controls/tests/test_lat_error_decomposition.py`. 종료코드 0, 253통과 0실패.
+- 이 결과는 conftest 없는 격리 실행이며 전체 통합시험 통과가 아니다. 일반 pytest는 `msgq.ipc_pyx` 부재로 준비 단계에서 실패했다(미해결).
