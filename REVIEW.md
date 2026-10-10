@@ -18,7 +18,7 @@ v3.1 보고서 원문은 기준 커밋 `9bd8d65b`의 REVIEW.md(git 이력)에 �
 
 이전 제출 꾸러미(`reviews/avoid31_submit/9bd8d65b/`)는 사본에 없어 참조하지 않았다(미보유). 사실 확인은 기준 커밋의 소스·시험·REVIEW.md를 직접 열어 했다.
 
-## 2. 변경 파일 (기준 대비 6개)
+## 2. 변경 파일 (기준 대비 7개: 소스 3, 시험 2, 문서 2)
 
 - `lib/lane_avoid.py` — 출력 유효성, 정책 구현 등록부, 공통 차체 외곽, 이동 객체 예측 호출, 위험 처리 제안 검증, 최종 재검사, 잔류 폐기 보고
 - `lib/lane_avoid_audit.py` — `output_invalid` 규칙, `audit_signal_chain`(최종 신호 연쇄 연속성 구조)
