@@ -231,6 +231,11 @@ class LanePlanner:
     #  self.lane_width_left_filtered.x, self.lane_width, self.lane_width_right_filtered.x)
 
     adjustLaneTime = self.params.get_float("LatMpcInputOffset") * 0.01 # 0.06 
+    # lane_avoid: the blend below overwrites path_xyz in place, so keep the laneless y
+    # and the lane y it is mixed with (same samples). Copies only; no effect on the path.
+    self.model_path_y = path_xyz[:, 1].copy()
+    self.lane_path_y = None
+    self.blend_d_prob = self.d_prob
     laneline_active = False
     self.d_prob_count = self.d_prob_count + 1 if self.d_prob > 0.3 else 0
     if self.lanefull_mode and self.d_prob_count > int(1 / DT_MDL):
@@ -244,6 +249,7 @@ class LanePlanner:
         if safe_idxs[0]:
           lane_path_y_interp = np.interp(path_t * (1.0 + adjustLaneTime), self.ll_t[safe_idxs], lane_path_y[safe_idxs])
           path_xyz[:,1] = self.d_prob * lane_path_y_interp + (1.0 - self.d_prob) * path_xyz[:,1]
+          self.lane_path_y = lane_path_y_interp
 
 
     path_xyz[:, 1] += (CAMERA_OFFSET + self.lane_offset_filtered.x)

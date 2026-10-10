@@ -13,6 +13,8 @@ from openpilot.common.params import Params
 #from openpilot.selfdrive.controls.lib.lane_planner import LanePlanner
 from openpilot.selfdrive.controls.lib.lane_planner_2 import LanePlanner
 from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
+from openpilot.selfdrive.controls.lib.lane_avoid import (LaneAvoidController, AvoidInputs, SourceReading, LEFT, RIGHT,
+                                                        radar_side_reading)
 from collections import deque
 
 TRAJECTORY_SIZE = 33
@@ -74,6 +76,12 @@ class LateralPlanner:
     self.curve_speed = 0
     self.lane_model_speed_guard = LaneModelSpeedGuard(recovery_frames=int(1 / DT_MDL))
     self.laneless_only = True
+    # default config is unapproved -> controller inactive, offset never applied
+    self.lane_avoid = LaneAvoidController()
+    self.lane_avoid_out = None
+    # evaluation clock for lane_avoid ages: the same time.monotonic() that stamps
+    # logMonoTime (cereal/messaging/__init__.py:45) and SubMaster recv_time (:252)
+    self.lane_avoid_clock = time.monotonic
 
   def reset_mpc(self, x0=None):
     if x0 is None:
@@ -161,6 +169,23 @@ class LateralPlanner:
 
     self.path_xyz[:, 1] += self.pathOffset
 
+    # approval is re-validated every frame (refresh), not taken from construction time
+    if self.lane_avoid.refresh():
+      if self.lanelines_active:
+        self.lane_avoid_out = self.lane_avoid.update(self.lane_avoid_inputs(sm, carrot, md, model_active))
+        # uniform shift of every consumed point: plan_yaw/plan_yaw_rate stay consistent.
+        # v3.2: an invalid output (constraint conflict / failed final check) is never
+        # consumed as an avoidance command. Not adding it is NOT an approved response
+        # (it drops a non-zero offset at once); the replacement command is undecided and
+        # this branch is unreachable in production (blockers keep lane_avoid disabled).
+        if self.lane_avoid_out.valid:
+          self.path_xyz[:, 1] += self.lane_avoid_out.applied
+      else:
+        # lane-mode path not consumed: the offset episode ends; re-entry starts from 0
+        self.lane_avoid_out = self.lane_avoid.mode_inactive(self.lane_avoid_clock())
+    else:
+      self.lane_avoid_out = None
+
     self.lat_mpc.set_weights(self.lateralPathCost, self.lateralMotionCost,
                              LATERAL_ACCEL_COST, LATERAL_JERK_COST,
                              STEERING_RATE_COST)
@@ -202,6 +227,64 @@ class LateralPlanner:
       self.solution_invalid_cnt = 0
   
     self.x_sol = self.lat_mpc.x_sol
+
+  def lane_avoid_inputs(self, sm, carrot, md, model_active):
+    # Only called while lane_avoid is active (never with the unapproved default config).
+    cs = sm['carState']
+    rs = sm['radarState']
+    # Ages = evaluation time - message logMonoTime (publish time, set by new_message at
+    # cereal/messaging/__init__.py:45 on the same monotonic clock as lane_avoid_clock).
+    # Sensor capture is earlier than publish; that extra latency is not measured here.
+    # A never-received service (logMonoTime 0) has no time, never age 0; a time ahead
+    # of now gives a negative age, which every freshness check rejects.
+    now = self.lane_avoid_clock()
+    model_t = sm.logMonoTime['modelV2'] * 1e-9 if sm.logMonoTime['modelV2'] > 0 else None
+    radar_t = sm.logMonoTime['radarState'] * 1e-9 if sm.logMonoTime['radarState'] > 0 else None
+    model_age = None if model_t is None else now - model_t
+    radar_age = None if radar_t is None else now - radar_t
+    errs = rs.radarErrors
+    radar_valid = bool(sm.valid['radarState'] and not (errs.canError or errs.radarFault or errs.wrongConfig or
+                                                       errs.radarUnavailableTemporary))
+    # whole consumed path span (body rear .. last point + body front) united with the fixed region
+    region_x = self.lane_avoid.radar_region_x(self.path_xyz[:, 0])
+    side_readings = {}
+    for side, bsd, lead, leads in ((LEFT, cs.leftBlindspot, rs.leadLeft, rs.leadsLeft),
+                                   (RIGHT, cs.rightBlindspot, rs.leadRight, rs.leadsRight)):
+      side_readings[side] = {
+        # carState BSD is OEM OR vision (the Oem/Onnx split Bools carry no validity or
+        # age); False cannot be told apart from an invalid, stale or unsupported
+        # source -> never clear. True is always a veto.
+        'bsd': SourceReading(supported=None, valid=None, age_s=None, detected=True if bsd else None),
+        'radar': radar_side_reading([lead] + list(leads), radar_valid, radar_age, region_x),
+        # no independent model side-object output exists (leadsV3 is ego-lane only)
+        'model': SourceReading(supported=False),
+      }
+    road_edges = {}
+    if len(md.roadEdges) >= 2 and len(md.roadEdgeStds) >= 2:
+      for i, side in ((0, LEFT), (1, RIGHT)):
+        # edges ride in the model message: they inherit its age; samples are checked separately
+        road_edges[side] = (md.roadEdges[i].x, md.roadEdges[i].y, md.roadEdgeStds[i],
+                            model_age if model_active else None)
+    lane_y = getattr(self.LP, 'lane_path_y', None)
+    return AvoidInputs(
+      t=now,
+      model_t=model_t,
+      clock_verified=True,  # now and every logMonoTime above come from time.monotonic()
+      center_valid=bool(self.lanelines_active and lane_y is not None),
+      path_x=self.path_xyz[:, 0],
+      model_y=getattr(self.LP, 'model_path_y', None),
+      lane_y=lane_y,
+      base_y=self.path_xyz[:, 1],
+      d_prob=getattr(self.LP, 'blend_d_prob', None),
+      model_valid=bool(model_active and sm.valid['modelV2']),
+      model_age_s=model_age if model_active else None,
+      lane_change_active=bool(md.meta.desire != log.Desire.none or carrot.atc_active or
+                              md.meta.laneChangeState != log.LaneChangeState.off),
+      driver_steering=bool(cs.steeringPressed),
+      measured_curvature=sm['controlsState'].curvature,
+      side_readings=side_readings,
+      road_edges=road_edges,
+    )
 
   def publish(self, sm, pm, carrot):
     plan_solution_valid = self.solution_invalid_cnt < 2
