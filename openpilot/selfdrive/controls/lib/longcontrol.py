@@ -17,7 +17,7 @@ HYUNDAI_LONGITUDINAL_KI = 0.0
 HYUNDAI_LONGITUDINAL_KF = 1.0
 STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
-STOPPING_ACCEL_MAX = -50
+STOPPING_ACCEL_MAX = -30
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
