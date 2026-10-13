@@ -68,9 +68,16 @@ jobs:
             openpilot/selfdrive/carrot/tests/test_scc_lead_policy.py \
             openpilot/selfdrive/carrot/tests/test_radar_lead_simulator.py \
             openpilot/selfdrive/carrot/tests/test_radard_dpath.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test compare page JavaScript
+        run: node --test 'tools/carrot_route_vault/tests/js/*.test.mjs'
+      - name: Resolve image name
+        shell: bash
+        # GHCR repository names must be lowercase; the owner (e.g. 2020K9) may not be.
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/carrot-route-vault" >> "$GITHUB_ENV"
       - name: Build committed bundle and image
-        env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/carrot-route-vault
         run: |
           python tools/carrot_route_vault/build_bundle.py "$RUNNER_TEMP/vault-bundle" --ref "$GITHUB_SHA"
           docker pull "$IMAGE:carrot-wip" || true
@@ -84,7 +91,6 @@ jobs:
       - name: Publish tested image
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE: ghcr.io/${{ github.repository_owner }}/carrot-route-vault
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$IMAGE:sha-$GITHUB_SHA"
