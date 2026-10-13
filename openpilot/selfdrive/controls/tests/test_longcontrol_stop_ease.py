@@ -477,3 +477,19 @@ def test_varying_final_limits_cover_raised_lower_lowered_upper_and_every_safety_
       assert accel <= upper
       seen["upper_below"] += accel != shadow
   assert min(seen.values()) >= 5, seen
+
+
+@pytest.mark.parametrize("v_rel", [math.nan, math.inf, -math.inf])
+def test_nonfinite_v_rel_returns_original_in_that_frame(monkeypatch, base_lc, v_rel):
+  new, _ = make(lc, monkeypatch, ON)
+  base, _ = make(base_lc, monkeypatch, ON)
+  for control in (new, base):
+    warm_up(control)
+    enter_from(control, -.93)
+  for _ in range(20):
+    f = frame()
+    assert step(new, f) > step(base, f)
+  f = frame(v_rel=v_rel)
+  assert step(new, f) == step(base, f) == new.stop_ease_shadow
+  f = frame()
+  assert step(new, f) == pytest.approx(new.stop_ease_shadow + STEP)
