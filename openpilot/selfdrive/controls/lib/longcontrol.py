@@ -18,7 +18,7 @@ HYUNDAI_LONGITUDINAL_KI = 0.0
 HYUNDAI_LONGITUDINAL_KF = 1.0
 STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
-STOPPING_ACCEL_MAX = -30
+STOPPING_ACCEL_MAX = -50
 
 # Optional close-lead stop easing (Hyundai/Kia conventional CAN openpilot long only).
 # Params: (name, default, min, max); Dist x0.1 m, Speed x0.1 m/s, Accel x0.01 m/s^2.

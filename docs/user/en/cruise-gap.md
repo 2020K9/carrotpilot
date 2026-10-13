@@ -117,7 +117,7 @@ It is therefore not the actual moving following distance. Its direct effect is c
 
 ### `StoppingAccel` · Stopping acceleration
 
-Default `-50`, range `-100 to -30`, step `10`. `-50` means `-0.50 m/s²`; `-100` means `-1.00 m/s²`. It is used across brands when openpilot controls longitudinal motion and does not directly control stock ACC longitudinal operation.
+Default `-50`, range `-100 to -50`, step `10`. `-50` means `-0.50 m/s²`; `-100` means `-1.00 m/s²`. It is used across brands when openpilot controls longitudinal motion and does not directly control stock ACC longitudinal operation.
 
 The original behavior enters stopping after `shouldStop` when actual acceleration exceeds the setting. Existing state-transition exceptions, including a nearby lead, remain. During stopping, requests weaker than the target become more negative at the vehicle's stopping rate; stronger requests are retained. Soft hold uses the vehicle-specific stationary-hold acceleration.
 

@@ -93,7 +93,7 @@ def test_hyundai_constructor_overrides_car_tune_immediately(monkeypatch):
 
 @pytest.mark.parametrize("brand", ["hyundai", "toyota", "gm", "mock"])
 @pytest.mark.parametrize("stored, expected", [
-  (None, -.5), (0, -.3), (10, -.3), (-10, -.3), (-30, -.3), (-40, -.4), (-50, -.5), (-70, -.7),
+  (None, -.5), (0, -.5), (10, -.5), (-10, -.5), (-50, -.5), (-70, -.7),
   (-100, -1.), (-150, -1.), (float('nan'), -.5), (float('inf'), -.5), ('invalid', -.5),
 ])
 def test_stopping_accel_bounds_apply_from_first_frame(monkeypatch, brand, stored, expected):
@@ -168,7 +168,7 @@ def test_original_one_way_ramp_and_vehicle_soft_hold(monkeypatch, flags, soft_ho
     assert target - cp.stoppingDecelRate * longcontrol_module.DT_CTRL - 1e-9 <= accel <= target
 
 
-@pytest.mark.parametrize("stored, expected", [(-80, -.8), (0, -.3), (-200, -1.), ('bad', -.5)])
+@pytest.mark.parametrize("stored, expected", [(-80, -.8), (0, -.5), (-200, -1.), ('bad', -.5)])
 def test_live_setting_refresh_keeps_retry_independent(monkeypatch, stored, expected):
   params = DictParams({"StoppingAccel": -50, "CanfdStopRetry": False})
   monkeypatch.setattr(longcontrol_module, "Params", lambda: params)
@@ -194,7 +194,7 @@ def test_stopping_setting_catalog_bounds_and_menu():
         yield from objects(child)
   entries = list(objects(catalog))
   setting = next(x for x in entries if x.get('name') == 'StoppingAccel')
-  assert (setting['min'], setting['max'], setting['default'], setting['unit']) == (-100, -30, -50, 10)
+  assert (setting['min'], setting['max'], setting['default'], setting['unit']) == (-100, -50, -50, 10)
   menu = next(x for x in entries if x.get('id') == 'CRUISE_STOPGO')
   assert 'StoppingAccel' in menu['params']
   assert not any(x.get('name') == 'CanfdStopRetry' for x in entries)
