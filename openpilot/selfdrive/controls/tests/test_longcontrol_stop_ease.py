@@ -350,3 +350,130 @@ def test_stop_ease_catalog_menu_and_param_keys():
   assert params[params.index('StoppingAccel') + 1:params.index('StoppingAccel') + 5] == [
     name for name, *_ in lc.STOP_EASE_PARAMS]
   assert math.isclose(lc.STOP_EASE_RATE, .8) and lc.STOP_EASE_GAP == 1.5 and lc.STOP_EASE_NEED_GAIN == 2.
+
+
+def stop_until_settings_read(control, other):
+  # Keep stopping until the ~1 s settings read has happened during this stop.
+  start = control.readParamCount
+  for _ in range(100):
+    f = frame(v=0.)
+    accel, original = step(control, f), step(other, f)
+    assert control.long_control_state == other.long_control_state == lc.LongCtrlState.stopping
+    if control.readParamCount < start:
+      return accel, original
+  raise AssertionError("no settings read during the stop")
+
+
+@pytest.mark.parametrize("change", ["value", "disable"])
+@pytest.mark.parametrize("entry", ["pid", "off", "starting", "soft_hold"])
+def test_every_stopping_entry_restarts_shadow_and_applies_pending(monkeypatch, base_lc, entry, change):
+  new, params = make(lc, monkeypatch, ON)
+  base, _ = make(base_lc, monkeypatch, ON)
+  for control in (new, base):
+    control.CP.startingState = entry == "starting"
+    control.CP.startAccel = .3
+    warm_up(control)
+    enter_from(control, -.93)
+  def both(f, active=True):
+    return step(new, f, active=active), step(base, f, active=active)
+
+  for _ in range(60):
+    accel, original = both(frame(v=0.))
+  assert accel == -.5 and original == -.93
+  if change == "value":
+    params.values["StopEaseAccel"] = -30
+    pending = pytest.approx((4.0, .5, -.3))
+  else:
+    params.values["StopEaseEnable"] = 0
+    pending = None
+  accel, original = stop_until_settings_read(new, base)
+  assert new.stop_ease_pending == pending and new.stop_ease == pytest.approx((4.0, .5, -.5))
+  assert accel == -.5 and original == -.93
+
+  # Leave this stop through the path that the next entry comes from.
+  if entry == "off":
+    for _ in range(5):
+      both(frame(), active=False)
+    assert new.long_control_state == lc.LongCtrlState.off
+    entry_frame = frame(v=0.)
+  elif entry == "starting":
+    both(frame(should_stop=False, v=0.))
+    assert new.long_control_state == lc.LongCtrlState.starting
+    entry_frame = frame(v=0.)
+  else:
+    for _ in range(30):
+      both(frame(should_stop=False, v=1.))
+    assert new.long_control_state == lc.LongCtrlState.pid
+    entry_frame = frame(d_rel=3.5) if entry == "pid" else frame(should_stop=False, v=0., soft_hold=1)
+  assert new.stop_ease_shadow is None
+  previous = new.last_output_accel
+  assert previous == base.last_output_accel
+
+  accel, original = both(entry_frame)
+  assert new.long_control_state == base.long_control_state == lc.LongCtrlState.stopping
+  start = new.CP.stopAccel if entry == "soft_hold" else previous
+  expected = start if start <= new.stopping_accel else min(start, 0.) - STEP
+  assert new.stop_ease_shadow == original == pytest.approx(expected)
+  assert new.stop_ease == pending
+  if entry == "soft_hold":
+    assert accel == original
+
+  for _ in range(150):
+    accel, original = both(frame(v=0.))
+  # The original ramp stops at StoppingAccel, at most one step stronger.
+  assert -.5 - STEP - 1e-9 <= original <= -.5
+  if change == "value":
+    assert accel == -.3
+  else:
+    assert accel == original
+
+
+def test_varying_final_limits_cover_raised_lower_lowered_upper_and_every_safety_return(monkeypatch, base_lc):
+  rng = random.Random(11)
+  weakest = -.5
+  new, _ = make(lc, monkeypatch, ON)
+  base, _ = make(base_lc, monkeypatch, ON)
+  off, _ = make(lc, monkeypatch, {"StoppingAccel": -50})
+  for control in (new, base, off):
+    warm_up(control)
+  seen = dict.fromkeys(["eased", "lower_above", "upper_below", "brake", "gas", "fcw", "closing", "soft_hold"], 0)
+  for i in range(4000):
+    kw = dict(should_stop=(i // 300) % 4 != 3, v=rng.uniform(0., .5), d_rel=rng.uniform(2., 4.),
+              v_rel=rng.uniform(-.6, .2), a_ego=0.)
+    trigger, r = None, rng.random()
+    if r < .1:
+      trigger = ("brake", "gas", "fcw", "closing", "soft_hold")[int(r * 50)]
+      kw.update({"brake": {"brake": True}, "gas": {"gas": True}, "fcw": {"fcw": True},
+                 "closing": {"v_rel": -3.}, "soft_hold": {"soft_hold": 1}}[trigger])
+    case = rng.random()
+    if case < .2:
+      lower, upper = rng.uniform(-.45, -.05), 2.  # lower above A (and above a strong shadow)
+    elif case < .4:
+      lower, upper = -3.5, rng.uniform(-1.2, -.55)  # upper below A
+    else:
+      lower, upper = -3.5, 2.
+    active = not (.1 <= r < .11)
+    f = frame(**kw)
+    accel = step(new, f, (lower, upper), active)
+    original = step(base, f, (lower, upper), active)
+    assert step(off, f, (lower, upper), active) == original
+    if new.long_control_state != lc.LongCtrlState.stopping or trigger == "soft_hold":
+      assert accel == original
+      seen["soft_hold"] += trigger == "soft_hold" and new.long_control_state == lc.LongCtrlState.stopping
+      continue
+    shadow = new.stop_ease_shadow
+    assert shadow == original
+    assert shadow <= accel <= max(shadow, min(max(weakest, lower), upper))
+    if trigger is not None:
+      assert accel == shadow
+      seen[trigger] += 1
+    if accel != shadow:
+      assert accel < 0.
+      seen["eased"] += 1
+    if lower > weakest and shadow == lower:
+      assert accel == lower
+      seen["lower_above"] += 1
+    if upper < weakest:
+      assert accel <= upper
+      seen["upper_below"] += accel != shadow
+  assert min(seen.values()) >= 5, seen

@@ -85,7 +85,7 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
       catalog_commit=COMMIT,
       generated_at=STAMP,
     )
-    self.assertEqual(len(result.generated_settings), 185)
+    self.assertEqual(len(result.generated_settings), 189)
     self.assertNotIn("SteerHandoverMode", result.index["settings"])
     self.assertIn("SignalAssistMode", result.index["settings"])
     self.assertIn("CruiseCoastingPercent", result.index["settings"])
