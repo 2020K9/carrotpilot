@@ -23,8 +23,10 @@ from aiohttp import web
 
 try:
   from .radar import RadarJobs
+  from .drive_jobs import DriveJobs
 except ImportError:
   from radar import RadarJobs
+  from drive_jobs import DriveJobs
 
 
 ROUTE_RE = re.compile(r"^[A-Za-z0-9_.|-]{20}$")
@@ -171,7 +173,9 @@ class RouteViewer:
     self.video_cache_max_bytes = max(128 * 1024 * 1024, int(video_cache_max_bytes))
     self._db_lock = asyncio.Lock()
     self._video_locks: dict[str, asyncio.Lock] = {}
-    self.radar_jobs = RadarJobs(self.db_path.parent / "route_radar_cache")
+    analysis_gate = asyncio.Semaphore(1)  # radar and drive analyses share one running subprocess
+    self.radar_jobs = RadarJobs(self.db_path.parent / "route_radar_cache", analysis_gate)
+    self.drive_jobs = DriveJobs(self.db_path.parent / "route_drive_cache", analysis_gate)
     self._init_db()
 
   @property
@@ -1147,11 +1151,46 @@ class RouteViewer:
   async def radar_asset(self, request):
     return web.FileResponse(Path(__file__).with_name("radar_view.js"), headers={"Content-Type": "text/javascript"})
 
+  async def _drive_response(self, directory, route, index):
+    source = None
+    for name in ("rlog.zst", "rlog.bz2", "rlog"):
+      try:
+        source = self._file_path(directory, route, index, name)
+        break
+      except web.HTTPNotFound:
+        continue
+    if source is None:
+      raise web.HTTPNotFound(text="주행 분석용 rlog 없음")
+    return await self.drive_jobs.response(source)
+
+  async def public_drive(self, request):
+    directory, route, _selection, indexes = self._public_request_selection(request)
+    index = _segment_index(request.match_info.get("index"))
+    if index not in indexes:
+      raise web.HTTPNotFound(text="route drive analysis not found")
+    return await self._drive_response(directory, route, index)
+
+  async def share_drive(self, request):
+    row = await self._share(request.match_info.get("token", ""))
+    return await self._drive_response(str(row["directory"]), str(row["route"]),
+                                      _segment_index(request.match_info.get("index")))
+
+  async def compare_page(self, _request):
+    return _html_response(COMPARE_HTML)
+
+  async def compare_asset(self, request):
+    return web.FileResponse(Path(__file__).with_name("compare_view.js"), headers={"Content-Type": "text/javascript"})
+
   def register(self, app: web.Application) -> None:
     app.on_cleanup.append(self.radar_jobs.close)
+    app.on_cleanup.append(self.drive_jobs.close)
     app.router.add_get("/assets/radar_view.js", self.radar_asset)
     app.router.add_get("/s/{token}/radar/{index}", self.share_radar)
     app.router.add_get("/routes/{directory}/{selection}/radar/{index}", self.public_radar)
+    app.router.add_get("/assets/compare_view.js", self.compare_asset)
+    app.router.add_get("/s/{token}/drive/{index}", self.share_drive)
+    app.router.add_get("/routes/{directory}/{selection}/drive/{index}", self.public_drive)
+    app.router.add_get("/compare", self.compare_page)
     app.router.add_get("/", self.home_page)
     app.router.add_get("/admin", self.admin_page)
     app.router.add_post("/api/admin/login", self.api_admin_login)
@@ -1289,7 +1328,7 @@ SHARE_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta
 <title>Shared Carrot Route · __ROUTE_TITLE__</title><style>__COMMON_STYLE__
 </style></head><body><main class="shell">
 <header class="topbar">__BRAND__<span class="grow"></span><span class="badge"><span class="badge-dot"></span>Shared route</span></header>
-<section class="share-hero"><div class="eyebrow">Driving archive</div><h1 id="title">Shared Route</h1><p id="meta" class="lede">route 정보를 불러오는 중…</p><div id="summary" class="summary-grid hidden"></div></section>
+<section class="share-hero"><div class="eyebrow">Driving archive</div><h1 id="title">Shared Route</h1><p id="meta" class="lede">route 정보를 불러오는 중…</p><div id="summary" class="summary-grid hidden"></div><p id="compareBar" class="hidden"><a id="compareOpen" class="button">A·B 비교 열기</a></p></section>
 <section class="card card-pad"><div class="video-stage" style="margin:0"><span id="videoEmpty" class="video-empty">미리보기를 준비하는 중…</span><video id="video" autoplay muted playsinline preload="metadata"></video></div></section>
 <section id="tools" class="hidden"><div class="section-head"><div><div class="eyebrow">Open with</div><h2>분석 도구 연결</h2></div><span class="muted tiny">도구 소스 수정 없이 API_HOST로 연결</span></div><div class="notice" style="margin-bottom:12px">명령을 복사해 openpilot 저장소에서 실행하세요. 이 공유 링크가 허용한 route 하나만 조회됩니다.</div><div id="commands" class="tools-grid"></div></section>
 <section><div class="section-head"><div><div class="eyebrow">Route contents</div><h2>세그먼트와 파일</h2></div><span id="fileCount" class="muted tiny"></span></div><div id="segments" class="public-segments"></div></section><div id="status" class="muted"></div>
@@ -1301,7 +1340,18 @@ const fileKind=n=>n.includes('camera')?'VIDEO':n.includes('log')?'LOG':'FILE';
 const video=$('#video');
 const radarReview=attachRadarReview(video);let radarSegments=[];
 function setVideo(source,preview,index){const segment=radarSegments.find(s=>String(s.index)===String(index));if(segment)radarReview.load(segment);video.poster=preview||'';video.src=source;video.muted=true;$('#videoEmpty').classList.add('hidden');video.play().catch(()=>{})}
+function compareSlots(){try{const v=JSON.parse(localStorage.getItem('carrotCompare')||'{}');return v&&typeof v==='object'?v:{}}catch{return {}}}
+function showCompare(){const c=compareSlots();if(c.a?.path&&c.b?.path){$('#compareOpen').href='/compare?'+new URLSearchParams({a:c.a.path,ai:String(c.a.index),b:c.b.path,bi:String(c.b.index)});$('#compareBar').classList.remove('hidden')}}
 async function copy(text,button){await navigator.clipboard.writeText(text);button.textContent='복사됨';setTimeout(()=>button.textContent='복사',1300)}
-async function load(){try{const r=await fetch(location.pathname+'/manifest');if(!r.ok)throw new Error(r.status===404?'공개 로그를 찾을 수 없거나 파일이 삭제되었습니다.':`HTTP ${r.status}`);const d=await r.json();radarSegments=d.segments;$('#title').textContent=d.route;$('#meta').textContent=`${d.deviceId} · 링크에 포함된 ${d.segmentCount}개 로그만 공개`;$('#summary').classList.remove('hidden');$('#summary').innerHTML=`<div class="card summary-item"><strong>${d.segmentCount}</strong><span>LOG FOLDERS</span></div><div class="card summary-item"><strong>${esc(d.totalSizeLabel)}</strong><span>ROUTE SIZE</span></div><div class="card summary-item"><strong>${d.firstSegment}–${d.lastSegment}</strong><span>SEGMENT RANGE</span></div>`;const commands=[['Cabana','CAN 메시지를 탐색하고 신호를 분석합니다.',d.cabanaCommand],['PlotJuggler','시간축으로 주행 데이터를 시각화합니다.',d.plotJugglerCommand],['JotPluggler','고속 그래프와 이벤트·신호를 함께 분석합니다.',d.jotPlugglerCommand]].filter(x=>x[2]);if(commands.length){$('#tools').classList.remove('hidden');$('#commands').innerHTML=commands.map(([name,desc,command],i)=>`<article class="card tool-card"><div class="tool-name"><span class="tool-mark">${name==='Cabana'?'C':name==='JotPluggler'?'J':'P'}</span>${name}</div><p class="muted tiny" style="margin:10px 0">${desc}</p><div class="command" id="cmd${i}">${esc(command)}<button class="copy" data-command="${encodeURIComponent(command)}">복사</button></div></article>`).join('')}const totalFiles=d.segments.reduce((n,s)=>n+s.files.length,0);$('#fileCount').textContent=`${totalFiles} files`;$('#segments').innerHTML=d.segments.map((s,i)=>`<details class="soft-card segment" ${i===0?'open':''}><summary><strong class="grow">${esc(s.name)}</strong><span class="pill">${s.files.length} files</span>${s.videoUrl?`<button data-index="${s.index}" data-play="${esc(s.videoUrl)}" data-preview="${esc(s.previewUrl||'')}">▶ 영상 재생</button>`:''}<button data-radar-index="${s.index}">레이더 검증</button></summary><div class="segment-body"><div class="files">${s.files.map(f=>`<a class="file" href="${esc(f.url)}" target="_blank" rel="noreferrer"><span class="tiny muted">${fileKind(f.name)}</span><span>${esc(f.name)}</span><span class="file-size">${esc(f.sizeLabel)}</span></a>`).join('')}</div></div></details>`).join('');const featured=d.segments.find(s=>s.videoUrl);if(featured)setVideo(featured.videoUrl,featured.previewUrl,featured.index);else if(d.segments.length)radarReview.load(d.segments[0])}catch(e){$('#status').textContent=e.message;$('#status').className='card card-pad error';$('#segments').innerHTML=''}}
-document.addEventListener('click',e=>{const radar=e.target.closest('[data-radar-index]');if(radar){e.preventDefault();const s=radarSegments.find(s=>String(s.index)===radar.dataset.radarIndex);if(s?.videoUrl)setVideo(s.videoUrl,s.previewUrl,s.index);else if(s){video.pause();video.removeAttribute('src');video.load();radarReview.load(s);}scrollTo({top:0,behavior:'smooth'});}const play=e.target.closest('[data-play]');if(play){e.preventDefault();setVideo(play.dataset.play,play.dataset.preview,play.dataset.index);scrollTo({top:0,behavior:'smooth'})}const button=e.target.closest('[data-command]');if(button)copy(decodeURIComponent(button.dataset.command),button)});load();
+async function load(){try{const r=await fetch(location.pathname+'/manifest');if(!r.ok)throw new Error(r.status===404?'공개 로그를 찾을 수 없거나 파일이 삭제되었습니다.':`HTTP ${r.status}`);const d=await r.json();radarSegments=d.segments;$('#title').textContent=d.route;$('#meta').textContent=`${d.deviceId} · 링크에 포함된 ${d.segmentCount}개 로그만 공개`;$('#summary').classList.remove('hidden');$('#summary').innerHTML=`<div class="card summary-item"><strong>${d.segmentCount}</strong><span>LOG FOLDERS</span></div><div class="card summary-item"><strong>${esc(d.totalSizeLabel)}</strong><span>ROUTE SIZE</span></div><div class="card summary-item"><strong>${d.firstSegment}–${d.lastSegment}</strong><span>SEGMENT RANGE</span></div>`;const commands=[['Cabana','CAN 메시지를 탐색하고 신호를 분석합니다.',d.cabanaCommand],['PlotJuggler','시간축으로 주행 데이터를 시각화합니다.',d.plotJugglerCommand],['JotPluggler','고속 그래프와 이벤트·신호를 함께 분석합니다.',d.jotPlugglerCommand]].filter(x=>x[2]);if(commands.length){$('#tools').classList.remove('hidden');$('#commands').innerHTML=commands.map(([name,desc,command],i)=>`<article class="card tool-card"><div class="tool-name"><span class="tool-mark">${name==='Cabana'?'C':name==='JotPluggler'?'J':'P'}</span>${name}</div><p class="muted tiny" style="margin:10px 0">${desc}</p><div class="command" id="cmd${i}">${esc(command)}<button class="copy" data-command="${encodeURIComponent(command)}">복사</button></div></article>`).join('')}const totalFiles=d.segments.reduce((n,s)=>n+s.files.length,0);$('#fileCount').textContent=`${totalFiles} files`;$('#segments').innerHTML=d.segments.map((s,i)=>`<details class="soft-card segment" ${i===0?'open':''}><summary><strong class="grow">${esc(s.name)}</strong><span class="pill">${s.files.length} files</span>${s.videoUrl?`<button data-index="${s.index}" data-play="${esc(s.videoUrl)}" data-preview="${esc(s.previewUrl||'')}">▶ 영상 재생</button>`:''}<button data-radar-index="${s.index}">레이더 검증</button><a class="button secondary" href="/compare?a=${encodeURIComponent(location.pathname)}&ai=${s.index}">주행 분석</a><button class="secondary" data-compare-slot="a" data-compare-index="${s.index}" data-compare-name="${esc(s.name)}">비교 A로</button><button class="secondary" data-compare-slot="b" data-compare-index="${s.index}" data-compare-name="${esc(s.name)}">비교 B로</button></summary><div class="segment-body"><div class="files">${s.files.map(f=>`<a class="file" href="${esc(f.url)}" target="_blank" rel="noreferrer"><span class="tiny muted">${fileKind(f.name)}</span><span>${esc(f.name)}</span><span class="file-size">${esc(f.sizeLabel)}</span></a>`).join('')}</div></div></details>`).join('');const featured=d.segments.find(s=>s.videoUrl);if(featured)setVideo(featured.videoUrl,featured.previewUrl,featured.index);else if(d.segments.length)radarReview.load(d.segments[0])}catch(e){$('#status').textContent=e.message;$('#status').className='card card-pad error';$('#segments').innerHTML=''}}
+document.addEventListener('click',e=>{const radar=e.target.closest('[data-radar-index]');if(radar){e.preventDefault();const s=radarSegments.find(s=>String(s.index)===radar.dataset.radarIndex);if(s?.videoUrl)setVideo(s.videoUrl,s.previewUrl,s.index);else if(s){video.pause();video.removeAttribute('src');video.load();radarReview.load(s);}scrollTo({top:0,behavior:'smooth'});}const play=e.target.closest('[data-play]');if(play){e.preventDefault();setVideo(play.dataset.play,play.dataset.preview,play.dataset.index);scrollTo({top:0,behavior:'smooth'})}const button=e.target.closest('[data-command]');if(button)copy(decodeURIComponent(button.dataset.command),button);const slot=e.target.closest('[data-compare-slot]');if(slot){e.preventDefault();const c=compareSlots();c[slot.dataset.compareSlot]={path:location.pathname,index:Number(slot.dataset.compareIndex),name:slot.dataset.compareName};localStorage.setItem('carrotCompare',JSON.stringify(c));slot.textContent='저장됨';showCompare()}});load();showCompare();
 </script></body></html>""".replace("__COMMON_STYLE__", COMMON_STYLE).replace("__BRAND__", BRAND)
+
+
+COMPARE_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080b0d">
+<title>Carrot Routes · 주행 비교</title><style>__COMMON_STYLE__
+</style></head><body><main class="shell">
+<header class="topbar">__BRAND__<span class="grow"></span><span class="badge"><span class="badge-dot"></span>Drive compare</span></header>
+<section><div class="eyebrow">Longitudinal review</div><h1>주행 분석·비교</h1><div id="compare"></div></section>
+<footer class="footer"><span>링크를 전달받은 사람만 접근할 수 있습니다.</span><span>Carrot Routes · hosted on Synology</span></footer></main>
+<script type="module" src="/assets/compare_view.js"></script></body></html>""".replace("__COMMON_STYLE__", COMMON_STYLE).replace("__BRAND__", BRAND)

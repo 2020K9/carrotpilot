@@ -13,10 +13,10 @@ from aiohttp import web
 
 
 class RadarJobs:
-  def __init__(self, cache: Path):
+  def __init__(self, cache: Path, gate: asyncio.Semaphore | None = None):
     self.cache = cache
     self.jobs: dict[str, asyncio.Task] = {}
-    self.gate = asyncio.Semaphore(1)
+    self.gate = gate if gate is not None else asyncio.Semaphore(1)
     self.version = None
 
   async def close(self, _app):
