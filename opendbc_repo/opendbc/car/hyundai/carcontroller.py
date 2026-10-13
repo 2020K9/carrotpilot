@@ -7,7 +7,7 @@ from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_f
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.carstate import CarState
-from opendbc.car.hyundai.stopping import CanfdStopping, ENTRY_SPEED_PARAM, entry_speed_from_param
+from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
@@ -299,12 +299,6 @@ class CarController(CarControllerBase):
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
-      if self.canfd_stopping is not None:
-        try:
-          entry_raw = params.get(ENTRY_SPEED_PARAM)
-        except Exception:
-          entry_raw = None
-        self.canfd_stopping.set_entry_speed(entry_speed_from_param(entry_raw))
 
     actuators = CC.actuators
     hud_control = CC.hudControl

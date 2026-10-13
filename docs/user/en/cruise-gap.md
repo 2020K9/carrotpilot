@@ -103,7 +103,6 @@ Tune the speed band containing the symptom instead of changing the whole table. 
 
 | Setting | Stored-value interpretation | Direction when increased or moved toward zero |
 |---|---|---|
-| `CanfdStopEntrySpeed` | `7` → 0.7 m/s | On CANFD, StopReq turns on at a higher vehicle speed |
 | `StopDistanceCarrot` | `600` → 6.00 m | Increases fixed clearance to a stopped lead |
 | `VEgoStopping` | `50` → 0.50 m/s | Higher values enter stopping state at a higher planned speed |
 | `AChangeCostStarting` | MPC acceleration-change cost | Higher values smooth initial acceleration changes |
@@ -132,11 +131,10 @@ The description above concerns upstream control. The final CANFD request overrid
 <a id="canfd-stopping"></a>
 ### CANFD stopping control
 
-This experimental sequence applies to Hyundai/Kia CANFD openpilot longitudinal control. Its entry speed can be changed with `CanfdStopEntrySpeed` (Stop Entry Speed, ×0.1 m/s, 1–7, default 7 = 0.7 m/s). Conventional CAN vehicles and stock ACC longitudinal control are unchanged.
+This experimental sequence applies to Hyundai/Kia CANFD openpilot longitudinal control without a separate setting. Conventional CAN vehicles and stock ACC longitudinal control are unchanged.
 
 - `StoppingAccel` still affects the original stop-entry decision and upstream acceleration calculation. However, both aReqRaw and aReqValue are overridden to zero from the first StopReq frame, including soft hold.
-- Initial entry requires the maximum absolute speed input to be at or below the `CanfdStopEntrySpeed` value (default 0.7 m/s). After entry, speed rebound, loss of deceleration, time and distance do not release StopReq or trigger retry.
-- A `CanfdStopEntrySpeed` change is not applied to a stop in progress; it applies from the next stop. Depending on the setting, entry can be lower than the stock observed entry speed range (about 1.7–2 km/h); this has not been verified on a vehicle.
+- Initial entry requires the maximum absolute speed input to be at or below 0.7 m/s. After entry, speed rebound, loss of deceleration, time and distance do not release StopReq or trigger retry.
 - An increase in jerkUpper is blocked on the first StopReq frame; the ordinary value is allowed from the next frame. Decreases are immediate. InfoDisplay and byte7 remain zero, and the lower band remains the fixed experimental value 0.20.
 - Existing departure decisions, disengagement, pedal, CAN and gear interlocks remain. The brake-input exception requires an armed soft hold with every speed input at or below 0.10 m/s.
 

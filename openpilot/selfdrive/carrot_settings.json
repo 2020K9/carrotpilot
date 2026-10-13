@@ -326,7 +326,6 @@
               "en": "Stop & Resume",
               "zh": "停车与再起步",
               "params": [
-                "CanfdStopEntrySpeed",
                 "StopDistanceCarrot",
                 "StoppingAccel",
                 "VEgoStopping",
@@ -1367,23 +1366,6 @@
       "max": 100,
       "default": 50,
       "unit": 5
-    },
-    {
-      "group": "주행튜닝",
-      "name": "CanfdStopEntrySpeed",
-      "title": "정차제어 진입속도x0.1m/s(7)",
-      "descr": "현대·기아 CANFD 오픈파일럿 종방향 제어에서 정지 요청(StopReq)을 켜는 차량 속도입니다. 저장값×0.1m/s이며 기본 7은 0.7m/s(2.52km/h)로 기존 값과 같습니다. 정지 판단 뒤 차량 속도(차속·네 바퀴 속도 중 가장 큰 값)가 이 값보다 빠르면 StopReq 없이 감속 요청(원시 목표 -0.50m/s² 또는 더 강한 값, 실제 송신값은 변화율 제한을 거침)으로 다가가고, 이 값 이하가 되면 StopReq를 켜고 가속도 요청을 0으로 보내 차량(ESC)에 정지를 맡깁니다. 내리면: 오픈파일럿 감속 요청을 더 낮은 속도까지 유지하고 StopReq가 늦게 켜집니다. 설정값에 따라 순정에서 관측된 진입 속도 범위(약 1.7~2km/h)보다 낮아질 수 있습니다. 실차에서 확인되지 않은 설정입니다. 범위 1~7(0.1~0.7m/s, 0.36~2.52km/h), 변경 단위 1(0.1m/s). 범위 밖 저장값은 끝값으로, 읽을 수 없는 값은 7로 처리합니다. 바꾼 값은 약 0.5초 안에 읽고 진행 중인 정지에는 적용하지 않으며 다음 정지부터 적용합니다. 계획 속도 기준인 정지출발민감도(VEgoStopping)와는 다른 값입니다. 일반 CAN과 순정 종방향에는 적용되지 않습니다.",
-      "egroup": "LONG",
-      "etitle": "Stop Entry Speed x0.1m/s(7)",
-      "edescr": "Vehicle speed at which Hyundai/Kia CAN FD openpilot longitudinal control turns on the stop request (StopReq). Stored value x0.1 m/s; the default 7 is 0.7 m/s (2.52 km/h), the same as the previous value. After a stop is decided, while vehicle speed (the largest of vehicle speed and the four wheel speeds) is above this value, the car approaches with a deceleration request without StopReq (raw target -0.50 m/s² or stronger; the transmitted value is rate-limited). At or below this value, StopReq is turned on and the acceleration request is sent as 0, leaving the stop to the vehicle (ESC). Lowering it: openpilot keeps its deceleration request down to a lower speed and StopReq turns on later. Depending on the setting, this can be lower than the entry speed range observed on stock (about 1.7-2 km/h). This setting has not been verified on a real vehicle. Range 1-7 (0.1-0.7 m/s, 0.36-2.52 km/h), step 1 (0.1 m/s). Stored values outside the range are clamped to the nearest end; unreadable values are treated as 7. Changes are read within about 0.5 s and are not applied to a stop in progress; they apply from the next stop. This is different from VEgoStopping, which is based on planned speed. Not applied to CAN (non-CAN FD) cars or stock longitudinal control.",
-      "cgroup": "纵向控制",
-      "ctitle": "停车控制进入速度x0.1m/s(7)",
-      "cdescr": "现代·起亚 CANFD 开源驾驶辅助纵向控制中开启停车请求（StopReq）的车速。保存值×0.1m/s，默认7即0.7m/s（2.52km/h），与原有值相同。判定停车后，若车速（车速与四个车轮速度中的最大值）高于此值，则不发送StopReq，以减速请求接近（原始目标-0.50m/s²或更强，实际发送值经过变化率限制）；降至此值或以下时开启StopReq并将加速度请求设为0，由车辆（ESC）完成停车。降低数值：开源驾驶辅助的减速请求会保持到更低的速度，StopReq开启更晚。根据设定值，可能低于原厂观测到的进入速度范围（约1.7~2km/h）。此设置尚未在实车上验证。范围1~7（0.1~0.7m/s，0.36~2.52km/h），调整单位1（0.1m/s）。超出范围的保存值按端值处理，无法读取的值按7处理。更改的值约0.5秒内读取，不应用于正在进行的停车，从下一次停车开始应用。与基于规划速度的停止/启动灵敏度（VEgoStopping）是不同的值。不适用于普通CAN车辆和原厂纵向控制。",
-      "min": 1,
-      "max": 7,
-      "default": 7,
-      "unit": 1,
-      "risk": "high"
     },
     {
       "group": "감속제어",
