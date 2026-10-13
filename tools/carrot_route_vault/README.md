@@ -118,9 +118,11 @@ Jobs (`drive_jobs.py`) follow the radar queue: radar and drive share one running
 subprocess slot (one `asyncio.Semaphore`), each queue answers 503 `Retry-After: 5`
 at four unfinished (waiting + running) jobs and 202 `Retry-After: 2` while preparing,
 a failed job answers 422 once and is retried on the next request, and the analysis
-subprocess is limited to 120 s. On timeout, cancellation or server cleanup
-(`on_cleanup`), the process is killed and awaited and temporary files are removed
-before the slot is released; waiting jobs are cancelled without starting a process.
+subprocess is limited to 120 s (radar replay keeps 300 s). Cancellation, including
+repeated cancellation, only interrupts waiting: both queues outlast a running publish
+thread and a killed process (`asyncio.shield` on the same future) before removing
+temporary files and releasing the slot. Server cleanup cancels both queues first and
+then awaits them together, so waiting jobs end without starting a process.
 Results are gzip-cached in `<db dir>/route_drive_cache` by source path, size,
 nanosecond mtime and drive code fingerprint, capped at 256 MiB (oldest first, the
 new result is kept).
@@ -132,8 +134,14 @@ Comparison page timeline: for side S with log times `t_S`, video times `v_S` and
 the last cell + 0.1 s or on a null cell. An independent `performance.now()` clock
 drives τ (rates 0.25/0.5/1/2); each video is paused while its target is null, out of
 its duration or unavailable, re-seeked beyond 0.15 s drift, and the clock waits for a
-buffering video for at most 5 s before releasing it until it is ready again. These
+buffering video for at most 5 s before releasing it until it is ready again; while it
+waits, every video is paused and they resume together. These
 tolerances are unapproved defaults. The page shows numbers and definitions only.
+Each side is validated (`validateDrive`: every displayed array, episode and statistic)
+before it is shown and becomes playable on its own; τ is clamped, not reset, when a
+side arrives. One 360 s deadline per load aborts the manifest, polls, body reads and
+waits through the request signal, then offers a retry. Common default episodes are
+chosen once every side has finished and never replace a person's choice.
 Deployment of this feature within 2020K9/carrotpilot is a separate decision.
 
 ## Automatic updates of the existing DSM project

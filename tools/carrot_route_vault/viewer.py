@@ -1181,8 +1181,14 @@ class RouteViewer:
   async def compare_asset(self, request):
     return web.FileResponse(Path(__file__).with_name("compare_view.js"), headers={"Content-Type": "text/javascript"})
 
+  async def close_jobs(self, _app):
+    # Cancel both queues before awaiting either, so a waiting job cannot take the shared slot meanwhile.
+    self.radar_jobs.cancel()
+    self.drive_jobs.cancel()
+    await asyncio.gather(self.radar_jobs.close(_app), self.drive_jobs.close(_app))
+
   def register(self, app: web.Application) -> None:
-    app.on_cleanup.append(self.radar_jobs.close)
+    app.on_cleanup.append(self.close_jobs)
     app.on_cleanup.append(self.drive_jobs.close)
     app.router.add_get("/assets/radar_view.js", self.radar_asset)
     app.router.add_get("/s/{token}/radar/{index}", self.share_radar)

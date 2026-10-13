@@ -130,6 +130,368 @@ export function formatStat(value) {
   return String(value);
 }
 
+// Arrays the page reads; each must match series.t in length.
+const DRIVE_SERIES = ['t', 'video_time_s', 'vEgo', 'aEgo', 'actAccel', 'leadDist', 'jerk'];
+export const GRAPH_SERIES = ['vEgo', 'aEgo', 'actAccel', 'leadDist', 'jerk'];
+const EPISODE_NUMBERS = ['start_t', 'end_t', 'start_video_t', 'end_video_t', 'duration', 'start_v', 'end_v', 'min_v', 'max_v',
+  'delta_v', 'min_a', 'max_a', 'avg_a', 'min_cmd_a', 'max_cmd_a', 'avg_cmd_a', 'max_jerk', 'std_jerk', 'cmd_actual_corr',
+  'start_lead_d', 'min_lead_d', 'end_lead_d', 'long_active_ratio'];
+const EPISODE_FLAGS = ['pedal_input', 'start_clipped', 'end_clipped'];
+const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isCount = v => Number.isInteger(v) && v >= 0;
+const isStrings = v => Array.isArray(v) && v.every(x => typeof x === 'string');
+
+// Checks every field the page displays before anything is published.
+export function validateDrive(data) {
+  const fail = reason => ({ok: false, reason});
+  if (!isObject(data)) return fail('data');
+  if (data.schemaVersion !== 1 || data.kind !== 'carrotDrive') return fail('schema');
+  const series = data.series;
+  if (!isObject(series)) return fail('series');
+  const t = series.t;
+  if (!Array.isArray(t) || !t.length) return fail('series.t');
+  for (let k = 0; k < t.length; k++) if (!finite(t[k]) || (k && t[k] < t[k - 1])) return fail('series.t');
+  for (const name of DRIVE_SERIES) {
+    const values = series[name];
+    if (!Array.isArray(values) || values.length !== t.length || !values.every(v => v === null || finite(v))) return fail(`series.${name}`);
+  }
+  if (!isStrings(data.missingServices)) return fail('missingServices');
+  if (!isStrings(data.ambiguousDefaultFields)) return fail('ambiguousDefaultFields');
+  if (!isObject(data.invalidCounts) || !Object.values(data.invalidCounts).every(isCount)) return fail('invalidCounts');
+  if (typeof data.videoAligned !== 'boolean') return fail('videoAligned');
+  if (typeof data.sourceVersion !== 'string' || typeof data.sourceLog !== 'string') return fail('source');
+  if (!Array.isArray(data.episodes)) return fail('episodes');
+  for (const [i, e] of data.episodes.entries()) {
+    const at = `episodes[${i}]`;
+    if (!isObject(e) || typeof e.type !== 'string') return fail(at);
+    for (const key of EPISODE_NUMBERS) if (e[key] !== null && !finite(e[key])) return fail(`${at}.${key}`);
+    if (!finite(e.start_t) || !finite(e.end_t) || e.start_t < t[0] || e.end_t > t[t.length - 1] || e.start_t > e.end_t) return fail(`${at}.range`);
+    for (const key of EPISODE_FLAGS) if (e[key] !== undefined && typeof e[key] !== 'boolean') return fail(`${at}.${key}`);
+    if (e.lead_track_ids != null && !(Array.isArray(e.lead_track_ids) && e.lead_track_ids.every(finite))) return fail(`${at}.lead_track_ids`);
+    if (e.states != null && !(isObject(e.states) && Object.values(e.states).every(isCount))) return fail(`${at}.states`);
+  }
+  return {ok: true, data};
+}
+
+// Non-zero invalidCounts per service (server definition) and null cells per graph series.
+export function missingSummary(data) {
+  return {
+    services: Object.entries(data.invalidCounts).filter(([, n]) => n > 0),
+    series: GRAPH_SERIES.map(name => [name, data.series[name].filter(v => v === null).length]).filter(([, n]) => n > 0),
+  };
+}
+
+export function noteLines(data) {
+  const nullCells = data.series.vEgo.filter(x => x === null).length;
+  const {services, series} = missingSummary(data);
+  return [
+    `코드 ${data.sourceVersion} · ${data.sourceLog} · ${data.series.t.length}칸(10Hz, 로그 시각)${data.videoAligned ? '' : ' · 영상 시각 없음: 추정 동기 안 함'}`,
+    ...(nullCells ? [`carState 무효/결측 칸 ${nullCells}개(값 없음 처리)`] : []),
+    ...(services.length ? [`서비스별 무효/결측 칸(invalidCounts: valid=false 칸): ${services.map(([name, n]) => `${name} ${n}`).join(', ')}`] : []),
+    ...(series.length ? [`그래프 값 없음 칸: ${series.map(([name, n]) => `${name} ${n}${name === 'leadDist' ? '(선행차 없음 포함)' : ''}`).join(', ')}`] : []),
+    ...(data.missingServices.length ? [`기록 없는 서비스: ${data.missingServices.join(', ')}`] : []),
+    `0은 기록값 또는 기본값일 수 있음: ${data.ambiguousDefaultFields.join(', ')}`,
+  ];
+}
+
+export function episodeOptions(data) {
+  const v = x => finite(x) ? (x * 3.6).toFixed(1) : '—';
+  return [{value: '', text: '장면 선택 안 함'}, ...data.episodes.map((e, i) => ({value: String(i),
+    text: `${TYPE_TEXT[e.type] || e.type} · t ${e.start_t.toFixed(1)}s · ${v(e.start_v)}→${v(e.end_v)} km/h${e.start_clipped || e.end_clipped ? ' · 잘림' : ''}`}))];
+}
+
+export function cardItems(e) {
+  if (!e) return [];
+  const card = (label, value, unit = '') => ({label, text: finite(value) ? `${value.toFixed(3)}${unit}` : '—'});
+  return [
+    card('상관도 cmd_actual_corr (시간 지연 미보정)', e.cmd_actual_corr),
+    card(endLeadLabel(e.type), e.end_lead_d, ' m'),
+    card('저크 표준편차: aEgo 차분(10Hz)', e.std_jerk, ' m/s³'),
+    card('최대 저크: aEgo 차분(10Hz)', e.max_jerk, ' m/s³'),
+    card('최저 가속도', e.min_a, ' m/s²'),
+    card('길이', e.duration, ' s'),
+    ...(e.pedal_input ? [{label: 'gasPressed 또는 brakePressed', text: '운전자 페달 입력 있음'}] : []),
+  ];
+}
+
+export function statTable(keys, episodes) {
+  if (!episodes.some(Boolean)) return null;
+  const pair = keys.length > 1;
+  return {
+    head: ['항목', ...keys.map(k => k.toUpperCase()), ...(pair ? ['Δ(B−A)'] : [])],
+    rows: STAT_KEYS.map(key => {
+      const values = episodes.map(e => e ? e[key] : null);
+      return [key, ...values.map(formatStat), ...(pair ? [formatStat(deltaValue(values[0], values[1]))] : [])];
+    }),
+  };
+}
+
+// While the common clock holds for a buffering video, every video waits so they resume together.
+export function playIntent({running, hold, state}) {
+  return running && !hold && state?.mode === 'synced' ? 'play' : 'pause';
+}
+
+class LoadError extends Error {}
+
+function abortError() {
+  const error = new Error('aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+// Loading, clock and video sync without the DOM. deps: fetch, now, setTimeout, clearTimeout,
+// AbortController, requestAnimationFrame. The controller alone schedules frames: one pending frame at most.
+// view callbacks (all optional): title, status, retry, notes, episodes, selected, align, layout, frame.
+export function createCompareController({sides: specs, deps, view = {}, align: initialAlign = 'episode'}) {
+  const sides = specs.map(spec => ({
+    key: spec.key, path: spec.path, index: spec.index, invalid: Boolean(spec.invalid), video: spec.video,
+    data: null, episode: null, userPicked: false, base: 0, sync: INITIAL_SYNC, videoUrl: '', mediaError: false,
+    generation: 0, abort: null, timer: null, finished: false, failed: false, expired: false,
+    status: '', statusError: false, retryVisible: false,
+  }));
+  const clock = {tau: 0, running: false, last: null, rate: 1, range: [0, 0]};
+  let align = initialAlign === 'start' ? 'start' : 'episode';
+  let alignByUser = false, defaultsChosen = false, frame = null, started = false;
+  const show = (name, ...args) => { if (typeof view[name] === 'function') view[name](...args); };
+  const sideOf = ref => typeof ref === 'number' ? sides[ref] : sides.find(s => s.key === ref);
+  const selected = side => side.data && side.episode !== null ? side.data.episodes[side.episode] ?? null : null;
+
+  function setStatus(side, text, error = false) { side.status = text; side.statusError = error; show('status', side.key, text, error); }
+  function setRetry(side, visible) { side.retryVisible = visible; show('retry', side.key, visible); }
+  function pickEpisode(side, value) { side.episode = value; show('selected', side.key, value === null ? '' : String(value)); }
+
+  // reset: a person changed alignment or episode, so restart at the beginning; otherwise only clamp τ.
+  function relayout(reset) {
+    for (const side of sides) {
+      const episode = selected(side);
+      side.base = align === 'episode' && episode ? episode.start_t : 0;
+    }
+    clock.range = timelineRange(sides.filter(s => s.data).map(s => ({t: s.data.series.t, base: s.base})));
+    const [lo, hi] = clock.range;
+    if (reset) clock.tau = align === 'episode' ? 0 : lo;
+    clock.tau = Math.min(Math.max(clock.tau, lo), hi);
+    if (hi <= lo) clock.running = false;
+    show('layout', {range: [lo, hi], cards: sides.map(s => ({key: s.key, items: cardItems(selected(s))})),
+                    table: statTable(sides.map(s => s.key), sides.map(selected))});
+  }
+
+  function sameType(side, episode) {
+    const i = episode ? side.data.episodes.findIndex(e => e.type === episode.type) : -1;
+    return i >= 0 ? i : null;
+  }
+
+  // Once every side has finished; never overrides a person's episode or alignment choice.
+  function chooseDefaults() {
+    defaultsChosen = true;
+    const picked = sides.find(s => s.userPicked);
+    if (picked) {
+      for (const side of sides) if (side.data && !side.userPicked) pickEpisode(side, sameType(side, selected(picked)));
+    } else {
+      const [a, b] = sides;
+      const pick = defaultEpisodes(a.data, b ? b.data : undefined);
+      if (pick) { pickEpisode(a, pick[0]); if (b) pickEpisode(b, pick[1]); }
+      else if (!alignByUser) { align = 'start'; show('align', align); }
+    }
+  }
+
+  function settle(side) {
+    side.finished = true;
+    if (!defaultsChosen) {
+      if (sides.every(s => s.finished)) chooseDefaults();
+    } else if (side.data) {
+      const other = sides.find(s => s !== side && selected(s));
+      if (other) pickEpisode(side, sameType(side, selected(other)));
+      else pickEpisode(side, sides.length === 1 && side.data.episodes.length ? 0 : null);
+    }
+    relayout(false);
+  }
+
+  function clearSide(side) {
+    side.data = null; side.episode = null; side.userPicked = false; side.sync = INITIAL_SYNC; side.mediaError = false;
+    side.video.pause(); side.video.removeAttribute('src');
+    if (typeof side.video.load === 'function') side.video.load();
+    show('episodes', side.key, []); show('notes', side.key, []);
+    relayout(false);
+  }
+
+  function sleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) { reject(abortError()); return; }
+      const onAbort = () => { deps.clearTimeout(id); reject(abortError()); };
+      const id = deps.setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, Math.max(0, ms));
+      signal.addEventListener('abort', onAbort, {once: true});
+    });
+  }
+
+  // One absolute deadline per load covers the manifest, every poll, every body read and every wait.
+  async function load(ref) {
+    const side = sideOf(ref);
+    const generation = ++side.generation;
+    const current = () => generation === side.generation;
+    if (side.abort) side.abort.abort();
+    if (side.timer !== null) deps.clearTimeout(side.timer);
+    side.abort = side.timer = null;
+    side.finished = side.failed = side.expired = false;
+    setRetry(side, false);
+    if (side.invalid) {
+      clearSide(side);
+      side.failed = true;
+      setStatus(side, '잘못된 비교 주소입니다(경로 또는 index).', true);
+      settle(side);
+      return;
+    }
+    const controller = new deps.AbortController(), signal = controller.signal;
+    const deadline = deps.now() + POLL_DEADLINE_MS;
+    let timedOut = false;
+    side.abort = controller;
+    side.timer = deps.setTimeout(() => { timedOut = true; controller.abort(); }, POLL_DEADLINE_MS);
+    try {
+      setStatus(side, '세그먼트 정보를 불러오는 중…');
+      const manifest = await deps.fetch(`${side.path}/manifest`, {cache: 'no-store', signal});
+      if (!current()) return;
+      if (!manifest.ok) throw new LoadError(manifest.status === 404 ? '로그를 찾을 수 없습니다.' : `세그먼트 정보를 불러오지 못했습니다 (${manifest.status}).`);
+      const info = await manifest.json();
+      if (!current()) return;
+      const segment = (Array.isArray(info?.segments) ? info.segments : []).find(s => Number(s?.index) === side.index);
+      if (!segment) throw new LoadError('선택한 세그먼트가 이 링크 범위에 없습니다.');
+      show('title', side.key, `${side.key.toUpperCase()} · ${typeof segment.name === 'string' ? segment.name : ''}`);
+      side.videoUrl = typeof segment.videoUrl === 'string' ? segment.videoUrl : '';
+      for (;;) {
+        if (deps.now() >= deadline) { timedOut = true; throw abortError(); }
+        setStatus(side, '주행 분석을 준비하는 중…');
+        const response = await deps.fetch(`${side.path}/drive/${side.index}`, {cache: 'no-store', signal});
+        if (!current()) return;
+        if (response.status === 202 || response.status === 503) {
+          await sleep(Math.min(retryAfterMs(response.headers.get('Retry-After')), deadline - deps.now()), signal);
+          if (!current()) return;
+          continue;
+        }
+        if (!response.ok) throw new LoadError(response.status === 404 ? '주행 분석용 rlog가 없습니다.' : response.status === 422 ? '주행 분석에 실패했습니다.' : `주행 분석을 불러오지 못했습니다 (${response.status}).`);
+        const data = await response.json();  // aborted through the request's signal
+        if (!current()) return;
+        const checked = validateDrive(data);
+        if (!checked.ok) throw new LoadError(`주행 분석 형식이 올바르지 않습니다 (${checked.reason}).`);
+        const notes = noteLines(data), options = episodeOptions(data);
+        side.data = data; side.episode = null; side.userPicked = false; side.sync = INITIAL_SYNC;
+        if (side.videoUrl && data.videoAligned) { side.mediaError = false; side.video.src = side.videoUrl; }
+        else { side.video.pause(); side.video.removeAttribute('src'); }
+        show('notes', side.key, notes); show('episodes', side.key, options);
+        setStatus(side, '');
+        settle(side);
+        return;
+      }
+    } catch (error) {
+      if (!current()) return;
+      clearSide(side);
+      if (timedOut) {
+        side.expired = true;
+        setStatus(side, '분석이 아직 끝나지 않았습니다.');
+        setRetry(side, true);
+      } else {
+        side.failed = true;
+        setStatus(side, error instanceof LoadError ? error.message : `네트워크 오류로 불러오지 못했습니다: ${error?.message || error}`, true);
+      }
+      settle(side);
+    } finally {
+      if (current()) { deps.clearTimeout(side.timer); side.timer = side.abort = null; }
+    }
+  }
+
+  function failFrame(side, error) {
+    try {
+      clearSide(side);
+    } finally {
+      side.failed = true;
+      setStatus(side, `화면 처리 중 오류로 이 쪽 표시를 멈췄습니다: ${error?.message || error}`, true);
+    }
+  }
+
+  function stepSide(side, now) {
+    const video = side.video, hasVideo = Boolean(side.data?.videoAligned && side.videoUrl && video.getAttribute('src'));
+    const target = side.data ? videoAt(side.data.series.t, side.data.series.video_time_s, side.base + clock.tau) : null;
+    const step = syncStep(side.sync, {target, currentTime: video.currentTime, duration: video.duration, hasVideo,
+                                      error: side.mediaError || Boolean(video.error), readyState: video.readyState}, now);
+    side.sync = step.state;
+    return {action: step.action, target};
+  }
+
+  function applySide(side, step, hold) {
+    const video = side.video;
+    if (step.action === 'seek' || step.action === 'seek-play') video.currentTime = step.target;
+    if (playIntent({running: clock.running, hold, state: side.sync}) === 'pause') {
+      if (!video.paused) video.pause();
+    } else if (video.paused) {
+      const playing = video.play();
+      if (playing && typeof playing.catch === 'function') playing.catch(() => { side.mediaError = true; });
+    }
+  }
+
+  function schedule() {
+    if (frame === null) frame = deps.requestAnimationFrame(now => { frame = null; tick(now); });
+  }
+
+  // A failing side is cleared and reported; the other side, the clock and the next frame continue.
+  function tick(now) {
+    try {
+      const elapsed = clock.last === null ? 0 : now - clock.last;
+      clock.last = now;
+      if (clock.running && !clockShouldHold(sides.map(s => s.sync))) {
+        clock.tau += elapsed / 1000 * clock.rate;
+        if (clock.tau >= clock.range[1]) { clock.tau = clock.range[1]; clock.running = false; }
+      }
+      const steps = sides.map(side => {
+        try { return stepSide(side, now); } catch (error) { failFrame(side, error); return null; }
+      });
+      const hold = clock.running && clockShouldHold(sides.map(s => s.sync));
+      sides.forEach((side, i) => {
+        if (!steps[i]) return;
+        try { applySide(side, steps[i], hold); } catch (error) { failFrame(side, error); }
+      });
+      show('frame', snapshot());
+    } finally {
+      schedule();
+    }
+  }
+
+  function snapshot() {
+    return {
+      clock: {...clock, range: [...clock.range]}, align, defaultsChosen,
+      sides: sides.map(s => ({key: s.key, data: s.data, episode: s.episode, userPicked: s.userPicked, base: s.base, sync: s.sync,
+                              status: s.status, statusError: s.statusError, retryVisible: s.retryVisible,
+                              finished: s.finished, failed: s.failed, expired: s.expired})),
+    };
+  }
+
+  return {
+    start() {
+      if (started) return;
+      started = true;
+      for (const side of sides) load(side.key);
+      schedule();
+    },
+    load, tick,
+    retry: ref => load(ref),
+    play() {
+      if (clock.tau >= clock.range[1]) clock.tau = clock.range[0];
+      clock.running = clock.range[1] > clock.range[0];
+    },
+    pause() { clock.running = false; },
+    seek(tau) { if (finite(tau)) clock.tau = Math.min(Math.max(tau, clock.range[0]), clock.range[1]); },
+    setRate(rate) { clock.rate = rate; for (const side of sides) side.video.playbackRate = rate; },
+    setAlign(value) { align = value === 'start' ? 'start' : 'episode'; alignByUser = true; relayout(true); },
+    setEpisode(ref, value) {
+      const side = sideOf(ref);
+      if (!side.data) return;
+      const i = value === null || value === '' ? null : Number(value);
+      side.episode = Number.isInteger(i) && i >= 0 && i < side.data.episodes.length ? i : null;
+      side.userPicked = true;
+      relayout(true);
+    },
+    markMediaError(ref) { sideOf(ref).mediaError = true; },
+    state: snapshot,
+  };
+}
+
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -156,18 +518,18 @@ const STYLE = `
 
 const COLORS = {a: '#ff8a36', b: '#56baff'};
 
+
+// Thin DOM layer: builds elements and hands browser services to the controller.
 function init() {
   document.head.append(el('style', {text: STYLE}));
   const root = document.querySelector('#compare');
   const params = new URLSearchParams(location.search);
-  let align = params.get('align') === 'start' ? 'start' : 'episode';
-  const sides = [];
+  const specs = [];
   for (const key of ['a', 'b']) {
     const raw = params.get(key), rawIndex = params.get(key + 'i');
     if (key === 'b' && raw === null) continue;
     const path = parseSafePath(raw, location.origin), index = parseIndex(rawIndex ?? '');
-    sides.push({key, path, index, invalid: path === null || index === null, data: null, sync: INITIAL_SYNC,
-                videoUrl: '', mediaError: false, episode: null, base: 0, generation: 0});
+    specs.push({key, path, index, invalid: path === null || index === null});
   }
 
   root.append(
@@ -175,7 +537,7 @@ function init() {
     el('p', {class: 'cmp-note', text: '영상 시각: modelV2 기준·동기 오차 미검증. 장면 기준: 자동 기준(미승인 기본값). 숫자와 정의만 표시하며 주행 품질을 판정하지 않습니다.'}),
   );
   const alignSelect = el('select', {'aria-label': '정렬 기준'}, el('option', {value: 'episode', text: '장면 시작 정렬'}), el('option', {value: 'start', text: '로그 시작 정렬'}));
-  alignSelect.value = align;
+  alignSelect.value = params.get('align') === 'start' ? 'start' : 'episode';
   const playButton = el('button', {type: 'button', text: '재생'});
   const scrub = el('input', {type: 'range', min: '0', max: '0', step: '0.01', value: '0', 'aria-label': '공통 재생 위치'});
   const rateSelect = el('select', {'aria-label': '배속'}, ...RATES.map(r => el('option', {value: String(r), text: `${r}×`})));
@@ -184,20 +546,21 @@ function init() {
   const grid = el('div', {class: 'cmp-grid'});
   root.append(grid, el('div', {class: 'card cmp-transport'}, playButton, scrub, timeLabel, rateSelect, alignSelect));
 
-  for (const side of sides) {
-    side.title = el('h2', {text: side.key.toUpperCase()});
-    side.status = el('p', {class: 'cmp-status', role: 'status'});
-    side.retry = el('button', {type: 'button', class: 'secondary hidden', text: '분석 대기 중(공유 대기열) — 다시 불러오기'});
-    side.select = el('select', {'aria-label': `${side.key.toUpperCase()} 장면`});
-    side.video = el('video', {muted: '', playsinline: '', preload: 'auto'});
+  const dom = {};
+  for (const spec of specs) {
+    const side = dom[spec.key] = {
+      title: el('h2', {text: spec.key.toUpperCase()}),
+      status: el('p', {class: 'cmp-status', role: 'status'}),
+      retry: el('button', {type: 'button', class: 'secondary hidden', text: '분석 대기 중(공유 대기열) — 다시 불러오기'}),
+      select: el('select', {'aria-label': `${spec.key.toUpperCase()} 장면`}),
+      video: el('video', {muted: '', playsinline: '', preload: 'auto'}),
+      syncLabel: el('div', {class: 'cmp-sync'}),
+      notes: el('div'),
+      cards: el('div', {class: 'cmp-cards'}),
+    };
     side.video.muted = true;
-    side.syncLabel = el('div', {class: 'cmp-sync'});
-    side.notes = el('div');
-    side.cards = el('div', {class: 'cmp-cards'});
+    spec.video = side.video;
     grid.append(el('section', {class: 'card card-pad cmp-side'}, side.title, side.status, side.retry, side.select, side.syncLabel, side.video, side.notes, side.cards));
-    side.video.addEventListener('error', () => { side.mediaError = true; });
-    side.retry.onclick = () => load(side);
-    side.select.onchange = () => { side.episode = side.select.value === '' ? null : Number(side.select.value); relayout(); };
   }
 
   const graphs = [
@@ -212,123 +575,21 @@ function init() {
     graphSection.append(el('div', {class: 'cmp-note', text: graph.title}), graph.canvas);
   }
   const legend = el('p', {class: 'cmp-note'});
-  for (const side of sides) legend.append(el('span', {style: `color:${COLORS[side.key]};margin-right:14px`, text: `■ ${side.key.toUpperCase()}`}));
+  for (const spec of specs) legend.append(el('span', {style: `color:${COLORS[spec.key]};margin-right:14px`, text: `■ ${spec.key.toUpperCase()}`}));
   graphSection.prepend(legend);
   const tableSection = el('section', {class: 'card card-pad'});
   root.append(graphSection, tableSection);
 
-  const clock = {tau: 0, running: false, last: 0, rate: 1, range: [0, 0]};
-
-  function setStatus(side, text, error = false) { side.status.textContent = text; side.status.classList.toggle('cmp-error', error); }
-
-  function relayout() {
-    align = alignSelect.value;
-    for (const side of sides) {
-      const episode = side.data && side.episode !== null ? side.data.episodes[side.episode] : null;
-      side.base = align === 'episode' && episode ? episode.start_t : 0;
+  function renderLayout({range, cards, table}) {
+    scrub.min = String(range[0]); scrub.max = String(range[1]);
+    for (const {key, items} of cards) {
+      dom[key].cards.replaceChildren(...items.map(c => el('div', {class: 'soft-card cmp-card'}, el('strong', {text: c.text}), el('span', {text: c.label}))));
     }
-    clock.range = timelineRange(sides.filter(s => s.data).map(s => ({t: s.data.series.t, base: s.base})));
-    clock.tau = align === 'episode' ? 0 : clock.range[0];
-    scrub.min = String(clock.range[0]); scrub.max = String(clock.range[1]);
-    renderCards(); renderTable(); draw();
-  }
-
-  function fillEpisodes(side) {
-    side.select.replaceChildren(el('option', {value: '', text: '장면 선택 안 함'}));
-    side.data.episodes.forEach((e, i) => {
-      const clipped = e.start_clipped || e.end_clipped ? ' · 잘림' : '';
-      const v = x => finite(x) ? (x * 3.6).toFixed(1) : '—';
-      side.select.append(el('option', {value: String(i), text: `${TYPE_TEXT[e.type] || e.type} · t ${e.start_t.toFixed(1)}s · ${v(e.start_v)}→${v(e.end_v)} km/h${clipped}`}));
-    });
-  }
-
-  function chooseDefaults() {
-    const loaded = sides.every(s => s.data || s.invalid || s.failed);
-    if (!loaded) return;
-    const [a, b] = sides;
-    const pick = defaultEpisodes(a.data, b ? b.data : undefined);
-    if (pick) { a.episode = pick[0]; if (b) b.episode = pick[1]; } else alignSelect.value = 'start';
-    for (const side of sides) if (side.data) side.select.value = side.episode === null ? '' : String(side.episode);
-    relayout();
-  }
-
-  async function load(side) {
-    const token = ++side.generation;
-    side.retry.classList.add('hidden'); side.failed = false;
-    if (side.invalid) { setStatus(side, '잘못된 비교 주소입니다(경로 또는 index).', true); side.failed = true; chooseDefaults(); return; }
-    try {
-      setStatus(side, '세그먼트 정보를 불러오는 중…');
-      const manifest = await fetch(`${side.path}/manifest`, {cache: 'no-store'});
-      if (!manifest.ok) throw new Error(manifest.status === 404 ? '로그를 찾을 수 없습니다.' : `세그먼트 정보를 불러오지 못했습니다 (${manifest.status}).`);
-      const info = await manifest.json();
-      const segment = (info.segments || []).find(s => Number(s.index) === side.index);
-      if (!segment) throw new Error('선택한 세그먼트가 이 링크 범위에 없습니다.');
-      side.title.textContent = `${side.key.toUpperCase()} · ${segment.name || ''}`;
-      side.videoUrl = segment.videoUrl || '';
-      const deadline = Date.now() + POLL_DEADLINE_MS;
-      while (token === side.generation) {
-        setStatus(side, '주행 분석을 준비하는 중…');
-        const response = await fetch(`${side.path}/drive/${side.index}`, {cache: 'no-store'});
-        if (response.status === 202 || response.status === 503) {
-          if (Date.now() > deadline) { setStatus(side, '분석이 아직 끝나지 않았습니다.'); side.retry.classList.remove('hidden'); return; }
-          await new Promise(resolve => setTimeout(resolve, retryAfterMs(response.headers.get('Retry-After'))));
-          continue;
-        }
-        if (!response.ok) throw new Error(response.status === 404 ? '주행 분석용 rlog가 없습니다.' : response.status === 422 ? '주행 분석에 실패했습니다.' : `주행 분석을 불러오지 못했습니다 (${response.status}).`);
-        const data = await response.json();
-        if (data.schemaVersion !== 1 || data.kind !== 'carrotDrive' || !Array.isArray(data.series?.t) || !data.series.t.length) throw new Error('주행 분석 형식이 올바르지 않습니다.');
-        if (token !== side.generation) return;
-        side.data = data;
-        if (side.videoUrl && data.videoAligned) { side.mediaError = false; side.video.src = side.videoUrl; } else side.video.removeAttribute('src');
-        const nullCells = data.series.vEgo.filter(x => x === null).length;
-        side.notes.replaceChildren(
-          el('p', {class: 'cmp-note', text: `코드 ${data.sourceVersion} · ${data.sourceLog} · ${data.series.t.length}칸(10Hz, 로그 시각)${data.videoAligned ? '' : ' · 영상 시각 없음: 추정 동기 안 함'}`}),
-          ...(nullCells ? [el('p', {class: 'cmp-note', text: `carState 무효/결측 칸 ${nullCells}개(값 없음 처리)`})] : []),
-          ...(data.missingServices.length ? [el('p', {class: 'cmp-note', text: `기록 없는 서비스: ${data.missingServices.join(', ')}`})] : []),
-          el('p', {class: 'cmp-note', text: `0은 기록값 또는 기본값일 수 있음: ${data.ambiguousDefaultFields.join(', ')}`}),
-        );
-        fillEpisodes(side);
-        setStatus(side, '');
-        chooseDefaults();
-        return;
-      }
-    } catch (error) {
-      if (token === side.generation) { side.failed = true; setStatus(side, error.message, true); chooseDefaults(); }
-    }
-  }
-
-  function selected(side) { return side.data && side.episode !== null ? side.data.episodes[side.episode] : null; }
-
-  function renderCards() {
-    for (const side of sides) {
-      const e = selected(side);
-      side.cards.replaceChildren();
-      if (!e) continue;
-      const card = (label, value, unit = '') => el('div', {class: 'soft-card cmp-card'}, el('strong', {text: finite(value) ? `${value.toFixed(3)}${unit}` : '—'}), el('span', {text: label}));
-      side.cards.append(
-        card('상관도 cmd_actual_corr (시간 지연 미보정)', e.cmd_actual_corr),
-        card(endLeadLabel(e.type), e.end_lead_d, ' m'),
-        card('저크 표준편차: aEgo 차분(10Hz)', e.std_jerk, ' m/s³'),
-        card('최대 저크: aEgo 차분(10Hz)', e.max_jerk, ' m/s³'),
-        card('최저 가속도', e.min_a, ' m/s²'),
-        card('길이', e.duration, ' s'),
-      );
-      if (e.pedal_input) side.cards.append(el('div', {class: 'soft-card cmp-card'}, el('strong', {text: '운전자 페달 입력 있음'}), el('span', {text: 'gasPressed 또는 brakePressed'})));
-    }
-  }
-
-  function renderTable() {
-    const episodes = sides.map(selected);
     tableSection.replaceChildren(el('div', {class: 'eyebrow', text: '장면 통계 대조'}),
       el('p', {class: 'cmp-note', text: 'Δ는 A·B 모두 유한한 수치일 때만 B−A로 계산합니다. 단위 SI(m/s, m/s², m, m/s³).'}));
-    if (!episodes.some(Boolean)) { tableSection.append(el('p', {class: 'cmp-note', text: '선택한 장면이 없습니다.'})); return; }
-    const head = el('tr', {}, el('th', {text: '항목'}), ...sides.map(s => el('th', {text: s.key.toUpperCase()})), ...(sides.length > 1 ? [el('th', {text: 'Δ(B−A)'})] : []));
-    const body = STAT_KEYS.map(key => {
-      const values = episodes.map(e => e ? e[key] : null);
-      const cells = values.map(v => el('td', {text: formatStat(v)}));
-      if (sides.length > 1) cells.push(el('td', {text: formatStat(deltaValue(values[0], values[1]))}));
-      return el('tr', {}, el('td', {text: key}), ...cells);
-    });
+    if (!table) { tableSection.append(el('p', {class: 'cmp-note', text: '선택한 장면이 없습니다.'})); return; }
+    const head = el('tr', {}, ...table.head.map(text => el('th', {text})));
+    const body = table.rows.map(row => el('tr', {}, ...row.map(text => el('td', {text}))));
     tableSection.append(el('table', {class: 'cmp-table'}, el('thead', {}, head), el('tbody', {}, ...body)));
   }
 
@@ -339,7 +600,7 @@ function init() {
     return {ctx, w, h};
   }
 
-  function draw() {
+  function draw({clock, sides}) {
     const [lo, hi] = clock.range, span = hi - lo || 1;
     for (const graph of graphs) {
       const {ctx, w, h} = context(graph.canvas);
@@ -381,43 +642,40 @@ function init() {
     scrub.value = String(clock.tau);
     timeLabel.textContent = `τ ${clock.tau.toFixed(2)} / ${clock.range[0].toFixed(1)}…${clock.range[1].toFixed(1)} s`;
     playButton.textContent = clock.running ? '일시정지' : '재생';
-    for (const side of sides) side.syncLabel.textContent = side.sync.mode === 'released' ? (REASON_TEXT[side.sync.reason] || '') : (side.sync.reason === 'buffering' ? REASON_TEXT.buffering : '');
+    for (const side of sides) dom[side.key].syncLabel.textContent = side.sync.mode === 'released' ? (REASON_TEXT[side.sync.reason] || '') : (side.sync.reason === 'buffering' ? REASON_TEXT.buffering : '');
   }
 
-  function syncSides(now) {
-    for (const side of sides) {
-      const video = side.video, hasVideo = Boolean(side.data?.videoAligned && side.videoUrl && video.getAttribute('src'));
-      const target = side.data ? videoAt(side.data.series.t, side.data.series.video_time_s, side.base + clock.tau) : null;
-      const step = syncStep(side.sync, {target, currentTime: video.currentTime, duration: video.duration, hasVideo,
-                                        error: side.mediaError || Boolean(video.error), readyState: video.readyState}, now);
-      side.sync = step.state;
-      if (step.action === 'seek' || step.action === 'seek-play') video.currentTime = target;
-      if (step.action === 'pause') video.pause();
-      if (!clock.running) video.pause();
-      else if (side.sync.mode === 'synced' && video.paused) video.play().catch(() => { side.mediaError = true; });
-    }
+  const controller = createCompareController({
+    sides: specs,
+    align: alignSelect.value,
+    deps: {
+      fetch: (url, options) => fetch(url, options), now: () => performance.now(),
+      setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id), AbortController,
+      requestAnimationFrame: fn => requestAnimationFrame(fn),
+    },
+    view: {
+      title: (key, text) => { dom[key].title.textContent = text; },
+      status: (key, text, error) => { dom[key].status.textContent = text; dom[key].status.classList.toggle('cmp-error', error); },
+      retry: (key, visible) => { dom[key].retry.classList.toggle('hidden', !visible); },
+      notes: (key, lines) => { dom[key].notes.replaceChildren(...lines.map(text => el('p', {class: 'cmp-note', text}))); },
+      episodes: (key, options) => { dom[key].select.replaceChildren(...options.map(o => el('option', {value: o.value, text: o.text}))); },
+      selected: (key, value) => { dom[key].select.value = value; },
+      align: value => { alignSelect.value = value; },
+      layout: renderLayout,
+      frame: draw,
+    },
+  });
+  for (const spec of specs) {
+    const side = dom[spec.key];
+    side.video.addEventListener('error', () => controller.markMediaError(spec.key));
+    side.retry.onclick = () => controller.retry(spec.key);
+    side.select.onchange = () => controller.setEpisode(spec.key, side.select.value);
   }
-
-  function tick(now) {
-    if (clock.running && !clockShouldHold(sides.map(s => s.sync))) {
-      clock.tau += (now - clock.last) / 1000 * clock.rate;
-      if (clock.tau >= clock.range[1]) { clock.tau = clock.range[1]; clock.running = false; }
-    }
-    clock.last = now;
-    syncSides(now);
-    draw();
-    requestAnimationFrame(tick);
-  }
-
-  playButton.onclick = () => {
-    if (!clock.running && clock.tau >= clock.range[1]) clock.tau = clock.range[0];
-    clock.running = !clock.running && clock.range[1] > clock.range[0];
-  };
-  scrub.oninput = () => { clock.tau = Number(scrub.value); };
-  rateSelect.onchange = () => { clock.rate = Number(rateSelect.value); for (const side of sides) side.video.playbackRate = clock.rate; };
-  alignSelect.onchange = relayout;
-  for (const side of sides) load(side);
-  requestAnimationFrame(now => { clock.last = now; tick(now); });
+  playButton.onclick = () => { if (controller.state().clock.running) controller.pause(); else controller.play(); };
+  scrub.oninput = () => controller.seek(Number(scrub.value));
+  rateSelect.onchange = () => controller.setRate(Number(rateSelect.value));
+  alignSelect.onchange = () => controller.setAlign(alignSelect.value);
+  controller.start();
 }
 
 if (typeof document !== 'undefined') init();

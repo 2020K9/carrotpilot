@@ -2,6 +2,7 @@ import asyncio
 import gzip
 import json
 import os
+import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -10,6 +11,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from .. import drive_jobs as drive_jobs_module
 from ..drive_jobs import DriveJobs
+from ..radar import RadarJobs
 from ..server import ROUTE_VIEWER_KEY, create_app
 from .test_viewer import DIRECTORY, OTHER_ROUTE, ROUTE, admin_headers, create_share, seed_route, viewer_config
 
@@ -324,6 +326,191 @@ def test_cleanup_cancels_waiting_and_kills_running(tmp_path, monkeypatch):
     assert all(task.done() for task in tasks)
     cache = viewer.drive_jobs.cache
     assert not [p for p in cache.glob(".*")]
+    assert not [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+
+  asyncio.run(run())
+
+
+class StalledPublish:
+  """Replaces publish: writes the compressed file, then blocks its worker thread until released."""
+
+  def __init__(self, monkeypatch, jobs_class, fail=False):
+    self.started, self.release = threading.Event(), threading.Event()
+    self.calls, self.events, self.fail = 0, [], fail
+    original = jobs_class.publish
+
+    def publish(jobs, temporary, compressed, output):
+      self.calls += 1
+      compressed.write_bytes(b"partial")
+      self.started.set()
+      self.release.wait(10)
+      if self.fail:
+        self.events.append("publish-failed")
+        raise ValueError("invalid analysis")
+      original(jobs, temporary, compressed, output)
+      self.events.append("publish-done")
+
+    monkeypatch.setattr(jobs_class, "publish", publish)
+
+
+def run_cancel_during_publish(tmp_path, monkeypatch, jobs_class, extra_cancels=0, fail=False):
+  _log, processes = install_fake_processes(monkeypatch)
+  stalled = StalledPublish(monkeypatch, jobs_class, fail)
+
+  async def run():
+    gate = asyncio.Semaphore(1)
+    jobs = jobs_class(tmp_path / "cache", gate)
+    jobs.version = "test"
+    source = tmp_path / "rlog.zst"
+    source.write_bytes(b"x")
+    response = await (jobs.response(source) if jobs_class is DriveJobs else jobs.response(source, "auto", 0))
+    assert response.status == 202
+    task = next(iter(jobs.jobs.values()))
+    await until(lambda: len(processes) == 1)
+    processes[0].release.set()
+    await until(stalled.started.is_set)
+    acquired = []
+
+    async def next_job():
+      async with gate:
+        acquired.append(sorted(p.name for p in jobs.cache.glob(".*")))
+        stalled.events.append("next-acquired")
+
+    waiter = asyncio.create_task(next_job())
+    closer = asyncio.create_task(jobs.close(None))
+    for _ in range(extra_cancels):
+      await asyncio.sleep(0.02)
+      task.cancel()
+    await asyncio.sleep(0.2)
+    assert not closer.done() and not task.done()
+    assert gate.locked() and not acquired
+    assert sorted(p.suffix for p in jobs.cache.glob(".*")) == [".gz", ".json"]  # not cleaned while publishing
+    stalled.release.set()
+    await asyncio.wait_for(closer, 5)
+    await asyncio.wait_for(waiter, 5)
+    assert task.cancelled()
+    assert stalled.calls == 1
+    assert stalled.events == ["publish-failed" if fail else "publish-done", "next-acquired"]
+    assert acquired == [[]]  # the next job got the slot only after the temporary files were removed
+    assert not gate.locked()
+    assert not list(jobs.cache.glob(".*"))
+    assert bool(list(jobs.cache.glob("*.json.gz"))) is not fail
+    assert len(processes) == 1
+
+  asyncio.run(run())
+
+
+def test_drive_cancel_during_publish_waits_before_cleanup_and_release(tmp_path, monkeypatch):
+  run_cancel_during_publish(tmp_path, monkeypatch, DriveJobs)
+
+
+def test_radar_cancel_during_publish_waits_before_cleanup_and_release(tmp_path, monkeypatch):
+  run_cancel_during_publish(tmp_path, monkeypatch, RadarJobs)
+
+
+def test_drive_double_cancel_during_publish_keeps_cleanup_order(tmp_path, monkeypatch):
+  run_cancel_during_publish(tmp_path, monkeypatch, DriveJobs, extra_cancels=2)
+
+
+def test_radar_double_cancel_during_publish_keeps_cleanup_order(tmp_path, monkeypatch):
+  run_cancel_during_publish(tmp_path, monkeypatch, RadarJobs, extra_cancels=2)
+
+
+def test_drive_publish_exception_during_cancel_keeps_cleanup_order(tmp_path, monkeypatch):
+  run_cancel_during_publish(tmp_path, monkeypatch, DriveJobs, fail=True)
+
+
+def test_radar_publish_exception_during_cancel_keeps_cleanup_order(tmp_path, monkeypatch):
+  run_cancel_during_publish(tmp_path, monkeypatch, RadarJobs, fail=True)
+
+
+def test_drive_double_cancel_during_kill_still_waits_process(tmp_path, monkeypatch):
+  log, processes = [], []
+
+  class SlowExitProcess(FakeProcess):
+    """Exits only after `exit` is set, even once killed."""
+
+    def __init__(self, *args, **kwargs):
+      super().__init__(*args, **kwargs)
+      self.exit = asyncio.Event()
+
+    async def wait(self):
+      if self.returncode is not None:
+        return self.returncode
+      await self.killed.wait()
+      await self.exit.wait()
+      FakeProcess.running -= 1
+      self.returncode = -9
+      self.log.append(("waited", self.output.name))
+      return self.returncode
+
+  async def create(*args, **_kwargs):
+    log.append(("spawn", Path(args[-1]).name))
+    process = SlowExitProcess(log, args, hang=True)
+    processes.append(process)
+    return process
+
+  monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+
+  async def run():
+    gate = asyncio.Semaphore(1)
+    jobs = DriveJobs(tmp_path / "cache", gate)
+    jobs.version = "test"
+    source = tmp_path / "rlog.zst"
+    source.write_bytes(b"x")
+    assert (await jobs.response(source)).status == 202
+    task = next(iter(jobs.jobs.values()))
+    await until(lambda: len(processes) == 1)
+
+    async def next_job():
+      async with gate:
+        log.append(("acquired", sorted(p.name for p in jobs.cache.glob(".*"))))
+
+    waiter = asyncio.create_task(next_job())
+    task.cancel()
+    await until(processes[0].killed.is_set)
+    task.cancel()
+    await asyncio.sleep(0.1)
+    assert not task.done() and gate.locked()
+    assert [entry[0] for entry in log] == ["spawn", "kill"]
+    assert list(jobs.cache.glob(".*"))  # the temporary file stays until the process has exited
+    processes[0].exit.set()
+    await asyncio.wait_for(waiter, 5)
+    assert task.cancelled()
+    assert [entry[0] for entry in log] == ["spawn", "kill", "waited", "acquired"]
+    assert log[-1][1] == []
+    assert not gate.locked()
+
+  asyncio.run(run())
+
+
+def test_cleanup_radar_running_and_drive_waiting_never_spawns_drive(tmp_path, monkeypatch):
+  from openpilot.selfdrive.carrot.radar.tools import radar_web_export
+  monkeypatch.setattr(radar_web_export, "source_version", lambda: "radar-test")
+  monkeypatch.setattr(drive_jobs_module.drive_analysis, "source_version", lambda: "drive-test")
+  log, processes = install_fake_processes(monkeypatch)
+
+  async def run():
+    seed_route(tmp_path, ROUTE, (0,))
+    client = TestClient(TestServer(create_app(viewer_config(tmp_path), start_cleanup=False)))
+    await client.start_server()
+    viewer = client.server.app[ROUTE_VIEWER_KEY]
+    base = f"/routes/{DIRECTORY}/{ROUTE}--0"
+    assert (await client.get(base + "/radar/0")).status == 202
+    await until(lambda: len(processes) == 1)
+    assert (await client.get(base + "/drive/0")).status == 202
+    for _ in range(20):
+      await asyncio.sleep(0)
+    tasks = [*viewer.radar_jobs.jobs.values(), *viewer.drive_jobs.jobs.values()]
+    assert len(tasks) == 2 and len(processes) == 1
+    await client.close()
+    assert len(processes) == 1
+    assert not any("drive_analysis.py" in p.args[1] for p in processes)  # the waiting drive job never spawned
+    assert [entry[0] for entry in log] == ["spawn", "kill", "waited"]
+    assert processes[0].returncode == -9
+    assert all(task.done() for task in tasks)
+    assert not viewer.radar_jobs.gate.locked()
+    assert not list(viewer.radar_jobs.cache.glob(".*"))
     assert not [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
 
   asyncio.run(run())

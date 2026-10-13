@@ -19,9 +19,12 @@ class RadarJobs:
     self.gate = gate if gate is not None else asyncio.Semaphore(1)
     self.version = None
 
-  async def close(self, _app):
+  def cancel(self):
     for job in self.jobs.values():
       job.cancel()
+
+  async def close(self, _app):
+    self.cancel()
     await asyncio.gather(*self.jobs.values(), return_exceptions=True)
 
   async def response(self, source: Path, sensor: str, sensitivity: int, radar_track_flip: str = "recorded"):
@@ -55,11 +58,23 @@ class RadarJobs:
     return web.json_response({"status": "preparing"}, status=202, headers={"Retry-After": "2", "Cache-Control": "no-store"})
 
   async def prepare(self, source, output, sensor, sensitivity, radar_track_flip="recorded"):
+    async def outlast(future) -> bool:
+      """Await `future` to completion through cancellations; return whether any cancellation arrived."""
+      cancelled = False
+      while not future.done():
+        try:
+          await asyncio.shield(future)
+        except asyncio.CancelledError:
+          cancelled = True
+        except Exception:
+          pass  # the outcome is read from the future itself
+      return cancelled
+
     async with self.gate:
       self.cache.mkdir(parents=True, exist_ok=True)
       temporary = self.cache / f".{secrets.token_hex(12)}.json"
       compressed = temporary.with_suffix(".gz")
-      process = None
+      process = publisher = None
       try:
         process = await asyncio.create_subprocess_exec(
           sys.executable, "-m", "openpilot.selfdrive.carrot.radar.tools.radar_web_export",
@@ -70,13 +85,21 @@ class RadarJobs:
         await asyncio.wait_for(process.wait(), timeout=300)
         if process.returncode:
           raise RuntimeError("radar replay failed")
-        await asyncio.to_thread(self.publish, temporary, compressed, output)
+        publisher = asyncio.ensure_future(asyncio.to_thread(self.publish, temporary, compressed, output))
+        await asyncio.shield(publisher)
       finally:
+        # Cancellation only interrupts waiting: the publishing thread and the killed process are
+        # outlasted before temporary files are removed and the shared slot is released.
+        cancelled = False
+        if publisher is not None:
+          cancelled |= await outlast(publisher)
         if process is not None and process.returncode is None:
           process.kill()
-          await process.wait()
+          cancelled |= await outlast(asyncio.ensure_future(process.wait()))
         temporary.unlink(missing_ok=True)
         compressed.unlink(missing_ok=True)
+        if cancelled:
+          raise asyncio.CancelledError
 
   def publish(self, temporary, compressed, output):
     payload = json.loads(temporary.read_text(encoding="utf-8"))
