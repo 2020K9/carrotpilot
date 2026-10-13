@@ -38,7 +38,8 @@ def build(destination: Path, ref: str):
     target = destination / name
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(subprocess.check_output(["git", "show", f"{commit}:{name}"], cwd=ROOT))
-  for name in ("server.py", "viewer.py", "radar.py", "radar_view.js", "requirements.txt", "Dockerfile.vault", "deploy_probe.py"):
+  for name in ("server.py", "viewer.py", "radar.py", "radar_view.js", "drive_analysis.py", "drive_jobs.py", "compare_view.js",
+               "requirements.txt", "Dockerfile.vault", "deploy_probe.py"):
     source = f"tools/carrot_route_vault/{name}"
     (destination / name).write_bytes(subprocess.check_output(["git", "show", f"{commit}:{source}"], cwd=ROOT))
   (destination / "SOURCE_COMMIT").write_text(commit + "\n", encoding="utf-8")
