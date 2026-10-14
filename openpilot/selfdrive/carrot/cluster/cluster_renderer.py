@@ -65,7 +65,6 @@ from cluster_config import (
     VEHICLE_LENGTH_M,
     WHITE,
     cluster_camera_view_is_road_camera,
-    cluster_camera_view_is_web_vision,
     cluster_camera_view_prefers_wide,
     cluster_wide_camera_zoom_factor,
     current_cluster_theme,
@@ -100,7 +99,6 @@ from cluster_scene import (
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_utils import blink_visible, clamp
-from cluster_web_vision_renderer import WebVisionRendererMixin
 
 
 CLUSTER_DIR = Path(__file__).resolve().parent
@@ -894,7 +892,7 @@ def label_rect_inside_bounds(
     return x >= left and y >= top and x + width <= right and y + height <= bottom
 
 
-class ClusterUiRenderer(WebVisionRendererMixin):
+class ClusterUiRenderer:
     # Class defaults also keep lightweight object.__new__ render probes on the
     # original Korean/metric presentation without running the GPU-heavy init.
     language = CLUSTER_LANGUAGE_KO
@@ -1022,7 +1020,6 @@ class ClusterUiRenderer(WebVisionRendererMixin):
         self.route_camera_tuning_visible = os.environ.get("CLUSTER_ROUTE_CAMERA_TUNING") == "1"
         self.profile_enabled = os.environ.get("CLUSTER_PROFILE_RENDER") == "1"
         self._profile_samples: list[tuple[str, float]] = []
-        self._web_vision_init()
 
     def set_profile_enabled(self, enabled: bool) -> None:
         self.profile_enabled = enabled
@@ -1230,7 +1227,6 @@ class ClusterUiRenderer(WebVisionRendererMixin):
         self._system_stats.close()
         if not self._window_open:
             return
-        self._web_vision_close()
         if self._direct_nv12_readback is not None:
             self._direct_nv12_readback.close()
             self._direct_nv12_readback = None
@@ -1500,19 +1496,8 @@ class ClusterUiRenderer(WebVisionRendererMixin):
         self._draw_hud(state, signal_lights)
         self._profile_add("render.hud", profile_stage)
         profile_stage = self._profile_start()
-        if self._web_vision_view_active(state):
-            # The web vision draws its own driving information and alert.
-            self._draw_web_vision_hud(state)
-        else:
-            self._draw_alert_overlay(getattr(state, "alert", None))
+        self._draw_alert_overlay(getattr(state, "alert", None))
         self._profile_add("render.alert", profile_stage)
-
-    def _web_vision_view_active(self, state: ClusterUiState) -> bool:
-        return (
-            cluster_camera_view_is_web_vision(getattr(state, "camera_view_mode", 0))
-            and self.screen_mode not in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI)
-            and self._effective_screen_mode(state) != CLUSTER_SCREEN_MODE_NAVI
-        )
 
     def _prepare_trip_report_cache(self, state: ClusterUiState, now: float | None = None) -> None:
         """Refresh the expensive trip-report panel outside the active frame target."""
@@ -1581,13 +1566,6 @@ class ClusterUiRenderer(WebVisionRendererMixin):
         if not cluster_camera_view_is_road_camera(state.camera_view_mode) or not state.onroad:
             self._close_live_road_camera()
         theme = self._current_theme()
-        if self._web_vision_view_active(state):
-            profile_stage = self._profile_start()
-            rl.clear_background(rl_color(theme.bg))
-            self._camera_overlay_wide = self._select_camera_overlay_stream(state)
-            self._draw_web_vision_world(state)
-            self._profile_add("render_world.web_vision", profile_stage)
-            return
         profile_stage = self._profile_start()
         scene = self._scene_for_state(state, self._highlight_lane_lit(state, signal_lights), theme)
         self._profile_add("render_world.build_scene", profile_stage)
@@ -3919,13 +3897,12 @@ class ClusterUiRenderer(WebVisionRendererMixin):
                 self._draw_status_footer(state)
                 return
 
-            if not self._web_vision_view_active(state):
-                self._draw_driving_hud_content(
-                    state,
-                    screen_mode,
-                    left_signal_lit,
-                    right_signal_lit,
-                )
+            self._draw_driving_hud_content(
+                state,
+                screen_mode,
+                left_signal_lit,
+                right_signal_lit,
+            )
             if screen_mode == CLUSTER_SCREEN_MODE_FULLSCREEN_3D:
                 self._draw_status_footer(state)
                 return

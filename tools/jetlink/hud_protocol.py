@@ -23,8 +23,7 @@ PARAMS = ('ClusterHud', 'ClusterHudDebug', 'ClusterHudBrightness', 'ClusterHudOr
           'ClusterHudRadarSourceColor', 'ClusterHudCameraViewMode', 'ClusterHudPanelLayout',
           'ClusterHudScreenMode', 'ShowPlotMode', 'LanguageSetting', 'IsMetric', 'ShowDateTime',
           'IsOnroad', 'CarParams', 'CalibrationParams', 'CustomSteerRatio', 'SteerActuatorDelay',
-          'LateralAccelerationFactor', 'UsbGpuActive', 'ShowLaneInfo', 'ShowPathMode', 'ShowPathColor',
-          'ShowPathModeLane', 'ShowPathColorLane', 'ShowPathColorCruiseOff', 'ShowRadarInfo', 'RadarLatFactor')
+          'LateralAccelerationFactor', 'UsbGpuActive')
 
 
 class Publisher:

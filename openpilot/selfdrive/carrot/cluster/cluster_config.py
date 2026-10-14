@@ -66,9 +66,6 @@ CLUSTER_CAMERA_VIEW_MODE_EGO_BOTTOM = 1
 CLUSTER_CAMERA_VIEW_MODE_ROAD_CAMERA = 2
 CLUSTER_CAMERA_VIEW_MODE_WIDE_CAMERA = 3
 CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA = 4
-# Stored value 5 is shown right below the wide camera in the settings menu;
-# the stored number never shifts the meaning of the existing 0..4 values.
-CLUSTER_CAMERA_VIEW_MODE_WEB_VISION = 5
 CLUSTER_CAMERA_VIEW_MODE_PARAM = "ClusterHudCameraViewMode"
 CLUSTER_ROAD_CAMERA_AUTO_WIDE_MAX_KPH = 36.0
 CLUSTER_ROAD_CAMERA_AUTO_NARROW_MIN_KPH = 54.0
@@ -271,11 +268,6 @@ def normalize_cluster_camera_view_mode(value: object) -> int:
             "camera-auto": CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA,
             "mode4": CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA,
             "mode-4": CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA,
-            "web-vision": CLUSTER_CAMERA_VIEW_MODE_WEB_VISION,
-            "web_vision": CLUSTER_CAMERA_VIEW_MODE_WEB_VISION,
-            "carrot-vision": CLUSTER_CAMERA_VIEW_MODE_WEB_VISION,
-            "mode5": CLUSTER_CAMERA_VIEW_MODE_WEB_VISION,
-            "mode-5": CLUSTER_CAMERA_VIEW_MODE_WEB_VISION,
         }
         if normalized in aliases:
             return aliases[normalized]
@@ -295,8 +287,6 @@ def normalize_cluster_camera_view_mode(value: object) -> int:
         return CLUSTER_CAMERA_VIEW_MODE_WIDE_CAMERA
     if mode == CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA:
         return CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA
-    if mode == CLUSTER_CAMERA_VIEW_MODE_WEB_VISION:
-        return CLUSTER_CAMERA_VIEW_MODE_WEB_VISION
     return CLUSTER_CAMERA_VIEW_MODE_DEFAULT
 
 
@@ -306,12 +296,7 @@ def cluster_camera_view_is_road_camera(mode: object) -> bool:
         CLUSTER_CAMERA_VIEW_MODE_ROAD_CAMERA,
         CLUSTER_CAMERA_VIEW_MODE_WIDE_CAMERA,
         CLUSTER_CAMERA_VIEW_MODE_AUTO_CAMERA,
-        CLUSTER_CAMERA_VIEW_MODE_WEB_VISION,
     )
-
-
-def cluster_camera_view_is_web_vision(mode: object) -> bool:
-    return normalize_cluster_camera_view_mode(mode) == CLUSTER_CAMERA_VIEW_MODE_WEB_VISION
 
 
 def cluster_camera_view_prefers_wide(mode: object, speed_kph: float, currently_wide: bool) -> bool:

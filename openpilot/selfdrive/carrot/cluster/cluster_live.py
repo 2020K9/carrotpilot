@@ -24,12 +24,6 @@ from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_spee
 from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
-from cluster_web_vision import (
-    WEB_VISION_SERVICES,
-    WebVisionInputs,
-    normalize_web_vision_params,
-    read_web_vision_raw_params,
-)
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -55,8 +49,6 @@ ACCELERATION_DUE_TO_GRAVITY = 9.80665
 DEFAULT_MAX_LATERAL_ACCEL = 3.0
 SELFDRIVE_STATE_TIMEOUT_SECONDS = 5.0
 SELFDRIVE_UNRESPONSIVE_TIMEOUT_SECONDS = 10.0
-# broker.py reads the web vision display settings once per live snapshot.
-WEB_VISION_PARAM_POLL_SECONDS = 1.0
 
 
 def deceleration_source_display_label(source: str | None) -> str:
@@ -183,9 +175,6 @@ class OpenpilotLiveSource:
             print(f"Carrot navigation media IPC unavailable: {exc}", flush=True)
             self._carrot_navi_media = None
         self._standby_state = standby_state()
-        self._web_vision_inputs: WebVisionInputs | None = None
-        self._web_vision_params: dict[str, float] | None = None
-        self._next_web_vision_param_read_t = 0.0
         self.profile_enabled = False
         self._profile_samples: list[tuple[str, float]] = []
         try:
@@ -284,51 +273,6 @@ class OpenpilotLiveSource:
             self._next_debug_param_read_t = 0.0
         self._hud_debug_mode = next_mode
 
-    def set_web_vision_enabled(self, enabled: bool) -> None:
-        """Collect web vision inputs only while camera view 5 is selected."""
-        if not enabled:
-            self._web_vision_inputs = None
-            return
-        if self._web_vision_inputs is not None:
-            return
-        self._web_vision_inputs = WebVisionInputs()
-        self._next_web_vision_param_read_t = 0.0
-        # Seed from the latest received messages so the view does not wait for
-        # every service to publish again.
-        for service in WEB_VISION_SERVICES:
-            try:
-                received = int(self.sm.recv_frame.get(service, 0)) > 0
-            except (AttributeError, TypeError, ValueError):
-                received = self._service_alive(service)
-            if received:
-                self._update_web_vision_service(service)
-
-    def _update_web_vision_service(self, service: str) -> None:
-        inputs = self._web_vision_inputs
-        if inputs is None:
-            return
-        received_t = self._service_receive_time(service)
-        try:
-            inputs.update(
-                service,
-                self.sm[service],
-                received_t if received_t is not None else time.monotonic(),
-                self._service_valid(service),
-            )
-        except Exception as exc:
-            print(f"Cluster web vision input {service} rejected: {exc}", flush=True)
-
-    def _with_web_vision(self, state: ClusterUiState) -> ClusterUiState:
-        inputs = self._web_vision_inputs
-        if inputs is None:
-            return state
-        now = time.monotonic()
-        if now >= self._next_web_vision_param_read_t:
-            raw = read_web_vision_raw_params(self.params) if self.params is not None else {}
-            self._web_vision_params = normalize_web_vision_params(raw, self._web_vision_params)
-            self._next_web_vision_param_read_t = now + WEB_VISION_PARAM_POLL_SECONDS
-        return replace(state, web_vision=inputs.snapshot(now, self._web_vision_params))
-
     def profile_samples(self) -> tuple[tuple[str, float], ...]:
         samples = tuple(self._profile_samples)
         self._profile_samples.clear()
@@ -356,8 +300,6 @@ class OpenpilotLiveSource:
                 continue
             event_t = self._service_time(service)
             self._apply_service_update(service, event_t)
-            if self._web_vision_inputs is not None and service in WEB_VISION_SERVICES:
-                self._update_web_vision_service(service)
         self._profile_add("source.live.apply_updates", profile_stage)
 
         onroad_state = self.onroad_state()
@@ -373,7 +315,7 @@ class OpenpilotLiveSource:
             state = frame_to_state(frame)
             self._profile_add("source.live.frame_to_state", profile_stage)
 
-            self.last_state = self._with_web_vision(self._with_live_hud_state(self._with_debug_state(state)))
+            self.last_state = self._with_live_hud_state(self._with_debug_state(state))
             self.frames += 1
             return self.last_state
 
@@ -381,7 +323,7 @@ class OpenpilotLiveSource:
         state = self._standby_state
         self._profile_add("source.live.standby_state", profile_stage)
 
-        self.last_state = self._with_web_vision(self._with_live_hud_state(self._with_debug_state(state)))
+        self.last_state = self._with_live_hud_state(self._with_debug_state(state))
         return self.last_state
 
     def _with_live_hud_state(self, state: ClusterUiState) -> ClusterUiState:

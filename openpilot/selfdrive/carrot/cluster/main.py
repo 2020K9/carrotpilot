@@ -39,7 +39,6 @@ from cluster_config import (
     DESIGN_WIDTH,
     normalize_cluster_brightness_percent,
     cluster_camera_view_is_road_camera,
-    cluster_camera_view_is_web_vision,
     normalize_cluster_camera_view_mode,
     normalize_cluster_encoder_mode,
     normalize_cluster_panel_layout,
@@ -896,7 +895,6 @@ def run_demo(
             map_theme=navi_map_theme,
         )
     if live_source is not None:
-        live_source.set_web_vision_enabled(cluster_camera_view_is_web_vision(active_camera_view_mode))
         live_source.set_profile_enabled(profile_render)
         live_source.set_hud_debug_mode(active_hud_debug_mode)
         live_source.set_debug_panels_enabled(
@@ -1221,10 +1219,6 @@ def run_demo(
                             flush=True,
                         )
                         active_camera_view_mode = next_camera_view_mode
-                        if live_source is not None:
-                            live_source.set_web_vision_enabled(
-                                cluster_camera_view_is_web_vision(active_camera_view_mode)
-                            )
                 next_camera_view_param_read = now + CAMERA_VIEW_PARAM_POLL_SECONDS
             if panel_layout_param_reader is not None and now >= next_panel_layout_param_read:
                 next_panel_layout = panel_layout_param_reader.read()
