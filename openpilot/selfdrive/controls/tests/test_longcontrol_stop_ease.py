@@ -373,7 +373,7 @@ def test_stop_ease_catalog_menu_and_param_keys():
     assert setting['risk'] == 'high'
     assert name not in stopgo['params'] and leaf_params.count(name) == 1
     assert f'{{"{name}", {{PERSISTENT, INT, "{default}"}}}}' in keys
-  assert menu['params'] == [name for name, *_ in lc.STOP_EASE_PARAMS]
+  assert menu['params'] == [name for name, *_ in lc.STOP_EASE_PARAMS] + ['K9StopJerkEase']
   assert math.isclose(lc.STOP_EASE_RATE, .8) and lc.STOP_EASE_GAP == 1.5 and lc.STOP_EASE_NEED_GAIN == 2.
 
 
