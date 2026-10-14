@@ -1500,16 +1500,23 @@ class ClusterUiRenderer(WebVisionRendererMixin):
         self._draw_hud(state, signal_lights)
         self._profile_add("render.hud", profile_stage)
         profile_stage = self._profile_start()
+        alert = getattr(state, "alert", None)
         if self._web_vision_view_active(state):
-            # The web vision draws its own driving information and alert.
-            self._draw_web_vision_hud(state)
+            # The web vision draws its own driving information and alert, but the
+            # HUD's own missing-selfdriveState alerts keep their usual priority.
+            own_alert = alert if alert is not None and alert.alert_type in CLUSTER_SYNTHETIC_ALERT_TEXT_KEYS else None
+            self._draw_web_vision_hud(state, draw_alert=own_alert is None)
+            self._draw_alert_overlay(own_alert)
         else:
-            self._draw_alert_overlay(getattr(state, "alert", None))
+            self._draw_alert_overlay(alert)
         self._profile_add("render.alert", profile_stage)
 
     def _web_vision_view_active(self, state: ClusterUiState) -> bool:
+        # Only live input carries web vision inputs; without them the existing
+        # road camera view (and its alerts) is drawn instead of an empty stage.
         return (
-            cluster_camera_view_is_web_vision(getattr(state, "camera_view_mode", 0))
+            getattr(state, "web_vision", None) is not None
+            and cluster_camera_view_is_web_vision(getattr(state, "camera_view_mode", 0))
             and self.screen_mode not in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI)
             and self._effective_screen_mode(state) != CLUSTER_SCREEN_MODE_NAVI
         )

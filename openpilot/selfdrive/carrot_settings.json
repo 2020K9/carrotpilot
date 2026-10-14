@@ -4400,7 +4400,7 @@
           "일반 카메라",
           "광각 카메라",
           "속도 자동",
-"당근웹비전"
+          "당근웹비전"
         ],
         "en": [
           "Default",
@@ -4408,7 +4408,7 @@
           "Narrow camera",
           "Wide camera",
           "Speed automatic",
-"당근웹비전"
+          "당근웹비전"
         ],
         "zh": [
           "Default",
@@ -4416,7 +4416,7 @@
           "Narrow camera",
           "Wide camera",
           "Speed automatic",
-"당근웹비전"
+          "당근웹비전"
         ]
       }
     }

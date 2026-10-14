@@ -40,6 +40,7 @@ from cluster_config import (
     normalize_cluster_brightness_percent,
     cluster_camera_view_is_road_camera,
     cluster_camera_view_is_web_vision,
+    cluster_web_vision_unsupported_notice,
     normalize_cluster_camera_view_mode,
     normalize_cluster_encoder_mode,
     normalize_cluster_panel_layout,
@@ -864,6 +865,9 @@ def run_demo(
     print(f"ShowDateTime external HUD clock: {'on' if active_clock_visible else 'off'}", flush=True)
     print(f"{CLUSTER_SCREEN_MODE_PARAM} initial: {active_screen_mode}", flush=True)
     print(f"{CLUSTER_CAMERA_VIEW_MODE_PARAM} initial: {active_camera_view_mode}", flush=True)
+    web_vision_notice = cluster_web_vision_unsupported_notice(active_camera_view_mode, input_mode)
+    if web_vision_notice is not None:
+        print(web_vision_notice, flush=True)
     print(f"{CLUSTER_PANEL_LAYOUT_PARAM} initial: {active_panel_layout}", flush=True)
     print(
         f"{CLUSTER_RADAR_INFO_PARAM} initial: {active_radar_info_mode} "
@@ -1221,6 +1225,9 @@ def run_demo(
                             flush=True,
                         )
                         active_camera_view_mode = next_camera_view_mode
+                        web_vision_notice = cluster_web_vision_unsupported_notice(active_camera_view_mode, input_mode)
+                        if web_vision_notice is not None:
+                            print(web_vision_notice, flush=True)
                         if live_source is not None:
                             live_source.set_web_vision_enabled(
                                 cluster_camera_view_is_web_vision(active_camera_view_mode)
