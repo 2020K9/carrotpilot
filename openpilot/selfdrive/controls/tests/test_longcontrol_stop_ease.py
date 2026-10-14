@@ -271,7 +271,7 @@ def test_final_accel_limits_keep_priority(monkeypatch, base_lc):
 @pytest.mark.parametrize("name, stored, index, expected", [
   ("StopEaseDist", 9, 0, 1.0), ("StopEaseDist", 81, 0, 8.0),
   ("StopEaseSpeed", 2, 1, .3), ("StopEaseSpeed", 31, 1, 3.0),
-  ("StopEaseAccel", -101, 2, -1.0), ("StopEaseAccel", -19, 2, -.2),
+  ("StopEaseAccel", -101, 2, -1.0), ("StopEaseAccel", 0, 2, 0.), ("StopEaseAccel", 1, 2, 0.),
   ("StopEaseDist", float("nan"), 0, 4.0), ("StopEaseSpeed", float("inf"), 1, .5),
   ("StopEaseAccel", "invalid", 2, -.5), ("StopEaseEnable", 2, None, None),
 ])
@@ -282,6 +282,28 @@ def test_setting_bounds_and_invalid_values(monkeypatch, name, stored, index, exp
     assert control.stop_ease_pending == pytest.approx((4.0, .5, -.5))
   else:
     assert control.stop_ease_pending[index] == pytest.approx(expected)
+
+
+def test_zero_target_releases_to_zero_and_lead_approach_still_limits(monkeypatch):
+  control, _ = make(lc, monkeypatch, {**ON, "StopEaseAccel": 0})
+  warm_up(control)
+  assert control.stop_ease_pending[2] == 0.
+  enter_from(control, -.93)
+  # No closing speed: eases at the bounded rate all the way to zero.
+  previous = -.93
+  for _ in range(200):
+    accel = step(control, frame(v=0.))
+    assert 0. <= accel - previous <= STEP + 1e-9
+    previous = accel
+  assert accel == 0. and control.stop_ease_shadow == -.93
+  # Lead starts closing: the required deceleration applies in that frame.
+  accel = step(control, frame(v=0., d_rel=3., v_rel=-.5))
+  assert accel == pytest.approx(-lc.STOP_EASE_NEED_GAIN * .5 ** 2 / (2. * (3. - lc.STOP_EASE_GAP)))
+  # Requirement as strong as the original: the original output returns.
+  accel = step(control, frame(v=0., d_rel=3., v_rel=-3.))
+  assert accel == control.stop_ease_shadow == -.93
+  accel = step(control, frame(v=0.))
+  assert accel == pytest.approx(-.93 + STEP)
 
 
 @pytest.mark.parametrize("enable", [-1, 0, float("nan"), "bad", None])

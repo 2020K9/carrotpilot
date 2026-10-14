@@ -3408,7 +3408,7 @@
       "group": "주행튜닝",
       "name": "StopEaseAccel",
       "title": "정차완화목표감속x0.01(-50)",
-      "descr": "정차 완화가 도달하는 가장 약한 감속 명령입니다. -100~-20, 기본값 -50은 -0.50m/s²입니다. 원래 명령이 이미 이 값보다 약하면 원래 명령을 그대로 쓰며, 완화가 감속을 더 세게 하거나 0 이상으로 만들지는 않습니다. 정차 후에도 조건이 유지되면 이 명령을 그대로 냅니다(경사로 정지 유지나 차량 반응은 확인되지 않았습니다). 범위 밖 값은 끝값으로 제한합니다. 현대·기아 일반 CAN(K9 등) 오픈파일럿 종방향에서만 사용하며 CAN FD·다른 차종·순정 ACC에는 적용하지 않습니다. 변경은 약 1초 안에 읽지만 진행 중인 정지에는 적용하지 않고 다음 정지부터 적용합니다. 실차 미검증 시험 기능입니다.",
+      "descr": "정차 완화가 도달하는 가장 약한 감속 명령입니다. -100~0, 기본값 -50은 -0.50m/s²입니다. 원래 명령이 이미 이 값보다 약하면 원래 명령을 그대로 쓰며, 완화가 감속을 더 세게 하지는 않습니다. 0으로 설정해도 앞차에 다가가는 중에는 거리와 상대속도로 계산한 감속 제한이 적용되고, 다가가지 않으면 브레이크 요청을 0까지 서서히 풉니다. 실제 정지거리, 충돌 방지, 정차 유지 효과는 확인되지 않았습니다. 정차 후에도 조건이 유지되면 이 명령을 그대로 내므로 0이면 정차 뒤 브레이크 요청이 0일 수 있으며, 정차 뒤 밀림 여부·경사로 정지 유지·차량 반응은 확인되지 않았습니다. 범위 밖 값은 끝값으로 제한합니다. 현대·기아 일반 CAN(K9 등) 오픈파일럿 종방향에서만 사용하며 CAN FD·다른 차종·순정 ACC에는 적용하지 않습니다. 변경은 약 1초 안에 읽지만 진행 중인 정지에는 적용하지 않고 다음 정지부터 적용합니다. 실차 미검증 시험 기능입니다.",
       "egroup": "LONG",
       "etitle": "Stop easing target decel x0.01 (-50)",
       "edescr": "Weakest deceleration command reached by stop easing. -100 to -20; default -50 means -0.50 m/s². If the original command is already weaker, it is used unchanged; easing never strengthens braking or reaches zero or above. While conditions remain after standstill, this command continues to be sent (hill holding and vehicle response are unverified). Out-of-range values are clamped. Used only for Hyundai/Kia conventional-CAN openpilot longitudinal control (e.g. K9); not applied to CAN FD, other brands or stock ACC. Changes are read within about one second but apply from the next stop, not to a stop in progress. Experimental and not verified on a vehicle.",
@@ -3416,7 +3416,7 @@
       "ctitle": "停车缓和目标减速 x0.01(-50)",
       "cdescr": "停车缓和达到的最弱减速指令。-100~-20，默认-50即-0.50m/s²。原指令已比该值弱时保持原指令；缓和不会加强制动，也不会达到0或以上。停车后条件仍满足时继续发送该指令（坡道保持与车辆反应未验证）。超出范围的值限制为端点。仅用于现代/起亚普通 CAN（如 K9）的 openpilot 纵向控制；不适用于 CAN FD、其他品牌或原厂 ACC。修改约一秒内读取，但不作用于进行中的停车，从下一次停车开始生效。实验功能，未经实车验证。",
       "min": -100,
-      "max": -20,
+      "max": 0,
       "default": -50,
       "unit": 10,
       "risk": "high"

@@ -27,7 +27,7 @@ STOP_EASE_PARAMS = (
   ("StopEaseEnable", 0, 0, 1),
   ("StopEaseDist", 40, 10, 80),
   ("StopEaseSpeed", 5, 3, 30),
-  ("StopEaseAccel", -50, -100, -20),
+  ("StopEaseAccel", -50, -100, 0),
 )
 STOP_EASE_GAP = 1.5         # m subtracted from lead distance in the closing-speed check
 STOP_EASE_NEED_GAIN = 2.0   # margin over ~0.5 effective/commanded decel ratio
