@@ -55,6 +55,25 @@ class TrafficState(Enum):
   def __str__(self):
     return self.name
 
+def parse_long_mpc_jerk_cost(raw) -> float:
+  """Stored LongMpcJerkCost text -> acc MPC jerk base cost.
+
+  Only a plain integer 5..60 is used. Missing, empty, non-numeric, decimal
+  (never truncated), NaN/inf and out-of-range values all use 20.
+  """
+  if isinstance(raw, bytes):
+    try:
+      raw = raw.decode("ascii")
+    except UnicodeDecodeError:
+      return 20.0
+  if not isinstance(raw, str):
+    return 20.0
+  text = raw.strip()
+  if not (text.isascii() and text.isdigit()):
+    return 20.0
+  value = int(text)
+  return float(value) if 5 <= value <= 60 else 20.0
+
 A_CRUISE_MAX_BP_CARROT = [0., 10 * CV.KPH_TO_MS, 40 * CV.KPH_TO_MS, 60 * CV.KPH_TO_MS, 80 * CV.KPH_TO_MS, 110 * CV.KPH_TO_MS, 140 * CV.KPH_TO_MS]
 
 class CarrotPlanner:
@@ -164,6 +183,7 @@ class CarrotPlanner:
     self.cruiseMaxVals6 = 0.6
 
     self.aChangeCostStarting = 10.0
+    self.longMpcJerkCost = 20.0
 
     self.trafficLightDetectMode = 2 # 0: None, 1:Stop, 2:Stop&Go
     self.trafficState_carrot = 0
@@ -229,10 +249,19 @@ class CarrotPlanner:
       self.eco_over_speed = self.params.get_int("CruiseEcoControl")
       self.autoNaviSpeedDecelRate = float(self.params.get_int("AutoNaviSpeedDecelRate")) * 0.01
       self.aChangeCostStarting = self.params.get_float("AChangeCostStarting")
+      self.longMpcJerkCost = parse_long_mpc_jerk_cost(self._read_param_text("LongMpcJerkCost"))
       self.trafficStopDistanceAdjust = self.params.get_float("TrafficStopDistanceAdjust") / 100.
     elif self.params_count >= 100:
 
       self.params_count = 0
+
+  def _read_param_text(self, key):
+    # Raw stored text, so decimals/garbage are rejected instead of cast by get_int.
+    try:
+      with open(self.params.get_param_path(key), "rb") as f:
+        return f.read()
+    except OSError:
+      return None
 
   def get_carrot_accel(self, v_ego):
     cruiseMaxVals = [self.cruiseMaxVals0, self.cruiseMaxVals1, self.cruiseMaxVals2, self.cruiseMaxVals3, self.cruiseMaxVals4, self.cruiseMaxVals5, self.cruiseMaxVals6]

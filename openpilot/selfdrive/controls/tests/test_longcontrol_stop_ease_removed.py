@@ -146,7 +146,7 @@ def test_catalog_param_keys_and_experimental_menu():
   menu = next(x for x in entries if x.get("id") == "EXPERIMENTAL")
   driving = next(x for x in catalog["menu"] if x.get("id") == "DRIVING")
   assert driving["groups"][-1] is menu and menu["ko"] == menu["en"] == menu["zh"] == "실험중"
-  assert menu["params"] == ["K9StopJerkEase", "K9StopSoftBrakeTime", "K9StopSoftBrakeAccel", "K9StopSoftBrakeSpeed"]
+  assert menu["params"] == ["K9StopJerkEase", "K9StopSoftBrakeTime", "K9StopSoftBrakeAccel", "K9StopSoftBrakeSpeed", "LongMpcJerkCost"]
   leaf_params = [name for x in entries if isinstance(x.get("params"), list) for name in x["params"] if isinstance(name, str)]
   for name in menu["params"]:
     assert leaf_params.count(name) == 1
