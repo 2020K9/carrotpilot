@@ -16,8 +16,8 @@ from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai.k9_stop_soft_brake import (
-  K9_SOFT_BRAKE_SPEED as SPEED_PARAM, K9StopSoftBrake, k9_stop_soft_brake_applies, read_k9_stop_soft_brake,
-  read_k9_stop_soft_brake_speed,
+  K9_SOFT_BRAKE_END_SPEED_ZERO, K9_SOFT_BRAKE_SPEED as SPEED_PARAM, K9StopSoftBrake, k9_stop_soft_brake_applies,
+  read_k9_stop_soft_brake, read_k9_stop_soft_brake_speed,
 )
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
@@ -195,13 +195,13 @@ def sent(rows):
 
 
 def control_trace(rows):
-  """What reaches the car and the control state: sent StopReq/ACCMode/aReq, longActive/enabled, LongControl output."""
+  """차로 가는 것과 제어 상태: 송신 StopReq/ACCMode/aReq, longActive/enabled, LongControl 출력."""
   return [(r["sent"] and (r["sent"]["StopReq"], r["sent"]["ACCMode"], r["sent"]["aReqValue"], r["sent"]["aReqRaw"]),
            r["long_active"], r["enabled"], r["cc_accel"], r["soft_hold"]) for r in rows]
 
 
 def check_expired_original_control(rows):
-  """After expiry: no weak decel (None, not 0), no soft hold, the original stopping command is sent while engaged."""
+  """만료 뒤: 약제동 없음(0이 아니라 None), 소프트홀드 없음, 제어 중에는 원래 정차 명령을 보냄."""
   assert rows and all(r["expired"] and r["soft"] is None and r["ci_soft"] is None and r["soft_hold"] == 0 and r["frames"] == 0
                       for r in rows)
   assert all(r["lcs"] == "stopping" and r["long_active"] and r["enabled"] for r in rows)
@@ -252,7 +252,7 @@ def test_time_zero_is_off(monkeypatch):
 
 
 def recording(loop):
-  """Records every step's inputs of loop (for same_inputs_off)."""
+  """loop의 매 step 입력을 기록한다(same_inputs_off용)."""
   steps, real_step = [], loop.step
 
   def step(**kw):
@@ -263,7 +263,7 @@ def recording(loop):
 
 
 def same_inputs_off(monkeypatch, loop_on, steps):
-  """Replays the recorded inputs of loop_on with the trial off (time 0) and returns its rows."""
+  """loop_on에서 기록한 입력을 기능 끔(시간 0)으로 다시 돌려 그 결과 행을 돌려준다."""
   off = Loop(monkeypatch, hold_time=0, **{k: v for k, v in loop_on.initial_params.items() if k != "K9StopSoftBrakeTime"})
   for kw in steps:
     off.step(**kw)
@@ -271,8 +271,8 @@ def same_inputs_off(monkeypatch, loop_on, steps):
 
 
 def test_sequence_weak_decel_then_original_stop_control(monkeypatch):
-  """Was test_sequence_weak_decel_then_existing_hold: after the set time the trial now ends (expires) instead of
-  requesting the soft hold, and the original stopping command is sent, identical to the trial off."""
+  """옛 이름 test_sequence_weak_decel_then_existing_hold: 설정 시간이 지나면 소프트홀드를 요청하지 않고 약제동을
+  끝내며(만료), 기능 끔과 같은 원래 정차 명령을 보낸다."""
   loop = Loop(monkeypatch, hold_time=20)
   steps = recording(loop)
   loop.approach()
@@ -290,12 +290,11 @@ def test_sequence_weak_decel_then_original_stop_control(monkeypatch):
   assert [r["frames"] for r in wait[:199]] == list(range(1, 200))
   assert all(r["soft"] == pytest.approx(-0.2) and r["soft_hold"] == 0 and not r["expired"] for r in wait[:199])
   assert all(r["sent"]["aReqValue"] == pytest.approx(-0.2, abs=TOL) and r["sent"]["StopReq"] == 1 for r in sent(wait[:199]))
-  # At exactly 2 s of standstill: the weak decel ends; no soft hold.
+  # 정지 정확히 2초: 약제동 끝, 소프트홀드 없음.
   assert wait[199]["expired"] and wait[199]["soft"] is None and wait[199]["soft_hold"] == 0
   after = loop.run(300, standstill=True, a_target=-0.1)
   check_expired_original_control(wait[199:] + after)
-  # Same inputs with the trial off: LongControl output never changes, and from the expiry on the sent commands, the
-  # control state and the (zero) soft hold are identical.
+  # 같은 입력의 기능 끔과 비교: LongControl 출력은 늘 같고, 만료부터는 송신 명령·제어 상태·소프트홀드(0)도 같다.
   off = same_inputs_off(monkeypatch, loop, steps)
   assert [r["cc_accel"] for r in loop.rows] == [r["cc_accel"] for r in off]
   n = len(loop.rows) - len(after) - 1
@@ -332,7 +331,7 @@ def test_pedal_clears_and_never_rearms(monkeypatch, pedal, during):
   pressed = loop.run(30, standstill=True, enabled=False, **{pedal: True})
   assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 and r["expired"] == (during == "expired")
              for r in pressed)
-  # Released, re-enabled and still stopped: no weak decel, no soft hold from this trial.
+  # 놓고 다시 켠 뒤에도 멈춰 있는 동안: 이 기능의 약제동·소프트홀드 없음.
   after = loop.run(600, standstill=True, a_target=-0.1)
   assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 for r in after)
   # It works again after the car has moved.
@@ -344,8 +343,8 @@ def test_pedal_clears_and_never_rearms(monkeypatch, pedal, during):
 
 
 def test_cruise_off_after_expiry(monkeypatch):
-  """Was test_cruise_off_clears_own_hold: there is no own hold any more; cruise off after the expiry sends no long
-  enable/StopReq, and re-enabling in the same stop brings no weak decel and no soft hold."""
+  """옛 이름 test_cruise_off_clears_own_hold: 자기 홀드가 더는 없다. 만료 뒤 크루즈를 끄면 종방향 활성·StopReq를
+  보내지 않고, 같은 정차에서 다시 켜도 약제동·소프트홀드가 없다."""
   loop = Loop(monkeypatch, hold_time=10)
   loop.approach()
   loop.run(200, standstill=True, a_target=-0.1)
@@ -377,8 +376,8 @@ def override_release_cruise_cycle(loop):
 
 
 def test_override_without_pedal_after_expiry_matches_off(monkeypatch):
-  """Was test_override_without_pedal_during_hold_clears_own_hold. After the expiry (no hold), override without
-  gas/brake, release, cruise off and on: no weak decel or soft hold returns, and the sends match time 0."""
+  """옛 이름 test_override_without_pedal_during_hold_clears_own_hold. 만료(홀드 없음) 뒤 페달 없는 오버라이드·놓음·
+  크루즈 끔·켬: 약제동·소프트홀드가 돌아오지 않고, 송신이 시간 0과 같다."""
   finals = []
   for hold_time in (0, 10):
     loop = Loop(monkeypatch, hold_time=hold_time)
@@ -428,15 +427,15 @@ def test_manual_soft_hold_unchanged(monkeypatch):
     traces.append([(r["soft_hold"], r["sent"] and (r["sent"]["StopReq"], r["sent"]["ACCMode"], r["sent"]["aReqValue"]))
                    for r in loop.rows[300:]])
     assert loop.rows[-1]["soft_hold"] == 2 and not loop.rows[-1]["expired"]
-    # While the existing soft hold is on, the trial never applies its weak decel.
+    # 원래 소프트홀드가 켜져 있는 동안 이 기능은 약제동을 걸지 않는다.
     assert all(r["soft"] is None for r in loop.rows if r["soft_hold"] > 0)
   assert traces[0] == traces[1]
 
 
 @pytest.mark.parametrize("on_cancel", [False, True])
 def test_manual_soft_hold_in_cancel_state_follows_soft_hold_on_cancel(monkeypatch, on_cancel):
-  """SoftHoldOnCancel: in the cruise cancel state a long brake arms the existing soft hold only when it is on.
-  The result, the sends and the control state are identical with this trial on/off."""
+  """SoftHoldOnCancel: 크루즈 취소 상태에서 긴 브레이크는 이 설정이 켜져 있을 때만 원래 소프트홀드를 건다.
+  결과·송신·제어 상태는 이 기능 켬/끔에서 같다."""
   traces = []
   for hold_time in (0, 20):
     loop = Loop(monkeypatch, hold_time=hold_time, SoftHoldOnCancel=on_cancel)
@@ -510,7 +509,7 @@ def test_close_lead_uses_strongest_of_strength_plan_and_need(monkeypatch, leftov
   loop.approach()
   lead = (d_rel, v_rel)
   near = loop.run(100, v=0.5 * KPH, a_target=plan, lead=lead) + loop.run(200, standstill=True, a_target=plan, lead=lead)
-  # A lead within 4 m no longer disables the trial: weak decel throughout and the expiry after 2 s of standstill.
+  # 4m 안의 앞차로 기능이 꺼지지 않음: 내내 약제동, 정지 2초 뒤 만료.
   assert all(r["soft"] is not None for r in near[1:-1]) and near[-1]["expired"] and near[-1]["soft"] is None
   assert all(r["soft_hold"] == 0 for r in near)
   need = need_accel(lead)
@@ -550,6 +549,7 @@ def test_no_lead_skips_need(monkeypatch):
 
 
 EPS = 1e-3 / 3.6  # 0.001 km/h
+END_SPEED = 2.0 / 3.6  # 회차 종료 속도: 속도 설정 2(기본값)는 진입 속도, 속도 설정 0은 잠정 기준 2km/h
 
 
 def test_entry_speed_default_is_2kph():
@@ -742,9 +742,9 @@ def test_speed_change_during_episode_keeps_entry_value(monkeypatch):
   wait += set_speed_and_wait_read(loop, 5, standstill=True, a_target=-0.1)
   n = 200 - len(wait)
   wait += loop.run(n, standstill=True, a_target=-0.1)
-  assert [r["frames"] for r in wait[:199]] == list(range(1, 200)) and wait[199]["expired"]  # timer not reset
+  assert [r["frames"] for r in wait[:199]] == list(range(1, 200)) and wait[199]["expired"]  # 타이머 초기화 안 됨
   expired = set_speed_and_wait_read(loop, 1, standstill=True, a_target=-0.1) + loop.run(200, standstill=True, a_target=-0.1)
-  check_expired_original_control(expired)  # the expiry is not undone by the change
+  check_expired_original_control(expired)  # 설정을 바꿔도 만료는 풀리지 않음
   # Driver releases with gas and drives off above every setting: the next stop uses the new 1 km/h.
   loop.run(10, standstill=True, gas=True, enabled=False)
   loop.run(100, v=7 * KPH, a_target=-0.1)
@@ -812,7 +812,7 @@ def test_soft_brake_never_feeds_back_into_longcontrol(monkeypatch, end):
     tail = loop.run(20, standstill=True, a_target=-0.1, lead=(3., NAN) if end == "invalid_lead" else None)
     runs.append((loop, tail))
   (off, _), (on, tail) = runs
-  # With no soft hold request any more, LongControl never sees the weak decel, also after the expiry.
+  # 소프트홀드 요청이 없으니 만료 뒤에도 LongControl은 약제동을 보지 않는다.
   assert [r["cc_accel"] for r in on.rows] == [r["cc_accel"] for r in off.rows]
   assert any(r["soft"] is not None for r in on.rows[:-len(tail)]) and tail[0]["soft"] is None
   if end == "expiry":
@@ -826,7 +826,7 @@ def test_soft_brake_never_feeds_back_into_longcontrol(monkeypatch, end):
 # Speed setting 0: the weak decel starts only from the car's standstill signal (time 0 is still "whole trial off").
 
 def test_speed_zero_never_moving_then_standstill_then_original_stop_control(monkeypatch):
-  """Was ..._then_existing_hold: after the set time the trial expires and the original stopping command is sent."""
+  """옛 이름 ..._then_existing_hold: 설정 시간이 지나면 만료되고 원래 정차 명령을 보낸다."""
   loop = Loop(monkeypatch, hold_time=20, K9StopSoftBrakeSpeed=0)
   steps = recording(loop)
   loop.approach(start=7.)  # down to 0.3 km/h, below every positive setting
@@ -913,10 +913,10 @@ def test_speed_zero_change_is_applied_per_episode(monkeypatch):
   check_common(loop)
 
 
-# Expiry (2026-10-15): after the set time the weak decel ends and no soft hold is requested.
+# 만료(2026-10-15): 설정 시간이 지나면 약제동이 끝나고 소프트홀드를 요청하지 않는다.
 
 def test_trial_code_never_writes_soft_hold():
-  """No assignment to _soft_hold_active in the K9 trial code; it is only read as an input."""
+  """K9 약제동 코드에 _soft_hold_active 대입 없음, 입력으로 읽기만 한다."""
   import inspect
   import re
   import opendbc.car.hyundai.k9_stop_soft_brake as module
@@ -928,61 +928,110 @@ def test_trial_code_never_writes_soft_hold():
 
 @pytest.mark.parametrize("setting", [2, 0])
 def test_expiry_boundary_and_same_stop_never_rearms_unit(setting):
-  """Just before / exactly at the expiry, the frames after it, a standstill flicker in the same stop and the next stop."""
+  """만료 직전·정확한 시점·뒤 연속 프레임, 같은 정차의 멈춤 신호 깜빡임·종료 속도 미만 이동(만료 유지),
+  종료 속도 도달로 회차 종료 뒤 다음 정차 정상 진입."""
+  assert K9_SOFT_BRAKE_END_SPEED_ZERO == END_SPEED
   speed, n = setting / 3.6, 50
   kw = dict(speed=speed, enabled=True, driver=False, inputs_valid=True, stopping=True, soft_hold_active=0)
   sb = K9StopSoftBrake()
   out = [sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(n - 1)]
-  assert out == [True] * (n - 1) and sb.frames == n - 1 and not sb.expired  # just before the expiry
-  assert sb.update(n, standstill=True, v_ego=0., **kw) is False  # exactly at the set time
+  assert out == [True] * (n - 1) and sb.frames == n - 1 and not sb.expired  # 만료 직전
+  assert sb.update(n, standstill=True, v_ego=0., **kw) is False  # 설정 시간 정확히
   assert sb.expired and sb.frames == 0 and sb.engaged
-  # Consecutive frames after it, also with a longer time setting: never on again in this stop.
+  # 그 뒤 연속 프레임, 시간 설정을 늘려도: 이 정차에서 다시 켜지지 않음.
   assert not any(sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(500))
   assert not any(sb.update(n * 4, standstill=True, v_ego=0., **kw) for _ in range(500))
   assert sb.expired and sb.frames == 0
+  # 2026-10-15 보완: 속도 0·기본값 모두, 회차 종료 속도(2km/h) 미만의 움직임·멈춤 신호 깜빡임은 같은 정차다.
+  # 차속 0에서 멈춤 신호 한 프레임 꺼짐 → 다시 켜짐: 만료 유지(70f8064b의 속도 0은 여기서 다시 걸렸음).
+  assert sb.update(n, standstill=False, v_ego=0., **kw) is False
+  assert not any(sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(300))
+  assert sb.expired and sb.engaged
+  # 종료 속도 바로 아래(멈춤 신호 꺼짐)와 그 뒤 다시 정지: 만료 유지.
+  assert not any(sb.update(n, standstill=False, v_ego=END_SPEED - EPS, **kw) for _ in range(50))
+  assert not any(sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(300))
+  assert sb.expired and sb.engaged
+  # 종료 속도 이상이어도 멈춤 신호가 켜져 있으면 회차 종료가 아님.
+  assert sb.update(n, standstill=True, v_ego=END_SPEED, **kw) is False and sb.expired
+  # 종료 속도 도달·멈춤 신호 꺼짐 → 회차 종료, 만료 풀림.
+  assert sb.update(n, standstill=False, v_ego=END_SPEED, **kw) is False
+  assert not sb.expired and not sb.engaged
   if setting:
-    # Standstill flicker below the entry speed is the same stop: still expired, no weak decel.
-    assert not any(sb.update(n, standstill=False, v_ego=0.5 / 3.6, **kw) for _ in range(20))
-    assert not any(sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(300))
-    assert sb.expired
-    # The stop episode ends at or above the entry speed without standstill; the next stop starts normally.
-    assert sb.update(n, standstill=False, v_ego=speed, **kw) is False
-    assert not sb.expired and not sb.engaged
-    assert sb.update(n, standstill=False, v_ego=speed / 2, **kw) is True
+    assert sb.update(n, standstill=False, v_ego=speed / 2, **kw) is True  # 다음 정차: 진입 속도 아래에서 다시 약제동
   else:
-    # Entry speed 0: the episode ends as soon as standstill ends; a new standstill is the next stop.
-    assert sb.update(n, standstill=False, v_ego=0.5 / 3.6, **kw) is False
-    assert not sb.expired and not sb.engaged
+    # 속도 0: 진입은 여전히 멈춤 신호 뒤에만.
+    assert not any(sb.update(n, standstill=False, v_ego=v, **kw) for v in (END_SPEED / 2, 0.0))
   out = [sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(n + 10)]
   assert out == [True] * (n - 1) + [False] * 11 and sb.expired
-  # Time 0 still turns everything off and resets.
+  # 시간 0은 여전히 전부 끄고 초기화.
   assert sb.update(0, standstill=True, v_ego=0., **kw) is False and not sb.expired and sb.frames == 0
 
 
-def test_expiry_closed_loop_two_stops_match_original_control(monkeypatch):
-  """Closed loop through LongControl -> cruise helper -> CarController -> SCC12: just before / at the expiry, the frames
-  after it (also with a standstill flicker), driving off and the next stop. After each expiry the sent StopReq/ACCMode/
-  aReq, longActive/enabled and the soft hold state are identical to the trial off (time 0)."""
-  loop = Loop(monkeypatch, hold_time=20)
+def expired_unit(setting, n=50):
+  kw = dict(enabled=True, driver=False, inputs_valid=True, stopping=True, soft_hold_active=0)
+  sb = K9StopSoftBrake()
+  for _ in range(n):
+    sb.update(n, speed=setting / 3.6, standstill=True, v_ego=0., **kw)
+  assert sb.expired
+  return sb, kw
+
+
+@pytest.mark.parametrize("setting", [2, 0])
+@pytest.mark.parametrize("bad", [dict(v_ego=NAN), dict(v_ego=INF), dict(v_ego=-INF), dict(inputs_valid=False)])
+def test_invalid_speed_input_never_ends_expired_episode_unit(setting, bad):
+  """잘못된 차속·입력으로는 회차가 끝나지 않고 만료가 남는다(멈춤 신호 꺼짐이어도)."""
+  sb, kw = expired_unit(setting)
+  kw = {**kw, "v_ego": 10 / 3.6, **bad}
+  assert not any(sb.update(50, speed=setting / 3.6, standstill=False, **kw) for _ in range(50))
+  assert sb.expired and sb.engaged
+  assert not any(sb.update(50, speed=setting / 3.6, standstill=True, **{**kw, "v_ego": 0.}) for _ in range(300))
+  assert sb.expired
+
+
+@pytest.mark.parametrize(("setting", "changed", "end_kph"), [(0, 5, 2), (5, 0, 5), (2, 0, 2), (1, 5, 1)])
+def test_end_speed_fixed_per_episode_unit(setting, changed, end_kph):
+  """회차 도중 속도 설정을 바꿔도 회차 종료 기준은 회차 시작 때 값(속도 0이면 2km/h)이다."""
+  sb, kw = expired_unit(setting)
+  speed = changed / 3.6
+  assert sb.update(50, speed=speed, standstill=False, v_ego=end_kph / 3.6 - EPS, **kw) is False and sb.expired
+  assert sb.update(50, speed=speed, standstill=False, v_ego=end_kph / 3.6, **kw) is False
+  assert not sb.expired and not sb.engaged
+
+
+@pytest.mark.parametrize("setting", [2, 0])
+def test_expiry_closed_loop_two_stops_match_original_control(monkeypatch, setting):
+  """LongControl -> 크루즈 도우미 -> CarController -> SCC12 폐루프, 속도 설정 2(기본값)·0: 만료 직전·시점·뒤, 같은 정차의
+  차속 0 멈춤 신호 깜빡임과 종료 속도(2km/h) 미만 이동(만료 유지), 출발(회차 종료)과 다음 정차(정상 진입).
+  만료부터 다음 회차 시작 전까지 송신 StopReq/ACCMode/aReq, longActive/enabled, LongControl 출력, 소프트홀드 상태가
+  기능 끔(시간 0)과 같다. 다음 회차의 약제동 구간은 대조하지 않는다."""
+  loop = Loop(monkeypatch, hold_time=20, K9StopSoftBrakeSpeed=setting)
   steps = recording(loop)
   stops = []
   for _ in range(2):
-    loop.run(100, v=10 * KPH, a_target=-0.3, should_stop=False)
+    loop.run(100, v=10 * KPH, a_target=-0.3, should_stop=False)  # 앞 정차가 있으면 여기서 회차 종료
     loop.approach(start=5.)
     wait = loop.run(200, standstill=True, a_target=-0.1)
     after = loop.run(150, standstill=True, a_target=-0.1)
-    flicker = loop.run(10, v=0.4 * KPH, a_target=-0.1) + loop.run(150, standstill=True, a_target=-0.1)
-    stops.append((len(loop.rows) - len(after) - len(flicker) - 1, wait, after, flicker))
+    same = (loop.run(1, v=0., a_target=-0.1) + loop.run(150, standstill=True, a_target=-0.1) +
+            loop.run(30, v=END_SPEED - 0.05 * KPH, a_target=-0.1) + loop.run(150, standstill=True, a_target=-0.1))
+    stops.append((wait, after, same))
+  drive = loop.run(100, v=10 * KPH, a_target=-0.3, should_stop=False)
   off = same_inputs_off(monkeypatch, loop, steps)
   assert [r["cc_accel"] for r in loop.rows] == [r["cc_accel"] for r in off]
   assert all(r["soft_hold"] == 0 for r in loop.rows + off)
-  for start, wait, after, flicker in stops:
-    assert wait[198]["soft"] == pytest.approx(-0.2) and wait[198]["ci_soft"] == pytest.approx(-0.2)  # just before
+  for i, (wait, after, same) in enumerate(stops):
+    assert wait[198]["soft"] == pytest.approx(-0.2) and wait[198]["ci_soft"] == pytest.approx(-0.2)  # 직전
     assert wait[198]["frames"] == 199 and not wait[198]["expired"]
-    check_expired_original_control(wait[199:] + after + flicker[10:])  # at the expiry and after it
-    assert all(r["expired"] and r["soft"] is None for r in flicker)
-    end = start + 1 + len(after) + len(flicker)
-    assert control_trace(loop.rows[start:end]) == control_trace(off[start:end])
-  # The weak decel ran again in the second stop.
-  assert stops[1][1][0]["soft"] is not None
+    check_expired_original_control(wait[199:] + after + same[1:151] + same[181:])  # 만료 시점과 그 뒤(정지 구간)
+    assert all(r["expired"] and r["soft"] is None and r["ci_soft"] is None for r in same)  # 같은 정차: 다시 안 걸림
+    start = wait[199]["frame"]
+    nxt = next((r["frame"] for r in loop.rows[start:] if r["soft"] is not None), len(loop.rows))
+    assert nxt > same[-1]["frame"] + 100  # 다음 회차는 출발(10km/h) 뒤에야 시작
+    assert control_trace(loop.rows[start:nxt]) == control_trace(off[start:nxt])
+    # 출발 첫 프레임에 회차 종료, 만료 풀림.
+    first_drive = loop.rows[same[-1]["frame"] + 1] if i == 0 else drive[0]
+    assert first_drive["v"] >= END_SPEED and not first_drive["expired"]
+  # 다음 정차에서 정상 진입·만료.
+  assert stops[1][0][0]["soft"] is not None and stops[1][0][199]["expired"]
+  assert any(r["soft"] is not None for r in loop.rows[stops[0][2][-1]["frame"]:stops[1][0][0]["frame"]]) == bool(setting)
   check_common(loop)

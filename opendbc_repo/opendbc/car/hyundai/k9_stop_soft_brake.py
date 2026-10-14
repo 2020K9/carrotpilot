@@ -25,6 +25,9 @@ K9_SOFT_BRAKE_ACCEL = ("K9StopSoftBrakeAccel", 20, 5, 50)
 # (no speed comparison). This is not the time setting 0, which turns the whole trial off.
 # 간격 1km/h·최소 0·최대 5km/h·기본 2km/h는 형님 지정. 실차 안전성·효과 미검증.
 K9_SOFT_BRAKE_SPEED = ("K9StopSoftBrakeSpeed", 2, 0, 5)
+# 속도 설정 0의 회차 종료 속도(m/s): 기본 진입 속도 2km/h를 다시 쓴 오프라인 검증용 잠정 기준. 진입에는 쓰지 않으며,
+# 실차 출발 검출이 검증됐다는 뜻은 아니다.
+K9_SOFT_BRAKE_END_SPEED_ZERO = K9_SOFT_BRAKE_SPEED[1] / 3.6
 K9_SOFT_BRAKE_DT = 0.01  # card loop period
 
 
@@ -73,7 +76,7 @@ def read_k9_stop_soft_brake_speed(params) -> float:
 
 
 class K9StopSoftBrake:
-  """Per-frame decision. The soft hold state belongs to the caller; this only reads it and never sets or clears it.
+  """Per-frame decision. 소프트홀드 상태는 호출한 쪽 것이며, 여기서는 읽기만 하고 켜거나 끄지 않는다.
 
   - Soft brake only in the stopping state, below the entry speed or at standstill (entry speed 0: at standstill only), enabled, no gas/brake/override, valid
     speed/lead/plan inputs (a reported lead with invalid distance/relative speed is invalid, not "no lead"), no
@@ -84,11 +87,13 @@ class K9StopSoftBrake:
   - Standstill ending after it was reported: original control until a new standstill or the entry speed or more
     (entry speed 0: until a new standstill).
   - The entry speed setting is fixed when a stop episode starts (first soft brake frame) and kept through the weak
-    decel, the standstill wait and the expiry; a changed setting applies from the next episode. The episode ends when
-    the car moves at or above the fixed entry speed without standstill (entry speed 0: as soon as standstill ends);
-    that also clears the expiry, so the next episode starts from the normal entry conditions.
-  - Pedal/override/disengage: off for this stop until the car moves (standstill ends).
-  - Time setting 0: everything off and reset.
+    decel, the standstill wait and the expiry; a changed setting applies from the next episode.
+  - 회차 종료: 멈춤 신호가 꺼지고, 유한하고 유효한 차속(inputs_valid)이 회차 종료 속도 이상일 때. 회차 종료 속도는
+    회차에 고정한 진입 속도(속도 설정 1~5), 속도 설정 0이면 K9_SOFT_BRAKE_END_SPEED_ZERO(2km/h, 회차 종료에만 씀).
+    회차 종료에서만 만료가 풀려 다음 회차가 기존 진입 조건으로 시작한다. 멈춤 신호 꺼짐만으로, 종료 속도보다 느린
+    이동으로, 잘못된 입력으로는 회차가 끝나지 않고 만료가 남는다.
+  - 페달·오버라이드·해제: 이 정차에서는 차가 움직일 때(멈춤 신호 꺼짐)까지 끔.
+  - 시간 설정 0: 전부 끄고 초기화.
   """
   def __init__(self):
     self.frames = 0
@@ -103,8 +108,8 @@ class K9StopSoftBrake:
     self.__init__()
 
   def update(self, hold_frames, *, speed, enabled, driver, standstill, v_ego, inputs_valid, stopping, soft_hold_active):
-    """speed: entry speed setting (m/s), used only when no episode is in progress. driver: gas, brake or override.
-    Returns True while the soft brake is applied."""
+    """speed: 진입 속도 설정(m/s), 진행 중인 회차가 없을 때만 쓴다. driver: 가속·브레이크 페달 또는 오버라이드.
+    약제동을 거는 동안 True를 돌려준다."""
     if hold_frames <= 0:
       self.reset()
       return False
@@ -125,7 +130,8 @@ class K9StopSoftBrake:
       self.blocked = False
     if driver or not enabled:
       self.blocked = True
-    episode_end = not standstill and (standstill_only or above_entry)
+    end_speed = K9_SOFT_BRAKE_END_SPEED_ZERO if standstill_only else self.speed
+    episode_end = not standstill and inputs_valid and math.isfinite(v_ego) and v_ego >= end_speed
     if episode_end:
       self.expired = False
 

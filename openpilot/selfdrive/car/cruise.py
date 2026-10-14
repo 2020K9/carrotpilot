@@ -204,7 +204,7 @@ class VCruiseCarrot:
     self._soft_hold_count = 0
     self._soft_hold_active = 0
     self.soft_hold_on_cancel = self.params.get_bool("SoftHoldOnCancel")
-    # K9StopSoftBrake trial: weak decel only; it reads the soft hold state but never sets or clears it.
+    # K9StopSoftBrake 시험: 약제동만 한다. 소프트홀드 상태는 읽기만 하고 켜거나 끄지 않는다.
     self.k9_stop_soft_brake = K9StopSoftBrake() if k9_stop_soft_brake_applies(CP) else None
     self.k9_stop_soft_brake_frames, self.k9_stop_soft_brake_strength = 0, 0.0
     self.k9_stop_soft_brake_speed = K9_SOFT_BRAKE_SPEED[1] / 3.6
@@ -329,7 +329,7 @@ class VCruiseCarrot:
       driver=CS.gasPressed or CS.brakePressed or CC.cruiseControl.override,
       standstill=CS.standstill, v_ego=CS.vEgo, inputs_valid=inputs_valid,
       stopping=CC.actuators.longControlState == LongCtrlState.stopping, soft_hold_active=self._soft_hold_active)
-    # None (not 0) once expired or inactive: the original longitudinal command is sent unchanged.
+    # 만료됐거나 꺼져 있으면 0이 아니라 None: 원래 종방향 명령을 그대로 보낸다.
     # The controller further takes min() with the planned aTarget: the strongest of the three is sent.
     self.k9_stop_soft_brake_accel = min(self.k9_stop_soft_brake_strength, need) if soft else None
 
