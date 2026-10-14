@@ -128,27 +128,6 @@ Changes apply within about one second, including while driving. Stronger output 
 
 The description above concerns upstream control. The final CANFD request override is described below.
 
-<a id="stop-ease"></a>
-### `StopEaseEnable`, `StopEaseDist`, `StopEaseSpeed`, `StopEaseAccel` · Close-lead stop easing
-
-An experimental feature used only for Hyundai/Kia **conventional CAN** openpilot longitudinal control (e.g. K9). It is not applied to CAN FD vehicles, other brands or stock ACC longitudinal control, and the settings are not read there. It has not been verified on a vehicle.
-
-| Setting | Stored value | Range | Default |
-|---|---|---|---|
-| `StopEaseEnable` | 0 off, 1 on | `0–1` | `0` (off = existing behavior) |
-| `StopEaseDist` | ×0.1 m, start lead distance | `10–80` (1.0–8.0 m) | `40` (4.0 m) |
-| `StopEaseSpeed` | ×0.1 m/s, start ego speed | `3–30` (0.3–3.0 m/s) | `5` (0.5 m/s, about 1.8 km/h) |
-| `StopEaseAccel` | ×0.01 m/s², weakest easing target | `-100 to -20` | `-50` (-0.50 m/s²) |
-
-When on, during the stopping phase described under `StoppingAccel`, with a radar lead present, lead distance at or below `StopEaseDist` and ego speed at or below `StopEaseSpeed`, the deceleration command is weakened toward `StopEaseAccel` at no more than 0.8 m/s³. The original stopping command is still computed separately, and the output always stays between it and `StopEaseAccel`. If the original command is already weaker it is used unchanged; easing never strengthens braking or reaches zero or above. While the conditions remain after standstill, the `StopEaseAccel` command continues to be sent. Whether the vehicle holds on a slope and how the SCC responds to the weaker command are unverified.
-
-Any of the following restores the original command in that control cycle (0.01 s): brake pedal, gas pedal, FCW, lead lost, lead distance above `StopEaseDist`, ego speed above `StopEaseSpeed`, soft hold, a lead relative speed that is not a finite number (such as NaN or infinity), or an easing target as strong as or stronger than the original command. The easing target is the stronger of `StopEaseAccel` and twice the deceleration need computed from the lead closing speed (need = closing speed² ÷ (2 × max(lead distance − 1.5 m, 0.05 m))). If the target lies between the original command and `StopEaseAccel`, the original command is not restored; easing is limited to that target (a stronger target applies in the same control cycle). The check runs every control cycle, but radar lead data update at about 20 Hz, so new values can arrive correspondingly later. Stops without a lead (such as at traffic lights) are unchanged.
-
-Setting changes are read about once per second and apply from the next stop, not to a stop in progress (turning it off as well). Out-of-range values are clamped to the endpoints and unreadable values use the default. The defaults are trial candidates, not approved recommendations.
-
-> [!CAUTION]
-> Easing weakens deceleration just before standstill, so stopping distance can increase and the gap to the lead can shrink. Start with the defaults and always be ready to brake.
-
 <a id="canfd-stopping"></a>
 ### CANFD stopping control
 

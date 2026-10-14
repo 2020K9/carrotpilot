@@ -6,7 +6,6 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.common.params import Params
-from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.selfdrive.controls.lib.cruise_coasting import (
   CruiseCoastingControl, MAX_PLAN_AGE, coasting_relief, no_coasting_lead,
 )
@@ -19,19 +18,6 @@ HYUNDAI_LONGITUDINAL_KF = 1.0
 STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
 STOPPING_ACCEL_MAX = -50
-
-# Optional close-lead stop easing (Hyundai/Kia conventional CAN openpilot long only).
-# Params: (name, default, min, max); Dist x0.1 m, Speed x0.1 m/s, Accel x0.01 m/s^2.
-# Unapproved trial defaults; not verified on a vehicle.
-STOP_EASE_PARAMS = (
-  ("StopEaseEnable", 0, 0, 1),
-  ("StopEaseDist", 40, 10, 80),
-  ("StopEaseSpeed", 5, 3, 30),
-  ("StopEaseAccel", -50, -100, 0),
-)
-STOP_EASE_GAP = 1.5         # m subtracted from lead distance in the closing-speed check
-STOP_EASE_NEED_GAIN = 2.0   # margin over ~0.5 effective/commanded decel ratio
-STOP_EASE_RATE = 0.8        # m/s^3, weakening rate only
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -85,11 +71,6 @@ class LongControl:
                              k_f=CP.longitudinalTuning.kf, rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
     self.coasting = CruiseCoastingControl()
-    # Stop easing: pending settings are read every ~1 s and applied only at a
-    # stopping entry. The shadow continues the unmodified stopping output.
-    self.stop_ease_pending = None
-    self.stop_ease = None
-    self.stop_ease_shadow = None
 
 
     self.params = Params()
@@ -116,40 +97,6 @@ class LongControl:
       value = STOPPING_ACCEL_DEFAULT
     # Enforce the menu bounds even for stale Params or direct writes.
     self.stopping_accel = min(STOPPING_ACCEL_MAX, max(STOPPING_ACCEL_MIN, value)) * 0.01
-
-  def _refresh_stop_ease(self):
-    if not (self.CP.brand == "hyundai" and not (self.CP.flags & HyundaiFlags.CANFD) and
-            self.CP.openpilotLongitudinalControl):
-      return
-    values = []
-    for name, default, lo, hi in STOP_EASE_PARAMS:
-      try:
-        value = float(self.params.get_float(name))
-      except (TypeError, ValueError):
-        value = default
-      if not math.isfinite(value):
-        value = default
-      values.append(round(min(hi, max(lo, value))))
-    enable, dist, speed, accel = values
-    self.stop_ease_pending = (dist * 0.1, speed * 0.1, accel * 0.01) if enable else None
-
-  def _stop_ease_accel(self, shadow, CS, long_plan, radarState, soft_hold_active):
-    # Returns the original stopping output unless every easing condition holds.
-    if self.stop_ease is None or soft_hold_active:
-      return shadow
-    dist, speed, accel = self.stop_ease
-    lead = radarState.leadOne
-    if not (lead.status and lead.dRel <= dist and CS.vEgo <= speed):
-      return shadow
-    if CS.brakePressed or CS.gasPressed or long_plan.fcw or not math.isfinite(lead.vRel):
-      return shadow
-    closing = max(0.0, -lead.vRel)
-    a_need = closing ** 2 / (2.0 * max(lead.dRel - STOP_EASE_GAP, 0.05))
-    target = min(accel, -STOP_EASE_NEED_GAIN * a_need)
-    if target <= shadow:
-      return shadow
-    # Weaken gradually from the previous output; strengthen immediately.
-    return max(shadow, min(target, self.last_output_accel + STOP_EASE_RATE * DT_CTRL))
 
   def _apply_hyundai_longitudinal_tuning(self):
     # Hyundai, Kia, and Genesis all use the opendbc "hyundai" brand. Keep the
@@ -195,7 +142,6 @@ class LongControl:
     if self.readParamCount >= 100:
       self.readParamCount = 0
       self._refresh_stopping_accel()
-      self._refresh_stop_ease()
     elif self.readParamCount == 10:
       self._refresh_longitudinal_tuning()
 
@@ -215,10 +161,7 @@ class LongControl:
       output_accel = 0.
 
     elif self.long_control_state == LongCtrlState.stopping:
-      if self.stop_ease_shadow is None:  # stopping entry from any other state
-        self.stop_ease_shadow = self.last_output_accel
-        self.stop_ease = self.stop_ease_pending
-      output_accel = self.stop_ease_shadow
+      output_accel = self.last_output_accel
 
       if soft_hold_active:
         output_accel = self.CP.stopAccel
@@ -227,8 +170,6 @@ class LongControl:
         output_accel = min(output_accel, 0.0)
         output_accel -= self.CP.stoppingDecelRate * DT_CTRL
       self.reset()
-      shadow_accel = output_accel
-      output_accel = self._stop_ease_accel(shadow_accel, CS, long_plan, radarState, soft_hold_active)
 
     elif self.long_control_state == LongCtrlState.starting:
       output_accel = self.CP.startAccel
@@ -265,8 +206,4 @@ class LongControl:
         self.coasting.reset()
 
     self.last_output_accel = np.clip(output_accel, accel_limits[0], accel_limits[1])
-    if self.long_control_state == LongCtrlState.stopping:
-      self.stop_ease_shadow = np.clip(shadow_accel, accel_limits[0], accel_limits[1])
-    else:
-      self.stop_ease_shadow = None
     return self.last_output_accel, a_target_ff, j_target_now

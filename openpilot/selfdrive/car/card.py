@@ -288,6 +288,8 @@ class Car:
     CS.carrotCruise = 1 if self.v_cruise_helper.carrot_cruise_active else 0
 
     self.CI.CS.softHoldActive = CS.softHoldActive
+    if self.v_cruise_helper.k9_stop_soft_brake is not None:
+      self.CI.CS.k9_stop_soft_brake_accel = self.v_cruise_helper.k9_stop_soft_brake_accel
     state_done_ns = time.monotonic_ns()
     self.card_diag_stage_current = {
       'decode': (decode_done_ns - recv_ns) // 1000,

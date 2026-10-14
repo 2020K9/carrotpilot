@@ -9,7 +9,12 @@ from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL, Command
 from openpilot.selfdrive.car.toyota_pcm_speed import ToyotaPcmSetSpeedSync
 
 from opendbc.car import structs
+from opendbc.car.hyundai.k9_stop_soft_brake import (
+  K9_SOFT_BRAKE_SPEED, K9StopSoftBrake, k9_lead_need_accel, k9_stop_soft_brake_applies, read_k9_stop_soft_brake,
+  read_k9_stop_soft_brake_speed,
+)
 GearShifter = structs.CarState.GearShifter
+LongCtrlState = car.CarControl.Actuators.LongControlState
 
 
 # WARNING: this value was determined based on the model's training distribution,
@@ -199,6 +204,11 @@ class VCruiseCarrot:
     self._soft_hold_count = 0
     self._soft_hold_active = 0
     self.soft_hold_on_cancel = self.params.get_bool("SoftHoldOnCancel")
+    # K9StopSoftBrake trial: only this helper sets/clears its own soft hold request.
+    self.k9_stop_soft_brake = K9StopSoftBrake() if k9_stop_soft_brake_applies(CP) else None
+    self.k9_stop_soft_brake_frames, self.k9_stop_soft_brake_strength = 0, 0.0
+    self.k9_stop_soft_brake_speed = K9_SOFT_BRAKE_SPEED[1] / 3.6
+    self.k9_stop_soft_brake_accel = None
     self._cruise_ready = False
     self._cruise_cancel_state = False
     self._pause_auto_speed_up = False
@@ -305,6 +315,26 @@ class VCruiseCarrot:
         else:
           cruiseSpeed1 = self.nRoadLimitSpeed + self.autoRoadSpeedLimitOffset
       self._cruise_speed_table = [cruiseSpeed1, cruiseSpeed2, cruiseSpeed3, cruiseSpeed4, cruiseSpeed5]
+      if self.k9_stop_soft_brake is not None:
+        self.k9_stop_soft_brake_frames, self.k9_stop_soft_brake_strength = read_k9_stop_soft_brake(self.params)
+        if self.frame % 100 == 0:  # entry speed: read every 1 s, fixed per stop episode
+          self.k9_stop_soft_brake_speed = read_k9_stop_soft_brake_speed(self.params)
+
+  def _update_k9_stop_soft_brake(self, CS, sm, CC):
+    radar_ok = sm.alive['radarState'] and sm.valid['radarState']
+    need = k9_lead_need_accel(sm['radarState'].leadOne) if radar_ok else None  # 0.0 without a detected lead
+    inputs_valid = need is not None and CS.canValid and math.isfinite(CS.vEgo) and math.isfinite(CC.actuators.aTarget)
+    soft, request, clear = self.k9_stop_soft_brake.update(
+      self.k9_stop_soft_brake_frames, speed=self.k9_stop_soft_brake_speed, enabled=CC.enabled and CC.longActive,
+      driver=CS.gasPressed or CS.brakePressed or CC.cruiseControl.override, pedal=CS.gasPressed or CS.brakePressed,
+      standstill=CS.standstill, v_ego=CS.vEgo, inputs_valid=inputs_valid,
+      stopping=CC.actuators.longControlState == LongCtrlState.stopping, soft_hold_active=self._soft_hold_active)
+    if clear:
+      self._soft_hold_active = 0
+    if request:
+      self._soft_hold_active = 2  # the existing soft hold braking path, without a cruise-on request
+    # The controller further takes min() with the planned aTarget: the strongest of the three is sent.
+    self.k9_stop_soft_brake_accel = min(self.k9_stop_soft_brake_strength, need) if soft else None
 
   def _update_carrot_man(self, sm):
     carrot_man = get_carrot_man(sm)
@@ -371,6 +401,8 @@ class VCruiseCarrot:
     if CC.enabled:
       self._cruise_ready = False
     v_cruise_kph = self._update_cruise_buttons(CS, CC, self.v_cruise_kph)
+    if self.k9_stop_soft_brake is not None:
+      self._update_k9_stop_soft_brake(CS, sm, CC)
     pcm_speed = self.toyota_pcm_speed_sync.update(
       self.CP, self.speed_from_pcm, CS,
       local_changed=abs(v_cruise_kph - prior_cruise_kph) > 1e-3,
