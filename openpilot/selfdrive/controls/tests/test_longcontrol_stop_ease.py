@@ -359,18 +359,21 @@ def test_stop_ease_catalog_menu_and_param_keys():
       for child in value:
         yield from objects(child)
   entries = list(objects(catalog))
-  menu = next(x for x in entries if x.get('id') == 'CRUISE_STOPGO')
+  menu = next(x for x in entries if x.get('id') == 'EXPERIMENTAL')
+  driving = next(x for x in catalog['menu'] if x.get('id') == 'DRIVING')
+  assert driving['groups'][-1] is menu and menu['ko'] == menu['en'] == menu['zh'] == '실험중'
+  stopgo = next(x for x in entries if x.get('id') == 'CRUISE_STOPGO')
+  leaf_params = [name for x in entries if isinstance(x.get('params'), list) for name in x['params']
+                 if isinstance(name, str)]
   keys = (ROOT / 'openpilot/common/params_keys.h').read_text(encoding='utf-8')
   for name, default, lo, hi in lc.STOP_EASE_PARAMS:
     setting = next(x for x in entries if x.get('name') == name)
     unit = 10 if name == "StopEaseAccel" else 1
     assert (setting['min'], setting['max'], setting['default'], setting['unit']) == (lo, hi, default, unit)
     assert setting['risk'] == 'high'
-    assert name in menu['params']
+    assert name not in stopgo['params'] and leaf_params.count(name) == 1
     assert f'{{"{name}", {{PERSISTENT, INT, "{default}"}}}}' in keys
-  params = menu['params']
-  assert params[params.index('StoppingAccel') + 1:params.index('StoppingAccel') + 5] == [
-    name for name, *_ in lc.STOP_EASE_PARAMS]
+  assert menu['params'] == [name for name, *_ in lc.STOP_EASE_PARAMS]
   assert math.isclose(lc.STOP_EASE_RATE, .8) and lc.STOP_EASE_GAP == 1.5 and lc.STOP_EASE_NEED_GAIN == 2.
 
 

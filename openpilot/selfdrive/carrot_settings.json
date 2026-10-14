@@ -337,10 +337,6 @@
               "params": [
                 "StopDistanceCarrot",
                 "StoppingAccel",
-                "StopEaseEnable",
-                "StopEaseDist",
-                "StopEaseSpeed",
-                "StopEaseAccel",
                 "VEgoStopping",
                 "AChangeCostStarting"
               ]
@@ -390,6 +386,18 @@
                 "CarrotCruiseAtcDecel"
               ]
             }
+          ]
+        },
+        {
+          "id": "EXPERIMENTAL",
+          "ko": "실험중",
+          "en": "실험중",
+          "zh": "실험중",
+          "params": [
+            "StopEaseEnable",
+            "StopEaseDist",
+            "StopEaseSpeed",
+            "StopEaseAccel"
           ]
         }
       ]
