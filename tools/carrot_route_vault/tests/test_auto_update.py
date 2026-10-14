@@ -145,8 +145,7 @@ def test_bundle_excludes_uncommitted_viewer(tmp_path, monkeypatch):
   repo = tmp_path / "repo"
   repo.mkdir()
   subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-  names = ("server.py", "viewer.py", "radar.py", "radar_view.js", "drive_analysis.py", "drive_jobs.py", "compare_view.js",
-           "requirements.txt", "Dockerfile.vault", "deploy_probe.py")
+  names = ("server.py", "viewer.py", "radar.py", "radar_view.js", "requirements.txt", "Dockerfile.vault", "deploy_probe.py")
   source = repo / "tools/carrot_route_vault"
   source.mkdir(parents=True)
   for name in names:

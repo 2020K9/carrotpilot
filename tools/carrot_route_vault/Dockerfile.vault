@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install --no-install-recommends --yes ffmpeg \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --requirement requirements.txt
-COPY --chown=carrot:carrot server.py viewer.py radar.py radar_view.js drive_analysis.py drive_jobs.py compare_view.js deploy_probe.py SOURCE_COMMIT /app/
+COPY --chown=carrot:carrot server.py viewer.py radar.py radar_view.js deploy_probe.py SOURCE_COMMIT /app/
 COPY --from=native_builder --chown=carrot:carrot /app/openpilot /app/openpilot/
 COPY --from=native_builder --chown=carrot:carrot /app/opendbc_repo /app/opendbc_repo/
 RUN chmod -R a+rX /app
