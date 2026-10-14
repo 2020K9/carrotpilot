@@ -4,12 +4,15 @@
 usage: python k9_stop_jerk_ease_compare.py --out-dir <dir> NAME=<base.pkl>,<new.pkl>,<stop logMonoTime ns> [...]
 Writes <NAME>_frames.csv (every generated SCC frame side by side) and summary.json.
 Reports transmitted values only; this is not vehicle response, braking delay or comfort evidence.
+Exit code: 2 if a case cannot be evaluated (no steps, mismatched steps, no sent SCC frame or no sent
+StopReq 0->1 onset), 1 if an invariant is violated, 0 otherwise. Risk candidates are counted, not failures.
 """
 import argparse
 import csv
 import json
 import os
 import pickle
+import sys
 
 SCC14_ADDR = 905
 JERK_UPPER_MASK = ((1 << 7) - 1) << 12  # SCC14 JerkUpperLimit: start bit 12, 7 bits, little endian
@@ -28,11 +31,21 @@ def compare(name, base_pkl, new_pkl, stop_t, out_dir):
   base = pickle.load(open(base_pkl, "rb"))["base"]["rows"]
   new = pickle.load(open(new_pkl, "rb"))
   modes = {m: new[m]["rows"] for m in ("0", "1", "2")}
-  assert all(len(r) == len(base) for r in modes.values())
-  for r in modes.values():
-    assert all(a["t"] == b["t"] for a, b in zip(base, r, strict=True))
-
-  summary = {"name": name, "steps": len(base), "git_recorded": pickle.load(open(base_pkl, "rb"))["git"]}
+  summary = {"name": name, "steps": len(base), "git_recorded": pickle.load(open(base_pkl, "rb"))["git"],
+             "unevaluable": [], "violations": []}
+  if not base:
+    summary["unevaluable"].append("no replayed steps")
+  if any(len(r) != len(base) or any(a["t"] != b["t"] or a["dec"].keys() != b["dec"].keys() for a, b in zip(base, r, strict=False))
+         for r in modes.values()):
+    summary["unevaluable"].append("base and mode steps do not match")
+  scc = [i for i, x in enumerate(base) if "SCC12" in x["dec"]]
+  if base and not scc:
+    summary["unevaluable"].append("no sent SCC12/SCC14 frame")
+  if not any(base[scc[k]]["dec"]["SCC12"]["StopReq"] == 1 and base[scc[k - 1]]["dec"]["SCC12"]["StopReq"] == 0
+             for k in range(1, len(scc))):
+    summary["unevaluable"].append("no sent StopReq 0->1 onset")
+  if summary["unevaluable"]:
+    return summary
 
   # Recording vs base replay (fidelity of the harness, recorded code version may differ).
   fid = {}
@@ -49,8 +62,9 @@ def compare(name, base_pkl, new_pkl, stop_t, out_dir):
 
   # Off must reproduce every transmitted message of the base tree.
   summary["off_all_messages_identical"] = all(a["sends"] == b["sends"] for a, b in zip(base, modes["0"], strict=True))
+  if not summary["off_all_messages_identical"]:
+    summary["violations"].append("mode0: transmitted messages differ from base")
 
-  scc = [i for i, x in enumerate(base) if "SCC12" in x["dec"]]
   for m in ("1", "2"):
     rows = modes[m]
     other_diff = 0
@@ -109,7 +123,20 @@ def compare(name, base_pkl, new_pkl, stop_t, out_dir):
         onsets.append(dict(t=(base[scc[k]]["t"] - stop_t) / 1e9, ju_prev=ju_b[k - 1], ju_base=ju_b[k], ju_mode=ju_m[k],
                            limited_frames=span, max_reduction=max([ju_b[k + q] - ju_m[k + q] for q in range(span)], default=0.0)))
 
+    # Decoded signals this scope must keep: StopReq, aReq, ComfortBand Upper/Lower, JerkLowerLimit, ACCMode.
+    kept_diff = {}
+    for msg, sigs in (("SCC12", ("ACCMode", "StopReq", "aReqRaw", "aReqValue")),
+                      ("SCC14", ("ComfortBandUpper", "ComfortBandLower", "JerkLowerLimit", "ACCMode"))):
+      for sig in sigs:
+        kept_diff[f"{msg}.{sig}"] = sum(abs(base[i]["dec"][msg][sig] - rows[i]["dec"][msg][sig]) > 1e-6 for i in scc)
+
+    checks = dict(non_upper_message_diff_steps=other_diff, upper_higher_than_base=higher, areq_changed_frames=areq_changed,
+                  stronger_decel_frames=len(stronger), limit_residue_frames=len(residue),
+                  **{f"kept_signal_diff[{k}]": v for k, v in kept_diff.items()})
+    summary["violations"] += [f"mode{m}: {k}={v}" for k, v in checks.items() if v]
+
     summary[f"mode{m}"] = dict(
+      kept_signal_diff_frames=kept_diff,
       non_upper_message_diff_steps=other_diff, upper_diff_frames=sum(ju_diff), upper_higher_than_base=higher,
       areq_changed_frames=areq_changed, stronger_decel_frames=len(stronger), stronger_decel_longest_run=runs(stronger_flags),
       stronger_decel_longest_run_s=runs(stronger_flags) * 0.02, stronger_decel=stronger[:20],
@@ -139,11 +166,11 @@ def compare(name, base_pkl, new_pkl, stop_t, out_dir):
   return summary
 
 
-def main():
+def main(argv=None):
   ap = argparse.ArgumentParser()
   ap.add_argument("--out-dir", required=True)
   ap.add_argument("cases", nargs="+")
-  args = ap.parse_args()
+  args = ap.parse_args(argv)
   out = []
   for case in args.cases:
     name, rest = case.split("=", 1)
@@ -151,7 +178,14 @@ def main():
     out.append(compare(name, base_pkl, new_pkl, int(stop_t), args.out_dir))
   with open(os.path.join(args.out_dir, "summary.json"), "w") as fh:
     json.dump(out, fh, indent=1, ensure_ascii=False)
+  for x in out:
+    for kind in ("unevaluable", "violations"):
+      for msg in x[kind]:
+        print(f"{x['name']}: {kind}: {msg}", file=sys.stderr)
+  if any(x["unevaluable"] for x in out):
+    return 2
+  return 1 if any(x["violations"] for x in out) else 0
 
 
 if __name__ == "__main__":
-  main()
+  sys.exit(main())

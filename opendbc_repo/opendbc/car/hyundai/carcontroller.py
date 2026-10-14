@@ -3,6 +3,7 @@ from collections import deque
 import numpy as np
 from opendbc.car.hyundai.scalar import clip_float
 from opendbc.can import CANPacker
+from opendbc.can.parser import get_raw_value
 from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_fault_avoidance, make_tester_present_msg, structs, apply_std_steer_angle_limits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
@@ -182,8 +183,10 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
 
 class K9StopJerkEase:
   """mode 0: off. 1: first sent StopReq 0->1 frame keeps Upper <= last sent Upper.
-  2: from that frame, Upper <= last + (computed - last) * k / N over K9_STOP_JERK_EASE_TIME.
-  Without a sent record, or once StopReq/enable/driver input ends it, the computed value is used."""
+  2: from that frame, Upper <= max(start + (computed - start) * k / N, previous sent) over K9_STOP_JERK_EASE_TIME,
+  so only a rise is limited: a computed value below the previous sent Upper is followed at once.
+  "Sent" is the decoded transmitted (0.1 step) value. Without a sent record, or once StopReq/enable/driver
+  input ends it, the computed value is used."""
   def __init__(self):
     self.last_stop_req = None
     self.last_jerk_u = None
@@ -197,7 +200,7 @@ class K9StopJerkEase:
     elif onset:
       self.frames = 0
       self.start = self.last_jerk_u
-    elif mode == 2 and self.frames is not None:
+    elif mode == 2 and self.frames is not None and self.last_jerk_u is not None:
       self.frames += 1
     else:
       self.frames = None
@@ -206,7 +209,7 @@ class K9StopJerkEase:
     if self.frames is not None and self.frames >= ramp_frames:
       self.frames = None
     if self.frames is not None:
-      jerk_u = min(jerk_u, self.start + (jerk_u - self.start) * self.frames / ramp_frames)
+      jerk_u = min(jerk_u, max(self.start + (jerk_u - self.start) * self.frames / ramp_frames, self.last_jerk_u))
     return jerk_u
 
   def record(self, stop_req: int | None, jerk_u: float | None):
@@ -685,11 +688,17 @@ class CarController(CarControllerBase):
             stop_req = (1 if stopping or (CS.softHoldActive > 0 and self.soft_hold_mode == 2) else 0) if CS.scc12 is not None else None
             allowed = CC.enabled and not CC.cruiseControl.override and not CS.out.gasPressed and not CS.out.brakePressed
             self.hyundai_jerk.jerk_u = self.stop_jerk_ease.update(self.stop_jerk_ease_mode, stop_req, self.hyundai_jerk.jerk_u, allowed)
-            self.stop_jerk_ease.record(stop_req, self.hyundai_jerk.jerk_u if CS.scc14 is not None else None)
 
-          can_sends.extend(hyundaican.create_acc_commands_scc(self.packer, CC.enabled, accel, self.hyundai_jerk, int(self.frame / 2),
-                                                          hud_control, set_speed_in_units, stopping,
-                                                          CC.cruiseControl.override, casper_ev, CS, self.soft_hold_mode))
+          scc_sends = hyundaican.create_acc_commands_scc(self.packer, CC.enabled, accel, self.hyundai_jerk, int(self.frame / 2),
+                                                         hud_control, set_speed_in_units, stopping,
+                                                         CC.cruiseControl.override, casper_ev, CS, self.soft_hold_mode)
+          can_sends.extend(scc_sends)
+          if self.stop_jerk_ease is not None:
+            # Record the Upper decoded from the transmitted SCC14 bytes; None when SCC14 is not sent.
+            msg = self.packer.dbc.name_to_msg["SCC14"]
+            dat = next((d for addr, d, _ in scc_sends if addr == msg.address), None)
+            sig = msg.sigs["JerkUpperLimit"]
+            self.stop_jerk_ease.record(stop_req, get_raw_value(dat, sig) * sig.factor + sig.offset if dat is not None else None)
         else:
           can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, self.hyundai_jerk, int(self.frame / 2),
                                                 hud_control, set_speed_in_units, stopping,

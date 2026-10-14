@@ -6,13 +6,19 @@ CarInterface.apply() in the code tree on PYTHONPATH, then decodes every generate
 Run once with the base tree (--modes base) and once with the modified tree (--modes 0,1,2).
 This reproduces transmitted values only; it is not a vehicle-response or comfort result.
 
-usage: PYTHONPATH=<tree> PARAMS_ROOT=<tmp> python k9_stop_jerk_ease_replay.py \
+Params are written to a fresh directory per mode, created with tempfile.mkdtemp inside PARAMS_ROOT.
+PARAMS_ROOT, if given, must not exist yet (an existing directory, file or symlink is refused and left
+untouched); the tool creates it. Without PARAMS_ROOT a new directory under TMPDIR is used.
+
+usage: PYTHONPATH=<tree> PARAMS_ROOT=<new path> python k9_stop_jerk_ease_replay.py \
          --schema <cereal dir of the recorded commit> --out out.pkl --modes 0,1,2 \
          --start <logMonoTime ns> --end <logMonoTime ns> <segment dir> [...]
 """
 import argparse
 import os
 import pickle
+import sys
+import tempfile
 from collections import deque
 
 import capnp
@@ -58,14 +64,26 @@ def to_current(msg, cls):
   return cls.new_message(**filt(msg.to_dict(), cls.schema))
 
 
-def write_params(root, entries, overrides):
-  d = os.path.join(root, "d")
-  os.makedirs(d, exist_ok=True)
-  for f in os.listdir(d):
-    os.remove(os.path.join(d, f))
+def make_params_root(path):
+  """Create the run's params root. An existing path (directory, file or symlink, even dangling) is refused."""
+  if path is None:
+    return tempfile.mkdtemp(prefix="k9_stop_jerk_ease_params_")
+  try:
+    os.mkdir(path)
+  except FileExistsError:
+    sys.exit(f"refusing PARAMS_ROOT={path!r}: it already exists (or is a symlink); give a new path")
+  return path
+
+
+def write_params(root, mode, entries, overrides):
+  """Write params into a new directory for this mode and return it (used as PARAMS_ROOT)."""
+  mode_root = tempfile.mkdtemp(prefix=f"mode_{mode}_", dir=root)
+  d = os.path.join(mode_root, "d")
+  os.mkdir(d)
   for k, v in {**entries, **overrides}.items():
     with open(os.path.join(d, k), "wb") as fh:
       fh.write(v)
+  return mode_root
 
 
 def replay(events, mode, start, end):
@@ -164,6 +182,7 @@ def main():
   ap.add_argument("--end", type=int, required=True)
   ap.add_argument("segs", nargs="+")
   args = ap.parse_args()
+  root = make_params_root(os.environ.get("PARAMS_ROOT"))
 
   events = read_events(args.schema, args.segs)
   init = next(ev.initData for ev in events if ev.which() == "initData")
@@ -186,13 +205,12 @@ def main():
     for bus in range(8):
       fp.setdefault(bus, {})
     entries["FingerPrints"] = repr(fp).encode()
-  root = os.environ["PARAMS_ROOT"]
   out = {}
   for mode in args.modes.split(","):
     overrides = {"ControlsReady": b"1"}  # card sets this before the first apply()
     if mode != "base":
       overrides["K9StopJerkEase"] = mode.encode()
-    write_params(root, entries, overrides)
+    os.environ["PARAMS_ROOT"] = write_params(root, mode, entries, overrides)
     out[mode] = replay(events, mode, args.start, args.end)
   out["git"] = init.gitCommit
   with open(args.out, "wb") as fh:
