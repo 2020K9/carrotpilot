@@ -2,9 +2,11 @@
 
 Below the K9StopSoftBrakeSpeed setting in the stopping state, the sent accel becomes the strongest of -strength,
 the planned aTarget and, with a detected lead, a closing-speed required decel, still clipped to the existing
-vehicle accel limits. Continuous car standstill frames are counted from the car's
-standstill signal; after the set time this trial requests the existing soft hold. Unapproved trial values,
-not verified on a vehicle (including whether the weak deceleration keeps the car from rolling).
+vehicle accel limits. Continuous car standstill frames are counted from the car's standstill signal.
+Unapproved trial values, not verified on a vehicle (including whether the weak deceleration keeps the car from rolling).
+
+시간 설정(K9StopSoftBrakeTime)은 연속 정지 상태에서 약제동을 유지하는 시간이다. 시간이 지나면 약제동을
+끝내고(만료) 원래 정차 제어로 돌아가며, 소프트홀드를 요청하지 않는다. 같은 정차 회차에서는 다시 켜지지 않는다.
 """
 import math
 
@@ -71,51 +73,44 @@ def read_k9_stop_soft_brake_speed(params) -> float:
 
 
 class K9StopSoftBrake:
-  """Per-frame decision. The caller owns the soft hold state; this only says when to set or clear it.
+  """Per-frame decision. The soft hold state belongs to the caller; this only reads it and never sets or clears it.
 
   - Soft brake only in the stopping state, below the entry speed or at standstill (entry speed 0: at standstill only), enabled, no gas/brake/override, valid
     speed/lead/plan inputs (a reported lead with invalid distance/relative speed is invalid, not "no lead"), no
     other soft hold, and while not latched off. The caller sends min(-strength, aTarget, lead need decel).
   - Hold frames count only continuous eligible standstill frames; any other frame resets them to 0.
+  - 만료: 연속 정지 프레임이 설정 시간에 이르는 그 프레임부터 약제동을 끝내고 원래 정차 제어로 돌아간다(소프트홀드
+    요청 없음). 만료 표시는 이 정차 회차가 끝날 때까지 남아, 같은 회차에서는 다시 멈춰도 약제동이 켜지지 않는다.
   - Standstill ending after it was reported: original control until a new standstill or the entry speed or more
     (entry speed 0: until a new standstill).
   - The entry speed setting is fixed when a stop episode starts (first soft brake frame) and kept through the weak
-    decel, the standstill wait and the hold; a changed setting applies from the next episode. The episode ends when
-    no own hold is active and the car moves at or above the fixed entry speed without standstill (entry speed 0: as
-    soon as standstill ends).
-  - Pedal/override/disengage: off for this stop until the car moves (standstill ends). It also ends this
-    trial's own hold request; a hold that was not requested here is never touched.
+    decel, the standstill wait and the expiry; a changed setting applies from the next episode. The episode ends when
+    the car moves at or above the fixed entry speed without standstill (entry speed 0: as soon as standstill ends);
+    that also clears the expiry, so the next episode starts from the normal entry conditions.
+  - Pedal/override/disengage: off for this stop until the car moves (standstill ends).
+  - Time setting 0: everything off and reset.
   """
   def __init__(self):
     self.frames = 0
     self.standstill_prev = False
     self.moved = False
     self.blocked = False
-    self.hold = False
+    self.expired = False  # 이 정차 회차의 약제동 시간이 지남
     self.engaged = False
     self.speed = None  # fixed entry speed (m/s) of the current episode
 
   def reset(self):
     self.__init__()
 
-  def update(self, hold_frames, *, speed, enabled, driver, standstill, v_ego, inputs_valid, stopping,
-             soft_hold_active, pedal=False):
-    """speed: entry speed setting (m/s), used only when no episode is in progress. driver: gas, brake or override;
-    pedal: gas or brake only. Returns (soft_brake, request_hold, clear_hold)."""
+  def update(self, hold_frames, *, speed, enabled, driver, standstill, v_ego, inputs_valid, stopping, soft_hold_active):
+    """speed: entry speed setting (m/s), used only when no episode is in progress. driver: gas, brake or override.
+    Returns True while the soft brake is applied."""
     if hold_frames <= 0:
-      clear = self.hold and soft_hold_active > 0
       self.reset()
-      return False, False, clear
+      return False
 
     if not self.engaged:
       self.speed = speed
-    clear = False
-    if self.hold and (driver or not enabled or soft_hold_active == 0):
-      # Gas/brake already reset the soft hold in the existing pedal logic (a long brake press may arm the
-      # existing manual hold, which is kept); an override or disengage without pedal input is cleared here.
-      clear = not pedal and soft_hold_active > 0
-      self.hold = False
-      self.blocked = True
 
     if self.standstill_prev and not standstill:
       self.moved = True
@@ -130,16 +125,19 @@ class K9StopSoftBrake:
       self.blocked = False
     if driver or not enabled:
       self.blocked = True
+    episode_end = not standstill and (standstill_only or above_entry)
+    if episode_end:
+      self.expired = False
 
-    eligible = (not self.hold and not self.blocked and not self.moved and enabled and not driver and inputs_valid and
+    eligible = (not self.expired and not self.blocked and not self.moved and enabled and not driver and inputs_valid and
                 stopping and soft_hold_active == 0 and (standstill or below_entry))
     self.frames = self.frames + 1 if eligible and standstill else 0
-    request = eligible and self.frames >= hold_frames
-    if request:
-      self.hold = True
+    expire = eligible and self.frames >= hold_frames
+    if expire:
+      self.expired = True
       self.frames = 0
-    if eligible or self.hold:
+    if eligible or self.expired:
       self.engaged = True
-    elif not standstill and (standstill_only or above_entry):
+    elif episode_end:
       self.engaged = False
-    return eligible and not request, request, clear
+    return eligible and not expire

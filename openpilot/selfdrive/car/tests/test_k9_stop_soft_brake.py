@@ -94,6 +94,7 @@ class Loop:
     self.params = MemoryParams({"K9StopSoftBrakeTime": hold_time, "K9StopSoftBrakeAccel": strength, "AutoCruiseControl": 1,
                                 "HyundaiCameraSCC": 1, "StoppingAccel": -50, "CruiseSpeedUnit": 10, "CruiseSpeedUnitBasic": 1,
                                 "CruiseButtonLongDelay": 50, "AutoGasTokSpeed": 30, "AutoGasCancelSpeed": 30, **extra})
+    self.initial_params = dict(self.params.values)
     for module in (cruise, longcontrol, carcontroller):
       monkeypatch.setattr(module, "Params", lambda *args, **kwargs: self.params)
     monkeypatch.setattr(cruise, "CommandReader", NullReader)
@@ -150,7 +151,9 @@ class Loop:
     self.rows.append(dict(frame=self.frame, v=v, standstill=standstill, sent=sent, lead=lead, cc_accel=cc_structs.actuators.accel,
                           a_target=cc_structs.actuators.aTarget, lcs=str(cc_structs.actuators.longControlState),
                           soft=self.helper.k9_stop_soft_brake_accel, soft_hold=cs.softHoldActive,
-                          frames=sb.frames if sb is not None else 0, own_hold=sb.hold if sb is not None else False))
+                          ci_soft=getattr(ci_cs, "k9_stop_soft_brake_accel", None),
+                          long_active=cc_structs.longActive, enabled=cc_structs.enabled,
+                          frames=sb.frames if sb is not None else 0, expired=sb.expired if sb is not None else False))
 
     # controlsd: next carControl
     plan = log.LongitudinalPlan.new_message(aTarget=a_target, vTargetNow=0. if should_stop else v + 1., shouldStop=should_stop)
@@ -191,6 +194,22 @@ def sent(rows):
   return [r for r in rows if r["sent"] is not None]
 
 
+def control_trace(rows):
+  """What reaches the car and the control state: sent StopReq/ACCMode/aReq, longActive/enabled, LongControl output."""
+  return [(r["sent"] and (r["sent"]["StopReq"], r["sent"]["ACCMode"], r["sent"]["aReqValue"], r["sent"]["aReqRaw"]),
+           r["long_active"], r["enabled"], r["cc_accel"], r["soft_hold"]) for r in rows]
+
+
+def check_expired_original_control(rows):
+  """After expiry: no weak decel (None, not 0), no soft hold, the original stopping command is sent while engaged."""
+  assert rows and all(r["expired"] and r["soft"] is None and r["ci_soft"] is None and r["soft_hold"] == 0 and r["frames"] == 0
+                      for r in rows)
+  assert all(r["lcs"] == "stopping" and r["long_active"] and r["enabled"] for r in rows)
+  assert sent(rows) and all(r["sent"]["StopReq"] == 1 and r["sent"]["ACCMode"] == 1 and
+                            r["sent"]["aReqValue"] == pytest.approx(max(ACCEL_MIN, min(ACCEL_MAX, r["cc_accel"])), abs=TOL)
+                            for r in sent(rows))
+
+
 def check_common(loop, strength=0.2):
   assert strong_plan_weakened(loop.rows, strength) == []
   for r in sent(loop.rows):
@@ -221,19 +240,41 @@ def test_other_cars_never_use_it(monkeypatch, cp):
   assert loop.helper.k9_stop_soft_brake is None and not loop.controller.stop_soft_brake
   loop.approach()
   loop.run(500, standstill=True)
-  assert all(r["soft"] is None and r["soft_hold"] == 0 for r in loop.rows)
+  assert all(r["soft"] is None and r["soft_hold"] == 0 and not r["expired"] for r in loop.rows)
 
 
 def test_time_zero_is_off(monkeypatch):
   loop = Loop(monkeypatch, hold_time=0)
   loop.approach()
   loop.run(800, standstill=True)
-  assert all(r["soft"] is None and r["soft_hold"] == 0 and r["frames"] == 0 for r in loop.rows)
+  assert all(r["soft"] is None and r["soft_hold"] == 0 and r["frames"] == 0 and not r["expired"] for r in loop.rows)
   check_common(loop)
 
 
-def test_sequence_weak_decel_then_existing_hold(monkeypatch):
+def recording(loop):
+  """Records every step's inputs of loop (for same_inputs_off)."""
+  steps, real_step = [], loop.step
+
+  def step(**kw):
+    steps.append(kw)
+    return real_step(**kw)
+  loop.step = step
+  return steps
+
+
+def same_inputs_off(monkeypatch, loop_on, steps):
+  """Replays the recorded inputs of loop_on with the trial off (time 0) and returns its rows."""
+  off = Loop(monkeypatch, hold_time=0, **{k: v for k, v in loop_on.initial_params.items() if k != "K9StopSoftBrakeTime"})
+  for kw in steps:
+    off.step(**kw)
+  return off.rows
+
+
+def test_sequence_weak_decel_then_original_stop_control(monkeypatch):
+  """Was test_sequence_weak_decel_then_existing_hold: after the set time the trial now ends (expires) instead of
+  requesting the soft hold, and the original stopping command is sent, identical to the trial off."""
   loop = Loop(monkeypatch, hold_time=20)
+  steps = recording(loop)
   loop.approach()
   # Before the stop the timer never runs, however long the car crawls below 2 km/h.
   loop.run(1000, v=0.5 * KPH, a_target=-0.1)
@@ -247,15 +288,19 @@ def test_sequence_weak_decel_then_existing_hold(monkeypatch):
 
   wait = loop.run(200, standstill=True, a_target=-0.1)
   assert [r["frames"] for r in wait[:199]] == list(range(1, 200))
-  assert all(r["soft"] == pytest.approx(-0.2) and r["soft_hold"] == 0 for r in wait[:199])
+  assert all(r["soft"] == pytest.approx(-0.2) and r["soft_hold"] == 0 and not r["expired"] for r in wait[:199])
   assert all(r["sent"]["aReqValue"] == pytest.approx(-0.2, abs=TOL) and r["sent"]["StopReq"] == 1 for r in sent(wait[:199]))
-  # At exactly 2 s of standstill: the existing soft hold, no weak decel any more.
-  assert wait[199]["soft_hold"] == 2 and wait[199]["soft"] is None and wait[199]["own_hold"]
-  hold = loop.run(300, standstill=True, a_target=-0.1)
-  assert all(r["soft_hold"] == 2 and r["soft"] is None for r in hold)
-  # Existing soft hold path: LongControl uses stopAccel and its ramp, StopReq=1 with long enabled.
-  assert all(r["sent"]["StopReq"] == 1 and r["sent"]["ACCMode"] == 1 for r in sent(hold))
-  assert hold[-1]["cc_accel"] == pytest.approx(-2.0) and sent(hold)[-1]["sent"]["aReqValue"] == pytest.approx(-2.0, abs=TOL)
+  # At exactly 2 s of standstill: the weak decel ends; no soft hold.
+  assert wait[199]["expired"] and wait[199]["soft"] is None and wait[199]["soft_hold"] == 0
+  after = loop.run(300, standstill=True, a_target=-0.1)
+  check_expired_original_control(wait[199:] + after)
+  # Same inputs with the trial off: LongControl output never changes, and from the expiry on the sent commands, the
+  # control state and the (zero) soft hold are identical.
+  off = same_inputs_off(monkeypatch, loop, steps)
+  assert [r["cc_accel"] for r in loop.rows] == [r["cc_accel"] for r in off]
+  n = len(loop.rows) - len(after) - 1
+  assert control_trace(loop.rows[n:]) == control_trace(off[n:])
+  assert all(r["soft_hold"] == 0 for r in off)
   check_common(loop)
 
 
@@ -271,39 +316,43 @@ def test_moving_while_waiting_resets_and_restarts(monkeypatch, kph):
   again = loop.run(250, standstill=True, a_target=-0.1)
   # 150 + 50 frames would already exceed 2 s; the new standstill needs a full 2 s from zero.
   assert [r["frames"] for r in again[:199]] == list(range(1, 200))
-  assert all(r["soft_hold"] == 0 for r in again[:199]) and again[199]["soft_hold"] == 2
+  assert all(r["soft_hold"] == 0 and not r["expired"] for r in again[:199])
+  assert again[199]["expired"] and again[199]["soft"] is None and again[199]["soft_hold"] == 0
   check_common(loop)
 
 
 @pytest.mark.parametrize("pedal", ["gas", "brake"])
-@pytest.mark.parametrize("during", ["wait", "hold"])
+@pytest.mark.parametrize("during", ["wait", "expired"])
 def test_pedal_clears_and_never_rearms(monkeypatch, pedal, during):
   loop = Loop(monkeypatch, hold_time=20)
   loop.approach()
   loop.run(100 if during == "wait" else 300, standstill=True, a_target=-0.1)
-  assert loop.rows[-1]["soft_hold"] == (0 if during == "wait" else 2)
+  assert loop.rows[-1]["soft_hold"] == 0 and loop.rows[-1]["expired"] == (during == "expired")
   # A short press (0.3 s); the controls disengage on a pedal at standstill.
   pressed = loop.run(30, standstill=True, enabled=False, **{pedal: True})
-  assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 and not r["own_hold"] for r in pressed)
-  # Released, re-enabled and still stopped: no weak decel, no new request from this trial.
+  assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 and r["expired"] == (during == "expired")
+             for r in pressed)
+  # Released, re-enabled and still stopped: no weak decel, no soft hold from this trial.
   after = loop.run(600, standstill=True, a_target=-0.1)
   assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 for r in after)
   # It works again after the car has moved.
   loop.run(100, v=3 * KPH, a_target=-0.1)
   loop.run(50, v=0.5 * KPH, a_target=-0.1)
-  assert loop.run(200, standstill=True, a_target=-0.1)[-1]["soft_hold"] == 2
+  again = loop.run(200, standstill=True, a_target=-0.1)
+  assert again[-2]["soft"] is not None and again[-1]["expired"] and again[-1]["soft_hold"] == 0
   check_common(loop)
 
 
-def test_cruise_off_clears_own_hold(monkeypatch):
+def test_cruise_off_after_expiry(monkeypatch):
+  """Was test_cruise_off_clears_own_hold: there is no own hold any more; cruise off after the expiry sends no long
+  enable/StopReq, and re-enabling in the same stop brings no weak decel and no soft hold."""
   loop = Loop(monkeypatch, hold_time=10)
   loop.approach()
   loop.run(200, standstill=True, a_target=-0.1)
-  assert loop.rows[-1]["soft_hold"] == 2
+  assert loop.rows[-1]["expired"] and loop.rows[-1]["soft_hold"] == 0
   off = loop.run(100, standstill=True, enabled=False)
   # off[0] still carries the previous (enabled) carControl, as in card.
-  assert all(r["soft_hold"] == 0 and r["soft"] is None and not r["own_hold"] for r in off[1:])
-  # No long enable / StopReq from a remaining hold request.
+  assert all(r["soft_hold"] == 0 and r["soft"] is None and not r["long_active"] for r in off[1:])
   assert all(r["sent"]["StopReq"] == 0 and r["sent"]["ACCMode"] == 0 for r in sent(off[2:]))
   after = loop.run(400, standstill=True, a_target=-0.1)
   assert all(r["soft_hold"] == 0 and r["soft"] is None for r in after)
@@ -327,18 +376,18 @@ def override_release_cruise_cycle(loop):
           loop.run(100, standstill=True, enabled=False), loop.run(400, standstill=True, a_target=-0.1))
 
 
-def test_override_without_pedal_during_hold_clears_own_hold(monkeypatch):
-  """Own hold, then override without gas/brake, release, cruise off and on: the own hold is really cleared, never
-  requested again, and the final sends match the path without this trial's hold (time 0)."""
+def test_override_without_pedal_after_expiry_matches_off(monkeypatch):
+  """Was test_override_without_pedal_during_hold_clears_own_hold. After the expiry (no hold), override without
+  gas/brake, release, cruise off and on: no weak decel or soft hold returns, and the sends match time 0."""
   finals = []
   for hold_time in (0, 10):
     loop = Loop(monkeypatch, hold_time=hold_time)
     loop.approach()
     loop.run(200, standstill=True, a_target=-0.1)
-    assert loop.rows[-1]["soft_hold"] == (2 if hold_time else 0)
+    assert loop.rows[-1]["soft_hold"] == 0 and loop.rows[-1]["expired"] == bool(hold_time)
     ov, released, off, on = override_release_cruise_cycle(loop)
     # ov[0] still carries the previous carControl (no override yet), as in card.
-    assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 and not r["own_hold"]
+    assert all(r["soft_hold"] == 0 and r["soft"] is None and r["frames"] == 0 and r["expired"] == bool(hold_time)
                for r in ov[1:] + released + off + on)
     # No long enable / StopReq from a remaining hold request while cruise is off.
     assert all(r["sent"]["StopReq"] == 0 and r["sent"]["ACCMode"] == 0 for r in sent(off[2:]))
@@ -358,9 +407,9 @@ def test_manual_soft_hold_unchanged_by_override_without_pedal(monkeypatch):
     loop.run(150, standstill=True, brake=True, enabled=False)
     loop.run(1, standstill=True, enabled=False)
     loop.run(100, standstill=True, a_target=-0.1)
-    assert loop.rows[-1]["soft_hold"] == 2 and not loop.rows[-1]["own_hold"]
+    assert loop.rows[-1]["soft_hold"] == 2
     override_release_cruise_cycle(loop)
-    assert not any(r["own_hold"] for r in loop.rows)
+    assert not any(r["expired"] for r in loop.rows)
     traces.append([(r["soft_hold"], r["sent"] and (r["sent"]["StopReq"], r["sent"]["ACCMode"], r["sent"]["aReqValue"]))
                    for r in loop.rows[300:]])
   assert traces[0] == traces[1]
@@ -378,7 +427,30 @@ def test_manual_soft_hold_unchanged(monkeypatch):
     loop.run(400, standstill=True, a_target=-0.1)
     traces.append([(r["soft_hold"], r["sent"] and (r["sent"]["StopReq"], r["sent"]["ACCMode"], r["sent"]["aReqValue"]))
                    for r in loop.rows[300:]])
-    assert loop.rows[-1]["soft_hold"] == 2 and not loop.rows[-1]["own_hold"]
+    assert loop.rows[-1]["soft_hold"] == 2 and not loop.rows[-1]["expired"]
+    # While the existing soft hold is on, the trial never applies its weak decel.
+    assert all(r["soft"] is None for r in loop.rows if r["soft_hold"] > 0)
+  assert traces[0] == traces[1]
+
+
+@pytest.mark.parametrize("on_cancel", [False, True])
+def test_manual_soft_hold_in_cancel_state_follows_soft_hold_on_cancel(monkeypatch, on_cancel):
+  """SoftHoldOnCancel: in the cruise cancel state a long brake arms the existing soft hold only when it is on.
+  The result, the sends and the control state are identical with this trial on/off."""
+  traces = []
+  for hold_time in (0, 20):
+    loop = Loop(monkeypatch, hold_time=hold_time, SoftHoldOnCancel=on_cancel)
+    loop.approach()
+    loop.run(100, standstill=True, a_target=-0.1)
+    loop.helper._cruise_cancel_state = True
+    loop.run(150, standstill=True, brake=True, enabled=False)
+    loop.run(1, standstill=True, enabled=False)
+    rest = loop.run(400, standstill=True, enabled=False, a_target=-0.1)
+    assert loop.helper.soft_hold_on_cancel is on_cancel
+    assert all(r["soft_hold"] == (2 if on_cancel else 0) for r in rest)
+    assert all(r["soft"] is None for r in loop.rows if r["soft_hold"] > 0)
+    assert not any(r["expired"] for r in loop.rows)
+    traces.append(control_trace(loop.rows[300:]))
   assert traces[0] == traces[1]
 
 
@@ -394,7 +466,7 @@ def test_strong_plan_decel_always_wins(monkeypatch, leftover):
   strong = [r for r in sent(loop.rows) if r["soft"] is not None and r["a_target"] < -0.2]
   assert len(strong) > 50
   assert all(r["sent"]["aReqValue"] == pytest.approx(r["a_target"], abs=TOL) for r in strong)
-  assert loop.rows[-1]["soft_hold"] == 2
+  assert loop.rows[-1]["expired"] and loop.rows[-1]["soft_hold"] == 0
   check_common(loop)
 
 
@@ -414,7 +486,7 @@ def test_invalid_inputs_use_original_control(monkeypatch, bad):
     assert r["sent"]["aReqValue"] == pytest.approx(r["cc_accel"], abs=TOL)
   # Once the condition clears, timing restarts from zero.
   ok = loop.run(200, standstill=True, a_target=-0.1)
-  assert [r["frames"] for r in ok[:199]] == list(range(1, 200)) and ok[199]["soft_hold"] == 2
+  assert [r["frames"] for r in ok[:199]] == list(range(1, 200)) and ok[199]["expired"] and ok[199]["soft_hold"] == 0
   check_common(loop)
 
 
@@ -438,8 +510,9 @@ def test_close_lead_uses_strongest_of_strength_plan_and_need(monkeypatch, leftov
   loop.approach()
   lead = (d_rel, v_rel)
   near = loop.run(100, v=0.5 * KPH, a_target=plan, lead=lead) + loop.run(200, standstill=True, a_target=plan, lead=lead)
-  # A lead within 4 m no longer disables the trial: weak decel throughout and the hold after 2 s of standstill.
-  assert all(r["soft"] is not None for r in near[1:-1]) and near[-1]["soft_hold"] == 2
+  # A lead within 4 m no longer disables the trial: weak decel throughout and the expiry after 2 s of standstill.
+  assert all(r["soft"] is not None for r in near[1:-1]) and near[-1]["expired"] and near[-1]["soft"] is None
+  assert all(r["soft_hold"] == 0 for r in near)
   need = need_accel(lead)
   expected = max(ACCEL_MIN, min(-0.2, plan, need))
   for r in sent(near[2:-1]):
@@ -536,28 +609,28 @@ def test_1_to_2kph_pedal_or_cruise_off(monkeypatch, cut):
   loop.approach()
   loop.run(50, v=1.5 * KPH, a_target=-0.1)
   rows = loop.run(50, v=1.5 * KPH, a_target=-0.1, **cut)
-  assert all(r["soft"] is None and r["frames"] == 0 and r["soft_hold"] == 0 and not r["own_hold"] for r in rows[1:])
+  assert all(r["soft"] is None and r["frames"] == 0 and r["soft_hold"] == 0 and not r["expired"] for r in rows[1:])
   for r in sent(rows[2:]):
     assert r["sent"]["aReqValue"] == pytest.approx(max(ACCEL_MIN, min(ACCEL_MAX, r["cc_accel"])), abs=TOL)
   # Released while still moving: the stop counts from its own standstill only (full 2 s from zero).
   loop.run(50, v=1.5 * KPH, a_target=-0.1)
   stop = loop.run(200, standstill=True, a_target=-0.1)
-  assert [r["frames"] for r in stop[:199]] == list(range(1, 200)) and stop[199]["soft_hold"] == 2
+  assert [r["frames"] for r in stop[:199]] == list(range(1, 200)) and stop[199]["expired"] and stop[199]["soft_hold"] == 0
   check_common(loop)
 
 
 def test_2kph_boundary_exact():
   for v, active in ((math.nextafter(K9_SOFT_BRAKE_SPEED, 0.), True), (K9_SOFT_BRAKE_SPEED, False),
                     (math.nextafter(K9_SOFT_BRAKE_SPEED, 1.), False)):
-    soft, request, clear = K9StopSoftBrake().update(200, speed=K9_SOFT_BRAKE_SPEED, enabled=True, driver=False, standstill=False, v_ego=v,
-                                                    inputs_valid=True, stopping=True, soft_hold_active=0)
-    assert (soft, request, clear) == (active, False, False)
+    soft = K9StopSoftBrake().update(200, speed=K9_SOFT_BRAKE_SPEED, enabled=True, driver=False, standstill=False, v_ego=v,
+                                    inputs_valid=True, stopping=True, soft_hold_active=0)
+    assert soft is active
   for v, rearmed in ((math.nextafter(K9_SOFT_BRAKE_SPEED, 0.), False), (K9_SOFT_BRAKE_SPEED, True)):
     sb = K9StopSoftBrake()
     kw = dict(speed=K9_SOFT_BRAKE_SPEED, enabled=True, driver=False, inputs_valid=True, stopping=True, soft_hold_active=0)
     sb.update(200, standstill=True, v_ego=0., **kw)
     sb.update(200, standstill=False, v_ego=v, **kw)
-    assert sb.update(200, standstill=False, v_ego=1.5 / 3.6, **kw)[0] == rearmed
+    assert sb.update(200, standstill=False, v_ego=1.5 / 3.6, **kw) is rearmed
 
 
 # K9StopSoftBrakeSpeed: 1 km/h steps, 0-5, default 2. 1-5 compare v < setting / 3.6; 0 = standstill signal only.
@@ -593,12 +666,12 @@ def test_speed_setting_boundary_exact(setting):
   assert read_k9_stop_soft_brake_speed(MemoryParams({"K9StopSoftBrakeSpeed": setting})) == speed
   kw = dict(enabled=True, driver=False, inputs_valid=True, stopping=True, soft_hold_active=0)
   for v, active in ((math.nextafter(speed, 0.), True), (speed, False), (math.nextafter(speed, 9.), False)):
-    assert K9StopSoftBrake().update(200, speed=speed, standstill=False, v_ego=v, **kw) == (active, False, False)
+    assert K9StopSoftBrake().update(200, speed=speed, standstill=False, v_ego=v, **kw) is active
   for v, rearmed in ((math.nextafter(speed, 0.), False), (speed, True), (math.nextafter(speed, 9.), True)):
     sb = K9StopSoftBrake()
     sb.update(200, speed=speed, standstill=True, v_ego=0., **kw)
     sb.update(200, speed=speed, standstill=False, v_ego=v, **kw)
-    assert sb.update(200, speed=speed, standstill=False, v_ego=speed / 2, **kw)[0] == rearmed
+    assert sb.update(200, speed=speed, standstill=False, v_ego=speed / 2, **kw) is rearmed
 
 
 @pytest.mark.parametrize(("stored", "expected"), [
@@ -669,9 +742,9 @@ def test_speed_change_during_episode_keeps_entry_value(monkeypatch):
   wait += set_speed_and_wait_read(loop, 5, standstill=True, a_target=-0.1)
   n = 200 - len(wait)
   wait += loop.run(n, standstill=True, a_target=-0.1)
-  assert [r["frames"] for r in wait[:199]] == list(range(1, 200)) and wait[199]["soft_hold"] == 2  # timer not reset
-  hold = set_speed_and_wait_read(loop, 1, standstill=True, a_target=-0.1) + loop.run(200, standstill=True, a_target=-0.1)
-  assert all(r["soft_hold"] == 2 and r["own_hold"] for r in hold)  # hold not released by the change
+  assert [r["frames"] for r in wait[:199]] == list(range(1, 200)) and wait[199]["expired"]  # timer not reset
+  expired = set_speed_and_wait_read(loop, 1, standstill=True, a_target=-0.1) + loop.run(200, standstill=True, a_target=-0.1)
+  check_expired_original_control(expired)  # the expiry is not undone by the change
   # Driver releases with gas and drives off above every setting: the next stop uses the new 1 km/h.
   loop.run(10, standstill=True, gas=True, enabled=False)
   loop.run(100, v=7 * KPH, a_target=-0.1)
@@ -717,16 +790,16 @@ def test_2_to_5kph_pedal_or_cruise_off(monkeypatch, cut):
   loop.approach(start=7.)
   loop.run(50, v=3.5 * KPH, a_target=-0.1)
   rows = loop.run(50, v=3.5 * KPH, a_target=-0.1, **cut)
-  assert all(r["soft"] is None and r["frames"] == 0 and r["soft_hold"] == 0 and not r["own_hold"] for r in rows[1:])
+  assert all(r["soft"] is None and r["frames"] == 0 and r["soft_hold"] == 0 and not r["expired"] for r in rows[1:])
   for r in sent(rows[2:]):
     assert r["sent"]["aReqValue"] == pytest.approx(max(ACCEL_MIN, min(ACCEL_MAX, r["cc_accel"])), abs=TOL)
   loop.run(50, v=3.5 * KPH, a_target=-0.1)
   stop = loop.run(200, standstill=True, a_target=-0.1)
-  assert [r["frames"] for r in stop[:199]] == list(range(1, 200)) and stop[199]["soft_hold"] == 2
+  assert [r["frames"] for r in stop[:199]] == list(range(1, 200)) and stop[199]["expired"] and stop[199]["soft_hold"] == 0
   check_common(loop)
 
 
-@pytest.mark.parametrize("end", ["invalid_lead", "hold"])
+@pytest.mark.parametrize("end", ["invalid_lead", "expiry"])
 def test_soft_brake_never_feeds_back_into_longcontrol(monkeypatch, end):
   """LongControl's own output (the next cycle's base) is the same with the trial on or off, so when the weak decel
   ends the stronger original command is sent at once, with no delayed recovery."""
@@ -739,12 +812,12 @@ def test_soft_brake_never_feeds_back_into_longcontrol(monkeypatch, end):
     tail = loop.run(20, standstill=True, a_target=-0.1, lead=(3., NAN) if end == "invalid_lead" else None)
     runs.append((loop, tail))
   (off, _), (on, tail) = runs
-  # Until the hold request (which then uses the existing soft hold path), LongControl never sees the weak decel.
-  n = len(on.rows) if end == "invalid_lead" else len(on.rows) - len(tail) + 1
-  assert [r["cc_accel"] for r in on.rows[:n]] == [r["cc_accel"] for r in off.rows[:n]]
+  # With no soft hold request any more, LongControl never sees the weak decel, also after the expiry.
+  assert [r["cc_accel"] for r in on.rows] == [r["cc_accel"] for r in off.rows]
   assert any(r["soft"] is not None for r in on.rows[:-len(tail)]) and tail[0]["soft"] is None
-  if end == "hold":
-    assert tail[0]["soft_hold"] == 2 and tail[0]["own_hold"]
+  if end == "expiry":
+    check_expired_original_control(tail)
+    assert control_trace(tail) == control_trace(off.rows[-len(tail):])
   first = next(r for r in tail if r["sent"] is not None)
   assert first["sent"]["aReqValue"] == pytest.approx(first["cc_accel"], abs=TOL) and first["cc_accel"] <= -0.5
   check_common(on)
@@ -752,8 +825,10 @@ def test_soft_brake_never_feeds_back_into_longcontrol(monkeypatch, end):
 
 # Speed setting 0: the weak decel starts only from the car's standstill signal (time 0 is still "whole trial off").
 
-def test_speed_zero_never_moving_then_standstill_then_existing_hold(monkeypatch):
+def test_speed_zero_never_moving_then_standstill_then_original_stop_control(monkeypatch):
+  """Was ..._then_existing_hold: after the set time the trial expires and the original stopping command is sent."""
   loop = Loop(monkeypatch, hold_time=20, K9StopSoftBrakeSpeed=0)
+  steps = recording(loop)
   loop.approach(start=7.)  # down to 0.3 km/h, below every positive setting
   moving = loop.rows + loop.run(300, v=0.1 * KPH, a_target=-0.1)  # crawling, standstill signal off
   assert all(r["soft"] is None and r["frames"] == 0 and r["soft_hold"] == 0 for r in moving)
@@ -764,11 +839,13 @@ def test_speed_zero_never_moving_then_standstill_then_existing_hold(monkeypatch)
   assert [r["frames"] for r in wait[:199]] == list(range(1, 200))  # counted from the first standstill frame
   assert all(r["soft"] == pytest.approx(-0.2) and r["soft_hold"] == 0 for r in wait[:199])
   assert all(r["sent"]["aReqValue"] == pytest.approx(-0.2, abs=TOL) and r["sent"]["StopReq"] == 1 for r in sent(wait[1:199]))
-  assert wait[199]["soft_hold"] == 2 and wait[199]["own_hold"] and wait[199]["soft"] is None
-  hold = loop.run(300, standstill=True, a_target=-0.1)
-  assert all(r["soft_hold"] == 2 and r["soft"] is None for r in hold)
-  assert all(r["sent"]["StopReq"] == 1 and r["sent"]["ACCMode"] == 1 for r in sent(hold))
-  assert hold[-1]["cc_accel"] == pytest.approx(-2.0)
+  assert wait[199]["expired"] and wait[199]["soft"] is None and wait[199]["soft_hold"] == 0
+  after = loop.run(300, standstill=True, a_target=-0.1)
+  check_expired_original_control(wait[199:] + after)
+  off = same_inputs_off(monkeypatch, loop, steps)
+  assert [r["cc_accel"] for r in loop.rows] == [r["cc_accel"] for r in off]
+  n = len(loop.rows) - len(after) - 1
+  assert control_trace(loop.rows[n:]) == control_trace(off[n:])
   check_common(loop)
 
 
@@ -782,7 +859,8 @@ def test_speed_zero_moving_while_waiting_resets_and_restarts(monkeypatch):
     assert r["sent"]["aReqValue"] == pytest.approx(r["cc_accel"], abs=TOL)  # original control
   again = loop.run(250, standstill=True, a_target=-0.1)
   assert [r["frames"] for r in again[:199]] == list(range(1, 200))
-  assert all(r["soft_hold"] == 0 for r in again[:199]) and again[199]["soft_hold"] == 2
+  assert all(r["soft_hold"] == 0 and not r["expired"] for r in again[:199])
+  assert again[199]["expired"] and again[199]["soft"] is None and all(r["soft_hold"] == 0 for r in again)
   check_common(loop)
 
 
@@ -791,7 +869,7 @@ def test_speed_zero_and_time_zero_is_all_off(monkeypatch):
   loop.approach(start=7.)
   loop.run(100, v=0.1 * KPH, a_target=-0.1)
   loop.run(800, standstill=True, a_target=-0.1)
-  assert all(r["soft"] is None and r["soft_hold"] == 0 and r["frames"] == 0 and not r["own_hold"] for r in loop.rows)
+  assert all(r["soft"] is None and r["soft_hold"] == 0 and r["frames"] == 0 and not r["expired"] for r in loop.rows)
   for r in sent(loop.rows[1:]):
     assert r["sent"]["aReqValue"] == pytest.approx(max(ACCEL_MIN, min(ACCEL_MAX, r["cc_accel"])), abs=TOL)
 
@@ -800,16 +878,16 @@ def test_speed_zero_uses_standstill_not_a_speed_comparison():
   kw = dict(enabled=True, driver=False, inputs_valid=True, stopping=True, soft_hold_active=0)
   # A slightly negative or zero measured speed without the standstill signal does not start it ("v < 0" is not used).
   for v in (-0.05, -1e-6, 0.0, 1e-6):
-    assert K9StopSoftBrake().update(200, speed=0.0, standstill=False, v_ego=v, **kw) == (False, False, False)
+    assert K9StopSoftBrake().update(200, speed=0.0, standstill=False, v_ego=v, **kw) is False
   # With the standstill signal it starts even if the measured speed is not exactly zero.
   for v in (0.0, 0.05):
-    assert K9StopSoftBrake().update(200, speed=0.0, standstill=True, v_ego=v, **kw) == (True, False, False)
+    assert K9StopSoftBrake().update(200, speed=0.0, standstill=True, v_ego=v, **kw) is True
   # After standstill ends, only a new standstill rearms it, whatever the speed.
   sb = K9StopSoftBrake()
   sb.update(200, speed=0.0, standstill=True, v_ego=0., **kw)
-  assert sb.update(200, speed=0.0, standstill=False, v_ego=3 / 3.6, **kw)[0] is False
-  assert sb.update(200, speed=0.0, standstill=False, v_ego=0.0, **kw)[0] is False
-  assert sb.update(200, speed=0.0, standstill=True, v_ego=0.0, **kw)[0] is True
+  assert sb.update(200, speed=0.0, standstill=False, v_ego=3 / 3.6, **kw) is False
+  assert sb.update(200, speed=0.0, standstill=False, v_ego=0.0, **kw) is False
+  assert sb.update(200, speed=0.0, standstill=True, v_ego=0.0, **kw) is True
   assert sb.frames == 1
   assert read_k9_stop_soft_brake_speed(MemoryParams({"K9StopSoftBrakeSpeed": 0})) == 0.0
 
@@ -820,7 +898,7 @@ def test_speed_zero_change_is_applied_per_episode(monkeypatch):
   wait = loop.run(80, standstill=True, a_target=-0.1)
   wait += set_speed_and_wait_read(loop, 5, standstill=True, a_target=-0.1)
   wait += loop.run(200 - len(wait), standstill=True, a_target=-0.1)
-  assert [r["frames"] for r in wait[:199]] == list(range(1, 200)) and wait[199]["soft_hold"] == 2
+  assert [r["frames"] for r in wait[:199]] == list(range(1, 200)) and wait[199]["expired"] and wait[199]["soft_hold"] == 0
   # Released and driven off; the next stop uses 5 km/h (active while moving at 3 km/h).
   loop.run(10, standstill=True, gas=True, enabled=False)
   loop.run(100, v=7 * KPH, a_target=-0.1)
@@ -832,4 +910,79 @@ def test_speed_zero_change_is_applied_per_episode(monkeypatch):
   loop.run(100, v=7 * KPH, a_target=-0.1)
   later = loop.run(100, v=1 * KPH, a_target=-0.1)
   assert all(r["soft"] is None for r in later)
+  check_common(loop)
+
+
+# Expiry (2026-10-15): after the set time the weak decel ends and no soft hold is requested.
+
+def test_trial_code_never_writes_soft_hold():
+  """No assignment to _soft_hold_active in the K9 trial code; it is only read as an input."""
+  import inspect
+  import re
+  import opendbc.car.hyundai.k9_stop_soft_brake as module
+  assert "_soft_hold_active" not in inspect.getsource(module)
+  helper_src = inspect.getsource(cruise.VCruiseCarrot._update_k9_stop_soft_brake)
+  assert re.search(r"_soft_hold_active\s*=[^=]", helper_src) is None
+  assert "soft_hold_active=self._soft_hold_active" in helper_src
+
+
+@pytest.mark.parametrize("setting", [2, 0])
+def test_expiry_boundary_and_same_stop_never_rearms_unit(setting):
+  """Just before / exactly at the expiry, the frames after it, a standstill flicker in the same stop and the next stop."""
+  speed, n = setting / 3.6, 50
+  kw = dict(speed=speed, enabled=True, driver=False, inputs_valid=True, stopping=True, soft_hold_active=0)
+  sb = K9StopSoftBrake()
+  out = [sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(n - 1)]
+  assert out == [True] * (n - 1) and sb.frames == n - 1 and not sb.expired  # just before the expiry
+  assert sb.update(n, standstill=True, v_ego=0., **kw) is False  # exactly at the set time
+  assert sb.expired and sb.frames == 0 and sb.engaged
+  # Consecutive frames after it, also with a longer time setting: never on again in this stop.
+  assert not any(sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(500))
+  assert not any(sb.update(n * 4, standstill=True, v_ego=0., **kw) for _ in range(500))
+  assert sb.expired and sb.frames == 0
+  if setting:
+    # Standstill flicker below the entry speed is the same stop: still expired, no weak decel.
+    assert not any(sb.update(n, standstill=False, v_ego=0.5 / 3.6, **kw) for _ in range(20))
+    assert not any(sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(300))
+    assert sb.expired
+    # The stop episode ends at or above the entry speed without standstill; the next stop starts normally.
+    assert sb.update(n, standstill=False, v_ego=speed, **kw) is False
+    assert not sb.expired and not sb.engaged
+    assert sb.update(n, standstill=False, v_ego=speed / 2, **kw) is True
+  else:
+    # Entry speed 0: the episode ends as soon as standstill ends; a new standstill is the next stop.
+    assert sb.update(n, standstill=False, v_ego=0.5 / 3.6, **kw) is False
+    assert not sb.expired and not sb.engaged
+  out = [sb.update(n, standstill=True, v_ego=0., **kw) for _ in range(n + 10)]
+  assert out == [True] * (n - 1) + [False] * 11 and sb.expired
+  # Time 0 still turns everything off and resets.
+  assert sb.update(0, standstill=True, v_ego=0., **kw) is False and not sb.expired and sb.frames == 0
+
+
+def test_expiry_closed_loop_two_stops_match_original_control(monkeypatch):
+  """Closed loop through LongControl -> cruise helper -> CarController -> SCC12: just before / at the expiry, the frames
+  after it (also with a standstill flicker), driving off and the next stop. After each expiry the sent StopReq/ACCMode/
+  aReq, longActive/enabled and the soft hold state are identical to the trial off (time 0)."""
+  loop = Loop(monkeypatch, hold_time=20)
+  steps = recording(loop)
+  stops = []
+  for _ in range(2):
+    loop.run(100, v=10 * KPH, a_target=-0.3, should_stop=False)
+    loop.approach(start=5.)
+    wait = loop.run(200, standstill=True, a_target=-0.1)
+    after = loop.run(150, standstill=True, a_target=-0.1)
+    flicker = loop.run(10, v=0.4 * KPH, a_target=-0.1) + loop.run(150, standstill=True, a_target=-0.1)
+    stops.append((len(loop.rows) - len(after) - len(flicker) - 1, wait, after, flicker))
+  off = same_inputs_off(monkeypatch, loop, steps)
+  assert [r["cc_accel"] for r in loop.rows] == [r["cc_accel"] for r in off]
+  assert all(r["soft_hold"] == 0 for r in loop.rows + off)
+  for start, wait, after, flicker in stops:
+    assert wait[198]["soft"] == pytest.approx(-0.2) and wait[198]["ci_soft"] == pytest.approx(-0.2)  # just before
+    assert wait[198]["frames"] == 199 and not wait[198]["expired"]
+    check_expired_original_control(wait[199:] + after + flicker[10:])  # at the expiry and after it
+    assert all(r["expired"] and r["soft"] is None for r in flicker)
+    end = start + 1 + len(after) + len(flicker)
+    assert control_trace(loop.rows[start:end]) == control_trace(off[start:end])
+  # The weak decel ran again in the second stop.
+  assert stops[1][1][0]["soft"] is not None
   check_common(loop)

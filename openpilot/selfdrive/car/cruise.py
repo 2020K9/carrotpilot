@@ -204,7 +204,7 @@ class VCruiseCarrot:
     self._soft_hold_count = 0
     self._soft_hold_active = 0
     self.soft_hold_on_cancel = self.params.get_bool("SoftHoldOnCancel")
-    # K9StopSoftBrake trial: only this helper sets/clears its own soft hold request.
+    # K9StopSoftBrake trial: weak decel only; it reads the soft hold state but never sets or clears it.
     self.k9_stop_soft_brake = K9StopSoftBrake() if k9_stop_soft_brake_applies(CP) else None
     self.k9_stop_soft_brake_frames, self.k9_stop_soft_brake_strength = 0, 0.0
     self.k9_stop_soft_brake_speed = K9_SOFT_BRAKE_SPEED[1] / 3.6
@@ -324,15 +324,12 @@ class VCruiseCarrot:
     radar_ok = sm.alive['radarState'] and sm.valid['radarState']
     need = k9_lead_need_accel(sm['radarState'].leadOne) if radar_ok else None  # 0.0 without a detected lead
     inputs_valid = need is not None and CS.canValid and math.isfinite(CS.vEgo) and math.isfinite(CC.actuators.aTarget)
-    soft, request, clear = self.k9_stop_soft_brake.update(
+    soft = self.k9_stop_soft_brake.update(
       self.k9_stop_soft_brake_frames, speed=self.k9_stop_soft_brake_speed, enabled=CC.enabled and CC.longActive,
-      driver=CS.gasPressed or CS.brakePressed or CC.cruiseControl.override, pedal=CS.gasPressed or CS.brakePressed,
+      driver=CS.gasPressed or CS.brakePressed or CC.cruiseControl.override,
       standstill=CS.standstill, v_ego=CS.vEgo, inputs_valid=inputs_valid,
       stopping=CC.actuators.longControlState == LongCtrlState.stopping, soft_hold_active=self._soft_hold_active)
-    if clear:
-      self._soft_hold_active = 0
-    if request:
-      self._soft_hold_active = 2  # the existing soft hold braking path, without a cruise-on request
+    # None (not 0) once expired or inactive: the original longitudinal command is sent unchanged.
     # The controller further takes min() with the planned aTarget: the strongest of the three is sent.
     self.k9_stop_soft_brake_accel = min(self.k9_stop_soft_brake_strength, need) if soft else None
 
