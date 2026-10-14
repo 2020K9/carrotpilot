@@ -1205,6 +1205,7 @@ function openDashcamPlayer(route, segment) {
       onSegmentMenu: (target, { close } = {}) => {
         return showDashcamSegmentMenu(route, target, { activePlayerClose: close });
       },
+      onSegmentAnalyze: (target, { seconds } = {}) => openDashcamDriveReplay(route, target || segment, { startTime: seconds }),
       onSegmentChange: (target) => {
         selectDashcamReadSegment(target);
       },
@@ -1223,28 +1224,56 @@ function openDashcamPlayer(route, segment) {
 
 dashcamReadStateStore.subscribe(syncDashcamSegmentReadStatusUi);
 
-async function openDashcamDriveReplay(route, segment) {
+// 리플레이 시작 결과는 "started"·"failed"·"cancelled" 중 하나다. 최신 요청의 실제
+// 시작 실패만 "failed"이고, 뒤 요청에 밀렸거나 사용자가 닫은 요청은 "cancelled"다.
+async function openDashcamDriveReplay(route, segment, options = {}) {
   const requestId = ++dashcamState.replayLoadSeq;
+  const isLatestRequest = () => requestId === dashcamState.replayLoadSeq;
   const replay = window.CarrotVisionReplay;
   if (!replay?.start) {
     showAppToast(getUIText("replay_unavailable", "Drive replay is not available in this browser."), { tone: "error" });
-    return;
+    return "failed";
   }
   const entry = (dashcamState.routes || []).find((item) => item.route === route);
   const segments = mergeDashcamSegments(dashcamSegmentsForRoute(entry), [], "asc");
   const titleForSegment = (target) => formatDashcamReplayTitle(entry, target);
-  const startPromise = replay.start({
-    route,
-    segment,
-    segments,
-    title: titleForSegment(segment),
-    titleForSegment,
-  });
+  let startPromise;
+  try {
+    startPromise = Promise.resolve(replay.start({
+      route,
+      segment,
+      segments,
+      title: titleForSegment(segment),
+      titleForSegment,
+      startTime: options.startTime,
+    }));
+  } catch (error) {
+    startPromise = Promise.reject(error);
+  }
   fetchAllDashcamSegmentNames(route).then((allSegments) => {
     if (requestId !== dashcamState.replayLoadSeq || !replay.isActive?.()) return;
     replay.updateSegments?.(mergeDashcamSegments(allSegments, [], "asc"), route);
   }).catch(() => {});
-  await startPromise;
+  let started;
+  try {
+    started = await startPromise;
+  } catch (error) {
+    if (!isLatestRequest()) return "cancelled";
+    showAppToast(`${getUIText("replay_failed", "주행 화면을 시작하지 못했습니다.")} ${error?.message || error}`, {
+      tone: "error",
+    });
+    return "failed";
+  }
+  if (!isLatestRequest()) return "cancelled";
+  if (started === true) return "started";
+  return started === false ? "failed" : "cancelled";
+}
+
+// 영상 칸은 리플레이를 먼저 열고, 최신 요청이 실제로 실패했을 때만 일반 재생기로 연다.
+async function openDashcamSegment(route, segment) {
+  const outcome = await openDashcamDriveReplay(route, segment);
+  if (outcome === "failed") openDashcamPlayer(route, segment);
+  return outcome;
 }
 
 function dashcamUploadSummaryLabel(stats) {
@@ -2061,6 +2090,7 @@ export {
   markDashcamScrollBusy,
   maybeLoadMoreDashcamRoutes,
   openDashcamPlayer,
+  openDashcamSegment,
   renderDashcamRoute,
   renderDashcamRoutes,
   resumeDashcamUploadJobIfNeeded,

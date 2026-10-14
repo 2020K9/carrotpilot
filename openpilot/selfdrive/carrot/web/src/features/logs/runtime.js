@@ -18,7 +18,7 @@ import {
   loadDashcamRoutes,
   markDashcamScrollBusy,
   maybeLoadMoreDashcamRoutes,
-  openDashcamPlayer,
+  openDashcamSegment,
   renderDashcamRoute,
   renderDashcamRoutes,
   resumeDashcamUploadJobIfNeeded,
@@ -321,6 +321,13 @@ function openLogsVideoPlayer(title, src, options = {}) {
     : null;
   const hasSendAction = typeof options.onSegmentSend === "function" || typeof options.onSend === "function";
   const hasMenuAction = typeof options.onSegmentMenu === "function" || typeof options.onMenu === "function";
+  const hasAnalyzeAction = typeof options.onSegmentAnalyze === "function";
+  const analyzeLabel = getUIText("dashcam_analyze", "분석");
+  const analyzeButton = hasAnalyzeAction
+    ? `<button class="dashcam-menu-btn dashcam-player-action dashcam-player-analyze" type="button" aria-label="${escapeHtml(analyzeLabel)}" title="${escapeHtml(analyzeLabel)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 3h2v16h16v2H3zm4 9h2v5H7zm4-5h2v10h-2zm4 3h2v7h-2z"/></svg>
+      </button>`
+    : "";
   const sendButton = hasSendAction
     ? `<button class="dashcam-menu-btn dashcam-player-action dashcam-player-send" type="button" aria-label="${escapeHtml(getUIText("log_upload", "Upload Logs"))}" title="${escapeHtml(getUIText("log_upload", "Upload Logs"))}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -362,6 +369,7 @@ function openLogsVideoPlayer(title, src, options = {}) {
         <div class="dashcam-player-title">${escapeHtml(currentMedia.title)}</div>
         <div class="dashcam-player-subtitle"${currentMedia.subtitle ? "" : " hidden"}>${escapeHtml(currentMedia.subtitle)}</div>
       </div>
+      ${analyzeButton}
       ${sendButton}
       ${menuButton}
       <button class="dashcam-player-close c-close" type="button" aria-label="${escapeHtml(getUIText("close", "Close"))}" title="${escapeHtml(getUIText("close", "Close"))}">
@@ -386,6 +394,7 @@ function openLogsVideoPlayer(title, src, options = {}) {
   let topActionPending = false;
   let navigationPending = false;
   let closed = false;
+  let suspended = false;
   let mediaSwitchToken = 0;
   let inputController = null;
   let segmentList = null;
@@ -496,17 +505,30 @@ function openLogsVideoPlayer(title, src, options = {}) {
       window.requestAnimationFrame(syncTransportPlayState);
     }
   };
+  // 구간 변경이 걸어 둔 canplay 재생 예약. 분석 전환 때 지워서 숨긴 영상이 다시 재생되지 않게 한다.
+  let pendingPlayback = null;
+  const cancelPendingPlayback = () => {
+    mediaSwitchToken += 1;
+    pendingPlayback?.media.removeEventListener("canplay", pendingPlayback.start);
+    pendingPlayback = null;
+  };
   const requestCurrentPlayback = (token) => {
     const start = () => {
-      if (closed || token !== mediaSwitchToken) return;
+      if (pendingPlayback?.start === start) pendingPlayback = null;
+      if (closed || suspended || token !== mediaSwitchToken) return;
       const result = player?.play ? player.play() : videoEl.play();
       if (result && typeof result.catch === "function") result.catch(() => {});
     };
     window.setTimeout(() => {
-      if (closed || token !== mediaSwitchToken) return;
+      if (closed || suspended || token !== mediaSwitchToken) return;
       const media = player?.media || videoEl;
-      if (media.readyState >= 2) start();
-      else media.addEventListener("canplay", start, { once: true });
+      if (media.readyState >= 2) {
+        start();
+        return;
+      }
+      pendingPlayback?.media.removeEventListener("canplay", pendingPlayback.start);
+      pendingPlayback = { media, start };
+      media.addEventListener("canplay", start, { once: true });
     }, 0);
   };
   const applyCurrentMedia = (media, optionsForChange = {}) => {
@@ -597,7 +619,7 @@ function openLogsVideoPlayer(title, src, options = {}) {
     media: videoEl,
     stage: playerDialog.frame,
     rates: [0.5, 1, 1.5, 2],
-    canInteract: () => !closed && overlay.isConnected,
+    canInteract: () => !closed && !suspended && overlay.isConnected,
     canPrevious: () => Boolean(previousButton && !previousButton.disabled),
     canNext: () => Boolean(nextButton && !nextButton.disabled),
     onTogglePlayback: () => transportPlayButton?.click(),
@@ -647,6 +669,30 @@ function openLogsVideoPlayer(title, src, options = {}) {
       : options.onSend;
     pauseCurrentPlayback();
     runTopAction(event, handler, "is-action-open");
+  });
+  overlay.querySelector(".dashcam-player-analyze")?.addEventListener("click", (event) => {
+    // 누른 순간의 구간과 구간 안 위치를 리플레이로 넘긴다.
+    const targetSegment = activeSegmentId();
+    const seconds = Math.max(0, Number(player?.currentTime ?? videoEl.currentTime) || 0);
+    pauseCurrentPlayback();
+    runTopAction(event, async () => {
+      // 리플레이가 화면을 넘겨받는 동안 일반 재생기를 가리고 입력을 막는다. 시작에
+      // 실패하면 같은 구간·위치에 멈춘 채로 되돌리고, 넘겨받았거나 취소되면 닫는다.
+      suspended = true;
+      cancelPendingPlayback();
+      overlay.style.display = "none";
+      let outcome = "failed";
+      try {
+        outcome = await options.onSegmentAnalyze(targetSegment, { seconds });
+      } finally {
+        if (outcome === "failed") {
+          suspended = false;
+          overlay.style.display = "";
+        } else {
+          close();
+        }
+      }
+    }, "is-action-open");
   });
   overlay.querySelector(".dashcam-player-menu")?.addEventListener("click", (event) => {
     const targetSegment = activeSegmentId();
@@ -888,7 +934,7 @@ function bindLogsPage() {
         if (route && dashcamState.routeHeights) delete dashcamState.routeHeights[route];
         if (!renderDashcamRoute(route)) renderDashcamRoutes({ animate: false });
       } else if (action === "play") {
-        openDashcamPlayer(route, segment);
+        openDashcamSegment(route, segment).catch(() => {});
       } else if (action === "segment-menu") {
         ev.stopPropagation();
         showDashcamSegmentMenu(route, segment).catch(() => {});

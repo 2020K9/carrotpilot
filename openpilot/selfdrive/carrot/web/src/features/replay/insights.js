@@ -239,6 +239,7 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     speed: { digits: 1, unit: " km/h" },
     steer: { digits: 2, unit: "°" },
     accel: { digits: 2, unit: " m/s²" },
+    jerk: { digits: 2, unit: " m/s³" },
     lead: { digits: 1, unit: " m" },
   });
 
@@ -252,7 +253,8 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     indexing: false,
     events: [],
     services: new Set(),
-    series: { speed: [], steer: [], accel: [], lead: [] },
+    series: { speed: [], steer: [], accel: [], command: [], lead: [] },
+    jerk: [],
     activeTab: "events",
     selectedEventId: "",
     currentEventId: "",
@@ -767,7 +769,8 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     state.indexing = false;
     state.events = [];
     state.services = new Set();
-    state.series = { speed: [], steer: [], accel: [], lead: [] };
+    state.series = { speed: [], steer: [], accel: [], command: [], lead: [] };
+    state.jerk = [];
     state.summarySeriesStatus = "idle";
     state.summaryToken += 1;
     state.activeTab = preferredTabName();
@@ -801,6 +804,7 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     resetAdvanced();
     for (const graphEl of graphEls.values()) {
       graphEl.querySelector("polyline")?.setAttribute("points", "");
+      graphEl.querySelectorAll("path").forEach((path) => path.setAttribute("d", ""));
       const output = graphEl.querySelector("output");
       if (output) output.textContent = "--";
       const cursor = graphEl.querySelector(".carrot-replay-insights__cursor");
@@ -852,7 +856,7 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     let min = Math.min(...samples.map((sample) => sample.value));
     let max = Math.max(...samples.map((sample) => sample.value));
     if (name === "speed" || name === "lead") min = Math.min(0, min);
-    if (name === "steer" || name === "accel") {
+    if (name === "steer") {
       const span = Math.max(1, Math.abs(min), Math.abs(max));
       min = -span;
       max = span;
@@ -876,7 +880,24 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     }).join(" ");
   }
 
+  // 가속도와 저크는 같은 최종 가속 그래프 점 배열에서 함께 그린다.
+  function renderAccelerationGraphs() {
+    const visible = (samples) => model?.downsample?.(samples, POLICY.graphPointLimit) || samples;
+    const geometry = dataTracks?.accelerationGraph?.({
+      actual: visible(state.series.accel || []),
+      command: visible(state.series.command || []),
+      durationSeconds: state.durationSeconds,
+    }) || null;
+    state.jerk = geometry?.jerk || [];
+    const accelEl = graphEls.get("accel");
+    accelEl?.querySelector("polyline")?.setAttribute("points", geometry?.actualPoints || "");
+    accelEl?.querySelector(".carrot-replay-insights__commandLine")?.setAttribute("d", geometry?.commandPath || "");
+    graphEls.get("jerk")?.querySelector("path")?.setAttribute("d", geometry?.jerkPath || "");
+  }
+
   function renderGraph(name) {
+    if (name === "accel") return renderAccelerationGraphs();
+    if (name === "jerk") return;
     const graphEl = graphEls.get(name);
     const line = graphEl?.querySelector("polyline");
     if (!line) return;
@@ -1421,9 +1442,16 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
     if (!ui) return;
     const cursorLeft = `${state.durationSeconds > 0 ? Math.max(0, Math.min(100, seconds / state.durationSeconds * 100)) : 0}%`;
     if (ui.cursor && ui.cursor.style.left !== cursorLeft) ui.cursor.style.left = cursorLeft;
-    const sample = model?.nearestSample?.(state.series[name] || [], seconds * 1000) || null;
+    const timeMs = seconds * 1000;
+    const sample = name === "jerk"
+      ? dataTracks?.spanningSample?.(state.jerk, timeMs) || null
+      : model?.nearestSample?.(state.series[name] || [], timeMs) || null;
     const format = GRAPH_FORMAT[name];
-    const output = format ? formatValue(sample?.value, format.digits, format.unit) : "";
+    let output = format ? formatValue(sample?.value, format.digits, format.unit) : "";
+    if (name === "accel") {
+      const command = dataTracks?.gapAwareSample?.(state.series.command || [], timeMs) || null;
+      output = `${formatValue(sample?.value, format.digits, "")} · ${text("replay_graph_command_accel", "명령")} ${formatValue(command?.value, format.digits, format.unit)}`;
+    }
     if (ui.output && ui.output.textContent !== output) ui.output.textContent = output;
   }
 
@@ -2036,6 +2064,7 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
       ["carrotReplaySpeedGraphLabel", "replay_graph_speed", "Speed"],
       ["carrotReplaySteerGraphLabel", "replay_graph_steering", "Steering"],
       ["carrotReplayAccelGraphLabel", "replay_graph_acceleration", "Acceleration"],
+      ["carrotReplayJerkGraphLabel", "replay_graph_jerk", "저크"],
       ["carrotReplayLeadGraphLabel", "replay_graph_lead_distance", "Lead distance"],
       ["carrotReplayAdvancedServiceLabel", "replay_advanced_service", "Data type"],
       ["carrotReplayAdvancedFieldLabel", "replay_advanced_field", "Measurement"],
@@ -2067,6 +2096,7 @@ window.CarrotReplayInsights = window.CarrotReplayInsights || (() => {
       speed: text("replay_graph_speed", "Speed"),
       steer: text("replay_graph_steering", "Steering"),
       accel: text("replay_graph_acceleration", "Acceleration"),
+      jerk: text("replay_graph_jerk", "저크"),
       lead: text("replay_graph_lead_distance", "Lead distance"),
     };
     graphEls.forEach((graphEl, name) => graphEl.setAttribute("aria-label", graphLabels[name] || name));

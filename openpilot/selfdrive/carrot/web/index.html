@@ -639,7 +639,12 @@
                   </div>
                   <div class="carrot-replay-insights__graph telemetry-graph" data-replay-graph="accel" data-telemetry-metric="acceleration" data-telemetry-tone="success" aria-label="Acceleration graph">
                     <div class="carrot-replay-insights__graphHead telemetry-graph__head"><strong id="carrotReplayAccelGraphLabel">Acceleration</strong><output>--.-- m/s²</output></div>
-                    <svg class="telemetry-graph__plot" viewBox="0 0 600 90" preserveAspectRatio="none" aria-hidden="true"><polyline points="" fill="none" stroke-width="1.6"></polyline></svg>
+                    <svg class="telemetry-graph__plot" viewBox="0 0 600 90" preserveAspectRatio="none" aria-hidden="true"><polyline points="" fill="none" stroke-width="1.6"></polyline><path class="carrot-replay-insights__commandLine" d="" fill="none" stroke-width="1.4"></path></svg>
+                    <i class="carrot-replay-insights__cursor telemetry-graph__cursor" aria-hidden="true"></i>
+                  </div>
+                  <div class="carrot-replay-insights__graph telemetry-graph" data-replay-graph="jerk" data-telemetry-metric="jerk" data-telemetry-tone="info" aria-label="저크 그래프">
+                    <div class="carrot-replay-insights__graphHead telemetry-graph__head"><strong id="carrotReplayJerkGraphLabel">저크</strong><output>--.-- m/s³</output></div>
+                    <svg class="telemetry-graph__plot" viewBox="0 0 600 90" preserveAspectRatio="none" aria-hidden="true"><path d="" fill="none" stroke-width="1.4"></path></svg>
                     <i class="carrot-replay-insights__cursor telemetry-graph__cursor" aria-hidden="true"></i>
                   </div>
                   <div class="carrot-replay-insights__graph telemetry-graph" data-replay-graph="lead" data-telemetry-metric="lead_distance" data-telemetry-tone="warning" aria-label="Lead distance graph">

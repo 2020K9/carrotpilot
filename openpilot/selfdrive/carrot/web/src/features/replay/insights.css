@@ -607,6 +607,16 @@ body.carrot-replay-active .drive-workspace__aux.is-replay-insights-host.is-repla
 .carrot-replay-insights.is-short-layout .carrot-replay-insights__eventList button { min-height: 60px; }
 .carrot-replay-insights.is-short-layout .carrot-replay-insights__graph { min-height: 102px; }
 
+/* 끊김이 있는 선(명령 가속·저크)은 path 로 그린다. 명령 가속은 점선이다. */
+.carrot-replay-insights__graph path {
+  fill: none;
+  stroke: var(--graph-color);
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: miter;
+  stroke-linecap: butt;
+}
+.carrot-replay-insights__graph .carrot-replay-insights__commandLine { stroke-dasharray: 5 4; }
+
 @media (prefers-reduced-motion: reduce) {
   .carrot-replay-insights { transition: none; }
 }

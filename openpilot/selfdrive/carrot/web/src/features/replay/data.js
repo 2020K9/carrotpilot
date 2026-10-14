@@ -7,6 +7,8 @@ window.CarrotReplayInsightsData = window.CarrotReplayInsightsData || (() => {
     numericSampleIntervalMs: 75,
     maxStateSamples: 6000,
     rawGraphPointLimit: 1200,
+    // 그래프 점 사이가 이보다 벌어지면 선을 끊는다. 근거 없는 임시값이다.
+    graphGapMs: 300,
   });
 
   const GROUPS = Object.freeze([
@@ -178,8 +180,8 @@ window.CarrotReplayInsightsData = window.CarrotReplayInsightsData || (() => {
     const decodeRecord = typeof options.decodeRecord === "function" ? options.decodeRecord : () => [];
     const shouldCancel = typeof options.shouldCancel === "function" ? options.shouldCancel : () => false;
     const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
-    const series = { speed: [], steer: [], accel: [], lead: [] };
-    const lastSampleAt = { speed: -Infinity, steer: -Infinity, accel: -Infinity, lead: -Infinity };
+    const series = { speed: [], steer: [], accel: [], command: [], lead: [] };
+    const lastSampleAt = { speed: -Infinity, steer: -Infinity, accel: -Infinity, command: -Infinity, lead: -Infinity };
     let index = 0;
 
     function push(name, timeMs, value) {
@@ -203,6 +205,10 @@ window.CarrotReplayInsightsData = window.CarrotReplayInsightsData || (() => {
                 push("speed", timeMs, Number(frame.decoded?.vEgo) * 3.6);
                 push("steer", timeMs, frame.decoded?.steeringAngleDeg);
                 push("accel", timeMs, frame.decoded?.aEgo);
+              } else if (frame?.service === "carControl") {
+                // 빠진 명령 가속은 0으로 채우지 않고 점을 만들지 않는다.
+                const commandAccel = frame.decoded?.actuators?.accel;
+                if (typeof commandAccel === "number") push("command", timeMs, commandAccel);
               } else if (frame?.service === "radarState" && frame.decoded?.leadOne?.status) {
                 push("lead", timeMs, frame.decoded.leadOne.dRel);
               }
@@ -286,6 +292,116 @@ window.CarrotReplayInsightsData = window.CarrotReplayInsightsData || (() => {
     });
   }
 
+  function finiteNumber(value) {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+
+  // 저크는 걸러내기 없이 그래프에 찍는 실제 가속 점끼리의 차이를 시간으로 나눈 값이며,
+  // 뒤쪽 점 시각에 둔다. startMs 는 계산에 쓴 앞쪽 점 시각이다.
+  function jerkSeries(points, maxGapMs = POLICY.graphGapMs) {
+    const list = Array.isArray(points) ? points : [];
+    const result = [];
+    for (let index = 1; index < list.length; index += 1) {
+      const previous = list[index - 1];
+      const current = list[index];
+      if (!finiteNumber(previous?.timeMs) || !finiteNumber(current?.timeMs)) continue;
+      if (!finiteNumber(previous.value) || !finiteNumber(current.value)) continue;
+      const dtMs = current.timeMs - previous.timeMs;
+      if (dtMs <= 0 || dtMs > maxGapMs) continue;
+      result.push({
+        timeMs: current.timeMs,
+        startMs: previous.timeMs,
+        value: (current.value - previous.value) / (dtMs / 1000),
+      });
+    }
+    return result;
+  }
+
+  // 시각이 이웃한 두 점 사이에 있고 그 간격이 maxGapMs 이하일 때만 가까운 점을 돌려준다.
+  function gapAwareSample(samples, timeMs, maxGapMs = POLICY.graphGapMs) {
+    const list = Array.isArray(samples) ? samples : [];
+    if (!list.length || !finiteNumber(timeMs)) return null;
+    let low = 0;
+    let high = list.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (list[middle].timeMs < timeMs) low = middle + 1;
+      else high = middle;
+    }
+    const next = list[low];
+    if (next?.timeMs === timeMs) return next;
+    const previous = list[low - 1];
+    if (!previous || !next || next.timeMs - previous.timeMs > maxGapMs) return null;
+    return timeMs - previous.timeMs <= next.timeMs - timeMs ? previous : next;
+  }
+
+  // 저크 점은 [startMs, timeMs] 구간의 값이다. 그 구간 밖(빈 구간)이면 null 이다.
+  function spanningSample(samples, timeMs) {
+    const list = Array.isArray(samples) ? samples : [];
+    if (!list.length || !finiteNumber(timeMs)) return null;
+    let low = 0;
+    let high = list.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (list[middle].timeMs < timeMs) low = middle + 1;
+      else high = middle;
+    }
+    const sample = list[low];
+    return sample && sample.startMs <= timeMs ? sample : null;
+  }
+
+  function symmetricRange(samples) {
+    let span = 1;
+    for (const sample of samples) if (finiteNumber(sample?.value)) span = Math.max(span, Math.abs(sample.value));
+    return { min: -span, max: span };
+  }
+
+  function graphCoordinate(sample, durationMs, range, height) {
+    const x = Math.max(0, Math.min(600, sample.timeMs / durationMs * 600));
+    const y = height - 5 - ((sample.value - range.min) / (range.max - range.min)) * (height - 10);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }
+
+  // isContinuous(앞 점, 현재 점)이 거짓이면 새 조각을 시작해 빈 구간을 가로질러 잇지 않는다.
+  function brokenPath(samples, durationMs, range, height, isContinuous) {
+    let path = "";
+    samples.forEach((sample, index) => {
+      const command = index > 0 && isContinuous(samples[index - 1], sample) ? "L" : "M";
+      path += `${path ? " " : ""}${command}${graphCoordinate(sample, durationMs, range, height)}`;
+    });
+    return path;
+  }
+
+  // 가속도 그래프 묶음: 실제·명령 가속은 두 값 범위를 합친 같은 세로축을 쓰고,
+  // 저크는 최종 실제 가속 그래프 점 배열에서 계산한다.
+  function accelerationGraph(options = {}) {
+    const actual = Array.isArray(options.actual) ? options.actual : [];
+    const command = Array.isArray(options.command) ? options.command : [];
+    const durationMs = Number(options.durationSeconds) * 1000;
+    const height = Number(options.height) || 90;
+    const maxGapMs = POLICY.graphGapMs;
+    const range = symmetricRange([...actual, ...command]);
+    const jerk = jerkSeries(actual, maxGapMs);
+    const jerkRange = symmetricRange(jerk);
+    const drawable = durationMs > 0;
+    return {
+      range,
+      jerk,
+      jerkRange,
+      actualPoints: drawable
+        ? actual.map((sample) => graphCoordinate(sample, durationMs, range, height)).join(" ")
+        : "",
+      commandPath: drawable
+        ? brokenPath(command, durationMs, range, height, (previous, current) => (
+          current.timeMs - previous.timeMs <= maxGapMs
+        ))
+        : "",
+      jerkPath: drawable
+        ? brokenPath(jerk, durationMs, jerkRange, height, (previous, current) => current.startMs === previous.timeMs)
+        : "",
+    };
+  }
+
   function sampleAt(samples, timeMs) {
     if (!samples.length) return null;
     let low = 0;
@@ -308,5 +424,9 @@ window.CarrotReplayInsightsData = window.CarrotReplayInsightsData || (() => {
     buildSummarySeries,
     buildTrack,
     sampleAt,
+    jerkSeries,
+    gapAwareSample,
+    spanningSample,
+    accelerationGraph,
   };
 })();

@@ -20,7 +20,7 @@
       "kind": "bundle",
       "source": "src/entries/replay.js",
       "path": "js/generated/replay.js",
-      "hash": "bd6a91b7222e5ea5dda9fa826e94542d976d14b4bcc815b79fa71b7dd3e12d20"
+      "hash": "e6e53af1faba2e4bb71ae09b8d80e20c9edd65cf690b720b676898316ff7f4fb"
     },
     {
       "id": "settings.store",
@@ -41,7 +41,7 @@
       "kind": "bundle",
       "source": "src/entries/logs.js",
       "path": "js/generated/logs.js",
-      "hash": "aa3f48bc3d5957a6959157f870fa6758d135fa94346a76109a2087057fd5cecc"
+      "hash": "4a73f528d0f841344ab6c2fade067284dc692dfdee0fd50fb28eab5344432feb"
     },
     {
       "id": "terminal.runtime",
@@ -104,7 +104,7 @@
       "kind": "bundle",
       "source": "src/entries/replay.css",
       "path": "css/generated/replay.css",
-      "hash": "81319a26b34cd564bbe28f186660c4f1fa1f674ed125bb835cf156cb633513e3"
+      "hash": "a6b950d5933f3a78c7859f49d54efe1b6a547ec9c91d4088edc6b21f1e7744a1"
     },
     {
       "id": "settings.styles",

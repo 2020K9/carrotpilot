@@ -83,6 +83,8 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
       ? Boolean(window.getWebSettingByKey(REPLAY_HUD_SETTING_KEY, false))
       : Boolean(window.CarrotWebSettingsState?.[REPLAY_HUD_SETTING_KEY]),
     timelineReady: false,
+    // 처음 위치를 준비하는 동안 참. 탐색·재생 입력만 막고 닫기·교체는 막지 않는다.
+    preparingStart: false,
   };
 
   function text(key, fallback, vars = null) {
@@ -324,7 +326,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
   }
 
   function seekReplayTo(seconds) {
-    if (!state.active || state.loading || !state.sourceKey || !videoEl) return false;
+    if (!state.active || state.loading || state.preparingStart || !state.sourceKey || !videoEl) return false;
     const target = Math.max(0, Math.min(replayDuration(), Number(seconds) || 0));
     beginScrub();
     videoEl.currentTime = target;
@@ -439,7 +441,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
   }
 
   function pauseReplayAtCurrentTime() {
-    if (!state.active || state.loading || !state.sourceKey || !videoEl) return null;
+    if (!state.active || state.loading || state.preparingStart || !state.sourceKey || !videoEl) return null;
     const currentSeconds = Math.max(0, Number(videoEl.currentTime || 0));
     videoEl.pause();
     syncTransport();
@@ -476,7 +478,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
   }
 
   function playDiagnosticReplay() {
-    if (!state.active || !state.ready || state.loading || !videoEl) {
+    if (!state.active || !state.ready || state.loading || state.preparingStart || !videoEl) {
       return Promise.reject(new Error("Replay is not ready for AR diagnostics"));
     }
     const result = videoEl.play?.();
@@ -705,7 +707,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
   }
 
   function handleStageScrubStart(event) {
-    if (!state.active || state.loading || !state.sourceKey || !videoEl) return;
+    if (!state.active || state.loading || state.preparingStart || !state.sourceKey || !videoEl) return;
     if (event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
     if (!isStageScrubTarget(event.target) || replayDuration() <= 0) return;
     resetStageScrub();
@@ -805,6 +807,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
     state.active = false;
     state.ready = false;
     state.loading = false;
+    state.preparingStart = false;
     state.timelineReady = false;
     state.scrubbing = false;
     state.seekHoldUntilMs = 0;
@@ -863,12 +866,56 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
     return true;
   }
 
+  // isReady 가 참이 될 때까지 기다린다. 영상 오류·영상 처리 실패는 오류로, 닫기·교체(abort)는
+  // AbortError 로 끝내며 어느 쪽이든 붙인 대기를 모두 뗀다.
+  function waitForReplayVideo(isReady, readyEvents, signal, failure) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        readyEvents.forEach((type) => videoEl.removeEventListener(type, onReady));
+        videoEl.removeEventListener("error", onError);
+        signal.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onReady = () => { if (isReady()) finish(); };
+      const videoError = () => new Error(text("replay_video_failed", "The saved road video could not be played."));
+      const onError = () => finish(videoError());
+      const onAbort = () => finish(new DOMException("Replay closed", "AbortError"));
+      if (signal.aborted) { onAbort(); return; }
+      if (isReady()) { finish(); return; }
+      readyEvents.forEach((type) => videoEl.addEventListener(type, onReady));
+      videoEl.addEventListener("error", onError);
+      signal.addEventListener("abort", onAbort);
+      failure.catch((error) => finish(error || videoError()));
+    });
+  }
+
+  // 영상 길이를 안 뒤 유효 범위로 제한한 위치로 옮기고, 그 위치에서 영상이 준비되면 기록에도
+  // 같은 위치를 적용한다. 시작 시각 0도 같은 절차를 거친다.
+  async function prepareReplayVideoAt(seconds, signal, failure) {
+    await waitForReplayVideo(() => videoEl.readyState >= 1, ["loadedmetadata"], signal, failure);
+    const target = Math.max(0, Math.min(replayDuration(), seconds));
+    videoEl.currentTime = target;
+    await waitForReplayVideo(
+      () => !videoEl.seeking && videoEl.readyState >= 2,
+      ["seeked", "loadeddata", "canplay"],
+      signal,
+      failure,
+    );
+    applyAt(target * 1000, { reset: true });
+    syncTransport();
+  }
+
   async function start(options = {}) {
     const segment = String(options.segment || "").trim();
     const route = String(options.route || "").trim();
     const segments = normalizeSegments(options.segments, segment);
     const titleForSegment = typeof options.titleForSegment === "function" ? options.titleForSegment : null;
     const requestedTitle = String(options.title || "").trim();
+    const startSeconds = Math.max(0, Number(options.startTime) || 0);
     if (!segment) throw new Error(text("replay_segment_missing", "A drive segment was not selected."));
     if (!stageEl || !videoEl || !controlsEl || !transport) {
       throw new Error(text("replay_unavailable", "Drive replay is not available in this browser."));
@@ -885,12 +932,14 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
         requestToken,
       });
     }
-    if (requestToken !== state.requestToken) return false;
+    // 다른 요청이 이어받았거나 닫힌 경우라 실패(false)가 아닌 취소로 끝낸다.
+    if (requestToken !== state.requestToken) return;
 
     const token = ++state.token;
     state.active = true;
     state.ready = false;
     state.loading = true;
+    state.preparingStart = false;
     state.timelineReady = false;
     state.scrubbing = false;
     state.seekHoldUntilMs = 0;
@@ -999,6 +1048,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
             String(error?.message || error || text("replay_video_failed_detail", "Close replay and check the saved video.")),
           );
         });
+        state.preparingStart = true;
         state.loading = false;
         stageEl?.classList.remove("is-replay-loading");
         videoEl.srcObject = null;
@@ -1012,6 +1062,10 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
         );
         window.requestCarrotVisionRender?.({ reason: "client replay timeline ready" });
         syncTransport();
+        // 요청 위치에서 영상이 준비되고 기록도 적용된 뒤에만 성공으로 끝내고 한 번만 재생한다.
+        await prepareReplayVideoAt(startSeconds, state.abortController.signal, videoCompletion);
+        if (!state.active || token !== state.token) return;
+        state.preparingStart = false;
         videoEl.play().catch(() => syncTransport());
         return true;
       }
@@ -1021,6 +1075,8 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
       if (error?.name === "AbortError" || token !== state.token) return;
       const message = String(error?.message || error || text("replay_failed", "Drive replay could not be started."));
       await stop({ returnToLogs: true, reason: "recorded replay failed", requestToken });
+      // 정리를 기다리는 동안 닫혔거나 다른 영상으로 바뀌었으면 실패가 아닌 취소로 끝낸다.
+      if (requestToken !== state.requestToken) return;
       if (typeof showAppToast === "function") {
         showAppToast(`${text("replay_failed", "Drive replay could not be started.")} ${message}`, {
           tone: "error",
@@ -1086,7 +1142,7 @@ window.CarrotVisionReplay = window.CarrotVisionReplay || (() => {
     text,
     getDuration: replayDuration,
     getStatus: replayStatusText,
-    canInteract: () => state.active && !state.loading && Boolean(state.sourceKey),
+    canInteract: () => state.active && !state.loading && !state.preparingStart && Boolean(state.sourceKey),
     onInteract: revealReplayControls,
     onClose: () => stop({ returnToLogs: true, reason: "replay close" }),
     onSeek: () => {
