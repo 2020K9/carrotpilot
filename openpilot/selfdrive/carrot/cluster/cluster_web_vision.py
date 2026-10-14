@@ -17,7 +17,7 @@ has no raylib dependency so the rules can be tested headlessly.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import math
 import sys
 from pathlib import Path
@@ -65,8 +65,6 @@ _ENUM_NAME_FIELDS = {
 
 # A model older than this is not drawn as if it were current.
 MODEL_STALE_SECONDS = 0.5
-# vision_raw.js MODEL_FRAME_HISTORY_LIMIT.
-MODEL_FRAME_HISTORY_LIMIT = 64
 
 
 def _attr(value: Any, name: str) -> Any:
@@ -186,29 +184,6 @@ def web_state_from_message(service: str, message: Any) -> dict[str, Any]:
     return _convert_schema(message, schema, service)
 
 
-@dataclass(frozen=True, slots=True)
-class ModelFrame:
-    """One remembered modelV2 for matching the model to the shown camera frame."""
-
-    frame_id: float
-    model: Mapping[str, Any]
-    valid: bool
-    sequence: int
-
-
-def select_synchronized_model(history: Sequence[ModelFrame], presented_frame_id: Any) -> ModelFrame | None:
-    """vision_raw.js selectSynchronizedModel(): newest model at or before the shown frame."""
-    if not history:
-        return None
-    target = js_number(presented_frame_id)
-    if not math.isfinite(target):
-        return history[-1]
-    for candidate in reversed(history):
-        if candidate.frame_id <= target:
-            return candidate
-    return history[0]
-
-
 @dataclass(slots=True)
 class WebVisionInputs:
     """Latest decoded web-vision services plus their arrival time and validity."""
@@ -218,7 +193,6 @@ class WebVisionInputs:
     valid: dict[str, bool] = field(default_factory=dict)
     sequence: dict[str, int] = field(default_factory=dict)
     generation: int = 0
-    model_history: list[ModelFrame] = field(default_factory=list)
 
     def update(self, service: str, message: Any, received_s: float, valid: bool = True) -> None:
         if service not in WEB_VISION_SERVICES:
@@ -228,29 +202,12 @@ class WebVisionInputs:
         self.valid[service] = bool(valid)
         self.generation += 1
         self.sequence[service] = self.generation
-        if service == "modelV2":
-            self._remember_model(self.services[service], bool(valid), self.generation)
-
-    def _remember_model(self, model: Mapping[str, Any], valid: bool, sequence: int) -> None:
-        # vision_raw.js rememberModelFrame(): the same frame replaces the last entry.
-        frame_id = js_number(model.get("frameId"))
-        if not math.isfinite(frame_id):
-            return
-        entry = ModelFrame(frame_id, model, valid, sequence)
-        history = self.model_history
-        if history and history[-1].frame_id == frame_id:
-            history[-1] = entry
-            return
-        history.append(entry)
-        if len(history) > MODEL_FRAME_HISTORY_LIMIT:
-            del history[0]
 
     def reset(self) -> None:
         self.services.clear()
         self.received_s.clear()
         self.valid.clear()
         self.sequence.clear()
-        self.model_history.clear()
         self.generation += 1
 
     def snapshot(self, now_s: float, params: Mapping[str, float] | None = None,
@@ -266,14 +223,12 @@ class WebVisionInputs:
             params=dict(params or WEB_VISION_DEFAULT_PARAMS),
             now_s=now_s,
             clock_text=clock_text,
-            model_history=tuple(self.model_history),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class WebVisionSnapshot:
     services: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    # Age/validity of the newest modelV2: a stalled model stream hides geometry.
     model_age_s: float | None = None
     model_valid: bool = False
     generation: int = 0
@@ -281,19 +236,6 @@ class WebVisionSnapshot:
     params: Mapping[str, float] = field(default_factory=dict)
     now_s: float | None = None
     clock_text: str | None = None
-    model_history: tuple[ModelFrame, ...] = ()
-
-    def for_presented_frame(self, presented_frame_id: Any) -> WebVisionSnapshot:
-        """Only modelV2 follows the shown frame; every other service stays at its latest value."""
-        selected = select_synchronized_model(self.model_history, presented_frame_id)
-        if selected is None or selected.sequence == self.sequence.get("modelV2"):
-            return self
-        services = dict(self.services)
-        services["modelV2"] = selected.model
-        sequence = dict(self.sequence)
-        sequence["modelV2"] = selected.sequence
-        return replace(self, services=services, sequence=sequence,
-                       model_valid=self.model_valid and selected.valid)
 
     def model_usable(self) -> bool:
         return (
@@ -1274,45 +1216,7 @@ class Label:
     baseline: str = "middle"
 
 
-@dataclass(frozen=True, slots=True)
-class EraseRoundRect:
-    """road_overlay_lead_renderer.js eraseLeadBoxOcclusion(): a destination-out
-    rounded rectangle that clears earlier 2D canvas items (not GPU geometry)."""
-
-    x: float
-    y: float
-    width: float
-    height: float
-    radius: float
-
-
-CanvasItem = RoundRect | Label | EraseRoundRect
-
-
-def canvas_item_bounds(item: CanvasItem, measure_text: Callable[[str, float, int], float]) -> tuple[float, float, float, float]:
-    """Generous (left, top, right, bottom) of a canvas item in source pixels."""
-    if isinstance(item, Label):
-        width = measure_text(item.text, item.size, item.weight)
-        left = item.x if item.align == "left" else item.x - width if item.align == "right" else item.x - width / 2
-        top = item.y - item.size * (1.2 if item.baseline == "bottom" else 0.3 if item.baseline == "top" else 0.75)
-        pad = item.stroke_width + 2.0
-        return left - pad, top - pad, left + width + pad, top + item.size * 1.5 + pad
-    pad = (item.stroke_width if isinstance(item, RoundRect) and item.stroke is not None else 0.0) + 1.0
-    return item.x - pad, item.y - pad, item.x + item.width + pad, item.y + item.height + pad
-
-
-def canvas_erase_hides_items(canvas: Sequence[CanvasItem], measure_text: Callable[[str, float, int], float]) -> bool:
-    """True when an erase overlaps an item drawn before it, so it changes the picture."""
-    earlier: list[tuple[float, float, float, float]] = []
-    for item in canvas:
-        bounds = canvas_item_bounds(item, measure_text)
-        if isinstance(item, EraseRoundRect):
-            left, top, right, bottom = bounds
-            if any(l < right and left < r and t < bottom and top < b for l, t, r, b in earlier):
-                return True
-        else:
-            earlier.append(bounds)
-    return False
+CanvasItem = RoundRect | Label
 
 
 @dataclass(slots=True)
@@ -1849,11 +1753,6 @@ class WebVisionOverlay:
         canvas.append(RoundRect(x, y, w, h, radius, fill))
         canvas.append(RoundRect(x, y, w, h, radius, None, stroke, stroke_width))
 
-    def _erase_occlusion(self, canvas: list, box, primary: bool, vw: float, vh: float) -> None:
-        x, y, w, h = box["rect"]
-        s = self.ui_scale(vw, vh)
-        canvas.append(EraseRoundRect(x, y, w, h, max((15 if primary else 12) * s, 7 if primary else 6)))
-
     def _distance_badges(self, canvas: list, box, radar_dist, vision_dist, is_scc, text_color, vw, vh, transform):
         o = self._badge_offsets(vw, vh)
         _, v_top, _, v_bottom = visible_source_rect(transform, vw, vh)
@@ -1904,7 +1803,6 @@ class WebVisionOverlay:
             is_scc = box["radarTrackId"] < 1
             stroke = (0, 0, 255, 0.96) if not box["radarDetected"] else (
                 (255, 0, 0, 0.96) if is_scc else (255, 175, 3, 0.96))
-            self._erase_occlusion(canvas, box, True, vw, vh)
             self._card(canvas, box, stroke, (0, 0, 0, 0.20), True, vw, vh)
             hold.update(lastValidMs=now_ms, box=box, strokeColor=stroke, isLeadScc=is_scc)
             if lead_state["showDistanceBadge"] is not False:
@@ -1919,7 +1817,6 @@ class WebVisionOverlay:
             anchor = box
         elif hold["box"] is not None and now_ms - hold["lastValidMs"] < LEAD_HOLD_MS:
             held = hold["box"]
-            self._erase_occlusion(canvas, held, True, vw, vh)
             self._card(canvas, held, hold["strokeColor"], (0, 0, 0, 0.20), True, vw, vh)
             if lead_state["showDistanceBadge"] is not False and (hold["radarDist"] > 0 or hold["visionDist"] > 0):
                 self._distance_badges(canvas, held, hold["radarDist"], hold["visionDist"], hold["isLeadScc"],
@@ -1936,7 +1833,6 @@ class WebVisionOverlay:
         if valid_two:
             box_two = self._project_lead_two_box(lead_two, model_path, m, vw, vh, transform, now_ms)
             if box_two is not None:
-                self._erase_occlusion(canvas, box_two, False, vw, vh)
                 self._card(canvas, box_two, (218, 111, 37, 0.96),
                            (255, 0, 0, 0.20) if status_two == 2 else (0, 0, 0, 0.20), False, vw, vh)
         else:

@@ -19,27 +19,21 @@ from cluster_config import (
   cluster_camera_view_is_road_camera,
   cluster_camera_view_is_web_vision,
   cluster_camera_view_prefers_wide,
-  cluster_web_vision_unsupported_notice,
   normalize_cluster_camera_view_mode,
 )
 from cluster_web_vision import (
   CruiseOverrideHold,
-  MODEL_FRAME_HISTORY_LIMIT,
   MODEL_STALE_SECONDS,
   WEB_VISION_SERVICES,
-  EraseRoundRect,
   Label,
-  RoundRect,
   WebVisionInputs,
   WebVisionOverlay,
-  canvas_erase_hides_items,
   derive_web_hud_data,
   normalize_web_vision_params,
   read_web_vision_raw_params,
   web_alert_layout,
   web_hud_layout,
   web_state_from_message,
-  select_synchronized_model,
 )
 from openpilot.cereal import log
 from openpilot.selfdrive.carrot.realtime.compact_state import SERVICE_SCHEMAS, encode_carrot_state_frame
@@ -404,229 +398,3 @@ def test_live_source_collects_web_vision_inputs_only_for_view_five():
 
   source.set_web_vision_enabled(False)
   assert source._with_web_vision(state).web_vision is None
-
-
-# ---------------------------------------------------------------------------
-# Model geometry follows the shown camera frame (vision_raw.js frame sync)
-# ---------------------------------------------------------------------------
-
-def _model_for_frame(frame_id, lane_offset):
-  model = _messages()["modelV2"]
-  model.frameId = frame_id
-  xs = [float(i) * 3.0 for i in range(33)]
-  _line(model.position, xs, [lane_offset] * 33, [0.0] * 33)
-  return model.as_reader()
-
-
-def _inputs_with_models(frame_ids, now=10.0):
-  inputs = _inputs(now=now)
-  for i, frame_id in enumerate(frame_ids):
-    inputs.update("modelV2", _model_for_frame(frame_id, 0.01 * frame_id), now + 0.05 * (i + 1), True)
-  return inputs
-
-
-def test_model_is_the_newest_at_or_before_the_shown_frame():
-  inputs = _inputs_with_models(range(101, 111))  # the newest model is frame 110
-  snapshot = inputs.snapshot(10.6, _params())
-
-  def selected(frame_id):
-    return snapshot.for_presented_frame(frame_id).services["modelV2"]["frameId"]
-
-  # Video behind the model (the model is ahead): use the model of the shown frame.
-  assert selected(105) == 105
-  assert selected(101) == 101
-  # Video ahead of the model: the newest model is the latest at or before it.
-  assert selected(115) == 110
-  # A dropped model frame uses the previous one, never a later one.
-  dropped = _inputs_with_models([101, 102, 103, 105]).snapshot(10.3, _params())
-  assert dropped.for_presented_frame(104).services["modelV2"]["frameId"] == 103
-  # Older than every remembered model (frame 100 from _inputs is the oldest): the oldest one, like the web.
-  assert selected(90) == 100
-  # Unknown shown frame: the newest model.
-  assert selected(None) == 110
-  assert select_synchronized_model((), 105) is None
-
-
-def test_frame_sync_replaces_only_the_model_input():
-  inputs = _inputs_with_models(range(101, 111))
-  # Other inputs keep arriving after the newest model.
-  inputs.update("radarState", _messages(lead_d=45.0)["radarState"].as_reader(), 10.7)
-  inputs.update("carState", _messages(v_cluster=25.0, right_blindspot=True)["carState"].as_reader(), 10.7)
-  inputs.update("selfdriveState", _messages(alert_text="TAKE CONTROL")["selfdriveState"].as_reader(), 10.7)
-  latest = inputs.snapshot(10.7, _params())
-  synced = latest.for_presented_frame(103)
-  assert synced.services["modelV2"]["frameId"] == 103
-  for service in WEB_VISION_SERVICES:
-    if service != "modelV2":
-      assert synced.services[service] is latest.services[service], service
-  assert synced.services["radarState"]["leadOne"]["dRel"] == 45.0
-  assert synced.services["selfdriveState"]["alertText1"] == "TAKE CONTROL"
-  # Model stream liveness still follows the newest model.
-  assert synced.model_age_s == latest.model_age_s and synced.model_usable()
-
-
-def test_overlay_draws_the_selected_model_geometry():
-  inputs = _inputs_with_models(range(101, 111))
-  snapshot = inputs.snapshot(10.6, _params())
-  synced = snapshot.for_presented_frame(104)
-  frame = WebVisionOverlay("ko").build(synced, synced.params, VIDEO_W, VIDEO_H, STAGE_W, STAGE_H, 10600.0)
-
-  only = _inputs(now=10.0)
-  only.update("modelV2", _model_for_frame(104, 1.04), 10.2, True)
-  only_snapshot = only.snapshot(10.6, _params())
-  expected = WebVisionOverlay("ko").build(only_snapshot, only_snapshot.params, VIDEO_W, VIDEO_H, STAGE_W, STAGE_H,
-                                          10600.0)
-  latest = WebVisionOverlay("ko").build(snapshot, snapshot.params, VIDEO_W, VIDEO_H, STAGE_W, STAGE_H, 10600.0)
-  assert frame.model_drawn and frame.model_triangles == expected.model_triangles
-  assert frame.model_triangles != latest.model_triangles
-
-  # A new shown frame rebuilds the geometry without a new model message.
-  overlay = WebVisionOverlay("ko")
-  overlay.build(snapshot.for_presented_frame(104), snapshot.params, VIDEO_W, VIDEO_H, STAGE_W, STAGE_H, 10600.0)
-  overlay.build(snapshot.for_presented_frame(104), snapshot.params, VIDEO_W, VIDEO_H, STAGE_W, STAGE_H, 10650.0)
-  assert overlay.geometry_builds == 1
-  overlay.build(snapshot.for_presented_frame(105), snapshot.params, VIDEO_W, VIDEO_H, STAGE_W, STAGE_H, 10700.0)
-  assert overlay.geometry_builds == 2
-
-
-def test_model_history_matches_the_web_limit_and_same_frame_rule():
-  inputs = _inputs_with_models(range(1, MODEL_FRAME_HISTORY_LIMIT + 11))
-  history = inputs.snapshot(20.0).model_history
-  assert len(history) == MODEL_FRAME_HISTORY_LIMIT
-  assert history[0].frame_id == 11 and history[-1].frame_id == MODEL_FRAME_HISTORY_LIMIT + 10
-  inputs.update("modelV2", _model_for_frame(MODEL_FRAME_HISTORY_LIMIT + 10, 9.0), 21.0, False)
-  history = inputs.snapshot(21.0).model_history
-  assert len(history) == MODEL_FRAME_HISTORY_LIMIT and history[-1].valid is False
-  inputs.reset()
-  assert inputs.snapshot(22.0).model_history == ()
-
-
-# ---------------------------------------------------------------------------
-# The second lead box erases what it covers (eraseLeadBoxOcclusion)
-# ---------------------------------------------------------------------------
-
-def _lead_two_frame(lead_two_y):
-  messages = _messages(lead_d=18.0)
-  radar = messages["radarState"]
-  radar.leadTwo.status = True
-  radar.leadTwo.radar = True
-  radar.leadTwo.dRel = 28.0
-  radar.leadTwo.yRel = lead_two_y
-  radar.leadTwo.radarTrackId = 9
-  inputs = WebVisionInputs()
-  for service, message in messages.items():
-    inputs.update(service, message.as_reader(), 10.0, True)
-  overlay = WebVisionOverlay("ko")
-  frame, _ = _build(overlay, inputs, 10.0)
-  return overlay, frame
-
-
-def test_second_lead_box_erases_the_earlier_canvas_it_covers():
-  overlay, frame = _lead_two_frame(0.5)
-  kinds = [type(item) for item in frame.canvas]
-  erases = [i for i, item in enumerate(frame.canvas) if isinstance(item, EraseRoundRect)]
-  # Web order: erase+card for lead one, its badges, then erase+card for lead two.
-  assert len(erases) == 2 and erases[0] == 0
-  second = frame.canvas[erases[1]]
-  card = frame.canvas[erases[1] + 1]
-  assert isinstance(card, RoundRect) and (card.x, card.y, card.width, card.height) == (
-    second.x, second.y, second.width, second.height)
-  assert second.radius == max(12 * overlay.ui_scale(VIDEO_W, VIDEO_H), 6)
-  assert Label in kinds[:erases[1]]  # lead one distance badge drawn before the erase
-  assert canvas_erase_hides_items(frame.canvas, overlay.measure_text)
-
-  # Far apart, the erase does not touch anything and changes nothing.
-  overlay, apart = _lead_two_frame(12.0)
-  assert sum(isinstance(item, EraseRoundRect) for item in apart.canvas) == 2
-  assert not canvas_erase_hides_items(apart.canvas, overlay.measure_text)
-  # The first lead's own erase comes before any canvas item.
-  overlay = WebVisionOverlay("ko")
-  single, _ = _build(overlay, _inputs(), 10.0)
-  assert isinstance(single.canvas[0], EraseRoundRect)
-  assert not canvas_erase_hides_items(single.canvas, overlay.measure_text)
-
-
-# ---------------------------------------------------------------------------
-# Safety alerts and the unsupported route replay
-# ---------------------------------------------------------------------------
-
-def _render_probe(cluster_renderer):
-  renderer = object.__new__(cluster_renderer.ClusterUiRenderer)
-  renderer.screen_mode = cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT
-  renderer.profile_enabled = False
-  calls = []
-  renderer._render_world = lambda state, lights: calls.append(("world", renderer._web_vision_view_active(state)))
-  renderer._draw_hud = lambda state, lights: None
-  renderer._draw_web_vision_hud = lambda state, draw_alert=True: calls.append(("web_hud", draw_alert))
-  renderer._draw_alert_overlay = lambda alert: calls.append(("alert", alert.alert_type if alert else None))
-  return renderer, calls
-
-
-def test_hud_safety_alerts_take_priority_in_view_five(monkeypatch):
-  cluster_live = pytest.importorskip("cluster_live")
-  cluster_renderer = pytest.importorskip("cluster_renderer")
-  from dataclasses import replace
-
-  source = object.__new__(cluster_live.OpenpilotLiveSource)
-  source._alert_onroad = False
-  source.sm = type("SM", (), {"recv_time": {}})()
-  updated = {"value": False}
-  source._service_updated = lambda _service: updated["value"]
-  source._service_data = lambda _service: type("S", (), {"enabled": True})()
-  clock = {"t": 90.0}
-  monkeypatch.setattr(cluster_live.time, "monotonic", lambda: clock["t"])
-  web_snapshot = _inputs(alert_text="TAKE CONTROL").snapshot(10.0, _params())
-  renderer, calls = _render_probe(cluster_renderer)
-
-  def step(t, mode=5):
-    clock["t"] = t
-    alert = source._live_cluster_alert(None, True)
-    state = replace(cluster_live.standby_state(), onroad=True, camera_view_mode=mode, alert=alert,
-                    web_vision=web_snapshot)
-    calls.clear()
-    renderer.render(state, (False, False))
-    return alert.alert_type if alert else None, list(calls)
-
-  assert step(90.0) == (None, [("world", True), ("web_hud", True), ("alert", None)])
-  # No selfdriveState since onroad started: "Waiting to start" in view 5 too.
-  assert step(95.5) == ("clusterSelfdriveStartup",
-                        [("world", True), ("web_hud", False), ("alert", "clusterSelfdriveStartup")])
-  # Input arrives: the web alert (from selfdriveState) is drawn again.
-  source.sm.recv_time["selfdriveState"] = 96.0
-  updated["value"] = True
-  assert step(96.0) == (None, [("world", True), ("web_hud", True), ("alert", None)])
-  updated["value"] = False
-  # Input stops while engaged: take control immediately, then reboot.
-  assert step(101.5) == ("clusterSelfdriveTimeout",
-                         [("world", True), ("web_hud", False), ("alert", "clusterSelfdriveTimeout")])
-  # Changing the camera view keeps the same alert on every mode.
-  for mode in (2, 3, 5, 0, 5):
-    alert_type, drawn = step(101.6, mode)
-    assert alert_type == "clusterSelfdriveTimeout" and ("alert", "clusterSelfdriveTimeout") in drawn, mode
-    assert (("web_hud", False) in drawn) == (mode == 5), mode
-  assert step(111.5)[0] == "clusterSelfdriveReboot"
-  assert step(111.5)[1][-1] == ("alert", "clusterSelfdriveReboot")
-  # Input recovers: the HUD alert clears and the web alert path returns.
-  source.sm.recv_time["selfdriveState"] = 112.0
-  assert step(112.1) == (None, [("world", True), ("web_hud", True), ("alert", None)])
-
-
-def test_route_replay_view_five_draws_the_existing_camera_view():
-  cluster_renderer = pytest.importorskip("cluster_renderer")
-  from dataclasses import replace
-  from cluster_models import ClusterAlert, RouteOverlay
-  from cluster_live import standby_state
-
-  renderer, calls = _render_probe(cluster_renderer)
-  overlay = RouteOverlay(video_rgba=bytes(4 * 4 * 4), video_width=4, video_height=4, video_frame_id="seg:1",
-                         camera_stream="road", panel_visible=False)
-  alert = ClusterAlert("Steering Unavailable", "Take Control", size=2, status=1, alert_type="steerUnavailable")
-  replay = replace(standby_state(), onroad=True, camera_view_mode=5, route_overlay=overlay, alert=alert)
-  assert replay.web_vision is None
-  renderer.render(replay, (False, False))
-  # No web vision inputs: the road camera view and its alert, not an empty stage.
-  assert calls == [("world", False), ("alert", "steerUnavailable")]
-  assert cluster_camera_view_is_road_camera(5) and not cluster_camera_view_prefers_wide(5, 10.0, False)
-  assert "not supported for --input route" in cluster_web_vision_unsupported_notice(5, "route")
-  assert cluster_web_vision_unsupported_notice(5, "live") is None
-  assert cluster_web_vision_unsupported_notice(2, "route") is None

@@ -314,16 +314,6 @@ def cluster_camera_view_is_web_vision(mode: object) -> bool:
     return normalize_cluster_camera_view_mode(mode) == CLUSTER_CAMERA_VIEW_MODE_WEB_VISION
 
 
-def cluster_web_vision_unsupported_notice(mode: object, input_mode: str) -> str | None:
-    """Web vision inputs exist only for live input; other inputs keep the road camera view."""
-    if not cluster_camera_view_is_web_vision(mode) or input_mode == "live":
-        return None
-    return (
-        f"{CLUSTER_CAMERA_VIEW_MODE_PARAM}=5 (web vision) is not supported for --input {input_mode}; "
-        "drawing the existing road camera view instead"
-    )
-
-
 def cluster_camera_view_prefers_wide(mode: object, speed_kph: float, currently_wide: bool) -> bool:
     normalized = normalize_cluster_camera_view_mode(mode)
     if normalized == CLUSTER_CAMERA_VIEW_MODE_WIDE_CAMERA:

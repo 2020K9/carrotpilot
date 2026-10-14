@@ -14,7 +14,6 @@ import pyray as rl
 
 from cluster_web_vision import (
     CruiseOverrideHold,
-    EraseRoundRect,
     Label,
     PLOT_COLORS,
     PLOT_MAX_POINTS,
@@ -24,7 +23,6 @@ from cluster_web_vision import (
     WebVisionOverlay,
     WebVisionPlotHistory,
     build_plot_data,
-    canvas_erase_hides_items,
     clamp,
     derive_web_hud_data,
     finite,
@@ -77,17 +75,12 @@ class WebVisionRendererMixin:
         self._web_blink_started: dict[str, float | None] = {"left": None, "right": None}
         self._web_vision_frame = None
         self._web_vision_stage = None
-        self._web_canvas_layer = None
 
     def _web_vision_close(self) -> None:
         texture = getattr(self, "_web_lfa_gray", None)
         if texture is not None and texture is not getattr(self, "_lfa_texture", None):
             rl.unload_texture(texture)
         self._web_lfa_gray = None
-        layer = getattr(self, "_web_canvas_layer", None)
-        if layer is not None:
-            rl.unload_render_texture(layer)
-        self._web_canvas_layer = None
 
     def _web_vision_ensure(self) -> None:
         if getattr(self, "_web_vision_overlay", None) is None:
@@ -120,7 +113,6 @@ class WebVisionRendererMixin:
         texture = None
         live_camera = None
         size = None
-        presented_frame_id = None
         if overlay is not None and overlay.video_rgba is not None and overlay.video_width > 0:
             texture = self._route_video_texture_for_overlay(overlay)
             size = (float(overlay.video_width), float(overlay.video_height))
@@ -128,22 +120,18 @@ class WebVisionRendererMixin:
             live_camera = self._live_road_camera_view()
             if live_camera is not None:
                 try:
-                    presented = live_camera.presented_frame()
+                    frame_size = live_camera.frame_size()
                 except Exception as exc:
                     print(f"Cluster live road camera failed: {exc}", flush=True)
                     self._close_live_road_camera()
-                    presented = None
+                    frame_size = None
                     live_camera = None
-                if presented is not None:
-                    size = (float(presented[0]), float(presented[1]))
-                    presented_frame_id = presented[2]
+                if frame_size is not None:
+                    size = (float(frame_size[0]), float(frame_size[1]))
         if size is None:
             # The web keeps the overlay off until a road frame is renderable.
             return
         snapshot = state.web_vision
-        if snapshot is not None:
-            # vision_raw.js selectSynchronizedModel(): draw the model of the shown frame.
-            snapshot = snapshot.for_presented_frame(presented_frame_id)
         params = getattr(snapshot, "params", None) or WEB_VISION_DEFAULT_PARAMS
         self._web_vision_overlay.language = self.language
         profile_stage = self._profile_start()
@@ -163,8 +151,7 @@ class WebVisionRendererMixin:
                                     rl.Vector2(0.0, 0.0), 0.0, rl.WHITE)
             elif live_camera is not None:
                 try:
-                    # Draw the frame polled above so the selected model matches it.
-                    live_camera.draw(video_rect, poll=False)
+                    live_camera.draw(video_rect)
                 except Exception as exc:
                     print(f"Cluster live road camera failed: {exc}", flush=True)
                     self._close_live_road_camera()
@@ -173,73 +160,11 @@ class WebVisionRendererMixin:
             self._draw_web_triangles(frame.triangles, stage, t)
             self._profile_add("web_vision.geometry", profile_stage)
             profile_stage = self._profile_start()
-            if canvas_erase_hides_items(frame.canvas, self._web_vision_overlay.measure_text):
-                self._draw_web_canvas_layer(frame.canvas, stage, t)
-            else:
-                for item in frame.canvas:
-                    self._draw_web_canvas_item(item, stage, t)
+            for item in frame.canvas:
+                self._draw_web_canvas_item(item, stage, t)
             self._profile_add("web_vision.canvas", profile_stage)
         finally:
             rl.end_scissor_mode()
-
-    def _draw_web_canvas_layer(self, items, stage, t) -> None:
-        """Draw the 2D canvas items on their own transparent layer, like the web
-        overlay canvas, so destination-out erases clear only earlier canvas items
-        and never the camera image or GPU geometry beneath."""
-        width = max(1, int(round(stage.width)))
-        height = max(1, int(round(stage.height)))
-        layer = self._web_canvas_layer
-        if layer is not None and (layer.texture.width != width or layer.texture.height != height):
-            rl.unload_render_texture(layer)
-            layer = None
-        if layer is None:
-            layer = rl.load_render_texture(width, height)
-            self._web_canvas_layer = layer
-        outer_framebuffer = rl.rl_get_active_framebuffer()
-        outer_width = rl.rl_get_framebuffer_width()
-        outer_height = rl.rl_get_framebuffer_height()
-        rl.end_scissor_mode()
-        rl.begin_texture_mode(layer)
-        try:
-            rl.clear_background(rl.Color(0, 0, 0, 0))
-            rl.rl_push_matrix()
-            rl.rl_translatef(-stage.x, -stage.y, 0.0)
-            try:
-                for item in items:
-                    if isinstance(item, EraseRoundRect):
-                        # destination-out: dst *= 1 - src.alpha for color and alpha.
-                        rl.rl_set_blend_factors(rl.RL_ZERO, rl.RL_ONE_MINUS_SRC_ALPHA, rl.RL_FUNC_ADD)
-                        rl.begin_blend_mode(rl.BlendMode.BLEND_CUSTOM)
-                        self._web_round_rect(stage.x + t.tx + item.x * t.scale, stage.y + t.ty + item.y * t.scale,
-                                             item.width * t.scale, item.height * t.scale, item.radius * t.scale,
-                                             (0, 0, 0))
-                    else:
-                        # source-over into a premultiplied layer.
-                        rl.rl_set_blend_factors_separate(rl.RL_SRC_ALPHA, rl.RL_ONE_MINUS_SRC_ALPHA, rl.RL_ONE,
-                                                         rl.RL_ONE_MINUS_SRC_ALPHA, rl.RL_FUNC_ADD, rl.RL_FUNC_ADD)
-                        rl.begin_blend_mode(rl.BlendMode.BLEND_CUSTOM_SEPARATE)
-                        self._draw_web_canvas_item(item, stage, t)
-                    rl.end_blend_mode()
-            finally:
-                rl.rl_pop_matrix()
-        finally:
-            rl.end_texture_mode()
-            if outer_framebuffer:
-                # Resume the caller's render target (end_texture_mode returned to the window).
-                rl.begin_texture_mode(rl.RenderTexture(
-                    outer_framebuffer,
-                    rl.Texture(0, outer_width, outer_height, 1, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8),
-                    rl.Texture(0, outer_width, outer_height, 1, 0),
-                ))
-            rl.begin_scissor_mode(int(round(stage.x)), int(round(stage.y)), int(round(stage.width)),
-                                  int(round(stage.height)))
-        rl.begin_blend_mode(rl.BlendMode.BLEND_ALPHA_PREMULTIPLY)
-        try:
-            rl.draw_texture_pro(layer.texture, rl.Rectangle(0.0, 0.0, float(width), -float(height)),
-                                rl.Rectangle(stage.x, stage.y, float(width), float(height)),
-                                rl.Vector2(0.0, 0.0), 0.0, rl.WHITE)
-        finally:
-            rl.end_blend_mode()
 
     def _draw_web_triangles(self, vertices, stage, t) -> None:
         if not vertices:
@@ -315,7 +240,7 @@ class WebVisionRendererMixin:
 
     # -- HUD widgets, plot and alert -----------------------------------------
 
-    def _draw_web_vision_hud(self, state, draw_alert: bool = True) -> None:
+    def _draw_web_vision_hud(self, state) -> None:
         self._web_vision_ensure()
         stage = self._web_vision_stage or self._camera_overlay_content_rect()
         snapshot = state.web_vision
@@ -332,8 +257,7 @@ class WebVisionRendererMixin:
             if plot is not None:
                 self._draw_web_plot(stage, plot)
             self._draw_web_hud_widgets(stage, data, now_ms / 1000.0, getattr(snapshot, "clock_text", None))
-            if draw_alert:
-                self._draw_web_alert(stage, snapshot)
+            self._draw_web_alert(stage, snapshot)
         finally:
             rl.end_scissor_mode()
 
