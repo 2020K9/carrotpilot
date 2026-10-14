@@ -1107,6 +1107,12 @@ function getSettingOptionValues(name, config) {
   if (!config || !Number.isInteger(config.min) || !Number.isInteger(config.max)) return [];
   const out = [];
   for (let value = config.min; value <= config.max; value += 1) out.push(value);
+  // "option_order" in carrot_settings.json only changes the listed order; each
+  // choice keeps its stored value, so a new value can sit next to its relatives.
+  const order = findSettingItemByName(String(name || "").trim())?.item?.option_order;
+  if (Array.isArray(order) && order.length === out.length && out.every((value) => order.includes(value))) {
+    return order.slice();
+  }
   return out;
 }
 

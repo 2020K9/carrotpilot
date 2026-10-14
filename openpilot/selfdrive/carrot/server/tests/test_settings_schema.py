@@ -461,10 +461,23 @@ def test_external_hud_brightness_and_orientation_use_catalog_controls(settings, 
     "ClusterHudCameraViewMode",
   ]
   camera_view = by_name["ClusterHudCameraViewMode"]
-  assert (camera_view["min"], camera_view["max"], camera_view["default"]) == (0, 4, 0)
+  assert (camera_view["min"], camera_view["max"], camera_view["default"]) == (0, 5, 0)
   assert camera_view["control"] == "select"
-  assert camera_view["options"]["ko"][2:] == ["일반 카메라", "광각 카메라", "속도 자동"]
-  assert camera_view["options"]["en"][2:] == ["Narrow camera", "Wide camera", "Speed automatic"]
+  # Stored values 0..4 keep their meaning; web vision is appended as value 5.
+  assert camera_view["options"]["ko"] == ["기본", "하단 뷰", "일반 카메라", "광각 카메라", "속도 자동", "당근웹비전"]
+  assert camera_view["options"]["en"] == [
+    "Default", "Bottom view", "Narrow camera", "Wide camera", "Speed automatic", "당근웹비전",
+  ]
+  assert camera_view["options"]["zh"] == [
+    "Default", "Bottom view", "Narrow camera", "Wide camera", "Speed automatic", "당근웹비전",
+  ]
+  # Only the menu order differs: value 5 is listed right after the wide camera.
+  assert camera_view["option_order"] == [0, 1, 2, 3, 5, 4]
+  assert camera_view["descr"].endswith("\n5: 당근웹비전(웹비전과 같은 일반 전방 카메라와 차선·경로·앞차·레이더·주행정보 표시)")
+  assert camera_view["edescr"] == (
+    "0: Default\n1: Mode 1 (bottom view)\n2: Narrow road camera\n3: Wide road camera\n"
+    "4: Automatic narrow/wide camera by speed"
+  )
 
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   assert '{"ClusterHudBrightness", {PERSISTENT, INT, "0"}}' in params_keys
@@ -598,3 +611,14 @@ def test_declared_numeric_bounds_stay_intact(params):
   assert (by_name["ApplyModelSpeed"]["min"], by_name["ApplyModelSpeed"]["max"]) == (-120, 120)
   assert by_name["ApplyModelSpeed"]["default"] == 0
   assert by_name["TFollowDecelBoost"]["unit"] == 10
+
+
+def test_option_order_is_a_display_permutation_only(params):
+  ordered = [p for p in params if "option_order" in p]
+  assert [p["name"] for p in ordered] == ["ClusterHudCameraViewMode"]
+  for p in ordered:
+    values = list(range(p["min"], p["max"] + 1))
+    assert sorted(p["option_order"]) == values
+    for language, labels in p["options"].items():
+      assert len(labels) == len(values), language
+      assert all(str(label).strip() for label in labels), language

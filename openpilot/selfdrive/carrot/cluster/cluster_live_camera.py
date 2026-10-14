@@ -347,6 +347,16 @@ class LiveRoadCamera:
             return None
         return (self._frame_id, self._frame_eof, int(self._frame.width), int(self._frame.height), self.is_wide)
 
+    def frame_size(self) -> tuple[int, int] | None:
+        """Poll the stream and return the current frame size without drawing."""
+        now = time.monotonic()
+        if not self._ensure_connection(now):
+            return None
+        self._poll_frame(now)
+        if self._frame is None:
+            return None
+        return int(self._frame.width), int(self._frame.height)
+
     def draw(self, destination: "rl.Rectangle") -> bool:
         now = time.monotonic()
         if not self._ensure_connection(now):

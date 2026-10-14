@@ -511,6 +511,8 @@ class ClusterUiState:
     recorded_cutin_active: bool = False
     recorded_cutin_sound: bool = False
     alert: ClusterAlert | None = None
+    # cluster_web_vision.WebVisionSnapshot for camera view 5 (당근웹비전).
+    web_vision: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
