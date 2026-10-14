@@ -20,11 +20,14 @@ from cluster_config import (
   EGO_FORWARD_M,
   GREEN,
   LIGHT_CLUSTER_THEME,
+  RED,
   VEHICLE_LENGTH_M,
+  WHITE,
 )
 from cluster_models import ClusterAlert, ClusterUiState, DetectedVehicle, LaneMarking, ModelPathPoint, RadarPoint, RouteOverlay
 import cluster_renderer
 from cluster_renderer import ClusterUiRenderer
+from cluster_route_replay import RouteLogParser, frame_to_state
 import cluster_scene
 from cluster_scene import (
   MeshStrip,
@@ -786,6 +789,54 @@ def test_speed_gear_badge_has_transparent_interior() -> None:
   assert len(boxes) == 1
   assert boxes[0][0][5] == (0, 0, 0, 0)
 
+
+def _speed_gear_badge_colors(state: ClusterUiState) -> tuple[tuple, tuple, tuple]:
+  renderer = object.__new__(ClusterUiRenderer)
+  boxes = []
+  texts = []
+  renderer._current_theme = lambda: LIGHT_CLUSTER_THEME
+  renderer._rounded_rect = lambda *args, **kwargs: boxes.append(args)
+  renderer._draw_text_with_stroke = lambda *args, **kwargs: texts.append(args)
+
+  renderer._draw_speed_gear_badge(state)
+
+  assert len(boxes) == 1 and len(texts) == 1
+  return texts[0][4], texts[0][5], boxes[0][6]
+
+
+def test_speed_gear_badge_turns_red_only_while_brake_lights_are_on() -> None:
+  road = CLUSTER_CAMERA_VIEW_MODE_ROAD_CAMERA
+  muted = LIGHT_CLUSTER_THEME.muted
+
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="D", brake_lights=True, camera_view_mode=road)) == (RED, (5, 9, 12), RED)
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="D", brake_lights=False, camera_view_mode=road)) == (WHITE, (5, 9, 12), WHITE)
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="D", camera_view_mode=road)) == (WHITE, (5, 9, 12), WHITE)
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="U", brake_lights=True, camera_view_mode=road)) == (RED, (5, 9, 12), RED)
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="U", brake_lights=False, camera_view_mode=road)) == (muted, (5, 9, 12), muted)
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="U", camera_view_mode=road)) == (muted, (5, 9, 12), muted)
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="D", brake_lights=True, camera_view_mode=0)) == (RED, (5, 9, 12), (5, 9, 12, 245))
+  assert _speed_gear_badge_colors(_cluster_state(gear_text="D", brake_lights=False, camera_view_mode=0)) == (WHITE, (5, 9, 12), (5, 9, 12, 245))
+
+
+def test_speed_gear_badge_returns_to_white_after_brake_lights_turn_off_or_disappear() -> None:
+  parser = RouteLogParser()
+  road = CLUSTER_CAMERA_VIEW_MODE_ROAD_CAMERA
+  colors = []
+  for t, car_state in enumerate((
+    SimpleNamespace(gearShifter="drive", brakeLights=True),
+    SimpleNamespace(gearShifter="drive", brakeLights=False),
+    SimpleNamespace(gearShifter="drive", brakeLights=True),
+    SimpleNamespace(gearShifter="drive"),
+  )):
+    state = replace(frame_to_state(parser._frame_from_car_state(car_state, float(t))), camera_view_mode=road)
+    colors.append(_speed_gear_badge_colors(state))
+
+  assert colors == [
+    (RED, (5, 9, 12), RED),
+    (WHITE, (5, 9, 12), WHITE),
+    (RED, (5, 9, 12), RED),
+    (WHITE, (5, 9, 12), WHITE),
+  ]
 
 def test_speed_block_draws_driving_mode_before_traffic_state() -> None:
   renderer = object.__new__(ClusterUiRenderer)

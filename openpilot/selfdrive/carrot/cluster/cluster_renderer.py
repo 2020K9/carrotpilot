@@ -7251,7 +7251,7 @@ class ClusterUiRenderer:
         if not gear:
             return
         theme = self._current_theme()
-        color = WHITE if gear != "U" else theme.muted
+        color = RED if state.brake_lights else WHITE if gear != "U" else theme.muted
         outline = color if cluster_camera_view_is_road_camera(state.camera_view_mode) else (5, 9, 12, 245)
         rect = rl.Rectangle(
             SPEED_GEAR_CENTER_X - SPEED_GEAR_W * 0.5,

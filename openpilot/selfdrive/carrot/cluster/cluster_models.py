@@ -440,6 +440,7 @@ class ClusterUiState:
     brake_press_prob: float = 0.0
     disengage_risk: float = 0.0
     hard_brake_predicted: bool = False
+    brake_lights: bool = False
     lane_change_available_left: bool | None = None
     lane_change_available_right: bool | None = None
     lane_change_prob: float = 0.0

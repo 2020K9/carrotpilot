@@ -340,6 +340,29 @@ def test_ev_mode_reaches_cluster_only_when_carstate_marks_it_valid():
   assert (frame_to_state(invalid).ev_mode_valid, frame_to_state(invalid).ev_mode_active) == (False, False)
 
 
+def test_brake_lights_reach_cluster_state_and_clear_after_release_or_missing_value():
+  parser = RouteLogParser()
+
+  on = parser._frame_from_car_state(SimpleNamespace(brakeLights=True), 1.0)
+  off = parser._frame_from_car_state(SimpleNamespace(brakeLights=False), 2.0)
+  on_again = parser._frame_from_car_state(SimpleNamespace(brakeLights=True), 3.0)
+  missing = parser._frame_from_car_state(SimpleNamespace(), 4.0)
+
+  assert [frame.brake_lights for frame in (on, off, on_again, missing)] == [True, False, True, False]
+  assert [frame_to_state(frame).brake_lights for frame in (on, off, on_again, missing)] == [True, False, True, False]
+  assert RouteLogParser()._frame_from_car_state(SimpleNamespace(), 0.0).brake_lights is False
+
+
+def test_brake_lights_are_preserved_as_discrete_state_during_replay_interpolation():
+  parser = RouteLogParser()
+  base = parser._frame_from_car_state(SimpleNamespace(), 0.0)
+  on = replace(base, t=0.0, brake_lights=True)
+  off = replace(base, t=1.0, brake_lights=False)
+
+  assert blend_frames(on, off, 0.49).brake_lights is True
+  assert blend_frames(on, off, 0.50).brake_lights is False
+  assert blend_frames(on, base, 0.50).brake_lights is False
+
 def test_ev_mode_is_preserved_as_discrete_state_during_replay_interpolation():
   parser = RouteLogParser()
   base = parser._frame_from_car_state(SimpleNamespace(), 0.0)

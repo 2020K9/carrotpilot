@@ -553,6 +553,7 @@ class RouteReplayFrame:
     brake_press_prob: float = 0.0
     disengage_risk: float = 0.0
     hard_brake_predicted: bool = False
+    brake_lights: bool = False
     lane_change_available_left: bool | None = None
     lane_change_available_right: bool | None = None
     lane_change_prob: float = 0.0
@@ -1807,6 +1808,7 @@ class RouteLogParser:
             lane_change_continuation=lane_change_continuation,
             throttle=clamp(safe_float(car_state, "gas", 0.0), 0.0, 1.0),
             brake=clamp(safe_float(car_state, "brake", 0.0), 0.0, 1.0),
+            brake_lights=bool(safe_get(car_state, "brakeLights", False)),
             detected_vehicles=detected_vehicles,
             radar_points=radar_points,
             corner_radar_supported=self.corner_radar_active_for_display(),
@@ -3779,6 +3781,7 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         right_road_edge_lateral_shift_m=right_road_edge_lateral_shift_m,
         throttle=frame.throttle,
         brake=frame.brake,
+        brake_lights=frame.brake_lights,
         model_path=frame.model_path,
         detected_vehicles=frame.detected_vehicles,
         radar_points=frame.radar_points,
@@ -3994,6 +3997,7 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
         lane_change_continuation=discrete.lane_change_continuation,
         throttle=lerp(left.throttle, right.throttle),
         brake=lerp(left.brake, right.brake),
+        brake_lights=discrete.brake_lights,
         detected_vehicles=discrete.detected_vehicles,
         radar_points=discrete.radar_points,
         corner_radar_supported=discrete.corner_radar_supported,
