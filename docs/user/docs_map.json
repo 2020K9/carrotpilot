@@ -1,5 +1,11 @@
 {
   "version": 1,
+  "revoked_commit_overrides": [
+    {
+      "commit": "8dc3cefaae33b7ebc236df86356c88633beb2e01",
+      "reason": "K9StopSoftBrakeTime 범위를 바꾼 설정 변경인데 영어 설명서 없이 한글 설명서만 고쳤으므로 문서 면제 사유가 아님"
+    }
+  ],
   "rules": [
     {
       "id": "settings-catalog-and-web",

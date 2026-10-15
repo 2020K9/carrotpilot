@@ -165,6 +165,26 @@ def test_push_accepts_reason_only_when_explicitly_enabled(git_repo):
   assert CHECKER.main(["--base", base, "--commit-overrides"]) == 0
 
 
+def test_revoked_commit_reason_no_longer_exempts_that_commit(git_repo, tmp_path_factory):
+  _, commit, base = git_repo
+  exempt = commit("openpilot/selfdrive/carrot_settings.json", "{}", "Range\n\nDocs-Not-Needed: Korean guide only.")
+  mapping = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+  mapping["revoked_commit_overrides"] = [{"commit": exempt, "reason": "Settings change missing English guide"}]
+  revoked_map = tmp_path_factory.mktemp("map") / "docs_map.json"
+  revoked_map.write_text(json.dumps(mapping), encoding="utf-8")
+  assert CHECKER.main(["--base", base, "--commit-overrides"]) == 0
+  assert CHECKER.main(["--base", base, "--commit-overrides", "--map", str(revoked_map)]) == 1
+
+
+def test_revoked_override_requires_full_sha_and_reason(tmp_path):
+  mapping = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+  mapping["revoked_commit_overrides"] = [{"commit": "8dc3cefa", "reason": "short SHA"}]
+  path = tmp_path / "docs_map.json"
+  path.write_text(json.dumps(mapping), encoding="utf-8")
+  with pytest.raises(ValueError, match="full commit SHA"):
+    load_mapping(path)
+
+
 @pytest.mark.parametrize("exempt_first", [True, False])
 def test_one_commit_reason_cannot_hide_another_settings_change(git_repo, exempt_first):
   _, commit, base = git_repo

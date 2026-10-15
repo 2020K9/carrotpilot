@@ -33,6 +33,9 @@ def load_mapping(path: Path) -> dict[str, Any]:
       raise ValueError(f"rule must contain code_paths and non-empty doc_sets: {rule['id']}")
     if rule.get("enforcement", "required") not in {"required", "advisory"}:
       raise ValueError(f"invalid enforcement: {rule['id']}")
+  for revoked in mapping.get("revoked_commit_overrides", []):
+    if not re.fullmatch(r"[0-9a-f]{40}", revoked.get("commit", "")) or not revoked.get("reason"):
+      raise ValueError(f"revoked override needs a full commit SHA and reason: {revoked}")
   return mapping
 
 
@@ -95,14 +98,17 @@ def changed_files_from_git(base: str, head: str) -> list[str]:
   return [normalize_path(line) for line in output.splitlines() if line.strip()]
 
 
-def unwaived_files_from_git(base: str, head: str) -> set[str]:
+def unwaived_files_from_git(base: str, head: str, mapping: dict[str, Any]) -> set[str]:
   """A commit reason covers only that commit, never other commits in a push."""
+  revoked = {item["commit"]: item["reason"] for item in mapping.get("revoked_commit_overrides", [])}
   resolved_base = resolve_base(base, head)
   commits = git_output("rev-list", "--first-parent", f"{resolved_base}..{head}").splitlines()
   unwaived: set[str] = set()
   for commit in commits:
     reason = extract_override_reason(git_output("show", "-s", "--format=%B", commit))
-    if reason:
+    if reason and commit in revoked:
+      print(f"Commit {commit[:12]} docs exception revoked: {revoked[commit]}")
+    elif reason:
       print(f"Commit {commit[:12]} docs exception: {reason}")
       continue
     paths = git_output("diff-tree", "--root", "--first-parent", "-m", "--no-commit-id", "--name-only", "-r", commit)
@@ -141,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
   missing = [rule for rule in missing if rule.get("enforcement", "required") == "required"]
 
   if missing and args.commit_overrides:
-    unwaived = unwaived_files_from_git(args.base, args.head)
+    unwaived = unwaived_files_from_git(args.base, args.head, mapping)
     missing = [
       {**rule, "matched_code": [path for path in rule["matched_code"] if path in unwaived]}
       for rule in missing if any(path in unwaived for path in rule["matched_code"])
