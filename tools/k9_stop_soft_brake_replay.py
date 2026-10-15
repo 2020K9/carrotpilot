@@ -22,11 +22,13 @@ usage: PYTHONPATH=<tree> PARAMS_ROOT=<new path> python k9_stop_soft_brake_replay
 import argparse
 import os
 import pickle
+import sys
+import tempfile
 import time
 from collections import deque
 
-# Shared, unmodified helpers of the K9StopJerkEase replay (same directory).
-from k9_stop_jerk_ease_replay import make_params_root, read_events, to_current, write_params
+import capnp
+import zstandard
 
 SCC_ADDR = {1056: "SCC11", 1057: "SCC12", 905: "SCC14"}
 SCC_SIGNALS = {
@@ -34,6 +36,62 @@ SCC_SIGNALS = {
   "SCC14": ("ComfortBandUpper", "ComfortBandLower", "JerkUpperLimit", "JerkLowerLimit", "ACCMode"),
 }
 SERVICES = ("radarState", "longitudinalPlan", "carrotMan", "drivingModelData")
+
+
+# 부모판 43d443e4 의 tools/k9_stop_jerk_ease_replay.py 34~86행에서 그대로 옮긴 함수 넷(그 도구는 지워졌다).
+def read_events(schema, segs):
+  capnp.remove_import_hook()
+  log = capnp.load(os.path.join(schema, "log.capnp"), imports=[schema, os.path.join(schema, "include")])
+  events = []
+  for seg in segs:
+    raw = open(os.path.join(seg, "rlog.zst"), "rb").read()
+    data = zstandard.ZstdDecompressor().decompressobj().decompress(raw)
+    try:
+      for ev in log.Event.read_multiple_bytes(data):
+        events.append(ev)
+    except capnp.KjException:
+      pass  # truncated tail of an interrupted segment
+  return events
+
+
+def to_current(msg, cls):
+  """Copy a recorded struct into the current schema, dropping fields that no longer exist."""
+  def filt(d, schema):
+    out = {}
+    fields = schema.fields
+    for k, v in d.items():
+      if k not in fields:
+        continue
+      f = fields[k]
+      if f.proto.which() == "slot" and f.proto.slot.type.which() == "struct" and isinstance(v, dict):
+        v = filt(v, f.schema)
+      elif f.proto.which() == "group" and isinstance(v, dict):
+        v = filt(v, f.schema)
+      out[k] = v
+    return out
+  return cls.new_message(**filt(msg.to_dict(), cls.schema))
+
+
+def make_params_root(path):
+  """Create the run's params root. An existing path (directory, file or symlink, even dangling) is refused."""
+  if path is None:
+    return tempfile.mkdtemp(prefix="k9_stop_jerk_ease_params_")
+  try:
+    os.mkdir(path)
+  except FileExistsError:
+    sys.exit(f"refusing PARAMS_ROOT={path!r}: it already exists (or is a symlink); give a new path")
+  return path
+
+
+def write_params(root, mode, entries, overrides):
+  """Write params into a new directory for this mode and return it (used as PARAMS_ROOT)."""
+  mode_root = tempfile.mkdtemp(prefix=f"mode_{mode}_", dir=root)
+  d = os.path.join(mode_root, "d")
+  os.mkdir(d)
+  for k, v in {**entries, **overrides}.items():
+    with open(os.path.join(d, k), "wb") as fh:
+      fh.write(v)
+  return mode_root
 
 
 class NullReader:
@@ -84,7 +142,7 @@ def replay(events, start, end, is_metric):
   parsers = {name: CANParser("hyundai_kia_generic", [(name, 0)], 0) for name in SCC_SIGNALS}
   has_trial = getattr(helper, "k9_stop_soft_brake", None) is not None
 
-  # Same carControl selection as k9_stop_jerk_ease_replay.py: carOutput identifies the applied command.
+  # carOutput 으로 그 걸음에서 실제 적용한 carControl 을 고른다.
   applied_accel = {}
   pending_send = []
   for ev in events:
