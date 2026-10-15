@@ -228,9 +228,9 @@ def test_gating_and_params():
   read = lambda t, a: read_k9_stop_soft_brake(MemoryParams({"K9StopSoftBrakeTime": t, "K9StopSoftBrakeAccel": a}))  # noqa: E731
   assert read(0, 20) == (0, pytest.approx(-0.2))
   assert read(5, 5) == (50, pytest.approx(-0.05))
-  assert read(50, 50) == (500, pytest.approx(-0.5))
-  assert read(7, 99) == (50, pytest.approx(-0.5))  # 0.5 s steps, clamped strength
-  assert read(99, -3) == (500, pytest.approx(-0.05))
+  assert read(50, 50) == (500, pytest.approx(-0.2))  # 세기 최대 20
+  assert read(7, 99) == (50, pytest.approx(-0.2))  # 0.5 s steps, clamped strength
+  assert read(99, -3) == (500, 0.0)  # 세기 최소 0
   assert read(-5, 20)[0] == 0
 
 
@@ -708,7 +708,7 @@ def test_real_params_unparsable_text_does_not_abort(tmp_path):
                        capture_output=True, text=True, timeout=60)
   assert out.returncode == 0, out.stderr
   speed, frames, accel = map(float, out.stdout.split()[-3:])
-  assert speed == pytest.approx(2.0) and frames == 0 and accel == pytest.approx(-0.5)
+  assert speed == pytest.approx(2.0) and frames == 0 and accel == pytest.approx(-0.2)  # b"99" -> 세기 최대 20
 
 
 def test_speed_setting_is_read_every_second(monkeypatch):
@@ -1035,3 +1035,45 @@ def test_expiry_closed_loop_two_stops_match_original_control(monkeypatch, settin
   assert stops[1][0][0]["soft"] is not None and stops[1][0][199]["expired"]
   assert any(r["soft"] is not None for r in loop.rows[stops[0][2][-1]["frame"]:stops[1][0][0]["frame"]]) == bool(setting)
   check_common(loop)
+
+
+# 세기 K9StopSoftBrakeAccel: 0~20, 칸 1, 기본 20. 0은 설정 제동만 0이고 기능 끔이 아니다.
+@pytest.mark.parametrize(("stored", "expected"), [
+  (0, 0), (1, 1), (20, 20), (-1, 0), (-50, 0), (21, 20), (50, 20), (99, 20), (b"0", 0), (b"21", 20), ("-3", 0),
+  (None, 20), (b"abc", 20), (float("nan"), 20),
+])
+def test_strength_range_0_to_20(stored, expected):
+  from opendbc.car.hyundai.k9_stop_soft_brake import K9_SOFT_BRAKE_ACCEL
+  assert K9_SOFT_BRAKE_ACCEL == ("K9StopSoftBrakeAccel", 20, 0, 20)
+  values = {"K9StopSoftBrakeTime": 20} if stored is None else {"K9StopSoftBrakeTime": 20, "K9StopSoftBrakeAccel": stored}
+  frames, accel = read_k9_stop_soft_brake(MemoryParams(values))
+  assert frames == 200 and accel == pytest.approx(-expected * 0.01) and accel <= 0.0
+
+
+def test_strength_catalog_and_param_key():
+  import json
+  from pathlib import Path
+  root = Path(__file__).resolve().parents[4]
+  catalog = json.loads((root / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
+  entry = next(x for x in catalog["params"] if x["name"] == "K9StopSoftBrakeAccel")
+  assert (entry["min"], entry["max"], entry["unit"], entry["default"]) == (0, 20, 1, 20)
+  keys = (root / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
+  assert '{"K9StopSoftBrakeAccel", {PERSISTENT, INT, "20"}}' in keys
+
+
+@pytest.mark.parametrize("strength", [0, 1, 20])
+@pytest.mark.parametrize("lead", [None, (3., -1.), (6., 0.)])
+def test_strength_0_1_20_never_weaker_than_plan_or_lead_need(monkeypatch, strength, lead):
+  """세기 0·1·20 모두 계획 감속·앞차 필요 감속 중 센 값보다 약하게 보내지 않는다. 세기 0이어도 기능은 켜져 있다."""
+  loop = Loop(monkeypatch, hold_time=20, strength=strength)
+  loop.approach(lead=lead)
+  plan = [-0.05, -0.3, -1.0, 0.0]
+  for k in range(400):
+    loop.step(v=0.5 * KPH if k < 100 else 0., standstill=k >= 100, a_target=plan[(k // 25) % len(plan)], lead=lead)
+  active = [r for r in loop.rows if r["soft"] is not None]
+  assert active and any(r["sent"] is not None for r in active)  # 세기 0도 약제동 상태로 들어감
+  assert strong_plan_weakened(loop.rows, strength * 0.01) == []
+  check_common(loop, strength * 0.01)
+  for r in active:
+    if r["sent"] is not None:
+      assert r["sent"]["aReqValue"] <= min(r["a_target"], need_accel(r["lead"]), -strength * 0.01) + TOL

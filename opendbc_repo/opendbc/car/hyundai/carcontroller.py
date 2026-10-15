@@ -3,7 +3,6 @@ from collections import deque
 import numpy as np
 from opendbc.car.hyundai.scalar import clip_float
 from opendbc.can import CANPacker
-from opendbc.can.parser import get_raw_value
 from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_fault_avoidance, make_tester_present_msg, structs, apply_std_steer_angle_limits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
@@ -53,10 +52,6 @@ CANFD_JERK_RELEASE_THRESHOLD = 0.1
 # toward this stock-like feedforward only after measured under-deceleration.
 CANFD_JERK_LOWER_ACCEL_BP = [0.0, 0.8, 1.2, 1.5, 2.0, 2.5, 3.2]
 CANFD_JERK_LOWER_LIMIT_V = [1.2, 1.2, 1.2, 1.7, 3.0, 3.3, 3.7]
-# K9 camera-SCC experiment (K9StopJerkEase): limit only the JerkUpperLimit rise when the sent
-# StopReq first changes 0->1. StopReq, aReq and ComfortBand are never changed here.
-K9_STOP_JERK_EASE_TIME = 1.0  # s, UNAPPROVED default: no vehicle evidence for this duration
-K9_STOP_JERK_EASE_DT = 0.02  # SCC12/SCC14 are sent every second 100 Hz control frame
 
 vibrate_intervals = [
   (0.0, 0.5),
@@ -182,42 +177,6 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   cmd_sw = cmd_rw * steer_ratio
   return clip_float(cmd_sw, -steer_sw_max_deg, steer_sw_max_deg)
 
-class K9StopJerkEase:
-  """mode 0: off. 1: first sent StopReq 0->1 frame keeps Upper <= last sent Upper.
-  2: from that frame, Upper <= max(start + (computed - start) * k / N, previous sent) over K9_STOP_JERK_EASE_TIME,
-  so only a rise is limited: a computed value below the previous sent Upper is followed at once.
-  "Sent" is the decoded transmitted (0.1 step) value. Without a sent record, or once StopReq/enable/driver
-  input ends it, the computed value is used."""
-  def __init__(self):
-    self.last_stop_req = None
-    self.last_jerk_u = None
-    self.start = 0.0
-    self.frames = None
-
-  def update(self, mode: int, stop_req: int | None, jerk_u: float, allowed: bool) -> float:
-    onset = stop_req == 1 and self.last_stop_req == 0 and self.last_jerk_u is not None
-    if mode not in (1, 2) or not allowed or stop_req != 1:
-      self.frames = None
-    elif onset:
-      self.frames = 0
-      self.start = self.last_jerk_u
-    elif mode == 2 and self.frames is not None and self.last_jerk_u is not None:
-      self.frames += 1
-    else:
-      self.frames = None
-
-    ramp_frames = round(K9_STOP_JERK_EASE_TIME / K9_STOP_JERK_EASE_DT)
-    if self.frames is not None and self.frames >= ramp_frames:
-      self.frames = None
-    if self.frames is not None:
-      jerk_u = min(jerk_u, max(self.start + (jerk_u - self.start) * self.frames / ramp_frames, self.last_jerk_u))
-    return jerk_u
-
-  def record(self, stop_req: int | None, jerk_u: float | None):
-    self.last_stop_req = stop_req
-    self.last_jerk_u = jerk_u
-
-
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -236,9 +195,6 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
-    self.stop_jerk_ease_mode = 0
-    self.stop_jerk_ease = (K9StopJerkEase() if CP.carFingerprint == CAR.KIA_K9 and not CP.flags & HyundaiFlags.CANFD and
-                           CP.flags & HyundaiFlags.CAMERA_SCC and CP.openpilotLongitudinalControl else None)
     self.stop_soft_brake = k9_stop_soft_brake_applies(CP)
     self.speedCameraHapticEndFrame = 0
     self.hapticFeedbackWhenSpeedCamera = 0
@@ -345,9 +301,6 @@ class CarController(CarControllerBase):
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
-      if self.stop_jerk_ease is not None:
-        mode = params.get_int("K9StopJerkEase")
-        self.stop_jerk_ease_mode = mode if mode in (1, 2) else 0
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -690,22 +643,9 @@ class CarController(CarControllerBase):
         #jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
         use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
         if camera_scc:
-          if self.stop_jerk_ease is not None:
-            # Same StopReq expression as create_acc_commands_scc; None when SCC12/SCC14 is not sent.
-            stop_req = (1 if stopping or (CS.softHoldActive > 0 and self.soft_hold_mode == 2) else 0) if CS.scc12 is not None else None
-            allowed = CC.enabled and not CC.cruiseControl.override and not CS.out.gasPressed and not CS.out.brakePressed
-            self.hyundai_jerk.jerk_u = self.stop_jerk_ease.update(self.stop_jerk_ease_mode, stop_req, self.hyundai_jerk.jerk_u, allowed)
-
-          scc_sends = hyundaican.create_acc_commands_scc(self.packer, CC.enabled, accel, self.hyundai_jerk, int(self.frame / 2),
+          can_sends.extend(hyundaican.create_acc_commands_scc(self.packer, CC.enabled, accel, self.hyundai_jerk, int(self.frame / 2),
                                                          hud_control, set_speed_in_units, stopping,
-                                                         CC.cruiseControl.override, casper_ev, CS, self.soft_hold_mode)
-          can_sends.extend(scc_sends)
-          if self.stop_jerk_ease is not None:
-            # Record the Upper decoded from the transmitted SCC14 bytes; None when SCC14 is not sent.
-            msg = self.packer.dbc.name_to_msg["SCC14"]
-            dat = next((d for addr, d, _ in scc_sends if addr == msg.address), None)
-            sig = msg.sigs["JerkUpperLimit"]
-            self.stop_jerk_ease.record(stop_req, get_raw_value(dat, sig) * sig.factor + sig.offset if dat is not None else None)
+                                                         CC.cruiseControl.override, casper_ev, CS, self.soft_hold_mode))
         else:
           can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, self.hyundai_jerk, int(self.frame / 2),
                                                 hud_control, set_speed_in_units, stopping,
