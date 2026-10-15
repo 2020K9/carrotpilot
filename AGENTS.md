@@ -1,5 +1,174 @@
 # Repository memory
 
+- On 2026-10-15, user's C4 Git Pull was blocked by two untracked manually
+  installed eGPU helpers identical to incoming blobs; back up only those files,
+  preserve unrelated build/model artifacts. Old93160a93 HUD repeatedly lost S3
+  before renderer ready. Prior qlogs reach99%; same HUD PID grows168.62->528.55
+  MiB RSS, +181.89MiB PSS across segments5->27. Actual failed JPEG pipelines
+  remain frozen after close/collect; unfreeze releases them. Pair HUD session
+  freeze with finally unfreeze/threshold restore, retaining active-frame policy.
+  27 focused tests and native isolated12-cycle reclamation pass. This fixes a
+  demonstrated retention path, not every system/native allocation or reboot
+  cause. User authorizes parked system stop/update; verify fresh P/zero/inactive.
+  Publish both maintained branches, single-parent. See docs/hud_retry_memory_20261015.md.
+
+- On 2026-10-15, user requested public S3 firmware/install guide after confirming
+  the panel wakes and turns off. S3 1.1.0 confirms sync/brightness-off, retries
+  failed shutdown and reasserts idle-off; C4 offroad dimming includes registered
+  S3. N16R8 / powered hub / TURZX 1cbe:0092 only. Browser installer and NAS ZIP
+  preserve NVS; never distribute device flash backups or pairing keys. UART
+  --auto requires a unique bridge and verifies identity. Native three-phase
+  150-frame final test passes with preserved pairing; browser-native flashing
+  is distinct from UART validation. Publish both maintained branches, single-parent.
+  See docs/s3_release_20261015.md and tools/esp32s3_display/INSTALL_KO.md.
+
+- On 2026-10-15, user requested MD v3 PR39087 on carrot-wip ONLY unless already
+  installed. Prior selection was8d736683; new checkpoint1365126a/12864, AMDd4c7a3fc,
+  pinned tinygrad02e69816/runtimec7c58622. PR changes only the big PKL; no matching
+  ONNX, internal/DM and Jetson remain unchanged. Preserve retry/fallback policies;
+  source-verified new runtime retains USB no-op sleep and +/-1 link-error meanings,
+  so extend only the exact hash allowlist.411 focused tests/13 Web tests pass,
+  8 Windows skips; Linux CI403 plus3 native-runtime tests and HTTPS empty-cache
+  install/offline reuse pass on8864280c9c.
+  No vehicle install or native20Hz/driving claim. See docs/md_v3_20261015.md.
+
+- On 2026-10-15, user requested explicit tmux error/retry visibility after
+  repeated eGPU investigations. Add bounded stderr [eGPU] lifecycle events with
+  PID/monotonic time, saved failure cause/classification, attempt/limit/backoff,
+  waiting reason, probe-ready/handover, actual first live publication and stop
+  reason. Preserve all retry/validation/model policies; never write diagnostic
+  text to the worker stdout protocol.179 focused tests pass; no vehicle action.
+  See docs/egpu_persistent_rejection_20261015.md.
+
+- On 2026-10-15, identified the persistent Ioniq 5 PE block from actual NAS
+  diagnostics: pinned90970e01 reports AMD failed with +1 during input upload.
+  Its usb_reap latches LIBUSB_TRANSFER_ERROR=1; old classifier recognized only-1.
+  Both branches now classify exactly +/-1 only for that verified runtime, with
+  previous-boot/hash/artifact/smoke validation for old rejections.175 tests and
+  the exact recorded traceback probe pass. The failing734634 predates Oct15
+  timing changes. Device wall clock was stale; do not assert recorded21:05 as
+  incident time. Physical USB root cause remains unknown; no vehicle install.
+  This supersedes the earlier unknown reporter cause below; numerical migration
+  is a separate correction. See docs/egpu_persistent_rejection_20261015.md.
+
+- On 2026-10-15, a Mountain Dew report remained rejected after reboot. Current
+  wip lacked nav's previous-boot numerical-rejection migration; four positive
+  replay cases fail before the port and pass afterward. Port only that migration,
+  preserving branch model/runtime and per-frame policies. Keep identity, fresh
+  boot, artifact verification and new smoke checks; unknown/integrity failures
+  remain blocked. Both web branches deny ineffective compile-restart on rejection
+  and offer a bounded matching historical failure download. Original reporter
+  failure/commit is still unknown; no vehicle action or USB root-cause claim.
+  See docs/egpu_persistent_rejection_20261015.md.
+
+- On 2026-10-15, Carnival225-28 on0e647cd2 has a visible moving-to-stop corner
+  born in-lane, excluded from L1 and outside-history/45m CUT-IN L2. Prior Oct14
+  fallback is inactive, not a demonstrated regression. Add measured braking L2
+  only with current confident lanes/vision,350ms lane/braking/physical history,
+  actual speed decline and integrated range-rate agreement; preserve front/SCC
+  primary and ordinary CUT-IN. Broad cruising association was rejected. All
+  102 logs/502 labels: prior499 rows identical in modes1/2/3; failures11/10/13,
+  predecel0/0/1 and208 unverified remain. Three new cases pass. All122,090 mode1
+  frames have unchanged L1; only6 Carnival and7 reviewed Azera L2 samples differ.
+  Carnival first66.35m/video16.602s, only6 samples:1.45s before replay front or
+  about1.3s before recorded front. Tighter obstacle input is not MPC/closed-loop
+  braking validation; the later evidence gap remains.1230 Windows tests pass,
+  vault36 pass/4 skips. Publish both maintained branches, single-parent, verify
+  automatic NAS image/page/replay; no vehicle action. See
+  docs/carnival_in_lane_braking_20261015.md. Recordings remain private.
+
+- On 2026-10-15, the user requested allowing S3 Wi-Fi HUD up to10fps while eGPU
+  is active. Its live rate reader inherited the wired USB5fps cap. Give only the
+  Wi-Fi reader a10fps cap, preserve lower configured rates and direct USB policy.
+  Parked HUD-only restart reports9.8-10.0Hz; model/DM each1200 consecutive valid
+  frames in60s, no process restart or fallback.32 focused tests pass on both
+  branches. This is host refresh, not optical panel FPS. See
+  docs/s3_wifi_egpu_investigation_20261015.md.
+
+- On 2026-10-15, the user required normal model output at20Hz and requested
+  upstream NAV n16 afbf2e547e / AMD52205044 (checkpoint96244b1f/12800). It changes
+  only the PKL; runtime d3f09c9/90970e01 and old Jetson ONNX are unchanged. Pin
+  the separate NAS n16 package on carrot-nav; preserve wip's model selection.
+  Shared eGPU fixes yield200us after1ms in this exact runtime's previously no-op
+  USB sleep, retaining FIFO54/core7 after lower-priority/core trials failed20Hz.
+  Full-response deadline150ms, bounded failed-worker kill/reaping plus ownership
+  lock, fresh-frame fallback and startup-only internal inference warmup/reset
+  replace the ~3s stale fallback. Stopped-worker probe reaches internal output
+  in718ms with106ms capture age; this is not fault-time20Hz or root-cause proof.
+  Final native300s has6000/6000 consecutive valid model/DM frames at20.0002Hz;
+  no fallback, S3 connected. Later USB link counter remains1->1, not zero.
+  Nav298/wip257 focused tests pass. User authorized parked restarts/install. See
+  docs/egpu_n16_stability_20261015.md for final validation and remaining limits.
+
+- On 2026-10-15, deeper direct-eGPU analysis confirms all three fault snapshots
+  were USB4-1/5Gbps, active with autosuspend off. Outstanding output_read used
+  ~95–99% main-thread CPU; worker FIFO54 and DM FIFO5 share CPU7, with DM CPU
+  sharply reduced during stalls. Pinned90970e01 has no-op USB sleep and zero-time
+  libusb polling; older AMDSignal yield tests do not cover it. Polling/starvation
+  is a supported failure-path hypothesis, not the initial GPU/bridge root cause.
+  Parent close can add2s; no runtime/model change or eGPU restart performed.
+  Parked retry permission pending. S3-only TCP disconnect recovers in9.217s
+  without process restart, model/DM601/600 valid updates in30s. Offroad Wi-Fi
+  association differs from HUD output gating. See docs/s3_wifi_egpu_investigation_20261015.md.
+
+- On 2026-10-15, S3 home Wi-Fi delay improved after an approved single-AP
+  channel1->6/20MHz change: 35% loss/217ms mean to no loss/6.7ms after removing
+  the temporary AP lock. C4 had no pairing file; saved the existing key privately.
+  Defer S3 TCP open until renderer readiness to avoid its2s idle timeout; notice
+  new registration during USB wait.30 focused tests pass; native parked HUD runs
+  typically9-13Hz, model/DM600/601 valid updates in30s with original PIDs. Physical
+  panel/road validation is separate. Three new Oct14/15 NAV-RL eGPU output-read
+  timeouts cause~3s model gaps and~3s-old first fallback; underlying cause remains
+  unresolved. No eGPU/model/control change. Publish host fixes to both maintained
+  branches, single-parent. See docs/s3_wifi_egpu_investigation_20261015.md.
+
+- On 2026-10-14, the upper/lower signal-group trial fixes supplied qualified
+  observations but not actual departure: 43,090 historical planner inputs at
+  nominal/+20ms and 20 recent segments show no output changes; Santa Fe encoded
+  165-frame replay still has zero releases. Keep UpperSignalGroupTrial OFFLINE;
+  production guard/tracker remain unchanged. Fresh neural comparison gives
+  68/73 box-eligible images versus rules47, tiles70; tiny green cores10/37 or
+  tiles19/37 remain weak. Neural also fails identity/release at recorded timing.
+  No retraining or vehicle change. Next target is learned whole-housing/lamp
+  recognition with encounter-separated labels, not another live rule relaxation.
+  Publish offline tools/tests/findings to both maintained branches, single-parent.
+  See docs/signal_upper_group_trial_20261014.md; raw evidence stays private.
+
+- On 2026-10-14, Carnival 222-1 on 0245e76f shows late front arrival and a
+  stopping-path tail rejecting visible stationary corner 1193. Add missing-L1
+  measured L2 only with confident actual inner lanes, stopping context, stable
+  corner history and current visual agreement. Do not relax ordinary path/L1
+  gates. Replay selects 11 frames at 74.32m, about0.57s earlier, not closed-loop
+  stopping validation. User also requested screen + one short sound for an
+  unselected, vision-missing, stable front/corner stationary pair: TTC<=4.8s,
+  range<=120m, active longitudinal only, 500ms confirmation and encounter/cooldown
+  suppression. Existing100 logs/497 labels are identical in modes1/2/3; existing
+  failures11/10/13 and208 unverified remain. All119,689 prior mode1 outputs match;
+  no advisory fires, so real positive performance is unproven.1176 wip tests pass;
+  two new Carnival cases pass all modes. Publish both maintained branches and
+  verify automatic NAS replay deployment; no vehicle action. See
+  docs/carnival_stopped_car_20261014.md; recordings stay private.
+
+- On 2026-10-14, Elantra route311 segments3/10 confirms86->88% memory use.
+  DPathRadarD's lifetime Cap'n Proto builder leaks replaced list/error storage:
+  restore a fresh builder each update, preserving controller history and fields.
+  532 tests pass;2,399 recorded-input frames serialize identically.72,000 real-
+  payload updates grow old RSS23.02MiB, fixed0.086MiB then flat (accelerated PC,
+  not an hour of vehicle operation). Actual radar RSS grows3.31MiB across~8min;
+  loggerd grows36.86MiB and remains unexplained. Do not claim the overall88%
+  issue solved. Publish both maintained branches, single-parent; no vehicle action.
+  See docs/elantra_memory_20261014.md; recordings remain private.
+
+- On 2026-10-14, the user requested recovering uncommitted completed work and
+  an explanation before publication. The pending October 3 changes are NNFF
+  startup-notice retry, a default-OFF search-only NNFF setting, and a common
+  120 ms temporary-steering warning presentation delay. Publish separately to
+  carrot-nav and carrot-wip with single-parent commits after current checks.
+  The user explicitly requested deleting the failed parked-blinker experiment:
+  remove its uncommitted safety hooks, helper and tests; retain only historical
+  findings. Do not reinstall or revive that experiment. See
+  docs/uncommitted_work_recovery_20261014.md. No vehicle deployment is included.
+
 - On 2026-10-12, 10a5 on nav ac1da01591/mode2 reproduces a real green held by
   a tiny sole red anchor and zero moving preparation after small night lamps
   repeatedly lose IDs. Add a two-housing red-to-green release: each anchor needs
@@ -468,6 +637,15 @@
   Closed-loop comfort and clearance remain unvalidated. Keep incident data local.
   See docs/longitudinal_gap_hold_band_20261005.md.
 
+- On 2026-10-03, the user explicitly approved adding core7 to C3/C3X main UI
+  onroad affinity: cores0,1,2,3,6,7 with SCHED_OTHER/nice19 for all UI threads.
+  This supersedes the earlier core7 exclusion for this UI. C4 stays core6;
+  offroad returns to cores0..3. Check each big core independently; preserve
+  model/DM, control/camera, IRQ and USB cluster policies. An allowed mask is
+  not a CPU quota or parallel rendering and may concentrate UI work on core7.
+  Device affinity/FPS and model/DM impact remain unvalidated. See
+  docs/camera_core5_trial.md.
+
 - On 2026-10-03, the user requested a manual compatibility option for intermittent
   cluster warnings: HyundaiCanfdClusterDirectTx defaults OFF on every vehicle,
   including EV6. In CAN-FD CAMERA_SCC only, enabling it at startup selects the
@@ -479,15 +657,6 @@
   are required. 543 focused/settings/Wiki/firmware-identity tests and F4/H7
   builds pass; actual warning resolution and physical timing remain unvalidated.
   See docs/canfd_cluster_rx_forwarding.md. Keep incident data local.
-
-- On 2026-10-03, the user explicitly approved adding core7 to C3/C3X main UI
-  onroad affinity: cores0,1,2,3,6,7 with SCHED_OTHER/nice19 for all UI threads.
-  This supersedes the earlier core7 exclusion for this UI. C4 stays core6;
-  offroad returns to cores0..3. Check each big core independently; preserve
-  model/DM, control/camera, IRQ and USB cluster policies. An allowed mask is
-  not a CPU quota or parallel rendering and may concentrate UI work on core7.
-  Device affinity/FPS and model/DM impact remain unvalidated. See
-  docs/camera_core5_trial.md.
 
 - On 2026-10-03, Tucson `0000030c--adf522a321--4` showed unnecessary left
   steering while passing a transporter. Actual speed stayed near 104 km/h
@@ -515,6 +684,24 @@
   pass on desktop with Windows Params storage substituted. This promotion is
   not a new retry fix or vehicle-response validation. See
   docs/steering_handover_20260930.md.
+
+- On 2026-10-01, Ioniq 5 PE `000005d3--54fb087f33--21` on eb58e6d7
+  confirmed live handover mode 3. The reporter clarified first-curve inside
+  positioning and insufficient turning at the street end after 35 s; this
+  supersedes interpreting the complaint as vibration/catching. First-curve
+  authority is full and angle tracking close; path/target and unwind timing
+  need investigation, without declaring the driving model at fault. First
+  0–10 s also has roughly 10 Hz original-MDPS
+  column-torque oscillation with ceiling 250 and no pressed detection. In the
+  tight left turn after 35 s, command reaches the existing 175-degree limit,
+  then repeated torque-based override drops authority to 25; at 39.125 s actual
+  wheel 51.7 versus target/command 147.1 gives 95.4 degrees error. Mode 3 stays
+  waiting during those drops. Exit capture/recover then hits the raw-force veto;
+  Panda TX echoes confirm 44-to-25 in 7.1 ms, followed by bounded return until
+  42.79 s. No CAN/steering/model fault or decoded warning-vibration request.
+  Torque/contact signals do not prove driver intent; the source of full-authority
+  oscillation and physical remedy remain unresolved. Analysis only; do not infer
+  that faster handover alone fixes it. See docs/ioniq5_5d3_steering_20261001.md.
 
 - On 2026-10-02, after the native CPU experiment and Ioniq 5 PE before/after
   logs, the user explicitly approved promotion to `carrot-wip` and deletion of
@@ -1197,6 +1384,12 @@
   `docs/user/` or link it from the public Wiki.
 
 # Settings Wiki authoring
+
+- On 2026-10-08, the user explicitly gave standing approval to commit and push
+  task-related Wiki updates to `https://github.com/ajouatom/openpilot.wiki.git`,
+  including its default `master` branch. Do not ask for separate Wiki-push
+  confirmation again for requested work. Continue following the authoring and
+  validation rules below and preserve unrelated Wiki content.
 
 - Before editing generated settings Wiki content or its generator, read
   `tools/docs/wiki_settings/AUTHORING_GUIDE.md` completely.

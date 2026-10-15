@@ -105,7 +105,7 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **187 parameters**. One driver-monitoring exception is search only; the remaining entries appear in these menus:
+The current `carrot_settings.json` contains **188 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
@@ -148,7 +148,7 @@ The result depends heavily on whether the car uses stock SCC and which button me
 Volkswagen's separate `SET` button sets current speed and `RES` restores the previous set speed, while `+`/`-` follow the button mode, speed units, and long-press setting. Manual engagement with openpilot longitudinal control remains tied to the physical `SET`/`RES` buttons.
 
 <a id="vehicle-steering"></a>
-### Vehicle steering — 37 top-level + 5 ONNX detail settings
+### Vehicle steering — 37 top-level + 5 ONNX detail + 1 search-only setting
 
 | Section | Parameters | Purpose |
 |---|---|---|
@@ -158,6 +158,7 @@ Volkswagen's separate `SET` button sets current speed and `RES` restores the pre
 | [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
 | Advanced torque | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
+| Advanced torque, search only | `NNFF` | Neural-network feedforward for torque steering |
 | Steering limits | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | Maximum torque and torque-rate limits |
 
 `ONNX Lane and BSD Detection` (`ShareData`) runs solid/dashed classification and camera BSD on the device. BSD alternates across configured sides whose model-estimated lane width is at least 2 m; speed and lane-change direction do not gate evaluation. The three-class model distinguishes a blind-spot threat from no nearby vehicle and a distant/rear vehicle. Its detail screen keeps the feature toggle at the top and shows the BSD detection-area editor in a separate card directly below it, with only side selection, image refresh, point undo/reset, and area save in the primary view. The basic rectangular point picker at the image's upper left uses `1(L)` and `1(R)` labels; tapping empty space adds a point whenever none is selected. Zoom, viewport panning, and whole-area dragging are omitted so only the selected point moves. Two equal-width buttons directly below the four editing actions open the road- and wide-camera images in pop-up dialogs. Runtime state, confidence, performance, diagnostics, and five persistent tuning values open from the lower-right **Expand/Collapse advanced settings** text and are collapsed by default. The editor retains one last camera frame and shows a dim default road example when no frame is available. An area can be saved only after receiving a real camera image in the current session. It defaults to off, and saved tuning values survive a service restart. The update includes OpenCV, prepared automatically during normal startup. When enabled, the service starts after onroad initialization and model/CAN/Panda readiness have settled for 0.5 seconds. Engaging cruise is not required. It stops offroad and waits again at the next onroad start. See [conditions and detailed values](lane-change.md#sharedata--onnx-lane-and-bsd-detection).
@@ -173,6 +174,12 @@ Manual steering ratio and learned-ratio scaling also apply to VW MEB, including 
 Previously ignored ID.4 values now take effect. For example, with `CustomSR=0`, a saved rate of `30%` applies `0.3 times` the learned ratio. Set the rate to `100%` to use the learned value unchanged.
 
 `LateralTorqueCustom` and `CustomSteer*` are advanced settings that can affect the vehicle tune and safety limits. Do not alter them without a vehicle-specific validated baseline and a recovery path.
+
+#### NNFF torque control
+
+`NNFF` is a neural-network feedforward option that defaults to off. Enabling selects torque-controller tuning on vehicles without angle control and uses NNFF when a matching model is available. Vehicles supported by comma's own NNFF retain that path's precedence; angle-control vehicles are unaffected.
+
+Disabling turns off this NNFF option without changing the separate `NNFFLite` value. Changes apply at the next onroad start or after a device reboot, rather than immediately during a drive. An absent startup notice alone does not establish whether NNFF is active.
 
 #### Steering recovery after driver intervention
 
@@ -291,7 +298,12 @@ In modes `EnableRadarTracks=1`–`3`, a confirmed departing front lead can recei
 
 Display contains 34 settings. External-HUD settings control the layout and output of separate display hardware.
 
-`ClusterHud` (External HUD Display) switches a **HUD connected directly to the device USB port** on or off. A HUD connected to Jetson starts automatically even when this value is `0`, and normally turns its display off with ignition. Use the existing always-on `ClusterHudDebug` modes to keep it visible offroad. Brightness and layout settings also apply to the Jetson HUD.
+`ClusterHud` (External HUD Display) switches a **direct USB HUD or a registered ESP32-S3 Wi-Fi HUD** on or off. A HUD connected to Jetson starts automatically even when this value is `0`, and normally turns its display off with ignition. Use the existing always-on `ClusterHudDebug` modes to keep it visible offroad. Brightness and layout settings also apply to the Jetson HUD.
+
+S3 Wi-Fi output requires a TURZX 9.2-inch display, a powered hub, and C4/S3 on the same 2.4 GHz network. Follow the [initial registration instructions](../../../tools/esp32s3_display/README.md) to register once over USB or import the registration file from the phone setup page. A registered S3 reconnects after reboot or an IP change. This path defaults to JPEG quality 50 and a 15 FPS target regardless of `ClusterHudEncoder`, allowing up to 10 FPS while the eGPU is active (direct USB keeps its 5 FPS cap). Actual speed depends on image content and wireless conditions; C4 vehicle measurements remain separate. Remove the registration file and restart HUD to restore direct USB output.
+
+The [NAS installer and setup guide](https://upload.shind0.synology.me/models/carrot-s3/index.html) provides the N16R8 board checklist, wiring, browser firmware installation, phone/C4 registration and firmware ZIP. S3 1.1.0 confirms and retries shutdown; updating preserves existing registration.
+
 
 The Jetson HUD shows the highest internal sensor temperature below `jetSON`, or in the upper-right corner in full-screen navigation/graph modes. If temperature data has not refreshed for three seconds, it shows `--°C`. A top-strip temperature warning starts 5°C below each sensor's configured thermal limit; reaching that limit shows an overheating warning. For example, a device configured to throttle at 99°C warns from 94°C. Check the fan and ventilation when warned. Vehicle driving alerts take precedence, and Jetson temperature remains separate from device temperature/memory statistics. This feature requires updated Jetson HUD software.
 
