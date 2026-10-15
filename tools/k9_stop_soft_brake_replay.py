@@ -17,7 +17,7 @@ Params come from initData, written to a fresh directory created inside PARAMS_RO
 an existing directory, file or symlink is refused). Without PARAMS_ROOT a new directory under TMPDIR is used.
 
 usage: PYTHONPATH=<tree> PARAMS_ROOT=<new path> python k9_stop_soft_brake_replay.py --schema <cereal dir> \
-         --out out.pkl --time base|0..50 --start <logMonoTime ns> --end <logMonoTime ns> <segment dir> [...]
+         --out out.pkl --time base|0..150 --start <logMonoTime ns> --end <logMonoTime ns> <segment dir> [...]
 """
 import argparse
 import os

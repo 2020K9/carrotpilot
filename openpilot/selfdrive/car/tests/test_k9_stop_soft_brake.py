@@ -230,7 +230,9 @@ def test_gating_and_params():
   assert read(5, 5) == (50, pytest.approx(-0.05))
   assert read(50, 50) == (500, pytest.approx(-0.2))  # 세기 최대 20
   assert read(7, 99) == (50, pytest.approx(-0.2))  # 0.5 s steps, clamped strength
-  assert read(99, -3) == (500, 0.0)  # 세기 최소 0
+  assert read(99, -3) == (1000, 0.0)  # 세기 최소 0
+  assert read(150, 20) == (1500, pytest.approx(-0.2))  # 시간 최대 15초
+  assert read(999, 20) == (1500, pytest.approx(-0.2))
   assert read(-5, 20)[0] == 0
 
 

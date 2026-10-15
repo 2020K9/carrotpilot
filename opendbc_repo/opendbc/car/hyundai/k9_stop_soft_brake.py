@@ -18,7 +18,7 @@ K9_SOFT_BRAKE_NEED_GAIN = 2.0
 K9_SOFT_BRAKE_MIN_GAP = 0.05  # m, lower bound of the remaining distance in the denominator
 # Params: (name, default, min, max).
 # Time x0.1 s in 0.5 s steps (0 = whole trial off).
-K9_SOFT_BRAKE_TIME = ("K9StopSoftBrakeTime", 0, 0, 50)
+K9_SOFT_BRAKE_TIME = ("K9StopSoftBrakeTime", 0, 0, 150)
 # Strength x0.01 m/s^2. Provisional value without supporting evidence (근거 없는 임시값): default 0.2 m/s^2.
 K9_SOFT_BRAKE_ACCEL = ("K9StopSoftBrakeAccel", 20, 0, 20)  # 0~20(칸 1), 0은 설정 제동만 0이고 기능 끔이 아님
 # Entry speed in 1 km/h steps: 1-5 compare "v_ego < value / 3.6 m/s"; 0 means only after the car's standstill signal
