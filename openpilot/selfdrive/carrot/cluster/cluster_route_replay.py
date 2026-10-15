@@ -25,6 +25,7 @@ from cluster_config import (
     BLUE_SOFT,
     CLUSTER_CAMERA_VIEW_MODE_ROAD_CAMERA,
     DEFAULT_LANE_WIDTH_M,
+    GREEN,
     MAX_ACCEL_MPS2,
     MAX_SPEED_KPH,
     MAX_STEERING_ANGLE_DEG,
@@ -4080,8 +4081,11 @@ def lanes_for_frame(
     lane_grid_offset: float = 0.0,
     use_animated_lane_grid: bool = False,
 ) -> tuple[LaneMarking, ...]:
-    left_inner_color = frame.left_lane_color or BLUE
-    right_inner_color = frame.right_lane_color or BLUE
+    # Detected ego-lane lines without a reported paint color show the lateral
+    # mode: blue for laneless, green while lane mode is active.
+    detected_lane_color = GREEN if frame.active_lane_line else BLUE
+    left_inner_color = frame.left_lane_color or detected_lane_color
+    right_inner_color = frame.right_lane_color or detected_lane_color
     left_outer_color = WHITE
     right_outer_color = WHITE
     if frame.lane_change == "left":

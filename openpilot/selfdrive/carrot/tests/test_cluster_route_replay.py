@@ -524,3 +524,27 @@ def test_adjacent_route_log_path_returns_none_for_missing_number(tmp_path):
   log_path.write_bytes(b"")
 
   assert adjacent_route_log_path(log_path, 1) is None
+
+
+def test_detected_ego_lane_lines_are_blue_laneless_and_green_in_lane_mode():
+  from cluster_config import BLUE, GREEN, YELLOW
+
+  parser = RouteLogParser()
+  base = parser._frame_from_car_state(SimpleNamespace(), 1.0)
+  lane_lines = tuple(
+    (
+      ModelPathPoint(0.0, lateral_m),
+      ModelPathPoint(30.0, lateral_m),
+    )
+    for lateral_m in (-5.4, -1.8, 1.8, 5.4)
+  )
+  frame = replace(base, model_lane_lines=lane_lines, left_lane_color=None, right_lane_color=None)
+
+  def inner_colors(active_lane_line, left_lane_color=None):
+    lanes = frame_to_state(replace(frame, active_lane_line=active_lane_line, left_lane_color=left_lane_color)).lanes
+    return lanes[1].color, lanes[2].color
+
+  assert inner_colors(None) == (BLUE, BLUE)
+  assert inner_colors(False) == (BLUE, BLUE)
+  assert inner_colors(True) == (GREEN, GREEN)
+  assert inner_colors(True, YELLOW) == (YELLOW, GREEN)
