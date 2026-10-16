@@ -647,6 +647,7 @@ def test_cluster_autorun_falls_back_only_for_h264_initialization(monkeypatch):
     if len(calls) == 1:
       raise H264PipelineInitializationError("native initialization failed")
 
+  cluster_run.configure_cluster_graphics = lambda: None
   cluster_run.main = run_cluster
   monkeypatch.setattr(carrot_package, "cluster_run", cluster_run, raising=False)
   monkeypatch.setitem(sys.modules, "selfdrive.carrot.cluster_run", cluster_run)
@@ -718,6 +719,7 @@ def test_cluster_autorun_does_not_fallback_after_runtime_failure(monkeypatch):
     calls.append(sys.argv[:])
     raise RuntimeError("render loop failed")
 
+  cluster_run.configure_cluster_graphics = lambda: None
   cluster_run.main = run_cluster
   monkeypatch.setattr(carrot_package, "cluster_run", cluster_run, raising=False)
   monkeypatch.setitem(sys.modules, "selfdrive.carrot.cluster_run", cluster_run)
