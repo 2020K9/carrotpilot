@@ -180,14 +180,14 @@ def need_accel(lead):
 
 
 def selected(r, strength):
-  """Strongest of -strength, plan and lead need, within the existing CarController accel limits."""
-  return max(ACCEL_MIN, min(ACCEL_MAX, min(-strength, r["a_target"], need_accel(r["lead"]))))
+  """-strength alone (plan and lead need are not applied), within the existing CarController accel limits."""
+  return max(ACCEL_MIN, min(ACCEL_MAX, -strength))
 
 
-def strong_plan_weakened(rows, strength=0.2):
-  """Frames where this trial was active and the sent aReq (Value or Raw) is weaker than the strongest selected decel."""
+def not_strength(rows, strength=0.2):
+  """Frames where this trial was active and the sent aReq (Value or Raw) is not the strength setting."""
   return [r for r in rows if r["soft"] is not None and r["sent"] is not None and
-          max(r["sent"]["aReqValue"], r["sent"]["aReqRaw"]) > selected(r, strength) + TOL]
+          (abs(r["sent"]["aReqValue"] - selected(r, strength)) > TOL or abs(r["sent"]["aReqRaw"] - selected(r, strength)) > TOL)]
 
 
 def sent(rows):
@@ -211,7 +211,7 @@ def check_expired_original_control(rows):
 
 
 def check_common(loop, strength=0.2):
-  assert strong_plan_weakened(loop.rows, strength) == []
+  assert not_strength(loop.rows, strength) == []
   for r in sent(loop.rows):
     if r["soft"] is not None:
       assert r["sent"]["aReqValue"] == pytest.approx(selected(r, strength), abs=TOL)
@@ -456,7 +456,7 @@ def test_manual_soft_hold_in_cancel_state_follows_soft_hold_on_cancel(monkeypatc
 
 
 @pytest.mark.parametrize("leftover", [False, True])
-def test_strong_plan_decel_always_wins(monkeypatch, leftover):
+def test_strong_plan_decel_does_not_override_strength(monkeypatch, leftover):
   loop = Loop(monkeypatch, hold_time=15, **(LEFTOVER if leftover else {}))
   # A steady lead at 6 m: its need decel is 0.
   for i in range(200):
@@ -466,7 +466,7 @@ def test_strong_plan_decel_always_wins(monkeypatch, leftover):
     loop.step(v=0.5 * KPH if k < 100 else 0., standstill=k >= 100, a_target=plan[(k // 25) % len(plan)], lead=(6., 0.))
   strong = [r for r in sent(loop.rows) if r["soft"] is not None and r["a_target"] < -0.2]
   assert len(strong) > 50
-  assert all(r["sent"]["aReqValue"] == pytest.approx(r["a_target"], abs=TOL) for r in strong)
+  assert all(r["sent"]["aReqValue"] == pytest.approx(-0.2, abs=TOL) for r in strong)  # 세기 설정이 최우선
   assert loop.rows[-1]["expired"] and loop.rows[-1]["soft_hold"] == 0
   check_common(loop)
 
@@ -506,7 +506,7 @@ def test_departure_state_is_not_braked(monkeypatch):
 @pytest.mark.parametrize("plan", [-0.1, -1.0])
 @pytest.mark.parametrize("d_rel", [1.4, 1.5, 1.6, 2.5, 3.9])
 @pytest.mark.parametrize("v_rel", [0.0, -0.3, -1.0, 0.3])  # steady, approaching (slow/fast), receding
-def test_close_lead_uses_strongest_of_strength_plan_and_need(monkeypatch, leftover, plan, d_rel, v_rel):
+def test_close_lead_sends_strength_only(monkeypatch, leftover, plan, d_rel, v_rel):
   loop = Loop(monkeypatch, hold_time=20, **(LEFTOVER if leftover else {}))
   loop.approach()
   lead = (d_rel, v_rel)
@@ -514,17 +514,10 @@ def test_close_lead_uses_strongest_of_strength_plan_and_need(monkeypatch, leftov
   # 4m 안의 앞차로 기능이 꺼지지 않음: 내내 약제동, 정지 2초 뒤 만료.
   assert all(r["soft"] is not None for r in near[1:-1]) and near[-1]["expired"] and near[-1]["soft"] is None
   assert all(r["soft_hold"] == 0 for r in near)
-  need = need_accel(lead)
-  expected = max(ACCEL_MIN, min(-0.2, plan, need))
+  # 나안: 계획·앞차 감속이 더 세도 세기 설정만 보낸다(앞차에 빨리 다가갈 때 부딪힐 위험을 받아들인 선택).
   for r in sent(near[2:-1]):
-    assert r["sent"]["aReqValue"] == pytest.approx(expected, abs=TOL)
-    assert r["sent"]["aReqRaw"] == pytest.approx(expected, abs=TOL)
-  if v_rel >= 0.0:
-    assert need == 0.0  # steady or receding lead: strength or plan only
-  if need < min(-0.2, plan):
-    assert expected < plan  # the need decel overrides a weaker plan
-  if plan < min(-0.2, need):
-    assert expected == pytest.approx(plan)
+    assert r["sent"]["aReqValue"] == pytest.approx(-0.2, abs=TOL)
+    assert r["sent"]["aReqRaw"] == pytest.approx(-0.2, abs=TOL)
   check_common(loop)
 
 
@@ -590,13 +583,13 @@ def test_2kph_boundary_rearms_after_standstill_ends(monkeypatch, kph_offset, rea
 @pytest.mark.parametrize(("plan", "lead"), [(-1.0, None), (-0.1, (2.5, -1.0)), (-1.0, (2.5, -1.0)), (-0.1, (1.5, -0.3)),
                                             (-0.1, (3.0, 0.3)), (-0.1, (2.0, 0.0)), (-0.1, None)])
 @pytest.mark.parametrize("kph", [1.0, 1.5, 1.99])
-def test_1_to_2kph_strongest_decel(monkeypatch, plan, lead, kph):
-  """The newly included 1-2 km/h band: strongest of -strength, plan and lead need decel is sent."""
+def test_1_to_2kph_strength_only(monkeypatch, plan, lead, kph):
+  """The newly included 1-2 km/h band: -strength is sent even with a stronger plan or lead need decel."""
   loop = Loop(monkeypatch, hold_time=20, **LEFTOVER)
   loop.approach(lead=lead)
   rows = loop.run(200, v=kph * KPH, a_target=plan, lead=lead)
   assert all(r["soft"] is not None and r["frames"] == 0 and r["soft_hold"] == 0 for r in rows)
-  expected = max(ACCEL_MIN, min(-0.2, plan, need_accel(lead)))
+  expected = -0.2
   for r in sent(rows[2:]):
     assert r["sent"]["aReqValue"] == pytest.approx(expected, abs=TOL)
     assert r["sent"]["aReqRaw"] == pytest.approx(expected, abs=TOL)
@@ -772,13 +765,13 @@ def test_speed_change_without_episode_applies_at_once(monkeypatch):
 @pytest.mark.parametrize(("plan", "lead"), [(-1.0, None), (-0.1, (2.5, -1.0)), (-1.0, (2.5, -1.0)), (-0.1, (1.5, -0.3)),
                                             (-0.1, (3.0, 0.3)), (-0.1, (2.0, 0.0)), (-0.1, None)])
 @pytest.mark.parametrize("kph", [2.0, 2.5, 3.5, 4.99])
-def test_2_to_5kph_strongest_decel(monkeypatch, plan, lead, kph):
-  """Setting 5: the newly allowed 2-5 km/h band sends the strongest of -strength, plan and lead need decel."""
+def test_2_to_5kph_strength_only(monkeypatch, plan, lead, kph):
+  """Setting 5: the newly allowed 2-5 km/h band sends -strength even with a stronger plan or lead need decel."""
   loop = Loop(monkeypatch, hold_time=20, K9StopSoftBrakeSpeed=5, **LEFTOVER)
   loop.approach(lead=lead, start=7.)
   rows = loop.run(200, v=kph * KPH, a_target=plan, lead=lead)
   assert all(r["soft"] is not None and r["frames"] == 0 and r["soft_hold"] == 0 for r in rows)
-  expected = max(ACCEL_MIN, min(-0.2, plan, need_accel(lead)))
+  expected = -0.2
   for r in sent(rows[2:]):
     assert r["sent"]["aReqValue"] == pytest.approx(expected, abs=TOL)
     assert r["sent"]["aReqRaw"] == pytest.approx(expected, abs=TOL)
@@ -1065,8 +1058,8 @@ def test_strength_catalog_and_param_key():
 
 @pytest.mark.parametrize("strength", [0, 1, 20])
 @pytest.mark.parametrize("lead", [None, (3., -1.), (6., 0.)])
-def test_strength_0_1_20_never_weaker_than_plan_or_lead_need(monkeypatch, strength, lead):
-  """세기 0·1·20 모두 계획 감속·앞차 필요 감속 중 센 값보다 약하게 보내지 않는다. 세기 0이어도 기능은 켜져 있다."""
+def test_strength_0_1_20_sent_regardless_of_plan_or_lead_need(monkeypatch, strength, lead):
+  """세기 0·1·20 모두 계획 감속·앞차 필요 감속이 더 세도 세기 설정만 보낸다. 세기 0이어도 기능은 켜져 있다."""
   loop = Loop(monkeypatch, hold_time=20, strength=strength)
   loop.approach(lead=lead)
   plan = [-0.05, -0.3, -1.0, 0.0]
@@ -1074,8 +1067,8 @@ def test_strength_0_1_20_never_weaker_than_plan_or_lead_need(monkeypatch, streng
     loop.step(v=0.5 * KPH if k < 100 else 0., standstill=k >= 100, a_target=plan[(k // 25) % len(plan)], lead=lead)
   active = [r for r in loop.rows if r["soft"] is not None]
   assert active and any(r["sent"] is not None for r in active)  # 세기 0도 약제동 상태로 들어감
-  assert strong_plan_weakened(loop.rows, strength * 0.01) == []
+  assert not_strength(loop.rows, strength * 0.01) == []
   check_common(loop, strength * 0.01)
   for r in active:
     if r["sent"] is not None:
-      assert r["sent"]["aReqValue"] <= min(r["a_target"], need_accel(r["lead"]), -strength * 0.01) + TOL
+      assert r["sent"]["aReqValue"] == pytest.approx(-strength * 0.01, abs=TOL)

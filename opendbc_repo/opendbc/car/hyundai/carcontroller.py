@@ -494,11 +494,11 @@ class CarController(CarControllerBase):
 
     # accel + longitudinal
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
-    # K9StopSoftBrake (set by card only while active): min(-strength, lead need decel) from card, then a stronger
-    # planned aTarget wins; the strongest is sent within the existing accel limits.
+    # K9StopSoftBrake (set by card only while active): -strength alone is sent, even if the planned aTarget or a lead
+    # needs stronger decel, clipped to the existing accel limits.
     soft_brake_accel = getattr(CS, "k9_stop_soft_brake_accel", None) if self.stop_soft_brake else None
     if soft_brake_accel is not None:
-      accel = clip_float(min(soft_brake_accel, actuators.aTarget), CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
+      accel = clip_float(soft_brake_accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
 

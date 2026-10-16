@@ -170,8 +170,15 @@ def base_cc(tmp_path_factory):
                               capture_output=True, text=True, encoding="utf-8").stdout
     except (OSError, subprocess.CalledProcessError) as e:
       pytest.fail(f"기준판 carcontroller.py를 읽지 못함(K9_JERK_EASE_BASE_CARCONTROLLER로 지정): {e}")
-    path = tmp_path_factory.mktemp("base_cc") / "carcontroller_43d443e4.py"
-    path.write_text(source, encoding="utf-8")
+  else:
+    source = Path(path).read_text(encoding="utf-8")
+  # 약제동 세기 최우선(계획 감속과 min 하지 않음)은 뒤에 일부러 바꾼 동작이라 기준판에도 같은 한 줄만 바꿔 맞춘다.
+  # JerkEase 제거가 송신을 바꾸지 않았는지만 비교하려는 것이다.
+  old_line = "clip_float(min(soft_brake_accel, actuators.aTarget),"
+  assert source.count(old_line) == 1
+  source = source.replace(old_line, "clip_float(soft_brake_accel,")
+  path = tmp_path_factory.mktemp("base_cc") / "carcontroller_43d443e4.py"
+  path.write_text(source, encoding="utf-8")
   spec = importlib.util.spec_from_file_location("carcontroller_jerk_ease_base_43d443e4", path)
   module = importlib.util.module_from_spec(spec)
   sys.modules[spec.name] = module

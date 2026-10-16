@@ -1,8 +1,8 @@
 """K9 camera-SCC stop soft brake trial (K9StopSoftBrakeTime / Accel / Speed), default off.
 
-Below the K9StopSoftBrakeSpeed setting in the stopping state, the sent accel becomes the strongest of -strength,
-the planned aTarget and, with a detected lead, a closing-speed required decel, still clipped to the existing
-vehicle accel limits. Continuous car standstill frames are counted from the car's standstill signal.
+Below the K9StopSoftBrakeSpeed setting in the stopping state, the sent accel becomes -strength alone, clipped to the
+existing vehicle accel limits: a stronger planned aTarget or lead closing-speed decel is NOT applied (user's choice,
+accepting a higher collision risk while closing on a lead). The lead decel is computed only to reject invalid radar. Continuous car standstill frames are counted from the car's standstill signal.
 Unapproved trial values, not verified on a vehicle (including whether the weak deceleration keeps the car from rolling).
 
 시간 설정(K9StopSoftBrakeTime)은 연속 정지 상태에서 약제동을 유지하는 시간이다. 시간이 지나면 약제동을
@@ -13,6 +13,7 @@ import math
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 
 # Closing-speed required decel, numbers taken from the removed StopEase trial (reference, not a safety proof).
+# Only its None (invalid lead) result is used now; the value itself is no longer sent.
 K9_SOFT_BRAKE_LEAD_GAP = 1.5  # m subtracted from the lead distance
 K9_SOFT_BRAKE_NEED_GAIN = 2.0
 K9_SOFT_BRAKE_MIN_GAP = 0.05  # m, lower bound of the remaining distance in the denominator
@@ -80,7 +81,7 @@ class K9StopSoftBrake:
 
   - Soft brake only in the stopping state, below the entry speed or at standstill (entry speed 0: at standstill only), enabled, no gas/brake/override, valid
     speed/lead/plan inputs (a reported lead with invalid distance/relative speed is invalid, not "no lead"), no
-    other soft hold, and while not latched off. The caller sends min(-strength, aTarget, lead need decel).
+    other soft hold, and while not latched off. The caller sends -strength only.
   - Hold frames count only continuous eligible standstill frames; any other frame resets them to 0.
   - 만료: 연속 정지 프레임이 설정 시간에 이르는 그 프레임부터 약제동을 끝내고 원래 정차 제어로 돌아간다(소프트홀드
     요청 없음). 만료 표시는 이 정차 회차가 끝날 때까지 남아, 같은 회차에서는 다시 멈춰도 약제동이 켜지지 않는다.

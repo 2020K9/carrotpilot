@@ -330,8 +330,8 @@ class VCruiseCarrot:
       standstill=CS.standstill, v_ego=CS.vEgo, inputs_valid=inputs_valid,
       stopping=CC.actuators.longControlState == LongCtrlState.stopping, soft_hold_active=self._soft_hold_active)
     # 만료됐거나 꺼져 있으면 0이 아니라 None: 원래 종방향 명령을 그대로 보낸다.
-    # The controller further takes min() with the planned aTarget: the strongest of the three is sent.
-    self.k9_stop_soft_brake_accel = min(self.k9_stop_soft_brake_strength, need) if soft else None
+    # 약제동 중에는 세기 설정만 보낸다(계획·앞차 감속이 더 세도 쓰지 않음). need는 레이더 값 검사에만 쓴다.
+    self.k9_stop_soft_brake_accel = self.k9_stop_soft_brake_strength if soft else None
 
   def _update_carrot_man(self, sm):
     carrot_man = get_carrot_man(sm)
