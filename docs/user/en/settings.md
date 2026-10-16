@@ -248,15 +248,6 @@ For Hyundai/Kia CANFD openpilot longitudinal control, aReqRaw and aReqValue beco
 
 On supported Tesla vehicles with the additional vehicle bus detected, the device's **alpha longitudinal** (`AlphaLongitudinalEnabled`) toggle also enables [automatic cruise set-speed adjustment](tesla.md#automatic-cruise-speed) to the vehicle-reported limit. Navigation/Carrot speed control takes precedence and pauses DAS-based adjustment until it ends and the limit is stable again; any manual pause remains in effect. Turning the right speed wheel pauses it; an opposite-direction wheel gesture within one second or disengaging and re-engaging resumes it. There is no separate Carrot Web setting for this feature.
 
-<a id="experimental"></a>
-### Experimental
-
-Trial features not validated on a vehicle. Read the description and change one item at a time.
-
-| Subsection | Parameters | Purpose |
-|---|---|---|
-| K9 stop soft brake | `K9StopSoftBrakeTime`, `K9StopSoftBrakeAccel`, `K9StopSoftBrakeSpeed` | Trial weak braking for Kia K9 non-CAN-FD camera-SCC stops. **Time** (0–15 s, 0.5 s steps): how long the weak brake is held after stopping, then original stop control resumes without soft hold. `0` (default) turns the whole feature off. **Strength** (x0.01 m/s², 0–20, step 1): higher brakes harder. While active, only this strength is sent, even when the plan or a lead needs stronger deceleration (closing quickly on a lead is not braked harder, so collision risk is higher). Pedal input, invalid radar values or time expiry end it and return to original stop control. `0` is a zero set brake, not off; default `20` (-0.20 m/s²). **Speed** (0–5 km/h): entry speed; `0` means only after the car stops; default `2`. Not validated on a vehicle |
-
 <a id="vehicle-hardware"></a>
 ## Vehicle and hardware
 
