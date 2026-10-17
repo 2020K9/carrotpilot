@@ -146,7 +146,7 @@ def test_catalog_param_keys_and_experimental_menu():
   menu = next(x for x in entries if x.get("id") == "EXPERIMENTAL")
   driving = next(x for x in catalog["menu"] if x.get("id") == "DRIVING")
   assert driving["groups"][-1] is menu and menu["ko"] == menu["en"] == menu["zh"] == "실험중"
-  assert menu["params"] == ["LongMpcJerkCost"]
+  assert menu["params"] == ["K9StopSoftBrakeTime", "K9StopSoftBrakeAccel", "K9StopSoftBrakeSpeed", "LongMpcJerkCost"]
   leaf_params = [name for x in entries if isinstance(x.get("params"), list) for name in x["params"] if isinstance(name, str)]
   for name in menu["params"]:
     assert leaf_params.count(name) == 1
@@ -155,57 +155,43 @@ def test_catalog_param_keys_and_experimental_menu():
 # K9StopJerkEase(K9 정차 변화 한도 완화) 삭제 확인.
 # 기준판 43d443e4의 carcontroller.py를 git에서 읽기 전용으로 꺼내 임시 파일로 불러오고(K9_JERK_EASE_BASE_CARCONTROLLER로
 # 다른 파일을 줄 수 있음), 기능 끔(0) 기준판과 삭제판의 실제 송신 CAN을 같은 입력·같은 다른 설정으로 비교한다.
-# 기준판 carcontroller.py 말고 나머지 모듈은 지금 저장소 것을 쓴다. 기준판이 가져오는 지운 k9_stop_soft_brake.py도
-# 같은 기준판에서 꺼내 불러올 때만 잠시 등록하며, 약제동은 끔(시간 0)으로만 비교한다(약제동 삭제는
-# openpilot/selfdrive/car/tests/test_k9_stop_soft_brake_removed.py에서 따로 확인).
+# 기준판 carcontroller.py 말고 나머지 모듈은 지금 저장소 것을 쓴다.
 JERK_EASE_BASE_COMMIT = "43d443e48f903bcd617612d7c9faefe8e9834910"
 CARCONTROLLER = "opendbc_repo/opendbc/car/hyundai/carcontroller.py"
 JERK_EASE = "K9StopJerkEase"
-K9_SOFT_BRAKE_MODULE = "opendbc.car.hyundai.k9_stop_soft_brake"
-K9_SOFT_BRAKE_FILE = "opendbc_repo/opendbc/car/hyundai/k9_stop_soft_brake.py"
 
 
 @pytest.fixture(scope="module")
 def base_cc(tmp_path_factory):
-  def base_source(rel):
-    try:
-      return subprocess.run(["git", "show", f"{JERK_EASE_BASE_COMMIT}:{rel}"], cwd=ROOT, check=True,
-                            capture_output=True, text=True, encoding="utf-8").stdout
-    except (OSError, subprocess.CalledProcessError) as e:
-      pytest.fail(f"기준판 {rel}을 읽지 못함(carcontroller.py는 K9_JERK_EASE_BASE_CARCONTROLLER로 지정): {e}")
-
-  def load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-  tmp = tmp_path_factory.mktemp("base_cc")
   path = os.environ.get("K9_JERK_EASE_BASE_CARCONTROLLER")
-  source = base_source(CARCONTROLLER) if not path else Path(path).read_text(encoding="utf-8")
-  path = tmp / "carcontroller_43d443e4.py"
+  if not path:
+    try:
+      source = subprocess.run(["git", "show", f"{JERK_EASE_BASE_COMMIT}:{CARCONTROLLER}"], cwd=ROOT, check=True,
+                              capture_output=True, text=True, encoding="utf-8").stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+      pytest.fail(f"기준판 carcontroller.py를 읽지 못함(K9_JERK_EASE_BASE_CARCONTROLLER로 지정): {e}")
+  else:
+    source = Path(path).read_text(encoding="utf-8")
+  # 약제동 세기 최우선(계획 감속과 min 하지 않음)은 뒤에 일부러 바꾼 동작이라 기준판에도 같은 한 줄만 바꿔 맞춘다.
+  # JerkEase 제거가 송신을 바꾸지 않았는지만 비교하려는 것이다.
+  old_line = "clip_float(min(soft_brake_accel, actuators.aTarget),"
+  assert source.count(old_line) == 1
+  source = source.replace(old_line, "clip_float(soft_brake_accel,")
+  path = tmp_path_factory.mktemp("base_cc") / "carcontroller_43d443e4.py"
   path.write_text(source, encoding="utf-8")
-  soft_brake = tmp / "k9_stop_soft_brake_43d443e4.py"
-  soft_brake.write_text(base_source(K9_SOFT_BRAKE_FILE), encoding="utf-8")
-  saved = sys.modules.get(K9_SOFT_BRAKE_MODULE)
-  load(K9_SOFT_BRAKE_MODULE, soft_brake)
-  try:
-    module = load("carcontroller_jerk_ease_base_43d443e4", path)
-  finally:
-    if saved is None:
-      sys.modules.pop(K9_SOFT_BRAKE_MODULE, None)
-    else:
-      sys.modules[K9_SOFT_BRAKE_MODULE] = saved
+  spec = importlib.util.spec_from_file_location("carcontroller_jerk_ease_base_43d443e4", path)
+  module = importlib.util.module_from_spec(spec)
+  sys.modules[spec.name] = module
+  spec.loader.exec_module(module)
   assert hasattr(module, JERK_EASE)  # 정말 그 기능이 있는 기준판
   return module
 
 
 def k9_run(monkeypatch, module, values):
-  """K9 카메라 SCC 합성 폐루프(test_k9_stop_soft_brake_removed.Loop)에서 module의 CarController로 정차·출발을 되풀이하고
+  """K9 카메라 SCC 합성 폐루프(test_k9_stop_soft_brake.Loop)에서 module의 CarController로 정차·출발을 되풀이하고
   매 프레임 송신 CAN(주소·바이트·버스)과 읽은 설정 이름을 돌려준다."""
   from opendbc.car import Bus
-  from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import KPH, Loop
+  from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake import KPH, Loop
   loop = Loop(monkeypatch, **values)
   monkeypatch.setattr(module, "Params", lambda *args, **kwargs: loop.params)
   loop.controller = module.CarController({Bus.pt: "hyundai_kia_generic"}, loop.CP)
@@ -240,31 +226,31 @@ def k9_run(monkeypatch, module, values):
   return loop, sends, reads
 
 
+SOFT_BRAKE_VALUES = [dict(hold_time=0, strength=20), dict(hold_time=20, strength=20), dict(hold_time=20, strength=0)]
 
 
 def test_k9_base_scenario_really_uses_jerk_ease(monkeypatch, base_cc):
   """비교 장면이 기준판의 이 기능을 실제로 건드리는지(켜면 송신값이 달라지는지) 먼저 확인."""
-  _, off, _ = k9_run(monkeypatch, base_cc, {JERK_EASE: 0})
+  _, off, _ = k9_run(monkeypatch, base_cc, dict(hold_time=0, strength=20, **{JERK_EASE: 0}))
   for mode in (1, 2):
-    _, on, _ = k9_run(monkeypatch, base_cc, {JERK_EASE: mode})
+    _, on, _ = k9_run(monkeypatch, base_cc, dict(hold_time=0, strength=20, **{JERK_EASE: mode}))
     assert len(on) == len(off) and on != off
 
 
+@pytest.mark.parametrize("values", SOFT_BRAKE_VALUES, ids=lambda v: f"time{v['hold_time']}_strength{v['strength']}")
 @pytest.mark.parametrize("leftover", [None, 0, 1, 2])
-def test_k9_sends_match_base_jerk_ease_off_even_with_leftover(monkeypatch, base_cc, leftover):
+def test_k9_sends_match_base_jerk_ease_off_even_with_leftover(monkeypatch, base_cc, values, leftover):
   """삭제판의 송신 CAN은 기준판 K9StopJerkEase=0과 프레임마다 같다. 옛 저장값 1·2가 남아 있어도 같고, 읽지도 않는다."""
   from opendbc.car.hyundai import carcontroller
   from opendbc.car.hyundai.values import CarControllerParams
-  _, base, _ = k9_run(monkeypatch, base_cc, {JERK_EASE: 0})
+  from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake import check_common
+  _, base, _ = k9_run(monkeypatch, base_cc, dict(values, **{JERK_EASE: 0}))
   extra = {} if leftover is None else {JERK_EASE: leftover}
-  loop, new, reads = k9_run(monkeypatch, carcontroller, extra)
+  loop, new, reads = k9_run(monkeypatch, carcontroller, dict(values, **extra))
   assert len(new) == len(base) == len(loop.rows) and new == base
-  assert JERK_EASE not in reads and "StoppingAccel" in loop.params.reads
-  # 차로 보내는 감속은 LongControl 출력을 기존 제한(-4.0~2.5, 판다와 같음)으로 자른 값.
-  for r in loop.rows:
-    if r["sent"] is not None:
-      expected = max(CarControllerParams.ACCEL_MIN, min(CarControllerParams.ACCEL_MAX, r["cc_accel"]))
-      assert r["sent"]["aReqValue"] == pytest.approx(expected, abs=.006)
+  assert JERK_EASE not in reads and "K9StopSoftBrakeTime" in reads
+  # 차로 보내는 감속은 기존 제한(-4.0~2.5, 판다와 같음)을 거친 기대값.
+  check_common(loop, values["strength"] * .01)
   assert (CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX) == (-4.0, 2.5)
   assert all(CarControllerParams.ACCEL_MIN <= r["sent"]["aReqValue"] <= CarControllerParams.ACCEL_MAX
              for r in loop.rows if r["sent"] is not None)

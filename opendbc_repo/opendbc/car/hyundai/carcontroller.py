@@ -6,6 +6,7 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_fault_avoidance, make_tester_present_msg, structs, apply_std_steer_angle_limits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
+from opendbc.car.hyundai.k9_stop_soft_brake import k9_stop_soft_brake_applies
 from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
@@ -194,6 +195,7 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
+    self.stop_soft_brake = k9_stop_soft_brake_applies(CP)
     self.speedCameraHapticEndFrame = 0
     self.hapticFeedbackWhenSpeedCamera = 0
     self.max_angle_frames = MAX_ANGLE_FRAMES
@@ -492,6 +494,11 @@ class CarController(CarControllerBase):
 
     # accel + longitudinal
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
+    # K9StopSoftBrake (set by card only while active): -strength alone is sent, even if the planned aTarget or a lead
+    # needs stronger decel, clipped to the existing accel limits.
+    soft_brake_accel = getattr(CS, "k9_stop_soft_brake_accel", None) if self.stop_soft_brake else None
+    if soft_brake_accel is not None:
+      accel = clip_float(soft_brake_accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
 
