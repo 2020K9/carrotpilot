@@ -266,9 +266,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     {"StopDistanceCarrot", {PERSISTENT, INT, "550"}},
     {"StoppingAccel", {PERSISTENT, INT, "-50"}},
-    {"K9StopSoftBrakeTime", {PERSISTENT, INT, "0"}},
-    {"K9StopSoftBrakeAccel", {PERSISTENT, INT, "20"}},
-    {"K9StopSoftBrakeSpeed", {PERSISTENT, INT, "2"}},
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},
     {"CancelButtonMode", {PERSISTENT, INT, "0"}},
     {"LfaButtonMode", {PERSISTENT, INT, "0"}},
@@ -349,7 +346,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TFollowDecelBoost", {PERSISTENT, INT, "0"}},
     {"SpeedTFFactor", {PERSISTENT, INT, "10"}},
     {"AChangeCostStarting", {PERSISTENT, INT, "10"}},
-    {"LongMpcJerkCost", {PERSISTENT, INT, "20"}},
     {"TrafficStopDistanceAdjust", {PERSISTENT, INT, "-150"}},
 
     {"HapticFeedbackWhenSpeedCamera", {PERSISTENT, INT, "0"}},

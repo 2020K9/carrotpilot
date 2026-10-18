@@ -335,8 +335,7 @@ class LongitudinalMpc:
                   jerk_factor=1.0,
                   a_change_cost_starting=A_CHANGE_COST_STARTING,
                   a_change_cost_factor=1.0,
-                  jerk_cost_factor=1.0,
-                  jerk_cost=J_EGO_COST):
+                  jerk_cost_factor=1.0):
     #jerk_factor = get_jerk_factor(personality)
     if self.mode == 'acc':
       a_change_cost = get_a_change_cost(
@@ -344,7 +343,7 @@ class LongitudinalMpc:
       )
       applied_jerk_cost_factor = float(np.clip(jerk_cost_factor, 0.0, 1.0))
       cost_weights = [X_EGO_OBSTACLE_COST, X_EGO_COST, V_EGO_COST, A_EGO_COST,
-                      a_change_cost, jerk_factor * applied_jerk_cost_factor * jerk_cost]
+                      a_change_cost, jerk_factor * applied_jerk_cost_factor * J_EGO_COST]
       constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, DANGER_ZONE_COST]
     elif self.mode == 'blended':
       a_change_cost = 40.0 if prev_accel_constraint else 0
@@ -556,7 +555,6 @@ class LongitudinalMpc:
       a_change_cost_starting=a_change_cost_starting,
       a_change_cost_factor=response_request.a_change_cost_factor,
       jerk_cost_factor=response_request.jerk_cost_factor,
-      jerk_cost=getattr(carrot, "longMpcJerkCost", J_EGO_COST),
     )
 
     # Extra TF is a comfort preference, not a change to physical lead obstacles,
