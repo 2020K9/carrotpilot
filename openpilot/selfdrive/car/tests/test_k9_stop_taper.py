@@ -26,8 +26,9 @@ LCS = structs.CarControl.Actuators.LongControlState
 
 
 def step(t, accel=-1.0, a_target=-1.0, v=0.5, a_ego=-0.5, standstill=False, long_active=True, override=False, gas=False,
-         brake=False, can_valid=True, stopping_or_pid=True, lead=None):
-  lead_visible, d, vrel = (False, 0.0, 0.0) if lead is None else (True, lead[0], lead[1])
+         brake=False, can_valid=True, stopping_or_pid=True, lead=None, lead_visible=None):
+  visible, d, vrel = (False, 0.0, 0.0) if lead is None else (True, lead[0], lead[1])
+  lead_visible = visible if lead_visible is None else lead_visible  # override: plan hasLead vs radarState distance
   return t.update(accel=accel, a_target=a_target, v_ego=v, a_ego=a_ego, standstill=standstill, long_active=long_active,
                   override=override, gas=gas, brake=brake, can_valid=can_valid, stopping_or_pid=stopping_or_pid,
                   lead_visible=lead_visible, lead_distance=d, lead_rel_speed=vrel)
@@ -244,12 +245,15 @@ def test_rearm_after_moving_again():
   assert t.phase == TaperPhase.taper
 
 
-def _stop_distance(taper, a_cmd, v0=kt.TAPER_SPEED - 1e-6, tau=0.0, g=0.0):
+def _stop_distance(taper, a_cmd, v0=kt.TAPER_SPEED - 1e-6, tau=0.0, g=0.0, dead=0.0):
   t = armed()
   v, x, a_act = v0, 0.0, a_cmd
-  for _ in range(2000):
+  queue = [a_cmd] * round(dead / kt.DT)  # pure transport delay before the first-order lag
+  for _ in range(3000):
     out = step(t, accel=a_cmd, a_target=a_cmd, v=v, a_ego=a_act + g) if taper else a_cmd
-    a_act += (out - a_act) * (1.0 if tau == 0 else kt.DT / tau)
+    queue.append(out)
+    applied = queue.pop(0)
+    a_act += (applied - a_act) * (1.0 if tau == 0 else min(1.0, kt.DT / tau))
     nv = v + (a_act + g) * kt.DT
     if nv <= 0:
       x += v * v / (2 * -(a_act + g))
@@ -281,6 +285,105 @@ def test_no_progress_and_max_time_return_original():
   assert outs[-1] == -1.0 and t.reason == "distance_budget"
 
 
+
+# Simplified-plant sensitivity only (first-order lag tau + dead time, no ESC hold/friction/pitch): NOT a vehicle
+# validation and not a K9 lag calibration. g > 0 is downhill, g < 0 uphill (m/s^2 along the road).
+@pytest.mark.parametrize("dead", [0.0, 0.1, 0.3])
+@pytest.mark.parametrize("tau", [0.05, 0.15, 0.3, 0.5, 0.7])
+@pytest.mark.parametrize("g", [0.0, 0.49, 0.78, -0.49, -0.78])
+@pytest.mark.parametrize("a_cmd", [-1.0, -1.49])
+def test_added_stop_distance_bound_with_actuator_lag_and_delay(a_cmd, g, tau, dead):
+  base = _stop_distance(False, a_cmd, tau=tau, g=g, dead=dead)
+  extra = _stop_distance(True, a_cmd, tau=tau, g=g, dead=dead) - base
+  assert -1e-6 <= extra <= kt.MAX_EXTRA_DISTANCE
+
+
+@pytest.mark.parametrize("tau,dead", [(0.05, 0.0), (0.3, 0.1), (0.7, 0.3)])
+def test_steep_downhill_with_lag_stops_whenever_original_stops(tau, dead):
+  # 12 % downhill: the original -1.49 still stops; the candidate must too. Its added distance (about 0.26-0.33 m in
+  # this model) exceeds the flat/5/8 % MAX_EXTRA_DISTANCE bound, which is therefore not a steep-grade bound.
+  base = _stop_distance(False, -1.49, tau=tau, g=1.18, dead=dead)
+  assert _stop_distance(True, -1.49, tau=tau, g=1.18, dead=dead) >= base - 1e-6
+
+
+@pytest.mark.parametrize("v", [-0.4, -0.11])
+def test_backward_motion_during_restore_returns_original_despite_stale_standstill(v):
+  # K9 wheel speeds are unsigned, so this is a finite-invalid-input guard: |vEgo| above MOVING_AFTER_STOP is motion.
+  t = _in_restore()
+  assert step(t, v=v, standstill=True) == -1.0 and t.phase == TaperPhase.done and t.reason == "moving"
+  t = _in_restore()
+  assert step(t, v=-0.05, standstill=True) > -1.0 and t.phase == TaperPhase.restore  # small KF undershoot: no change
+
+
+@pytest.mark.parametrize("lead", [(1.5, -0.5), (2.0, 0.0), (-1.0, 0.0)])
+def test_radar_lead_without_plan_has_lead_is_respected(lead):
+  # controlsd: leadVisible = plan.hasLead, leadDistance = current radarState leadOne.dRel. Recorded K9 drives show
+  # hasLead False with a non-zero distance (down to ~1.5 m) for up to ~60 ms.
+  t = armed()
+  for _ in range(30):
+    step(t, v=0.5)
+  assert t.phase == TaperPhase.taper and t.out > -1.0
+  assert step(t, v=0.5, lead=lead, lead_visible=False) == -1.0 and t.reason == "lead_too_close"
+  t = armed()
+  for _ in range(30):
+    assert step(t, v=0.5, lead=lead, lead_visible=False) == -1.0
+  assert t.phase == TaperPhase.idle
+
+
+def test_radar_lead_without_plan_has_lead_bounds_floor():
+  t = armed()
+  outs = [step(t, accel=-1.2, v=0.8, lead=(2.2, -0.8), lead_visible=False) for _ in range(30)]  # inside the budget
+  assert t.phase == TaperPhase.taper and all(o == -1.2 for o in outs)  # need 1.6 m/s^2 > original: kept
+
+
+@pytest.mark.parametrize("leave", [{"accel": 0.0, "a_target": 0.0}, {"accel": 0.2, "a_target": 0.2}, {"v": 1.0}])
+def test_leaving_window_ends_episode_until_rearm(leave):
+  t = armed()
+  for _ in range(30):
+    step(t, v=0.6)
+  assert t.phase == TaperPhase.taper and t.out > -1.0
+  args = {"v": 0.6} | leave
+  assert step(t, **args) == args.get("accel", -1.0) and t.reason == "left_window" and t.phase == TaperPhase.done
+  for _ in range(300):  # back inside the window in the same stop: original, no fresh budget/time
+    assert step(t, v=0.6) == -1.0
+  step(t, v=kt.REARM_SPEED)
+  assert t.armed and t.phase == TaperPhase.idle
+  step(t, v=0.6)
+  assert t.phase == TaperPhase.taper
+
+
+def test_oscillating_original_cannot_restart_distance_budget():
+  # A one-frame accel >= 0 every 0.4 s at constant 0.6 m/s used to start a new episode with a fresh budget each time.
+  t = armed()
+  tapered_travel = 0.0
+  for i in range(400):
+    a = 0.0 if i % 40 == 39 else -1.0
+    out = step(t, accel=a, a_target=a, v=0.6)
+    if out != a:
+      tapered_travel += 0.6 * kt.DT
+  assert tapered_travel <= 0.6 ** 2 / 2.0 + kt.DISTANCE_MARGIN
+
+
+@pytest.mark.parametrize("seq", [
+  [(0.0, True), (0.0, False), (0.0, True)],  # standstill flag drops for one frame at rest
+  [(0.105, True)],  # recorded K9: vEgo 0.10-0.109 m/s at the standstill edge in 17 of 73 stops
+])
+def test_standstill_edge_flicker_and_lagging_vego_pass_original(seq):
+  t = armed()
+  for _ in range(30):
+    step(t, v=0.3)
+  assert t.phase == TaperPhase.taper
+  outs = [step(t, v=v, standstill=ss) for v, ss in seq]
+  assert t.phase == TaperPhase.done and t.reason == "moving" and outs[-1] == -1.0
+  for _ in range(50):
+    assert step(t, v=0.0, standstill=True) == -1.0
+
+
+def test_sub_1kmh_creep_ends_by_budget_or_time():
+  t = armed()
+  outs = [step(t, v=0.25, a_ego=-0.3) for _ in range(round(kt.TAPER_MAX_TIME / kt.DT) + 10)]
+  assert t.phase == TaperPhase.done and t.reason in ("distance_budget", "no_progress") and outs[-1] == -1.0
+
 # --- CarController integration: SCC12 aReq/StopReq on K9 with valid CAN -------------------------------------------
 
 BASE_COMMIT = "38df0d7c5abaae4c677951ce3b6dc0dfd94c739d"  # carrot-wip before the K9StopTaper candidate
@@ -297,12 +400,13 @@ class Rig:
     self.frame = 0
     self.can = []
 
-  def step(self, accel, state, v, standstill=False, a_target=None, gas=False, brake=False, a_ego=None, lead=None):
+  def step(self, accel, state, v, standstill=False, a_target=None, gas=False, brake=False, a_ego=None, lead=None,
+           lead_visible=True):
     cc = structs.CarControl(enabled=True, longActive=True)
     cc.actuators.accel, cc.actuators.aTarget = accel, accel if a_target is None else a_target
     cc.actuators.longControlState = state
     if lead is not None:
-      cc.hudControl.leadVisible, cc.hudControl.leadDistance, cc.hudControl.leadRelSpeed = True, lead[0], lead[1]
+      cc.hudControl.leadVisible, cc.hudControl.leadDistance, cc.hudControl.leadRelSpeed = lead_visible, lead[0], lead[1]
     cs = make_ci_state()
     cs.out = structs.CarState(vEgo=v, vEgoRaw=v, standstill=standstill, aEgo=accel if a_ego is None else a_ego,
                               canValid=True, gasPressed=gas, brakePressed=brake)
@@ -411,6 +515,57 @@ def test_on_k7_identical_and_on_k9_differs_from_pre_candidate(monkeypatch, base_
   ref9 = mixed_sequence(Rig(monkeypatch, taper=False, module=base_cc))
   monkeypatch.undo()
   assert mixed_sequence(Rig(monkeypatch)).can != ref9.can  # the scenario really exercises the taper
+
+
+def edge_sequence(rig, seed="k9-stop-taper-edges"):
+  """Plan/radar lead disagreement, standstill flicker and lagging vEgo, accel sign oscillation, sub-1 km/h creep."""
+  rng = random.Random(seed)
+  for cycle in range(4):
+    for _ in range(60):
+      rig.step(-0.8, LCS.pid, 4.0)
+    for i in range(140):
+      v = max(1.6 - 0.011 * i, 0.03)
+      a = 0.05 if cycle == 1 and i % 30 == 29 else rng.uniform(-1.3, -0.6)
+      lead = (rng.uniform(1.2, 3.0), -v) if cycle == 2 and i % 7 < 3 else None
+      rig.step(a, LCS.stopping if i > 30 else LCS.pid, 0.25 if cycle == 3 and i > 100 else v,
+               a_ego=rng.uniform(-1.0, 0.1), lead=lead, lead_visible=i % 2 == 0)
+    for i in range(80):
+      rig.step(-1.1, LCS.stopping, 0.105 if i < 3 else 0.0, standstill=i not in (5, 6))
+    for i in range(40):
+      rig.step(0.8, LCS.pid, 0.05 * i, standstill=i == 0)
+  return rig
+
+
+@pytest.mark.parametrize("values", [{}, {"K9StopTaper": False}], ids=["missing", "false"])
+@pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
+def test_off_edge_sequence_identical_to_pre_candidate_controller(monkeypatch, base_cc, values, fingerprint):
+  ref = edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), taper=False, module=base_cc))
+  monkeypatch.undo()
+  new = edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), taper=False, **values))
+  assert len(ref.can) == len(new.can) == 1280 and ref.can == new.can
+
+
+def test_on_edge_sequence_k7_identical_k9_never_stronger_and_stopreq_kept(monkeypatch, base_cc):
+  ref7 = edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), taper=False, module=base_cc))
+  monkeypatch.undo()
+  assert edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7))).can == ref7.can
+  monkeypatch.undo()
+  parser = CANParser("hyundai_kia_generic", [("SCC12", 0)], 0)
+
+  def scc12(can):
+    out = []
+    for i, frame in enumerate(can):
+      msgs = [(a, d, b) for a, d, b in frame if a == 1057]
+      if msgs:
+        parser.update([i * 10_000_000, msgs])
+        out.append((parser.vl["SCC12"]["StopReq"], parser.vl["SCC12"]["ACCMode"], parser.vl["SCC12"]["aReqValue"]))
+    return out
+  base, cand = scc12(edge_sequence(Rig(monkeypatch, taper=False, module=base_cc)).can), None
+  monkeypatch.undo()
+  cand = scc12(edge_sequence(Rig(monkeypatch)).can)
+  assert len(base) == len(cand) and base != cand
+  for (bs, bm, ba), (cs, cm, ca) in zip(base, cand, strict=True):
+    assert (cs, cm) == (bs, bm) and ca >= ba - 0.011  # StopReq/ACCMode kept; aReq never stronger (2 LSB)
 
 
 ORIG = pytest.approx(-1.2, abs=1e-6)  # original command after float32 CarControl storage

@@ -25,8 +25,10 @@ episode (constants are model-derived, NOT K9-calibrated, not a safety proof):
 - the original strengthening by more than STRENGTHEN_ABORT since taper entry;
 - pedal/override/brake, inactive control, a long control state other than stopping/pid, invalid CAN or
   non-finite inputs;
-- a visible lead at <= LEAD_MIN_GAP (including zero/negative distance) is treated as too close or invalid;
-- restore only: motion (not standstill, or vEgo > MOVING_AFTER_STOP) or an original no stronger than the output.
+- a lead at <= LEAD_MIN_GAP (including zero/negative distance) is treated as too close or invalid. A lead counts when
+  the plan reports one (leadVisible) OR its radar distance is non-zero: controlsd takes leadVisible from the plan and
+  the distance from the current radarState, which recorded K9 drives show disagreeing for up to ~60 ms;
+- restore only: motion (not standstill, or |vEgo| > MOVING_AFTER_STOP) or an original no stronger than the output.
 Taper only:
 - lead floor: never weaker than closing^2 / (2 (d - LEAD_MIN_GAP)), a constant-decel kinematic heuristic from the
   HUD lead. It ignores actuator lag and lead deceleration and does NOT guarantee stopping LEAD_MIN_GAP short;
@@ -34,10 +36,13 @@ Taper only:
   floor), or TAPER_MAX_TIME, returns the original. v1 without this never stopped on 5-8 % grades in the simulator;
 - distance budget: measured travel (integrated vEgo) since entry may exceed the entry command's flat-road stop
   distance v^2 / (2 |a|) by at most DISTANCE_MARGIN, then the original returns;
-- a new episode needs the vehicle to have moved at REARM_SPEED or faster.
+- leaving the window (vEgo >= TAPER_SPEED or an original accel >= 0) ends the episode; a new episode needs the
+  vehicle to have moved at REARM_SPEED or faster, so the progress/time/distance limits cannot be restarted by
+  oscillating around the window edge.
 No stop-line distance exists in this fork, so the stop position is not corrected. MAX_EXTRA_DISTANCE is only the
-bound asserted by the simplified simulator tests (flat and 5/8 % downhill, ideal actuator); it is NOT a
-guaranteed real-vehicle stopping distance increase.
+bound asserted by the simplified simulator tests (flat and 5/8 % up/downhill; ideal actuator and first-order lag
+0.05-0.7 s with 0-0.3 s dead time, not K9-measured); it is NOT a guaranteed real-vehicle stopping distance increase.
+On a 12 % downhill the same model adds up to about 0.33 m.
 """
 import math
 from enum import IntEnum
@@ -114,6 +119,7 @@ class K9StopTaper:
     if not long_active or override or gas or brake or not can_valid or not stopping_or_pid:
       self.armed = False
       return self._finish(accel, "interlock")
+    lead_visible = lead_visible or lead_distance != 0.0  # plan and radarState can disagree for a few frames
     lead_too_close = lead_visible and lead_distance <= LEAD_MIN_GAP
 
     if v_ego >= REARM_SPEED and not standstill:
@@ -144,8 +150,8 @@ class K9StopTaper:
       if standstill or v_ego <= 0.0:
         self.phase, self.reason = TaperPhase.restore, "restore"
       elif v_ego >= TAPER_SPEED or accel >= 0.0:
-        self.phase, self.reason, self.out = TaperPhase.idle, "left_window", accel
-        return accel
+        self.armed = False
+        return self._finish(accel, "left_window")
       else:
         self.taper_time += DT
         self.travel += v_ego * DT
@@ -163,7 +169,7 @@ class K9StopTaper:
 
     if self.phase == TaperPhase.restore:
       self.armed = False
-      if not standstill or v_ego > MOVING_AFTER_STOP:
+      if not standstill or abs(v_ego) > MOVING_AFTER_STOP:
         return self._finish(accel, "moving")
       if accel >= self.out:
         return self._finish(accel, "release")
