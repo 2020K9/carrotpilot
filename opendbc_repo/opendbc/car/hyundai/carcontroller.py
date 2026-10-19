@@ -7,6 +7,7 @@ from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_f
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.carstate import CarState
+from opendbc.car.hyundai.k9_stop_taper import K9StopTaper, k9_stop_taper_applies
 from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
@@ -194,6 +195,8 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
+    self.k9_stop_taper = K9StopTaper() if k9_stop_taper_applies(CP) else None
+    self.k9_stop_taper_enabled = False  # K9StopTaper param, default OFF, read live every 0.5 s
     self.speedCameraHapticEndFrame = 0
     self.hapticFeedbackWhenSpeedCamera = 0
     self.max_angle_frames = MAX_ANGLE_FRAMES
@@ -299,6 +302,8 @@ class CarController(CarControllerBase):
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
+      if self.k9_stop_taper is not None:
+        self.k9_stop_taper_enabled = params.get_bool("K9StopTaper")
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -493,6 +498,18 @@ class CarController(CarControllerBase):
     # accel + longitudinal
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
+    if self.k9_stop_taper is not None and not self.k9_stop_taper_enabled:
+      self.k9_stop_taper.reset()  # OFF: original accel; turning ON again needs a fresh run at REARM_SPEED
+    elif self.k9_stop_taper is not None:
+      # Sent accel only; StopReq/longControlState unchanged. See k9_stop_taper.py for precedence and limits.
+      accel = self.k9_stop_taper.update(
+        accel=accel, a_target=float(actuators.aTarget), v_ego=float(CS.out.vEgo), a_ego=float(CS.out.aEgo),
+        standstill=bool(CS.out.standstill),
+        long_active=bool(CC.longActive), override=bool(CC.cruiseControl.override), gas=bool(CS.out.gasPressed),
+        brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid),
+        stopping_or_pid=actuators.longControlState in (LongCtrlState.stopping, LongCtrlState.pid),
+        lead_visible=bool(hud_control.leadVisible), lead_distance=float(hud_control.leadDistance),
+        lead_rel_speed=float(hud_control.leadRelSpeed))
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
 
     # HUD messages

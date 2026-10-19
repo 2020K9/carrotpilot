@@ -105,11 +105,11 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **188 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
+The current `carrot_settings.json` contains **189 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 123 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Driving control | 124 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap, running |
 | Vehicle and hardware | 17 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 34 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
@@ -247,6 +247,25 @@ Deceleration preview operates independently of the response level. During active
 For Hyundai/Kia CANFD openpilot longitudinal control, aReqRaw and aReqValue become zero in the first StopReq frame, so this setting does not change transmitted acceleration while StopReq remains active. Automatic release/retry is removed.
 
 On supported Tesla vehicles with the additional vehicle bus detected, the device's **alpha longitudinal** (`AlphaLongitudinalEnabled`) toggle also enables [automatic cruise set-speed adjustment](tesla.md#automatic-cruise-speed) to the vehicle-reported limit. Navigation/Carrot speed control takes precedence and pauses DAS-based adjustment until it ends and the limit is stable again; any manual pause remains in effect. Turning the right speed wheel pauses it; an opposite-direction wheel gesture within one second or disengaging and re-engaging resumes it. There is no separate Carrot Web setting for this feature.
+
+<a id="experimental"></a>
+### Running — 1 setting
+
+Carrot Web path: **Driving control > Running** (Korean UI: **주행 제어 > 실행중**; internal group ID `EXPERIMENTAL`). Trial features whose effect and safety are not validated on a vehicle. Read the description and change one item at a time.
+
+| Subsection | Parameters | Purpose |
+|---|---|---|
+| K9 pre-stop brake release | `K9StopTaper` | Default `0` (off); sent CAN is then identical to the original. `1`: Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only. In an ordinary stop after driving above 1.5 m/s, below 1.0 m/s the sent decel request (aReq) is eased at most 2 m/s³ toward `-(0.3 + speed)` m/s², and briefly after stopping the sent hold aReq is restored at 2 m/s³. Never stronger than the original. StopReq, hold/soft-hold timing and other cars are unchanged. Not vehicle-validated |
+
+`K9StopTaper` (K9 pre-stop brake release) is a trial intended to reduce the body nod at the instant the wheels stop. It assumes a smaller deceleration at that instant gives a smaller nod; this is not proven.
+
+- **What is changed:** only the sent aReq. While easing, it is weaker than the original command. Right after standstill the sent hold aReq is also still weaker than the original and is moved back to it at 2 m/s³ (usually 0.5 s or less); the hold command is therefore modified for that time. StopReq and hold/soft-hold timing are not changed.
+- **Immediate return to the original command, while easing and while restoring:** original or planned decel at or below `-1.5` m/s² (hard braking), original braking more than 0.3 m/s² stronger than at entry, a visible lead at 2 m or less or an invalid lead range, accelerator/brake pedal, override, disengagement, invalid CAN or values, and (after stopping) any motion or a departure command.
+- **Also while easing:** almost no measured deceleration for 0.2 s (e.g. downhill), more than 2 s, or the stop-distance budget (flat-road stop distance of the original command + 0.12 m) exceeded.
+- **Lead:** with a visible lead, it never eases below a constant-deceleration estimate of what is needed to stop 2 m short of it. The estimate ignores actuator lag and lead braking and does not guarantee a 2 m gap.
+- **Stopping distance:** there is no stop-line distance input, so the stop position is not corrected. 0.25 m is only the added-distance bound asserted in simplified simulator tests (flat and 5/8 % downhill, ideal actuator), not a guaranteed real-vehicle value.
+- **Switching:** applies within about 0.5 s, also while driving. Turning it off returns an active release or restore to the original at once; turning it on acts from the next stop after driving above 1.5 m/s again.
+- **Limits:** the effect is unconfirmed. In four recorded K9 stops braking fell off and returned after StopReq, and the measured rebound after stopping was similar whether the sent aReq was -0.1 or -0.96. These are observations, not a paired comparison: they neither prove that the ESC runs its own sequence or ignores aReq, nor that this feature has no effect. Simulated acceleration swings are not a pitch or comfort measurement; no reduction of the wheel-stop deceleration or of pitch during hold is promised.
 
 <a id="vehicle-hardware"></a>
 ## Vehicle and hardware

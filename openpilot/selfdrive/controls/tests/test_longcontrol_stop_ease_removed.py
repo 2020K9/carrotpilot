@@ -143,9 +143,11 @@ def test_catalog_param_keys_and_experimental_menu_removed():
   stopping = next(x for x in entries if x.get("name") == "StoppingAccel")
   assert (stopping["min"], stopping["max"], stopping["default"]) == (-100, -50, -50)
   assert '{"StoppingAccel", {PERSISTENT, INT, "-50"}}' in keys
-  # 실험중 묶음의 마지막 항목(K9 약제동 3개·LongMpcJerkCost)까지 지워져 빈 메뉴 칸도 함께 사라졌다.
-  assert not any(x.get("id") == "EXPERIMENTAL" for x in entries)
-  assert "실험중" not in text
+  # EXPERIMENTAL 묶음의 옛 항목(K9 약제동 3개·LongMpcJerkCost)은 지워졌고, 지금은 화면 이름 "실행중" 아래
+  # 새 기본 OFF 항목 K9StopTaper만 있다.
+  experimental = [x for x in entries if x.get("id") == "EXPERIMENTAL"]
+  assert len(experimental) == 1 and experimental[0]["params"] == ["K9StopTaper"]
+  assert "LongMpcJerkCost" not in text
 
 
 # K9StopJerkEase(K9 정차 변화 한도 완화) 삭제 확인.

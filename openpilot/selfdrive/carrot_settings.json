@@ -389,6 +389,15 @@
               ]
             }
           ]
+        },
+        {
+          "id": "EXPERIMENTAL",
+          "ko": "실행중",
+          "en": "Running",
+          "zh": "运行中",
+          "params": [
+            "K9StopTaper"
+          ]
         }
       ]
     },
@@ -3368,6 +3377,23 @@
       "max": -50,
       "default": -50,
       "unit": 10
+    },
+    {
+      "group": "주행튜닝",
+      "name": "K9StopTaper",
+      "title": "K9 정지 직전 제동 풀기 (실험)",
+      "descr": "0: 끔(기본값, 원래 송신 CAN과 같음). 1: 기아 K9 일반 CAN 카메라 SCC 오픈파일럿 종방향에서만 동작하는 시험 기능입니다. 1.5m/s 넘게 달린 뒤 1.0m/s 미만으로 서는 보통 정차에서 보내는 감속 요청(aReq)만 초당 2m/s³ 이하로 -(0.3+속도)m/s²까지 풀어, 바퀴가 서는 순간의 끄덕임을 줄이려 합니다(그 순간 감속이 작으면 끄덕임도 작다는 가정이며 증명되지 않음). 원래 명령보다 세게 잡지 않습니다. StopReq와 정차 유지·소프트홀드 시점, 다른 차종은 바뀌지 않지만, 멈춘 직후(대개 0.5초 이하) 보내는 정차 제동 aReq는 원래보다 약하며 초당 2m/s³로 원래 값까지 되돌립니다. 푸는 중과 되돌리는 중 모두 원래 명령이나 계획 감속 -1.5m/s² 이하, 원래 제동이 0.3m/s² 넘게 세짐, 앞차 2m 이하 또는 거리값 이상, 페달·오버라이드·제어 해제·CAN 또는 값 이상, 멈춘 뒤 움직임이 있으면 즉시 원래 명령으로 돌아갑니다. 푸는 중에는 감속이 안 됨(0.2초)·2초 초과·정지거리 예산 초과 때도 돌아갑니다. 앞차가 보이면 앞차 2m 앞에서 서는 데 필요한 등감속 계산값보다 약하게 풀지 않지만, 지연을 무시한 어림값이라 2m 앞 정지를 보장하지 않습니다. 정지선 거리 입력이 없어 정지 위치를 보정하지 않으며, 0.25m는 단순 시뮬레이터 시험에서 확인한 늘어난 정지거리 상한일 뿐 실차 보장값이 아닙니다. 주행 중에도 약 0.5초 안에 반영되며, 끄면 즉시 원래 명령이고 켜면 다음 정차부터 동작합니다. 기록된 K9 정차 4건(짝지은 비교 아님)에서는 StopReq 뒤 제동이 빠졌다가 다시 걸렸고 보낸 aReq가 달라도 되튐이 비슷해, 효과가 작거나 없을 수 있습니다. 끄덕임 감소·승차감·안전은 실차에서 검증되지 않았습니다.",
+      "egroup": "LONG",
+      "etitle": "K9 Pre-stop Brake Release (Trial)",
+      "edescr": "0: Off (default; identical sent CAN). 1: Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only. In an ordinary stop after driving above 1.5 m/s, below 1.0 m/s only the sent decel request (aReq) is eased at most 2 m/s³ toward -(0.3 + speed) m/s² to try to reduce the nod at wheel stop (assumes a smaller decel at that instant gives a smaller nod; unproven). Never stronger than the original. StopReq, standstill hold/soft hold timing and other cars are unchanged, but right after stopping (usually 0.5 s or less) the sent hold aReq is still weaker than the original and is restored at 2 m/s³. Both while easing and while restoring it returns to the original at once for original or planned decel <= -1.5 m/s², original braking more than 0.3 m/s² stronger, a lead at 2 m or less or invalid lead range, pedal/override/disengage, invalid CAN or values, or motion after stopping. While easing it also returns for no deceleration for 0.2 s, over 2 s or the stop-distance budget. With a lead it never eases below a constant-decel estimate of what is needed to stop 2 m short; that estimate ignores lag and does not guarantee a 2 m gap. There is no stop-line distance input, so the stop position is not corrected; 0.25 m is only the added-distance bound seen in simplified simulator tests, not a real-vehicle guarantee. Applies within about 0.5 s while driving; OFF returns the original at once, ON acts from the next stop. In four recorded K9 stops (observational, not a paired test) braking fell off and returned after StopReq with similar rebounds for different sent aReq, so the effect may be small or none. Nod reduction, comfort and safety are not vehicle-validated.",
+      "cgroup": "纵向控制",
+      "ctitle": "K9 停车前制动释放（试验）",
+      "cdescr": "默认关闭（发送的CAN与原来相同）。仅限起亚K9非CAN-FD摄像头SCC openpilot纵向：普通停车低于1.0m/s时，只以不超过2m/s³的速率放松发送的减速请求(aReq)，试图减轻车轮停止瞬间的点头（假设，未证明）。不会比原命令更强。StopReq与停车保持时机不变，但停车后短时间（通常≤0.5秒）发送的保持制动aReq仍弱于原值，并以2m/s³恢复。放松与恢复期间，遇急刹(≤-1.5m/s²)、原制动增强超过0.3、前车≤2m或距离异常、踏板、接管、CAN或数值异常、停车后移动时立即恢复原命令。前车约束是忽略延迟的估算，不保证停在前车2m外；0.25m只是简化仿真测试的增加距离上限，不是实车保证。约0.5秒内生效。点头减轻、舒适性与安全均未经实车验证，效果可能很小或没有。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "risk": "high"
     },
     {
       "group": "가속설정",
