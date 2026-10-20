@@ -232,10 +232,13 @@ def test_actual_update_resolves_response_after_refresh_on_every_gap_change(mode,
   planner_class = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'CarrotPlanner')
   update = next(n for n in planner_class.body if isinstance(n, ast.FunctionDef) and n.name == 'update')
   # Run the production refresh/selection prefix without hardware or navigation.
-  update.body = update.body[:3]
-  namespace = {'get_lead_response_for_gap': get_lead_response_for_gap, 'get_mode_lead_response': get_mode_lead_response}
+  end = next(i for i, n in enumerate(update.body) if 'self.leadAccelResponse =' in ast.unparse(n))
+  update.body = update.body[:end + 1]
+  namespace = {'get_lead_response_for_gap': get_lead_response_for_gap, 'get_mode_lead_response': get_mode_lead_response,
+               'model_stop_suspended': lambda sm: False}
   exec(compile(ast.Module(body=[update], type_ignores=[]), str(source), 'exec'), namespace)
-  planner = SimpleNamespace(leadAccelResponseBase=0, leadAccelResponseTF=[5, 3, 0, -1], myDrivingMode=mode)
+  planner = SimpleNamespace(leadAccelResponseBase=0, leadAccelResponseTF=[5, 3, 0, -1], myDrivingMode=mode,
+                            model_stop_suspended=False, user_stop_distance=-1)
   planner._update_driving_mode = lambda sm: None
   planner._params_update = lambda: setattr(planner, 'leadAccelResponseBase', 4)
   event = log.Event.new_message()
@@ -329,7 +332,7 @@ def test_live_auto_selection_releases_accelerating_lead_and_preserves_manual_ove
 
 def test_stored_mode_change_still_disables_automatic_selection():
   from types import SimpleNamespace as NS
-  values = {'MyDrivingMode': DrivingMode.Eco.value, 'MyDrivingModeAuto': 1, 'TrafficLightDetectMode': 1}
+  values = {'MyDrivingMode': DrivingMode.Eco.value, 'MyDrivingModeAuto': 1, 'ModelStopPrediction': 1}
   planner = CarrotPlanner.__new__(CarrotPlanner)
   planner.params = NS(get_int=values.__getitem__)
   planner.frame = planner.params_count = 9

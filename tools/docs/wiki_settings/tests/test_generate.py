@@ -88,7 +88,7 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
     self.assertEqual(len(result.generated_settings), 195)
     self.assertIn("NNFF", result.index["settings"])
     self.assertNotIn("SteerHandoverMode", result.index["settings"])
-    self.assertIn("TrafficLightDetectMode", result.index["settings"])
+    self.assertIn("ModelStopPrediction", result.index["settings"])
     self.assertIn("CruiseCoastingPercent", result.index["settings"])
     self.assertIn("RadarTrackFlip", result.index["settings"])
     self.assertIn("DriverMonitoringEnabled", result.index["settings"])
@@ -97,7 +97,7 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
     self.assertIn("CarrotVisionEnabled", result.index["settings"])
     for retired in ("ClusterHudPriority", "ClusterHudCoreMode", "ClusterHudLiveFps", "CanfdStopRetry", "DisableDM",
                     "CarrotYouTubeLive", "CarrotYouTubeQuality", "CarrotYouTubeTimestamp",
-                    "SignalAssistMode", "LeadBrakeLights"):
+                    "SignalAssistMode", "LeadBrakeLights", "TrafficLightDetectMode"):
       self.assertNotIn(retired, result.index["settings"])
     self.assertEqual(result.index["review"], {"current": 0, "needs_review": 195})
     self.assertEqual(result.index["locales"], ["ko", "en", "zh"])

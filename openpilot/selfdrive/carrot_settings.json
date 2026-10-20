@@ -284,7 +284,7 @@
               "en": "Model Stop",
               "zh": "模型停车",
               "params": [
-                "TrafficLightDetectMode",
+                "ModelStopPrediction",
                 "TrafficStopDistanceAdjust"
               ]
             }
@@ -3427,15 +3427,15 @@
     },
     {
       "group": "감속제어",
-      "name": "TrafficLightDetectMode",
+      "name": "ModelStopPrediction",
       "title": "모델 정지 예측 감속",
-      "descr": "0: 끔, 1: 켬(기본). 앞차가 없을 때 주행 모델이 예측한 정지(정지 경로 종점·미래 감속)를 따라 감속·정지합니다. 모델은 신호등뿐 아니라 정지선, 일시정지 표지, 장애물 등으로도 정지를 예측할 수 있으며 신호등 색을 판독하는 기능이 아닙니다. 이렇게 정지한 뒤 자동 출발하지 않으므로 가속 페달로 출발해야 합니다(앞차 추종 중 앞차가 출발하면 일반 앞차 추종으로 출발). 예전 값 2(정지/출발)는 1로 처리합니다. 운전자가 항상 신호와 도로 상황을 직접 확인해야 합니다.",
+      "descr": "0: 끔, 1: 켬(기본). 앞차가 없을 때 주행 모델이 예측한 정지(정지 경로 종점·미래 감속)를 따라 감속·정지합니다. 모델은 신호등뿐 아니라 정지선, 일시정지 표지, 장애물 등으로도 정지를 예측할 수 있으며 신호등 색을 판독하는 기능이 아닙니다. 이렇게 정지한 뒤 자동 출발하지 않으므로 가속 페달로 출발해야 합니다(앞차 추종 중 앞차가 출발하면 일반 앞차 추종으로 출발). 예전 설정 TrafficLightDetectMode 값은 처음 한 번만 옮겨집니다(0→0, 1·2→1). 0으로 꺼도 학습된 모델이 신호를 반영해 예측하는 성질 자체가 없어지지는 않으며, 이 감속·정지만 사용하지 않습니다. 운전자가 항상 신호와 도로 상황을 직접 확인해야 합니다.",
       "egroup": "SPEED",
       "etitle": "Model Stop Prediction",
-      "edescr": "0: Off, 1: On (default). With no lead, slow and stop when the driving model predicts a stop (stop path endpoint and future deceleration). The model may predict stops for traffic lights, stop lines, stop signs or obstacles; it is not a traffic-light colour detector. There is no automatic departure after such a stop: press the accelerator to depart (a lead moving away still departs through normal lead following). A saved legacy value 2 (Stop & Go) is treated as 1. The driver must always check signals and the road.",
+      "edescr": "0: Off, 1: On (default). With no lead, slow and stop when the driving model predicts a stop (stop path endpoint and future deceleration). The model may predict stops for traffic lights, stop lines, stop signs or obstacles; it is not a traffic-light colour detector. There is no automatic departure after such a stop: press the accelerator to depart (a lead moving away still departs through normal lead following). The old TrafficLightDetectMode value is migrated once (0->0, 1/2->1). Setting 0 only stops using this deceleration; it does not remove what the pretrained model has learned about signals. The driver must always check signals and the road.",
       "cgroup": "速度控制",
       "ctitle": "模型停车预测",
-      "cdescr": "0: 关闭, 1: 开启（默认）。无前车时按驾驶模型预测的停车（停车路径终点及未来减速）减速并停车。模型可能因红绿灯、停止线、停车标志或障碍物等预测停车，并非红绿灯颜色检测功能。此类停车后不会自动起步，需踩油门起步（跟车时前车起步则按正常跟车起步）。旧值2（停止和起步）按1处理。驾驶员必须始终自行确认信号和路况。",
+      "cdescr": "0: 关闭, 1: 开启（默认）。无前车时按驾驶模型预测的停车（停车路径终点及未来减速）减速并停车。模型可能因红绿灯、停止线、停车标志或障碍物等预测停车，并非红绿灯颜色检测功能。此类停车后不会自动起步，需踩油门起步（跟车时前车起步则按正常跟车起步）。旧设置TrafficLightDetectMode仅迁移一次（0→0，1/2→1）。设为0只是不使用此减速，并不消除预训练模型已学到的信号特征。驾驶员必须始终自行确认信号和路况。",
       "min": 0,
       "max": 1,
       "default": 1,

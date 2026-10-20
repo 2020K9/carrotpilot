@@ -4,12 +4,14 @@
   functions. Removed signalcolord camera worker, modeld signal shadow, signal
   assist/start-guard/stop-prepare/lead-brake-lamp modules, SignalAssistMode/
   LeadBrakeLights, nav/phone traffic-light inputs, green auto-departure, signal
-  alerts/sounds/UI icons and tools/signal_analysis. Model-native no-lead stop is
-  kept (not light-specific; weights may still encode lights): TrafficLightDetectMode
-  key retained, 0 off/1 on, saved 2 treated as 1, departure needs gas or lead
-  handover. Capnp signal fields/enums retained inert. K9 logs: removed worker used
-  ~45% of one little core/76MiB; no GPU reclaimed, no camera latency change and
-  no validated camera optimization. See docs/signal_removal_20261020.md.
+  alerts/sounds/UI icons and signal analysis/training tools. Generic model-native
+  no-lead stop is kept for safety, renamed ModelStopPrediction 0/1; retired
+  TrafficLightDetectMode is migrated once (0->0,1/2->1) only if the new key is
+  unset, never read by the planner. Pretrained weights may still stop for
+  signals; setting 0 does not erase them. Capnp signal fields/enums inert.
+  Removed worker's historical K9 cost 44.1-46.3% of one core/75-77MiB is not a
+  paired gain; GPU reclaim unproven; no camera improvement yet. See
+  docs/signal_removal_20261020.md.
 
 - On 2026-10-20, user requests comma-to-Jetson HUD/navigation over Wi-Fi,
   no USB fallback, and complete ESP32-S3 display retirement. S3 code, firmware,

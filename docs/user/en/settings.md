@@ -199,7 +199,7 @@ Force-sensor trends do not establish loss of hand contact or driver consent to h
 | [Road speed limit](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | Desired-speed adjustment from the road limit |
 | [Speed bumps](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | Completion time, crossing speed, and early-release distance |
 | [Curves and turns](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | Curve slowing from curvature and distance, prompt recovery after confirmed easing, and route-turn speed |
-| [Model stop](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | Model stop-prediction slowing, stop-position adjustment, and automatic stopped-vehicle alignment |
+| [Model stop](speed-deceleration.md#traffic-light) | `ModelStopPrediction`, `TrafficStopDistanceAdjust` | Model stop-prediction slowing, stop-position adjustment, and automatic stopped-vehicle alignment |
 
 `AutoNaviSpeedCtrlMode` is `0` off, `1` fixed speed cameras, `2` cameras plus speed bumps, or `3` those events plus mobile-camera events.
 
@@ -209,7 +209,7 @@ While external navigation is connected, deceleration, countdowns, and navigation
 
 `AutoNaviSpeedDecelRate` defaults to `120` (1.20 m/s²); a lower value begins slowing farther away. Updating the software does not change an existing saved value. `AutoNaviSpeedSafetyFactor` applies a percentage of the event limit as the target. Before tuning either value, confirm that the event type, limit, and remaining distance are being received correctly.
 
-`TrafficLightDetectMode` (Model Stop Prediction) is `0` off or `1` on (default). With no lead, it slows and stops when the driving model predicts a stop; the model may stop for traffic lights, stop lines, stop signs or obstacles and is not a traffic-light detector. There is no automatic departure after such a stop: press the accelerator (a lead moving away still departs through normal lead following). A saved legacy value `2` is treated as `1`. The driver must always verify signals and the road.
+`ModelStopPrediction` (Model Stop Prediction) is `0` off or `1` on (default). With no lead, it slows and stops when the driving model predicts a stop; the model may stop for traffic lights, stop lines, stop signs or obstacles and is not a traffic-light detector. There is no automatic departure after such a stop: press the accelerator (a lead moving away still departs through normal lead following). The setting replaces the retired `TrafficLightDetectMode`: its saved value is copied once at startup (`0`→`0`, `1`/`2`→`1`) unless `ModelStopPrediction` is already set. Setting `0` only stops using this slowing; it does not remove what the pretrained model has learned about signals. The driver must always verify signals and the road.
 
 ### Cruise and following gap — 29 settings overall, 26 on Hyundai/Kia/Genesis
 

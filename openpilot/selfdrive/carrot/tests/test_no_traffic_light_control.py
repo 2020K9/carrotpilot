@@ -39,7 +39,7 @@ class Events:
     self.events.append(name)
 
 
-def planner(detect_mode=1, carrot_man=None):
+def planner(detect_mode=1, carrot_man=None, suspended=None):
   helpers = load_file(CARROT / 't_follow.py', 'nosignal_tf')
   stop = load_file(CARROT / 'traffic_stop.py', 'nosignal_stop')
   filters = load_file(REPO / 'openpilot/common/filter_simple.py', 'nosignal_filters')
@@ -52,7 +52,7 @@ def planner(detect_mode=1, carrot_man=None):
             RADAR_TO_CAMERA=1.52, MyMovingAverage=filters.MyMovingAverage,
             TrafficStopModelLeadMatcher=stop.TrafficStopModelLeadMatcher,
             is_traffic_stop_entry_allowed=stop.is_traffic_stop_entry_allowed,
-            model_stop_suspended=lambda sm: False)
+            model_stop_suspended=lambda sm: bool(suspended and suspended[0]))
   ns.update({n: getattr(helpers, n) for n in dir(helpers) if not n.startswith('_')})
   source = (CARROT / 'carrot_functions.py').read_text(encoding='utf-8')
   nodes = [n for n in ast.parse(source).body if isinstance(n, (ast.ClassDef, ast.FunctionDef))]
@@ -62,7 +62,7 @@ def planner(detect_mode=1, carrot_man=None):
   cls._update_driving_mode = lambda self, sm: None
   cls._update_model_desire = lambda self, sm: None
   p = cls()
-  p.trafficLightDetectMode = detect_mode
+  p.modelStopPrediction = detect_mode
   return p
 
 
@@ -171,7 +171,7 @@ def test_navigation_traffic_light_state_has_no_control_effect(nav_state):
   assert 'trafficSignChanged' not in events and 'trafficSignGreen' not in events
 
 
-def test_detect_mode_zero_disables_model_stop():
+def test_model_stop_prediction_zero_disables_model_stop():
   p = planner(detect_mode=0)
   sm = inputs(speed=10., distance=40., model_v=0.)
   run(p, sm)
@@ -185,3 +185,41 @@ def test_stop_notice_is_muted_by_lead():
   p.last_event_time = 0
   p.add_stop_event('trafficStopping')
   assert p.events.events == []
+
+
+def test_motorway_suspension_cancels_model_stop_but_keeps_soft_hold_and_user_stop():
+  flag = [False]
+  p = planner(suspended=flag)
+  sm = inputs(speed=10., distance=40., model_v=0.)
+  run(p, sm)
+  assert p.xState.name == 'e2eStop'
+  flag[0] = True  # fresh motorway class: generic model stop is suspended
+  run(p, sm, 5)
+  assert p.xState.name == 'e2eCruise' and p.actual_stop_distance == 0.
+  flag[0] = False  # back to ordinary road: model stop may enter again
+  run(p, sm)
+  assert p.xState.name == 'e2eStop'
+
+  p = planner(suspended=[True])
+  sm = inputs(distance=80.)
+  sm['carState'].softHoldActive = 1
+  run(p, sm, 5)
+  assert p.xState.name == 'e2eStopped'  # driver/vehicle hold is not cancelled
+
+  p = planner(suspended=[True])
+  sm = inputs(speed=5., distance=80.)
+  p.user_stop_distance = 20.
+  run(p, sm, 3)
+  assert p.xState.name == 'e2eStop' and 0 < p.stop_dist <= 20.  # explicit user stop survives suspension
+
+
+def test_gas_from_moving_model_stop_blocks_reentry_for_ten_seconds():
+  p = planner()
+  sm = inputs(speed=10., distance=40., model_v=0.)
+  run(p, sm)
+  assert p.xState.name == 'e2eStop'
+  sm['carState'].gasPressed = True
+  run(p, sm, 1)
+  sm['carState'].gasPressed = False
+  run(p, sm, 20)
+  assert p.xState.name == 'e2eCruise'  # still within the 10 s cooldown

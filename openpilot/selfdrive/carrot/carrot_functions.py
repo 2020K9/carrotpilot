@@ -144,7 +144,7 @@ class CarrotPlanner:
 
     self.aChangeCostStarting = 10.0
 
-    self.trafficLightDetectMode = 1  # model-native stop prediction: 0 off, 1 on
+    self.modelStopPrediction = 1  # model-native no-lead stop prediction: 0 off, 1 on
 
     self.eco_over_speed = 2
     self.eco_target_speed = 0
@@ -182,8 +182,7 @@ class CarrotPlanner:
 
     if self.params_count == 10:
       self.myHighModeFactor = 1.2 #float(self.params.get_int("MyHighModeFactor")) / 100.
-      # Retained key: 0 disables the model-native stop; any other value enables it.
-      self.trafficLightDetectMode = 1 if self.params.get_int("TrafficLightDetectMode") > 0 else 0
+      self.modelStopPrediction = 1 if self.params.get_int("ModelStopPrediction") > 0 else 0
     elif self.params_count == 20:
       self.tFollowGap1 = self.params.get_float("TFollowGap1") / 100.
       self.tFollowGap2 = self.params.get_float("TFollowGap2") / 100.
@@ -509,7 +508,7 @@ class CarrotPlanner:
     else:
       self.check_model_stopping(v_cruise, v, v_ego, a_ego, x[-1], y, radarstate.leadOne.dRel if lead_detected else 1000)
 
-    if self.myDrivingMode == DrivingMode.High or self.trafficLightDetectMode == 0:
+    if self.myDrivingMode == DrivingMode.High or self.modelStopPrediction == 0:
       self.trafficState = TrafficState.off
 
     #self.update_user_control()

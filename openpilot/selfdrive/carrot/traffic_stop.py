@@ -147,3 +147,24 @@ def model_stop_suspended(sm, now: float | None = None) -> bool:
                 and 0 <= now - lane.meta.receivedMonoTimeNanos / 1e9 <= ROAD_TIMEOUT)
   except (AttributeError, KeyError, TypeError):
     return False
+
+
+MODEL_STOP_PREDICTION_KEY = "ModelStopPrediction"
+LEGACY_MODEL_STOP_KEY = "TrafficLightDetectMode"  # retired: 0 none, 1 stop, 2 stop & go
+
+
+def migrate_model_stop_prediction(params) -> None:
+  """One-time copy of the retired TrafficLightDetectMode into ModelStopPrediction.
+
+  Runs before manager default population. An explicitly set new key always wins;
+  absent, malformed or negative legacy values leave the new key to its default.
+  """
+  if params.get(MODEL_STOP_PREDICTION_KEY) is not None:
+    return
+  try:
+    legacy = params.get(LEGACY_MODEL_STOP_KEY)
+  except Exception:
+    return
+  if isinstance(legacy, bool) or not isinstance(legacy, int) or legacy < 0:
+    return
+  params.put_int(MODEL_STOP_PREDICTION_KEY, 0 if legacy == 0 else 1)

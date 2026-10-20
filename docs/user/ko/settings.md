@@ -201,7 +201,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 | [도로 제한속도](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | 도로 제한속도에 맞춘 목표 속도 조절 |
 | [과속방지턱](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | 방지턱 감속 완료 시점, 통과 속도와 조기 종료 거리 |
 | [커브·턴](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | 곡률·남은 거리 기반 감속, 회전 완화 확인 후 빠른 복구와 경로 턴 속도 |
-| [모델 정지](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | 모델 정지 예측 감속, 정지 위치 및 정지차 기준 자동 보정 |
+| [모델 정지](speed-deceleration.md#traffic-light) | `ModelStopPrediction`, `TrafficStopDistanceAdjust` | 모델 정지 예측 감속, 정지 위치 및 정지차 기준 자동 보정 |
 
 `AutoNaviSpeedCtrlMode`는 `0` 미사용, `1` 과속카메라, `2` 과속카메라+방지턱, `3` 과속카메라+방지턱+이동식카메라입니다.
 
@@ -211,7 +211,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 
 `AutoNaviSpeedDecelRate`의 기본값은 `120`(1.20m/s²)이며, 값이 낮을수록 더 먼 거리에서 감속을 시작합니다. 기존 저장값은 업데이트만으로 변경되지 않습니다. `AutoNaviSpeedSafetyFactor`는 감속 목표에 적용하는 제한속도 비율입니다. 감속이 이상하면 값부터 바꾸지 말고 이벤트 종류, 제한속도와 남은 거리가 정상 수신되는지 먼저 확인하세요.
 
-`TrafficLightDetectMode`(모델 정지 예측 감속)는 `0` 끔, `1` 켬(기본)입니다. 앞차가 없을 때 주행 모델이 정지를 예측하면 감속·정지합니다. 모델은 신호등뿐 아니라 정지선, 일시정지 표지, 장애물 등으로도 정지를 예측할 수 있으며 신호등 색을 판독하는 기능이 아닙니다. 이렇게 정지한 뒤에는 자동 출발하지 않으므로 가속 페달로 출발합니다(앞차 추종 중 앞차가 출발하면 일반 앞차 추종으로 출발). 예전 값 `2`는 `1`로 처리합니다. 운전자가 항상 신호와 도로 상황을 직접 확인해야 합니다.
+`ModelStopPrediction`(모델 정지 예측 감속)은 `0` 끔, `1` 켬(기본)입니다. 앞차가 없을 때 주행 모델이 정지를 예측하면 감속·정지합니다. 모델은 신호등뿐 아니라 정지선, 일시정지 표지, 장애물 등으로도 정지를 예측할 수 있으며 신호등 색을 판독하는 기능이 아닙니다. 이렇게 정지한 뒤에는 자동 출발하지 않으므로 가속 페달로 출발합니다(앞차 추종 중 앞차가 출발하면 일반 앞차 추종으로 출발). 이 설정은 폐지된 `TrafficLightDetectMode`를 대체합니다. `ModelStopPrediction`이 아직 없으면 시작할 때 예전 값을 한 번만 옮깁니다(`0`→`0`, `1`·`2`→`1`). `0`은 이 감속을 쓰지 않을 뿐, 학습된 모델이 신호를 반영하는 성질을 없애지는 않습니다. 운전자가 항상 신호와 도로 상황을 직접 확인해야 합니다.
 
 ### 크루즈·차간 — 전체 29개, 현대·기아·제네시스 26개
 

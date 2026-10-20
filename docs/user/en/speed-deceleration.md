@@ -334,16 +334,16 @@ For isolated tuning, start with mode 1 and `ApplyModelSpeed=0`; adjust the curve
 
 This follows the driving model's own predicted stop (predicted path end and future speed decline) when there is no lead. The model may predict a stop for a traffic light, stop line, stop sign, obstacle or other reason; Carrot does not read traffic-light colours and has no separate traffic-light detector.
 
-### `TrafficLightDetectMode`
+### `ModelStopPrediction`
 
-The key name is retained for saved-settings compatibility. It is shown as **Model Stop Prediction**.
+Shown as **Model Stop Prediction**. The setting replaces the retired `TrafficLightDetectMode`: its saved value is copied once at startup (`0`→`0`, `1`/`2`→`1`) unless `ModelStopPrediction` is already set. The pretrained driving model may itself predict stops at signals; `0` only stops using that prediction for slowing.
 
 | Value | Behavior |
 |---:|---|
 | `0` | Off: the model's stop prediction does not slow or stop the vehicle |
 | `1` | On (default): slow and stop on the model's stop prediction with no lead |
 
-A saved legacy value `2` (former Stop & Go) is treated as `1`. There is no automatic departure after a model-predicted stop: press the accelerator to depart. When following a lead, the lead moving away still departs through normal lead following.
+There is no automatic departure after a model-predicted stop: press the accelerator to depart. When following a lead, the lead moving away still departs through normal lead following.
 
 Model stop prediction is not used in high-speed driving mode (`MyDrivingMode=4`), above roughly 20 degrees of steering angle, when the model lacks stop-path confidence, during selected strong-deceleration conditions, or when a lead is ahead of the stop target. The driver must always check signals and the road.
 
@@ -374,7 +374,7 @@ Adjust by 100 (1 m) at a time under comparable no-lead model stops, because the 
 | No speed-bump slowing | Mode 2+, event type, road category |
 | Curve slowing on a straight road | Which of vision, route, or model selected the minimum |
 | Slowing with turn mode 0 | Future-model speed, applied-model speed, separate ATC |
-| Unwanted model stop | `TrafficLightDetectMode`, driving mode, model decision |
+| Unwanted model stop | `ModelStopPrediction`, driving mode, model decision |
 
 Automatic CAN diagnostic logs are generated only when currently received vehicle or radar state from the present onroad session reports an actual error. CAN timeouts from the previous drive's shutdown are not used, and capture occurs five seconds after detection to include the immediate aftermath. When investigating a speed or deceleration issue, upload the affected drive from Carrot Web even if no automatic diagnostic log was generated.
 
