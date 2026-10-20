@@ -1,5 +1,279 @@
 # Repository memory
 
+- On 2026-10-20, user requests comma-to-Jetson HUD/navigation over Wi-Fi,
+  no USB fallback, and complete ESP32-S3 display retirement. S3 code, firmware,
+  pairing tools and installer routes removed both branches; shared renderer
+  opens USB directly, preserving Jetson panel hotplug. Nav-only Wi-Fi integrates
+  tjdgus200 b09e20a1 with both-end USB display rejection and no Jetson display
+  pumps in inference. Dedicated AP starts offroad; model/provisioning USB stays.
+  Signed nav runtime b7b463a20b published and pinned, old80eedcdd ONNX unchanged;
+  latest n16 Jetson model remains deferred. Owner SD patched6144 APP bytes with
+  verbatim original setup retained; verified FAT payload/runtime pre-cache,
+  independent ext4/GPT readback; DATA journal/model/key not written. Next boot
+  performs one-time receiver enrollment/cache, then ordinary boot gate probes
+  and activates selected runtime. SD prepared, NOT boot/hardware tested.
+  Desktop52 integration and41 retirement tests/4Windows skips; Linux94 root,
+  845 broad/55skips,119 nav,11 real-storage pass; eGPU and installer CI pass.
+  No physical RF/display-rate/20Hz/road claim. Wip retains its separate runtime.
+  Private backups excluded; single-parent. See docs/jetson_wifi_usb_panel_20261020.md.
+
+- On 2026-10-19, offroad Mapbox review finds real navd allManeuvers failure:
+  np.cumsum yields numpy.float64, rejected by device Capnp struct-list setter.
+  Convert distance to Python float at serialization only. Six real-cereal cases
+  fail before/pass after on nav; wip old sums already pass, same boundary guard
+  ported without model/route changes. Nav93 pass/9 native-render skips; wip22 pass.
+  Exact corrected source in isolated C4 /tmp trial:44 synthetic route positions,
+  actual Mapbox tiles/Carrot bridge/native VisionIPC/MapInput pixels match;
+  warm10.109-20.089ms, IPC+checks0.913-1.623ms. Host-shaped buffers only, no
+  driving-model inference/20Hz/steering claim. Cold537ms (earlier885ms) still
+  exceeds500ms gate; not fixed. Operational code/Params/processes unchanged,
+  no vehicle installation. Both maintained branches single-parent. See
+  docs/mapbox_instruction_serialization_20261019.md; tokens/evidence private.
+
+
+- On 2026-10-19, Ioniq9 route417/19 on5032afca77 reproduces retained stopped-red
+  memory after lead-follow departure: target-4.497/output-4/measured-3.616m/s2
+  at road speed, no new signal tracks, gas intervention at6.395s. Retire both
+  start/legacy stopped latches above5km/h; preserve low-speed hold and fresh
+  moving-red approach. Track auxiliary ownership to clear orphan e2eStopped
+  after mode/invalid reset; preserve user/soft/stay stops. Gate final output by
+  speed too. Seeded recorded-input127-pair replay: logged56/old55/new0 holds;
+  no native MPC or closed-loop claim. Prior segment/latch origin unavailable.
+  Both branches704 focused tests pass including61 new cases. Raw private; no
+  vehicle install. See docs/signal_departure_hold_20261019.md.
+
+
+- On 2026-10-19, user selects pearl cartoon DM eyes for both C3/C4. Replace
+  shared onroad camera inset with plain Widget: no video client/shader/textures
+  or box. Bounded mirrored head pose is illustrative, not ocular gaze; eyelids
+  use actual per-eye blink/confidence, no decorative random blinking. Preserve
+  freshness/session gates plus 500ms repeated-frame guard; gray unknown eyes,
+  warning/lockout and wheel fallback, alert hiding/AlwaysOnDM and RHD selection.
+  No monitoring/model/control/settings/sound changes. 75 focused and 180 wider
+  UI/sound tests pass (one Windows native-IPC exclusion); desktop actual-renderer
+  captures cover both sizes with synthetic inputs/schematic HUD. No physical
+  vehicle installation, readability or CPU/road validation. Both maintained
+  branches single-parent. See docs/dm_pearl_eyes_20261019.md.
+
+- On 2026-10-19, user confirms company/hotspot share SSID and explicitly requests
+  disconnect/reconnect testing without waiting for another hotspot. App-only S3
+  1.2.1 preserves pairing: separate association/IP states,30s/20s watchdogs,
+  max5s failed-attempt backoff; no repeated connect during active association.
+  Diagnostic suppressed-IP notification recovers in20s plus rejoin: the stack
+  still had IP, so this is a state-machine fault test, not DHCP/root-cause proof.
+  Sender sync protects setup from an observed local idle-off collision; local
+  decoder reset invalidates TCP/reference queue. Keep2s visual idle-off.
+  Production has UART S3RECONNECT, no private AP/fault hooks. Exact893088-byte app
+  67c8222e passes5 forced reconnects without MCU reboot/USB errors: IP3.88-3.94s,
+  authentication13.52-14.02s, forwarded stream verified17.34-20s. Host discovery
+  retries within same deadline; restore1Mbps/QP28..51 while retaining bounded
+  pacing/queues/CBR. Both branches60 tests+1skip; native C recovery policy and
+  installer5 tests pass; download test1pass/4Windows skips. Initial100s complex
+  test passes, worst full-colour~2fps then other phases~10: no universal10fps,
+  hotspot/road or overnight-memory clearance. Preserve C4 model/DM processes.
+  Exact final100s complex sequence passes too. Guarded C4 Git reconciliation
+  retains model163840/DM163845; mixed180s includes two observed DM gaps, then
+  untouched60s model1202/DM1201 consecutive valid at20.005802/20.000011Hz,
+  HUD12/12 connected. Final120s UART has no disconnect/close/USB error.
+  Both maintained branches single-parent; private backups/logs excluded.
+  See docs/s3_reconnect_20261019.md for final observation/release status.
+
+- On 2026-10-19, user rejects ending S3 work at parser-only correction. Native
+  driver QP S_CTRL succeeds without applying ranges; pre-stream S_EXT_CTRLS
+  with all-layer255/all six I/P/B limits works. S3 defaults500kbps CBR-CFR,
+  QP44..51 reduce luma bursts831472B to~28KB, but full-colour noise still177KB:
+  neither setting is a hard cap. Pace <=16KB chunks at125000B/s, keep three
+  ordered slots/backpressure; reset3s dead-sender timer only on completed chunk
+  progress. Fixed timer previously aborted active paced transmission. Retry
+  authenticated UDP capabilities within existing1s deadline; legacyJPEG remains.
+  Exact native/Python actual-S3 full100s sequence passes: colour noise90units/30s
+  (~3fps/~982kbps), later luma/blocks~10fps, no transport error; earlier same-
+  profile failures remain recorded. Guarded seven-source/native-library C4
+  install and HUD-only restart, model49147/DM49149 unchanged. Actual HUD~10fps/
+  280kbps/~8KB peaks, but180s observation has16/36 connected samples and ends
+  disconnected. Independent568-byte sync retransmissions and S3~2s FIN persist;
+  no universal radio/firmware/hotspot fix. Model/DM3601/3600 valid consecutive,
+  ~20Hz; mixed HUD-state available638->704MiB does not clear overnight creep.
+  Both branches59 tests/oneLinuxskip; no router/firmware change, raw private.
+  Publish single-parent. See docs/s3_complex_scene_20261019.md follow-up.
+
+- On 2026-10-19, user requests deliberately complex S3 traffic after motion-only
+  dropouts on company Wi-Fi and hotspot. New boot/base68e7785c8b at~78% reproduces
+  native1Mbps VBR-CFR silence:751 motion inputs/75s yield one residual unit,
+  601 noise inputs/60s yield zero; raw no-network callbacks reproduce and recover
+  on static. CBR gradual90s actual S3 passes~10fps, but abrupt noise produces
+  831472-byte units and another fast-parser trial hits3s ordered-queue timeout.
+  Withdraw CBR default candidate; no rate/firmware/router change. Post-open
+  QP28/36/44 controls return success but identical output, not a validated cap.
+  Retain byte-equivalent Annex-B bytes.find search: native100KB394-487ms ->
+  0.212-0.228ms;831KB2.986-3.407s ->1.745-3.635ms, synthetic low-priority timings.
+  Both branches52 tests/one Linux skip; guarded one-file C4 install restoresHUD1,
+  model49147/DM49149 unchanged. Final180s model/DM3601 valid consecutive each
+  at20.000236/20.000119Hz; first25s reconnect then31/36 connected samples,
+  actual H264~10fps/~1Mbps; available692.37->689.74MiB. Bounded parked only,
+  not a full disconnect/encoder/memory fix.
+  Small-command/discovery failures also precede video; auto can fall back toJPEG
+  after lost capability response. Old pending memory watch ended at reboot after
+  322samples/1639.90s, not2h; mixed HUD states do not prove a plateau. See
+  docs/s3_complex_scene_20261019.md. Raw evidence private; single-parent branches.
+
+- On 2026-10-19, user requests HUD isolation and broad recent/native/signal
+  memory review. Same C4 boot/base2d71d318: normal HUD stop90.22->84.12%; stop
+  mode2 recognition and separate legacy policy observer reaches79.12%, without
+  model/DM/eGPU restart. Legacy observer consumes104MiB despite idle internal
+  standby, remains after SignalAssistMode0, original private flag1 backed up
+  then set0 and identity-checked worker terminated. Gate its creation only for
+  ready-eGPU standby; preserve warm fallback and active-internal opt-in behavior.
+  This is footprint correction, not proven creeping-leak/full-warning cure.
+  150 latest closed qlogs peak91%; user92% outside retained samples remains.
+  Full warmed windows lose200MiB; proclogd~12.4MiB, model/eGPU broadly stable,
+  Shmem+79.5MiB and smaller common-service growth, incomplete total attribution.
+  Oct11 pre-WiFi109c90-91% includes377MiB signalcolord child plus103MiB legacy
+  observer; current mode2 is~60MiB. Native CPU drawing60k iterations plateaus;
+  not GPU/road proof. RAM logs~81MiB; do not remove watchdog heartbeat or hide
+  growth by vacuuming. Observer adds bounded tmpfs/enable-state inventory.
+  20min HUD-off and10min all-off comparisons include marked diagnostic windows;
+  no long stability claim. Restore HUD1/mode2, retain legacy flag0:~87% snapshots,
+  then180s model/DM3600 valid consecutive each20.00088/20.00138Hz; S3 still retries
+  below90%. PC/C4 same H264 clips pass;8KiB chunks slower, no transport-policy fix.
+  NAV42/wip43 lifecycle tests and20proclog/2Linuxskips pass. Publish both branches
+  single-parent; model source not installed live. Restored-state low-priority
+  observer408329 capped2h/32MiB is pending, not a stability result. See
+  docs/memory_feature_isolation_20261019.md. Raw evidence private.
+
+- On 2026-10-19, user requested applying Jetlink491cf1e USB-current protection
+  after PV5 UVLO review. Port USB_ICL zero vote into Carrot's own daemon/helper,
+  all transport modes, only after1.5s observed empty port and helper rechecks.
+  Preserve across retries/exit; reboot clears. Omit upstream's attached-iOS
+  exception because transport selection is not proof of independent power.
+  Attached/unknown startup defers; missing/conflicting voter and failed helper
+  are bounded/reported. No VM/role/model/deadline changes or vehicle action.
+  Desktop fake-sysfs and daemon regression pass; Linux real-socket validation
+  remains CI-only. UVLO+Jetson is a plausible mechanism, not confirmed PV5 cure;
+  available900mA is not measured draw. Both maintained branches single-parent.
+  See docs/jetlink_usb_power_20261019.md for activation and validation limits.
+
+- On 2026-10-18, user again reports90% versus~80% after reboot. Completed2h
+  capture has1412 samples/118 inventories: available421.45->375.51MiB,
+  minimum326.65. Proclogd PSS14.64->52.81MiB; at10:21 private dirty rises38.62MiB
+  with RSS only+0.36MiB, then plateaus. GC-induced shared-page copying reproduced
+  in native isolated forks; exact live GC trigger remains inferred. Fix daemon-
+  entry GC freeze before runtime resources, keeping new cycles collectible and
+  parent unchanged. Separately prune exited metadata and validatePID/starttime:
+  2000 native byte-identical publications retain2 entries versus old2001; PID
+  reuse now refreshes metadata. Exact-main native GC private-dirty delta13.28->
+  1.66MiB; desktop20pass/2Linuxskips. Nativepytest unavailable, standalone native
+  assertions pass. No vehicle install/restart; old manager preimports module.
+  Model/DM/UI GPU inventories unchanged, HUD lifecycle median+0.59MiB, S3 often
+  disconnected. Does NOT explain all80->90%, prove Wi-Fi/eGPU cause, or establish
+  long stability. Publish both branches single-parent; raw evidence private.
+  See docs/proclog_memory_20261018.md. Supersedes pending2h status below.
+
+- On 2026-10-18, user explicitly removed the Ioniq5PE-only CAN GPS restriction.
+  Use actual DBC profile eligibility across Hyundai/Kia/Genesis: named0x374,
+  eight bytes, two unsigned LE32 coordinates at0/32, scale1e-6/offset0. Optional
+  registration covers CANFD and legacy parser paths; current legacy DBC lacks
+  the profile. All CANFD configurations pass synthetic reception on configured
+  bus, including late arrival; absent/incompatible profiles stay inactive.
+  Preserve priority, original timestamps, motion/freeze/course checks. Nav155/
+  wip134 focused tests pass with desktop OS doubles. Real driving evidence is
+  still Ioniq5PE only; no vehicle install or new CPU claim. This supersedes the
+  model-name restriction below. Both maintained branches, single-parent. See
+  docs/vehicle_can_gps_20261018.md.
+
+
+- On 2026-10-18, repeated S3 TCP failures persist after background downloads end;
+  Omada has both clients associated, C4 5GHz/-67dBm and S3 2.4GHz/-71dBm.
+  Remove only the Wi-Fi path's repeated10s shared-USB settling delay, preserving
+  loading wait and wired policy.45 focused tests pass; selective guarded HUD
+  install, no model/router/firmware change. Publish nav0adebf127c/wip2c479eaedf,
+  single-parent. This improves recovery delay, not the original disconnect cause.
+  User redirects C3/eGPU memory comparison to own C4:129qlogs show warmed evening
+  82-83% versus morning88-89%; overall increase remains incompletely attributed.
+  Native preimport comparison creates no sockets/threads; disabled HUD does not
+  start a Wi-Fi sender. Same-boot600s live retry observation ends with unchanged
+  ~393MiB available, HUD inactivePSS83.75-84.01MiB, active~182-186, stable oldION;
+  model/eGPU PSS changes~0.1MiB, GPU inventories unchanged. No new leak reproduced
+  or memory fix claimed. Some older95% samples include withdrawn diagnostic
+  compilation; do not use this to dismiss earlier92%. Read-only low-priority
+  observer PID273288 runs at most2h/32MiB under /data/carrot/diagnostics; result
+  pending, do not claim completed stability. Concurrent60s model/DM1200/1199
+  valid consecutive at19.99856/19.99491Hz, not strict>=20. See
+  docs/s3_disconnect_followup_20261018.md and docs/memory_scope_followup_20261018.md.
+
+- On 2026-10-18, user requested external-nav > phone > vehicle > device GPS.
+  Ioniq5PE bus0/0x374 contains positive LE32 lat/lon*1e-6: 20 segments/1195
+  original samples near1Hz. No OEM heading/fix-quality decoded; restrict profile
+  to this model/validated hemisphere. Optional receive-only monitor requires
+  three plausible samples, original timestamps, motion/freeze/freshness checks;
+  derived >=5m course is separately valid, disabled in reverse, never north by
+  default. Independent sources prevent lower-priority overwrite. Raw replay
+  119551 CAN events accepts1166 fixes, rejects6 acquisition/23 moving repeats;
+  829 have course. Nav188 tests pass/9 native-render skips, desktop OS doubles.
+  No vehicle install/native CPU/closed-loop claim. Publish both maintained
+  branches single-parent, preserving model architecture; wip also needs existing
+  nav receipt/sequence handling. See docs/vehicle_can_gps_20261018.md. Raw private.
+
+
+- On 2026-10-18, user reported worse signals and requested evening/morning review.
+  Read-only/hash-verified213 files; actual drives10ea/10eb run087f862d81 with
+  unchanged918654b8 tracker. Upper/central selectors remain OFFLINE, not the cause.
+  Morning08:17:02 visible green is read, but box/ID mismatch repeatedly resets
+  guard confirmation; right arrow+round green15x8 fails1.7 aspect gate. Actual
+  hold persists until driver gas04.390, despite model stop distance rising~49m.
+  Evening twilight near-red miss is proposal failure, not highest-row selection;
+  later green confirms in~1.24–1.49s but lead bypass already removed veto.
+  Measured evening9.29–12.87Hz, morning7.70–12.07Hz. New20-segment/12,492-observer
+  central replay removes7 greens, changes0/20,955 nominal and0/20,951 +20ms guard
+  updates, one release each; no solution or closed-loop claim. User proposes
+  remembering central red housings and accepting strong same-housing transitions.
+  Target whole-housing continuity/arrow separation, not brightness-only release.
+  No vehicle/code/model change; publish records both branches, single-parent.
+  See docs/signal_drive_review_20261018.md; raw evidence remains private.
+
+- On 2026-10-17, user requested locationd CPU optimization, then rejected the
+  small benefit and explicitly requested stopping, original code and records
+  only. Trial native-result/noise-allocation optimization preserves32,625 replay
+  inputs exactly and saves9.23% replay CPU; live38.63->35.24% of one core is
+  only3.38 percentage points (~0.85 points averaged over cores0--3). Do NOT
+  publish/reinstall the withdrawn implementation/tests. Restore all four C4
+  source/native files to verified original hashes on same boot/base2ef833b2;
+  guarded manager restart recreates the exited tmux session with original env.
+  Original native mapping verified in locationd/paramsd. Final60s model1201/DM1200
+  valid consecutive at20.000005/20.003386Hz; pose1200 healthy at20.001242Hz,
+  same PIDs and eGPU active at both ends. No model/settings/reboot changes or
+  road/memory/hard-deadline claim. Publish records only to both maintained
+  branches, single-parent. See docs/locationd_cpu_20261017.md.
+
+- On 2026-10-17, user requested central-priority signal improvement and historical
+  validation. Offline 122 segments/56,612 observations: any-colour peripheral
+  rejection removes1,035 reds; do not activate it. Preserve every red/red-history
+  track and same-row green pairs: revised selector excludes503 green boxes,
+  not503 labelled false positives. Development48-frame review removes33/34 clear
+  backgrounds and retains7/7 visible overhead greens; seven exclusions remain
+  ambiguous. These examples informed the rule, not independent accuracy tests.
+  Road-only selection barely acts at low-confidence intersections; explicit
+  image fallback is only a screen-position hypothesis. Paired stopped guards
+  have0 changes over115,920 nominal and115,898 +20ms updates,18 releases each;
+  cold per segment, not MPC/moving/closed-loop validation. Existing18.802s red
+  colour gap remains.750 desktop tests pass with native Params lookup doubled.
+  Keep CentralSignalSelector OFFLINE: no observer/display/control/vehicle change.
+  Publish both maintained branches single-parent. See
+  docs/signal_central_selection_20261017.md; raw evidence remains private.
+
+- On 2026-10-17, user requested another live memory-leak investigation while
+  ignition stays on. Same boot/base2ef833b2/selective HUD fixes: untouched580s
+  retry observation returns HUD PSS75.55--75.74MiB, old ION4.75MiB unchanged.
+  Then guarded HUD-only isolation runs real live renderer/native H264 into a
+  packet sink (not S3) for~10min/5985 diagnostic units. Last5min PSS183.81--184.98
+  MiB; bounded text cache resets, GPU240 objects/151.49MiB unchanged across140s.
+  Normal close/collect drops to83.66MiB, display weakref gone, owned ION empty.
+  No additional production leak reproduced or speculative code change. Earlier
+  92% event remains incompletely attributed; no hours/road/S3 stability claim.
+  Restore HUD1; final453.42MiB available/87.43%, S3 disconnected. Independent60s
+  model/DM1200 valid consecutive each at20.0012/20.0069Hz, original PIDs/eGPU.
+  Publish findings both branches single-parent. See docs/hud_memory_followup_20261017.md.
+
 - On 2026-10-17, user reported >92% memory and clarified HUD power was cycled
   before the observed88%; user authorizes vehicle-log transfer for diagnosis,
   raw evidence stays private. Three routes/11,046 memory samples reach91%.
