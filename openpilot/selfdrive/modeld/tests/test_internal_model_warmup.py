@@ -31,10 +31,10 @@ def test_missing_startup_camera_has_bounded_wait(monkeypatch):
 
 @pytest.mark.parametrize('failure', [False, True])
 def test_warmup_executes_full_inference_then_discards_synthetic_history(failure):
-  original_shadow, image = object(), object()
+  image = object()
   calls, resets = [], []
   def run(bufs, transforms, inputs, prepare_only):
-    assert model.signal_shadow is None and not prepare_only
+    assert not prepare_only
     assert bufs == {'img': image, 'big_img': image}
     np.testing.assert_array_equal(transforms['img'], np.eye(3))
     assert not inputs['desire_pulse'].any()
@@ -46,11 +46,11 @@ def test_warmup_executes_full_inference_then_discards_synthetic_history(failure)
   def reset():
     model.history = 0
     resets.append(True)
-  model = SimpleNamespace(run=run, reset=reset, history=0, signal_shadow=original_shadow)
+  model = SimpleNamespace(run=run, reset=reset, history=0)
   if failure:
     with pytest.raises(RuntimeError, match='warmup failure'):
       warm_internal_model(model, {'img': image, 'big_img': image})
   else:
     warm_internal_model(model, {'img': image, 'big_img': image})
   assert len(calls) == (1 if failure else 3)
-  assert resets == [True] and model.history == 0 and model.signal_shadow is original_shadow
+  assert resets == [True] and model.history == 0

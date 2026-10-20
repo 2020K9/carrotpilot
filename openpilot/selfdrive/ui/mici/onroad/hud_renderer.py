@@ -1,4 +1,3 @@
-import json
 import time
 import numpy as np
 import pyray as rl
@@ -178,7 +177,6 @@ class HudRenderer(Widget):
     super().__init__()
     self._overlay = OverlayLayer(1)
     self._overlay_state = None
-    self._traffic_light_info = None
     self._cruise_speed_animation_started = 0.0
     """Initialize the HUD renderer."""
     self._debug_speed_panel = False
@@ -219,7 +217,6 @@ class HudRenderer(Widget):
     self._set_speed_alpha_filter = FirstOrderFilter(0.0, 0.1, 1 / gui_app.target_fps)
 
     self._set_speed_override = SetSpeedOverride()
-    self._debug_traffic_light = False
 
     self._cruise_speed_text_last = ""
     self._cruise_speed_animation_text = ""
@@ -239,8 +236,6 @@ class HudRenderer(Widget):
 
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""
-    # Expiry/colour changes are evaluated on every UI frame, including reuse.
-    self._traffic_light_info = self._get_traffic_light_info()
     self._wheel_alpha_filter.update(255 * 0.95)
     self._wheel_y_filter.update(0)
     sm = ui_state.sm
@@ -301,7 +296,7 @@ class HudRenderer(Widget):
   def _render(self, rect: rl.Rectangle) -> None:
     """Render HUD elements to the screen."""
     state = self._overlay_state
-    key = (state.key if state else None, self._traffic_light_info, self._can_draw_top_icons, self._show_wheel_critical)
+    key = (state.key if state else None, self._can_draw_top_icons, self._show_wheel_critical)
     self._overlay.draw(rect, self._paint, key, enabled=state is not None and state.enabled,
                        urgent=state is not None and state.urgent)
     self._draw_cruise_speed_animation(rect)
@@ -616,15 +611,6 @@ class HudRenderer(Widget):
 
 
     # --------------------------------------------------------------------------
-    # Traffic Light (always higher priority than debug UI)
-    # --------------------------------------------------------------------------
-    traffic_x = int(time_block_right + 12)
-    traffic_y = int(pos_y)
-
-    if self._draw_traffic_light_info(traffic_x, traffic_y):
-      return
-
-    # --------------------------------------------------------------------------
     # Debug UI
     # --------------------------------------------------------------------------
     if show_debug_ui == 0:
@@ -736,7 +722,7 @@ class HudRenderer(Widget):
     """
     Bottom-left speed panel (like your 3rd image)
     - Background: images/speed_bg.png
-    - Overlays: current speed, set speed, traffic light, cruise gap (1~4), gear (D/P/R/N)
+    - Overlays: current speed, set speed, cruise gap (1~4), gear (D/P/R/N)
     """
     ov = self._set_speed_override.compute(ui_state.sm, float(self.set_speed))
 
@@ -959,105 +945,3 @@ class HudRenderer(Widget):
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
     unit_pos = rl.Vector2(rect.x + rect.width / 2 - unit_text_size.x / 2, 290 - unit_text_size.y / 2)
     rl.draw_text_ex(self._font_medium, unit_text, unit_pos, FONT_SIZES.speed_unit, 0, COLORS.WHITE_TRANSLUCENT)
-
-
-  def _get_traffic_light_info(self):
-    from openpilot.selfdrive.ui.signal_status import signal_detection_paused
-    if signal_detection_paused(ui_state.sm):
-      return {"lamp": "paused", "remain": 0}
-    # debug demo
-    if self._debug_traffic_light:
-      demo_list = [
-        {"lamp": "red", "remain": 13, "ts": time.monotonic()},
-        {"lamp": "green", "remain": 8, "ts": time.monotonic()},
-        {"lamp": "left", "remain": 7, "ts": time.monotonic()},
-        {"lamp": "right", "remain": 5, "ts": time.monotonic()},
-        {"lamp": "uturn", "remain": 4, "ts": time.monotonic()},
-      ]
-      idx = int(time.monotonic() // 2) % len(demo_list)
-      return demo_list[idx]
-
-    try:
-      raw = ui_state.params_memory.get("TrafficLight", encoding="utf-8")
-      if not raw:
-        return None
-
-      d = json.loads(raw)
-      lamp = str(d.get("lamp", "")).strip()
-      remain = int(d.get("remain", 0))
-      ts = float(d.get("ts", 0.0))
-
-      if lamp not in ("red", "green", "left", "right", "uturn"):
-        return None
-
-      if remain <= 0:
-        return None
-
-      # 1초마다 들어온다고 했으니, 2.5초 정도 지나면 stale로 보고 숨김
-      if ts > 0.0 and (time.monotonic() - ts) > 2.5:
-        return None
-
-      return {
-        "lamp": lamp,
-        "remain": remain,
-      }
-    except Exception:
-      return None
-
-  def _draw_traffic_light_lamp(self, lamp: str, cx: int, cy: int, size: int) -> None:
-    if lamp == "red":
-      rl.draw_circle(cx, cy, size, rl.Color(255, 70, 70, 245))
-      rl.draw_circle_lines(cx, cy, size, rl.Color(255, 255, 255, 220))
-      return
-
-    if lamp == "green":
-      rl.draw_circle(cx, cy, size, rl.Color(0, 220, 80, 245))
-      rl.draw_circle_lines(cx, cy, size, rl.Color(255, 255, 255, 220))
-      return
-
-    if lamp == "left":
-      txt = "<-"
-      color = rl.Color(0, 255, 100, 240)
-    elif lamp == "right":
-      txt = "->"
-      color = rl.Color(0, 255, 100, 240)
-    elif lamp == "uturn":
-      txt = "U"
-      color = rl.Color(255, 220, 80, 240)
-    else:
-      return
-
-    font_size = int(size * 2.0)
-    text_size = measure_text_cached(self._font_display, txt, font_size)
-    draw_text_ui_style(txt, cx, cy, font_size, color, font=self._font_display, border_width=1.0, shadow_offset=8.0, align="center", y_offset=0.0)
-
-  def _draw_traffic_light_info(self, pos_x: int, pos_y: int) -> bool:
-    info = self._traffic_light_info
-    if not info:
-      return False
-
-    if info["lamp"] == "paused":
-      from openpilot.selfdrive.ui.signal_status import draw_signal_pause
-      draw_signal_pause(pos_x + 24, pos_y, 24)
-      return True
-
-    lamp = info["lamp"]
-    remain = str(info["remain"])
-
-    lamp_size = 24
-    remain_font = 28
-    gap = 5
-
-    remain_size = measure_text_cached(self._font_semi_bold, remain, remain_font)
-
-    lamp_cx = pos_x + lamp_size
-    lamp_cy = int(pos_y)
-
-    self._draw_traffic_light_lamp(lamp, lamp_cx, lamp_cy, lamp_size)
-
-    text_x = lamp_cx + lamp_size + gap
-    text_y = int(pos_y - remain_size.y / 2)
-
-    draw_text_ui_style(remain, text_x, text_y, remain_font, rl.Color(255, 255, 255, 235), font=self._font_display, border_width=1.0, shadow_offset=8.0, align="left_top", y_offset=0.0)
-
-    return True

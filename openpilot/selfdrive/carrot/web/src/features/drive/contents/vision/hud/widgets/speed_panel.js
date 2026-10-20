@@ -1,6 +1,6 @@
 "use strict";
 
-import { SPEED_BG_URI, TRAFFIC_GREEN_URI, TRAFFIC_RED_URI } from "../assets.js";
+import { SPEED_BG_URI } from "../assets.js";
 import { COLORS } from "../tokens.js";
 import { svg, setText } from "../dom.js";
 
@@ -30,27 +30,6 @@ const OVERRIDE_LABEL_Y = 291.8; // SPEED_PANEL_Y - 4*0.8
 const OVERRIDE_SPEED_FS = 41.6; // 52*0.8
 const OVERRIDE_LABEL_FS = 24;   // 가독성 위해 클러스터(25*0.8=20)보다 소폭 확대
 
-function trafficIcon(doc, { uri, crop, centerX }) {
-  const size = 34;
-  const root = svg(doc, "svg", {
-    class: "chud-speed-traffic",
-    x: centerX - size * 0.5,
-    y: 286 - size * 0.5,
-    width: size,
-    height: size,
-    viewBox: crop,
-    preserveAspectRatio: "xMidYMid meet",
-  });
-  root.append(svg(doc, "image", {
-    href: uri,
-    x: 0,
-    y: 0,
-    width: 256,
-    height: 256,
-  }));
-  return root;
-}
-
 export function createSpeedPanel(doc) {
   const root = svg(doc, "svg", {
     class: "chud-speed",
@@ -67,18 +46,6 @@ export function createSpeedPanel(doc) {
     height: 113.6,
     opacity: 235 / 255,
     preserveAspectRatio: "none",
-  });
-  // 신호등은 한 번에 하나만 켜지므로 빨강/초록을 같은 자리에 겹쳐 둔다(토글 시 위치 안 바뀜).
-  const TRAFFIC_CENTER_X = SPEED_X - 38;
-  const redLight = trafficIcon(doc, {
-    uri: TRAFFIC_RED_URI,
-    crop: "72 7 52 52",
-    centerX: TRAFFIC_CENTER_X,
-  });
-  const greenLight = trafficIcon(doc, {
-    uri: TRAFFIC_GREEN_URI,
-    crop: "132 7 52 52",
-    centerX: TRAFFIC_CENTER_X,
   });
   const speed = svg(doc, "text", {
     class: "chud-t-speed",
@@ -130,7 +97,7 @@ export function createSpeedPanel(doc) {
     y: OVERRIDE_SPEED_Y,
     "font-size": OVERRIDE_SPEED_FS,
     "text-anchor": "middle",  });
-  root.append(background, redLight, greenLight, speed, setSpeed, gap, gearBox, gear, ev, overrideLabel, overrideSpeed);
+  root.append(background, speed, setSpeed, gap, gearBox, gear, ev, overrideLabel, overrideSpeed);
 
   // 설계 중심 cy + cap 보정으로 baseline(y) 설정. x/text-anchor는 그대로(가로 중앙).
   function place(el, cy, fs) {
@@ -162,10 +129,6 @@ export function createSpeedPanel(doc) {
     setText(gear, hasGear ? data.gear : "--");
     gear.classList.toggle("is-muted", !hasGear);
     gearBox.classList.toggle("is-muted", !hasGear);
-
-    const trafficState = Number(data.trafficState);
-    redLight.style.display = trafficState === 1 ? "" : "none";
-    greenLight.style.display = trafficState === 2 ? "" : "none";
 
     const evActive = data.evActive === true;
     ev.style.display = evActive ? "" : "none";

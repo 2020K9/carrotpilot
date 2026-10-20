@@ -1,5 +1,4 @@
 import fcntl
-import json
 import math
 import os
 import socket
@@ -78,7 +77,6 @@ nav_type_mapping = {
   249: ("", "", 6)   #TG
 }
 
-import collections
 
 COUNTDOWN_NEW_TARGET_MIN_JUMP_M = 20.0
 SCHOOL_ZONE_GAS_OVERRIDE_TIMEOUT_S = 3.0
@@ -180,9 +178,6 @@ class CarrotServ:
     self.carrotArg = ""
     self.carrotCmdIndex_last = 0
 
-    self.traffic_light_q = collections.deque(maxlen=int(2.0/0.1))  # 2 secnods
-    self.traffic_light_count = -1
-    self.traffic_state = 0
 
     self.left_spd_sec = 100
     self.left_tbt_sec = 100
@@ -213,7 +208,6 @@ class CarrotServ:
     self.carrot_navi_has_control = False
     self.carrot_navi_road_limit_valid = False
     self.carrot_navi_off_route = False
-    self.carrot_navi_traffic_active = False
     self.carrot_navi_control = None
 
     self.debugText = ""
@@ -270,84 +264,7 @@ class CarrotServ:
   def _update_cmd(self):
     if self.carrotCmdIndex != self.carrotCmdIndex_last:
       self.carrotCmdIndex_last = self.carrotCmdIndex
-      command_handlers = {
-        "DETECT": self._handle_detect_command,
-      }
-
-      handler = command_handlers.get(self.carrotCmd)
-      if handler:
-        handler(self.carrotArg)
-
-    self.traffic_light_q.append((-1, -1, "none", 0.0))
-    self.traffic_light_count -= 1
-    if self.traffic_light_count < 0:
-      self.traffic_light_count = -1
-      self.traffic_state = 0
-
-  def _handle_detect_command(self, xArg):
-    elements = [e.strip() for e in xArg.split(',')]
-    if len(elements) >= 4:
-      try:
-        state = elements[0]
-        value1 = float(elements[1])
-        value2 = float(elements[2])
-        value3 = float(elements[3])
-        self.traffic_light(value1, value2, state, value3)
-        self.traffic_light_count = int(0.5 / 0.1)
-      except ValueError:
-        pass
-
-  def traffic_light(self, x, y, color, cnf):
-    traffic_red = 0
-    traffic_green = 0
-    traffic_left = 0
-    traffic_red_trig = 0
-    traffic_green_trig = 0
-    traffic_left_trig = 0
-    for pdata in self.traffic_light_q:
-      px, py, pcolor,pcnf = pdata
-      if abs(x - px) < 0.2 and abs(y - py) < 0.2:
-        if pcolor in ["Green Light", "Left turn"]:
-          if color in ["Red Light", "Yellow Light"]:
-            traffic_red_trig += cnf
-            traffic_red += cnf
-          elif color in ["Green Light", "Left turn"]:
-            traffic_green += cnf
-        elif pcolor in ["Red Light", "Yellow Light"]:
-          if color in ["Green Light"]: #, "Left turn"]:
-            traffic_green_trig += cnf
-            traffic_green += cnf
-          elif color in ["Left turn"]:
-            traffic_left_trig += cnf
-            traffic_left += cnf
-          elif color in ["Red Light", "Yellow Light"]:
-            traffic_red += cnf
-
-    #print(self.traffic_light_q)
-    if traffic_red_trig > 0:
-      self.traffic_state = 1
-      #self._add_log("Red light triggered")
-      #print("Red light triggered")
-    elif traffic_green_trig > 0 and traffic_green > traffic_red:  #주변에 red light의 cnf보다 더 크면 출발... 감지오류로 출발하는경우가 생김.
-      self.traffic_state = 2
-      #self._add_log("Green light triggered")
-      #print("Green light triggered")
-    elif traffic_left_trig > 0:
-      self.traffic_state = 3
-    elif traffic_red > 0:
-      self.traffic_state = 1
-      #self._add_log("Red light continued")
-      #print("Red light continued")
-    elif traffic_green > 0:
-      self.traffic_state = 2
-      #self._add_log("Green light continued")
-      #print("Green light continued")
-    else:
-      self.traffic_state = 0
-      #print("TrafficLight none")
-
-    self.traffic_light_q.append((x,y,color,cnf))
-
+      # Phone traffic-light DETECT commands are intentionally ignored.
 
   def calculate_current_speed(self, left_dist, safe_speed_kph, safe_time, safe_decel_rate):
     safe_speed = safe_speed_kph / 3.6
@@ -903,17 +820,6 @@ class CarrotServ:
     self.carrot_navi_vehicle_sequence = -1
     self.carrot_navi_route_sequence = -1
 
-  def _clear_carrot_navi_traffic(self):
-    if not getattr(self, "carrot_navi_traffic_active", False):
-      return
-    params_memory = getattr(self, "params_memory", None)
-    if params_memory is not None:
-      try:
-        params_memory.remove("TrafficLight")
-      except Exception:
-        pass
-    self.carrot_navi_traffic_active = False
-
   def _clear_carrot_navi_control(self):
     self.rear_camera_events = []
     self.active_count = 0
@@ -944,7 +850,6 @@ class CarrotServ:
     self.last_update_gps_time_navi = 0
     self._gps_sources().remove('external_navi')
     self.szPosRoadName = ""
-    self._clear_carrot_navi_traffic()
 
   def _apply_carrot_navi_speed(self, navi: CarrotNaviControl):
     speed = navi.speed
@@ -1026,28 +931,6 @@ class CarrotServ:
     self.nGoPosDist = route.remaining_distance_m if route.present else 0
     self.nGoPosTime = route.remaining_time_sec if route.present else 0
 
-  def _apply_carrot_navi_traffic(self, navi: CarrotNaviControl):
-    traffic = navi.traffic
-    if not traffic.present or not traffic.visible or not traffic.lamp or traffic.remain_sec <= 0:
-      self._clear_carrot_navi_traffic()
-      return
-
-    params_memory = getattr(self, "params_memory", None)
-    if params_memory is None:
-      return
-    value = {
-      "distance": traffic.distance_m,
-      "lamp": traffic.lamp,
-      "remain": traffic.remain_sec,
-      "source": traffic.source,
-      "ts": time.monotonic(),
-    }
-    try:
-      params_memory.put_nonblocking("TrafficLight", json.dumps(value))
-      self.carrot_navi_traffic_active = True
-    except Exception:
-      pass
-
   def _apply_carrot_navi_guidance(self, navi: CarrotNaviControl, force=False):
     current = navi.current
     current_changed = force or current.sequence != self.carrot_navi_current_sequence
@@ -1110,9 +993,8 @@ class CarrotServ:
       self.carrot_navi_speed_sequence = navi.speed.sequence
       self._apply_carrot_navi_speed(navi)
 
-    # Traffic Params still use the service heartbeat; GPS only accepts new fixes.
+    # GPS only accepts new fixes.
     self._apply_carrot_navi_vehicle(navi)
-    self._apply_carrot_navi_traffic(navi)
     if new_session or navi.route.sequence != self.carrot_navi_route_sequence:
       self._apply_carrot_navi_route(navi)
 
@@ -1536,7 +1418,6 @@ class CarrotServ:
     msg.carrotMan.carrotCmdIndex = int(self.carrotCmdIndex)
     msg.carrotMan.carrotCmd = self.carrotCmd
     msg.carrotMan.carrotArg = self.carrotArg
-    msg.carrotMan.trafficState = self.traffic_state
 
     msg.carrotMan.xPosSpeed = float(v_ego_kph) #float(self.nPosSpeed)
     msg.carrotMan.xPosAngle = float(self.bearing)

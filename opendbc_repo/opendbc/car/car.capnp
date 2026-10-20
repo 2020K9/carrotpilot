@@ -560,8 +560,8 @@ struct CarControl {
 
       longEngaged @10;
       longDisengaged @11;
-      trafficSignGreen @12;
-      trafficSignChanged @13;
+      trafficSignGreen @12; # DEPRECATED 2026-10-20: no sound mapped
+      trafficSignChanged @13; # DEPRECATED 2026-10-20: no sound mapped
       laneChange @14;
       stopping @15;
       autoHold @16;

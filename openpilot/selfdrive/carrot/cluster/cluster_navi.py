@@ -14,7 +14,6 @@ from cluster_models import (
     NaviRouteInfo,
     NaviSpeedInfo,
     NaviStatusInfo,
-    NaviTrafficLightInfo,
     NaviVehicleInfo,
 )
 
@@ -22,7 +21,6 @@ from cluster_models import (
 LIVE_TTL_S = 6.0
 STATUS_TTL_S = 10.0
 ROUTE_TTL_S = 30.0
-TRAFFIC_TTL_S = 60.0
 MAX_ROUTE_POINTS = 256
 MAX_ROAD_LIMIT_KPH = 200
 ROAD_LIMIT_STEP_KPH = 10
@@ -240,31 +238,6 @@ def parse_carrot_navi(
                 ),
             )
 
-    traffic_item = _get(data, "trafficSignal")
-    traffic_meta = _meta(traffic_item, now)
-    traffic = None
-    if traffic_meta is not None and bool(_get(traffic_item, "visible", False)):
-        previous_traffic = previous.traffic_light if previous is not None else None
-        if _same_meta(previous_traffic, traffic_meta):
-            traffic = previous_traffic
-        else:
-            traffic = NaviTrafficLightInfo(
-                distance_m=max(0, _int(traffic_item, "distanceM")),
-                red_s=max(0, _int(traffic_item, "redRemainSec")) if bool(_get(traffic_item, "redValid")) else None,
-                straight_s=(
-                    max(0, _int(traffic_item, "greenRemainSec")) if bool(_get(traffic_item, "greenValid")) else None
-                ),
-                left_s=max(0, _int(traffic_item, "leftRemainSec")) if bool(_get(traffic_item, "leftValid")) else None,
-                right_s=max(0, _int(traffic_item, "rightRemainSec")) if bool(_get(traffic_item, "rightValid")) else None,
-                uturn_s=max(0, _int(traffic_item, "uturnRemainSec")) if bool(_get(traffic_item, "uturnValid")) else None,
-                red_on=bool(_get(traffic_item, "redOn")) if bool(_get(traffic_item, "redValid")) else None,
-                straight_on=bool(_get(traffic_item, "greenOn")) if bool(_get(traffic_item, "greenValid")) else None,
-                left_on=bool(_get(traffic_item, "leftOn")) if bool(_get(traffic_item, "leftValid")) else None,
-                right_on=bool(_get(traffic_item, "rightOn")) if bool(_get(traffic_item, "rightValid")) else None,
-                uturn_on=bool(_get(traffic_item, "uturnOn")) if bool(_get(traffic_item, "uturnValid")) else None,
-                meta=traffic_meta,
-            )
-
     crossroad_item = _get(data, "crossroad")
     crossroad_meta = _meta(crossroad_item, now)
     crossroad = None
@@ -341,7 +314,6 @@ def parse_carrot_navi(
         ),
         lane_ahead=lane_ahead,
         speed=speed,
-        traffic_light=traffic,
         crossroad=crossroad,
         route=route,
         status=status,
@@ -373,12 +345,11 @@ def fresh_carrot_navi(state: NaviLiveState | None, now: float | None = None) -> 
     lane_current = fresh(state.lane_current, LIVE_TTL_S)
     lane_ahead = tuple(item for item in state.lane_ahead if fresh(item, LIVE_TTL_S) is not None)
     speed = fresh(state.speed, LIVE_TTL_S)
-    traffic = fresh(state.traffic_light, TRAFFIC_TTL_S)
     crossroad = fresh(state.crossroad, LIVE_TTL_S)
     route = fresh(state.route, ROUTE_TTL_S)
     status = fresh(state.status, STATUS_TTL_S)
 
-    if not any((vehicle, current, next_guidance, lane_current, lane_ahead, speed, traffic, crossroad, route, status)):
+    if not any((vehicle, current, next_guidance, lane_current, lane_ahead, speed, crossroad, route, status)):
         return None, math.inf
     effective = replace(
         state,
@@ -388,7 +359,6 @@ def fresh_carrot_navi(state: NaviLiveState | None, now: float | None = None) -> 
         lane_current=lane_current,
         lane_ahead=lane_ahead,
         speed=speed,
-        traffic_light=traffic,
         crossroad=crossroad,
         route=route,
         status=status,

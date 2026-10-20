@@ -9,7 +9,6 @@ import {
   isCruiseDisplayVisible,
   resolveLaneModeState,
   resolveCruiseKph,
-  resolveTrafficState,
   vehicleHudSignature,
   withVehicleHudFields,
 } from "../src/features/drive/contents/vision/hud/data_bridge.js";
@@ -60,28 +59,12 @@ test("manual laneless request wins presentation while stale services settle", ()
   assert.equal(laneMode.pathActive, true, "road geometry keeps following the current planner sample");
 });
 
-test("traffic light keeps an active planner state when carrotMan carries zero", () => {
-  assert.equal(resolveTrafficState({
-    longitudinalPlan: { trafficState: 1 },
-    carrotMan: { trafficState: 0 },
-  }), 1);
-  assert.equal(resolveTrafficState({
+test("vehicle HUD payload no longer carries traffic-light state", () => {
+  const payload = deriveVehicleHudPayload({
     longitudinalPlan: { trafficState: 2 },
-    carrotMan: { trafficState: 0 },
-  }), 2);
-});
-
-test("traffic light falls back to carrotMan and rejects unknown states", () => {
-  assert.equal(resolveTrafficState({
-    longitudinalPlan: { trafficState: 0 },
     carrotMan: { trafficState: 1 },
-  }), 1);
-  assert.equal(resolveTrafficState({ carrotMan: { trafficState: 2 } }), 2);
-  assert.equal(resolveTrafficState({ longitudinalPlan: { trafficState: 9 } }), 0);
-  assert.equal(deriveVehicleHudPayload({
-    longitudinalPlan: { trafficState: 2 },
-    carrotMan: { trafficState: 0 },
-  }).trafficState, 2);
+  });
+  assert.equal(Object.hasOwn(payload, "trafficState"), false);
 });
 
 test("LFA activity follows carControl lateral actuation before engagement fallbacks", () => {
@@ -285,7 +268,6 @@ test("final presentation payload retains cluster-only fields", () => {
     laneModePlanned: false,
     laneModePresentation: "armed",
     cruiseOverride: { kph: 77, label: "cam:n", mode: 2 },
-    trafficState: 0,
     drivingMode: null,
   });
 });
@@ -310,7 +292,7 @@ test("classic live and replay glue uses the shared fields and one lifecycle sink
   assert.match(rawSource, /CarrotHudDataBridge\?\.withVehicleHudFields\?\.\(basePayload,\s*j\)/);
   assert.match(rawSource, /CarrotHudDataBridge\?\.vehicleHudSignature\?\.\(payload\)/);
   assert.match(rawSource, /createCruiseOverrideHold\?\.\(\)/);
-  assert.match(rawSource, /const trafficState = Number\(vehiclePayload\.trafficState\)/);
+  assert.doesNotMatch(rawSource, /trafficState|tlight/);
   assert.match(rawSource, /payload\.cruiseOverride = stabilizedHudCruiseOverride\(payload\.cruiseOverride,\s*payload\)/);
   assert.match(
     rawSource,

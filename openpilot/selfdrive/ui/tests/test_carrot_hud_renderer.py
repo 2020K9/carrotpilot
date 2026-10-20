@@ -326,7 +326,6 @@ def test_speed_panel_reuses_one_snapshot(hud_module, monkeypatch):
 
   monkeypatch.setattr(renderer, "_get_speed_limit_info", lambda: calls.append("snapshot") or speed_limit_info)
   monkeypatch.setattr(renderer, "_draw_carrot_main_background", lambda bx, by, info: (calls.append("background"), snapshots.append(info)))
-  monkeypatch.setattr(renderer, "_draw_carrot_traffic_light", lambda bx, by: calls.append("traffic"))
   monkeypatch.setattr(renderer, "_draw_carrot_speed_panel", lambda bx, by: calls.append("speed"))
   monkeypatch.setattr(renderer, "_draw_carrot_lower_status", lambda bx, by: calls.append("status"))
   monkeypatch.setattr(renderer, "_draw_carrot_speed_limit_box", lambda bx, by, info: (calls.append("limit"), snapshots.append(info)))
@@ -335,7 +334,7 @@ def test_speed_panel_reuses_one_snapshot(hud_module, monkeypatch):
 
   renderer._draw_set_speed_carrot(module.rl.Rectangle(10, 20, 1000, 600))
 
-  assert calls == ["snapshot", "background", "traffic", "speed", "status", "limit", "device", "navigation"]
+  assert calls == ["snapshot", "background", "speed", "status", "limit", "device", "navigation"]
   assert snapshots[0] is speed_limit_info
   assert snapshots[1] is speed_limit_info
   # Painting must not advance animation time; a reused layer skips this method.

@@ -21,11 +21,7 @@ test("HUD debug snapshot stays compact and separates source, derivation and disp
   const root = {
     ...diagnosticNode(),
     querySelector: (selector) => nodes[selector] || null,
-    querySelectorAll: (selector) => (
-      selector === ".chud-speed-traffic"
-        ? [diagnosticNode(), { ...diagnosticNode(), hidden: true }]
-        : []
-    ),
+    querySelectorAll: () => [],
   };
   const target = {
     CarrotHudState: {
@@ -38,12 +34,11 @@ test("HUD debug snapshot stays compact and separates source, derivation and disp
       },
       controlsState: { enabled: true, vCruiseCluster: 87, activeLaneLine: true },
       lateralPlan: { useLaneLines: true },
-      longitudinalPlan: { trafficState: 2 },
+      longitudinalPlan: { trafficState: 2, cruiseTarget: 88 },
       carControl: { latActive: true },
       carrotMan: {
         desiredSpeed: 77,
         desiredSource: "cam",
-        trafficState: 0,
         xSpdType: 1,
         xSpdLimit: 60,
         xSpdDist: 420,
@@ -54,7 +49,6 @@ test("HUD debug snapshot stays compact and separates source, derivation and disp
       deriveVehicleHudPayload: () => ({
         evActive: true,
         activeLaneLine: true,
-        trafficState: 2,
         cruiseOverride: { kph: 77, label: "cam:n", mode: 2 },
       }),
     },
@@ -94,13 +88,13 @@ test("HUD debug snapshot stays compact and separates source, derivation and disp
   assert.equal(report.source.lateralPlan.useLaneLines, true);
   assert.equal(report.source.carControl.latActive, true);
   assert.equal(report.source.carrotMan.xSpdDist, 420);
-  assert.equal(report.source.carrotMan.trafficState, 0);
-  assert.equal(report.source.longitudinalPlan.trafficState, 2);
-  assert.equal(report.derived.trafficState, 2);
+  assert.equal(report.source.longitudinalPlan.cruiseTarget, 88);
+  assert.equal(Object.hasOwn(report.source.longitudinalPlan, "trafficState"), false);
+  assert.equal(Object.hasOwn(report.source.carrotMan, "trafficState"), false);
   assert.equal(report.derived.cruiseOverride.kph, 77);
   assert.equal(report.presentation.overlay.data.activeLaneLine, true);
   assert.equal(report.dom.cruiseOverride.text, "77");
-  assert.equal(report.dom.trafficRed.present, true);
-  assert.equal(report.dom.trafficGreen.hidden, true);
+  assert.equal(Object.hasOwn(report.dom, "trafficRed"), false);
+  assert.equal(Object.hasOwn(report.dom, "trafficGreen"), false);
   assert.ok(JSON.stringify(report).length < 5000);
 });

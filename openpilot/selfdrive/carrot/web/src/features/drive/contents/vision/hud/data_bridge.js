@@ -32,11 +32,6 @@ function pressure(value) {
   return number != null && number >= 5 && number <= 100 ? number : null;
 }
 
-function trafficSignalState(value) {
-  const state = finite(value);
-  return state === 1 || state === 2 ? state : 0;
-}
-
 // Cluster driving-mode telltale: longitudinalPlan.myDrivingMode 1..4 (연비/안전/일반/고속).
 // Anything outside 1..4 means "no badge".
 function drivingModeState(value) {
@@ -165,7 +160,6 @@ export function withVehicleHudFields(payload = {}, source = {}) {
     laneModePlanned: laneMode.planned,
     laneModePresentation: laneMode.presentation,
     cruiseOverride: cruiseOverridePayload(source.cruiseOverride),
-    trafficState: trafficSignalState(source.trafficState ?? payload.trafficState),
     drivingMode: drivingModeState(source.drivingMode ?? payload.drivingMode),
   };
 }
@@ -281,16 +275,6 @@ export function deriveCruiseOverride(state = {}) {
   return null;
 }
 
-// The cluster follows longitudinalPlan while the comma HUD follows carrotMan.
-// Compact/replay samples can update those services at different moments, and
-// carrotMan commonly carries an explicit 0 that must not mask an active planner
-// signal. Prefer an active cluster state, then fall back to an active HUD state.
-export function resolveTrafficState(state = {}) {
-  const plannerState = trafficSignalState(state.longitudinalPlan?.trafficState);
-  if (plannerState !== 0) return plannerState;
-  return trafficSignalState(state.carrotMan?.trafficState);
-}
-
 // Decoded compact and raw replay state intentionally converge here. UI widgets
 // consume this stable payload and never need to know the cereal layout.
 export function deriveVehicleHudPayload(state = {}) {
@@ -319,7 +303,6 @@ export function deriveVehicleHudPayload(state = {}) {
     laneModePlanned: laneMode.planned,
     laneModePresentation: laneMode.presentation,
     cruiseOverride: deriveCruiseOverride(state),
-    trafficState: resolveTrafficState(state),
     drivingMode: drivingModeState(state.longitudinalPlan?.myDrivingMode),
     // The cluster wheel follows lateral actuation, not overall engagement.
     // Older recordings without carControl retain the legacy state fallback.
@@ -344,7 +327,6 @@ export const CarrotHudDataBridge = Object.freeze({
   resolveLaneModeState,
   deriveCruiseOverride,
   createCruiseOverrideHold,
-  resolveTrafficState,
   resolveCruiseKph,
   isCruiseDisplayVisible,
   withVehicleHudFields,

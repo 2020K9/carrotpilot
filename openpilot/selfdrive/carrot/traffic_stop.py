@@ -119,3 +119,31 @@ def get_traffic_stop_obstacle_distance(stop_distance: float, cruise_obstacle_dis
     release = float(np.interp(signal_obstacle, [release_distance, cruise_obstacle], [1.0, 0.0]))
     return cruise_obstacle + release * (signal_obstacle - cruise_obstacle)
   return signal_obstacle
+
+
+NAVI_TIMEOUT = 2.0
+ROAD_TIMEOUT = 10.0  # v2 JSON stream's advertised stale_timeout_ms
+
+
+def model_stop_suspended(sm, now: float | None = None) -> bool:
+  """Suspend the model-native E2E stop only on a fresh, explicit vNavi motorway class."""
+  import time
+  now = time.monotonic() if now is None else now
+  try:
+    if not (sm.seen['carrotNavi'] and sm.valid['carrotNavi'] and sm.alive['carrotNavi']):
+      return False
+    if not 0 <= now - sm.recv_time['carrotNavi'] <= NAVI_TIMEOUT:
+      return False
+    navi = sm['carrotNavi']
+    lane = navi.laneCurrent
+    if navi.schemaVersion != 1 or not navi.connected or not navi.sessionId:
+      return False
+    if navi.navigationStatus.meta.present and navi.navigationStatus.offRoute:
+      return False
+    # roadCategory defaults to zero in old messages and when the source omits it.
+    # Neither case is evidence of a motorway.
+    return bool(lane.meta.present and lane.roadCategoryValid and lane.roadCategory in (0, 1)
+                and lane.meta.receivedMonoTimeNanos > 0
+                and 0 <= now - lane.meta.receivedMonoTimeNanos / 1e9 <= ROAD_TIMEOUT)
+  except (AttributeError, KeyError, TypeError):
+    return False

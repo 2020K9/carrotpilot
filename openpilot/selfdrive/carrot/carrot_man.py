@@ -55,7 +55,7 @@ except ImportError:
 NetworkType = log.DeviceState.NetworkType
 NAVI_HTTP_PORT = 7713
 NAVI_HTTP_MAX_BODY_SIZE = 16 * 1024 * 1024
-NAVI_EVENT_TYPES = ("complexCrossroad", "rgdata", "vrtx", "ssinf", "sinf", "route")
+NAVI_EVENT_TYPES = ("complexCrossroad", "rgdata", "vrtx", "route")
 NAVI_DEBUG_PARAM = "CarrotNaviDebug"
 NAVI_IMAGE_PARAM = "CarrotNaviImage"
 NAVI_IMAGE_BASE64_MAX_CHARS = 6 * 1024 * 1024
@@ -1617,104 +1617,6 @@ class CarrotMan:
       except Exception as e:
         print("NavDestination put error:", e)
 
-  def _put_traffic_light(self, lamp: str, remain: Any, distance: Any = 0, lat: Any = None, lon: Any = None):
-    try:
-      remain_int = int(float(remain or 0))
-    except Exception:
-      remain_int = 0
-
-    if remain_int <= 0:
-      return
-
-    try:
-      distance_int = int(float(distance or 0))
-    except Exception:
-      distance_int = 0
-
-    traffic_light = {
-      "distance": distance_int,
-      "lamp": lamp,
-      "remain": remain_int,
-      "ts": time.monotonic(),
-    }
-
-    try:
-      if lat is not None:
-        traffic_light["lat"] = float(lat)
-      if lon is not None:
-        traffic_light["lon"] = float(lon)
-    except Exception:
-      pass
-
-    self.params_memory.put_nonblocking("TrafficLight", json.dumps(traffic_light))
-
-  def handle_traffic_light(self, d: dict):
-    if not isinstance(d, dict):
-      return
-
-    # {'distance': 120, 'greenLightRemainTime': 0, 'leftLightRemainTime': 0, 'location': {'coordString': 'x:127.045286, y:37.477032', 'latitude': 37.47703188722564, 'longitude': 127.04528634430659},
-    #       'redLightRemainTime': 15, 'rightLightRemainTime': 0, 'uturnLightRemainTime': 0, 'greenLightOn': False, 'leftLightOn': False, 'redLightOn': True, 'rightLightOn': False, 'uturnLightOn': False}
-    lamp = None
-    remain = 0
-
-    if d.get("redLightOn"):
-      lamp = "red"
-      remain = d.get("redLightRemainTime", 0)
-    elif d.get("leftLightOn"):
-      lamp = "left"
-      remain = d.get("leftLightRemainTime", 0)
-    elif d.get("greenLightOn"):
-      lamp = "green"
-      remain = d.get("greenLightRemainTime", 0)
-    elif d.get("rightLightOn"):
-      lamp = "right"
-      remain = d.get("rightLightRemainTime", 0)
-    elif d.get("uturnLightOn"):
-      lamp = "uturn"
-      remain = d.get("uturnLightRemainTime", 0)
-
-    if lamp is None:
-      return
-
-    location = d.get("location", {})
-    lat = None
-    lon = None
-    try:
-      if isinstance(location, dict):
-        if location.get("latitude") is not None:
-          lat = float(location.get("latitude"))
-        if location.get("longitude") is not None:
-          lon = float(location.get("longitude"))
-    except Exception:
-      pass
-    self._put_traffic_light(lamp, remain, d.get("distance", 0), lat, lon)
-
-  def handle_traffic_light_detail(self, d: dict):
-    if not isinstance(d, dict):
-      return
-
-    green_checks = (
-      ("left", "left", "left_remain_time"),
-      ("straight", "green", "straight_remain_time"),
-      ("right", "right", "right_remain_time"),
-      ("uturn", "uturn", "uturn_remain_time"),
-    )
-    for field, lamp, remain_field in green_checks:
-      if str(d.get(field, "")).upper() == "GREEN_LIGHT_ON":
-        self._put_traffic_light(lamp, d.get(remain_field, 0), d.get("distance", 0), d.get("lat"), d.get("lon"))
-        return
-
-    red_remain = 0
-    for field in ("straight", "left", "right", "uturn"):
-      if str(d.get(field, "")).upper() == "RED_LIGHT_ON":
-        try:
-          red_remain = max(red_remain, int(d.get(f"{field}_remain_time", 0) or 0))
-        except Exception:
-          pass
-
-    if red_remain > 0:
-      self._put_traffic_light("red", red_remain, d.get("distance", 0), d.get("lat"), d.get("lon"))
-
   def handle_complex_crossroad(self, d: dict):
     if not isinstance(d, dict):
       return
@@ -1771,47 +1673,6 @@ class CarrotMan:
 
   def _remaining_time(self, value: Any) -> Optional[int]:
     return self._safe_int_or_none(value, minimum=1, maximum=999)
-
-  def _traffic_light_debug_from_sinf(self, sinf: dict) -> Dict[str, Any]:
-    return {
-      "distanceM": self._safe_int_or_none(sinf.get("distance"), minimum=0),
-      "redS": self._remaining_time(sinf.get("redLightRemainTime")),
-      "straightS": self._remaining_time(sinf.get("greenLightRemainTime")),
-      "leftS": self._remaining_time(sinf.get("leftLightRemainTime")),
-      "rightS": self._remaining_time(sinf.get("rightLightRemainTime")),
-      "uturnS": self._remaining_time(sinf.get("uturnLightRemainTime")),
-      "redOn": bool(sinf.get("redLightOn")),
-      "straightOn": bool(sinf.get("greenLightOn")),
-      "leftOn": bool(sinf.get("leftLightOn")),
-      "rightOn": bool(sinf.get("rightLightOn")),
-      "uturnOn": bool(sinf.get("uturnLightOn")),
-    }
-
-  def _traffic_light_debug_from_ssinf(self, ssinf: dict) -> Dict[str, Any]:
-    red_remaining = []
-    for signal_key, remain_key in (
-      ("straight", "straight_remain_time"),
-      ("left", "left_remain_time"),
-      ("right", "right_remain_time"),
-      ("uturn", "uturn_remain_time"),
-    ):
-      if str(ssinf.get(signal_key, "")).upper() == "RED_LIGHT_ON":
-        remaining = self._remaining_time(ssinf.get(remain_key))
-        if remaining is not None:
-          red_remaining.append(remaining)
-    return {
-      "distanceM": self._safe_int_or_none(ssinf.get("distance"), minimum=0),
-      "redS": max(red_remaining) if red_remaining else None,
-      "straightS": self._remaining_time(ssinf.get("straight_remain_time")),
-      "leftS": self._remaining_time(ssinf.get("left_remain_time")),
-      "rightS": self._remaining_time(ssinf.get("right_remain_time")),
-      "uturnS": self._remaining_time(ssinf.get("uturn_remain_time")),
-      "redOn": bool(red_remaining),
-      "straightOn": str(ssinf.get("straight", "")).upper() == "GREEN_LIGHT_ON",
-      "leftOn": str(ssinf.get("left", "")).upper() == "GREEN_LIGHT_ON",
-      "rightOn": str(ssinf.get("right", "")).upper() == "GREEN_LIGHT_ON",
-      "uturnOn": str(ssinf.get("uturn", "")).upper() == "GREEN_LIGHT_ON",
-    }
 
   def _write_navi_image_param(self, crossroad: dict, image_hash: str):
     image_base64 = crossroad.get("imageBase64")
@@ -1884,23 +1745,6 @@ class CarrotMan:
       })
     elif event_type in ("vrtx", "route"):
       summary.update(self._route_summary(obj.get(event_type)))
-    elif event_type == "sinf" and isinstance(obj.get("sinf"), dict):
-      sinf = obj["sinf"]
-      summary.update({
-        "distance": sinf.get("distance"),
-        "redLightOn": sinf.get("redLightOn"),
-        "greenLightOn": sinf.get("greenLightOn"),
-        "leftLightOn": sinf.get("leftLightOn"),
-      })
-    elif event_type == "ssinf" and isinstance(obj.get("ssinf"), dict):
-      ssinf = obj["ssinf"]
-      summary.update({
-        "distance": ssinf.get("distance"),
-        "straight": ssinf.get("straight"),
-        "left": ssinf.get("left"),
-        "straightRemain": ssinf.get("straight_remain_time"),
-        "leftRemain": ssinf.get("left_remain_time"),
-      })
     elif event_type == "complexCrossroad" and isinstance(obj.get("complexCrossroad"), dict):
       crossroad = obj["complexCrossroad"]
       image_base64 = crossroad.get("imageBase64")
@@ -1954,7 +1798,6 @@ class CarrotMan:
     severity = "normal"
     lines: List[str] = []
     speed_limit_kph: Optional[int] = None
-    traffic_light: Optional[Dict[str, Any]] = None
 
     if isinstance(obj, dict) and event_type == "rgdata" and isinstance(obj.get("rgdata"), dict):
       rgdata = self._normalize_rgdata(obj["rgdata"])
@@ -1992,35 +1835,6 @@ class CarrotMan:
       else:
         lines.append("Route points: 0")
 
-    elif isinstance(obj, dict) and event_type == "sinf" and isinstance(obj.get("sinf"), dict):
-      sinf = obj["sinf"]
-      title = "Traffic light"
-      traffic_light = self._traffic_light_debug_from_sinf(sinf)
-      if sinf.get("redLightOn"):
-        severity = "stop"
-      elif sinf.get("leftLightOn") or sinf.get("greenLightOn"):
-        severity = "go"
-      lines.extend((
-        self._navi_debug_line("Distance", f"{sinf.get('distance', '--')}m"),
-        self._navi_debug_line("Red", f"{sinf.get('redLightOn')} {sinf.get('redLightRemainTime', '--')}s"),
-        self._navi_debug_line("Green", f"{sinf.get('greenLightOn')} {sinf.get('greenLightRemainTime', '--')}s"),
-        self._navi_debug_line("Left", f"{sinf.get('leftLightOn')} {sinf.get('leftLightRemainTime', '--')}s"),
-      ))
-
-    elif isinstance(obj, dict) and event_type == "ssinf" and isinstance(obj.get("ssinf"), dict):
-      ssinf = obj["ssinf"]
-      title = "Traffic light detail"
-      traffic_light = self._traffic_light_debug_from_ssinf(ssinf)
-      red_active = any(str(ssinf.get(key, "")).upper() == "RED_LIGHT_ON" for key in ("straight", "left", "right", "uturn"))
-      green_active = any(str(ssinf.get(key, "")).upper() == "GREEN_LIGHT_ON" for key in ("straight", "left", "right", "uturn"))
-      severity = "stop" if red_active else "go" if green_active else "normal"
-      lines.extend((
-        self._navi_debug_line("Distance", f"{ssinf.get('distance', '--')}m"),
-        self._navi_debug_line("Straight", f"{ssinf.get('straight', '--')} {ssinf.get('straight_remain_time', '--')}s"),
-        self._navi_debug_line("Left", f"{ssinf.get('left', '--')} {ssinf.get('left_remain_time', '--')}s"),
-        self._navi_debug_line("Right", f"{ssinf.get('right', '--')} {ssinf.get('right_remain_time', '--')}s"),
-      ))
-
     elif isinstance(obj, dict) and event_type == "complexCrossroad" and isinstance(obj.get("complexCrossroad"), dict):
       crossroad = obj["complexCrossroad"]
       title = "Complex crossroad"
@@ -2044,7 +1858,6 @@ class CarrotMan:
       "severity": severity,
       "lines": [line for line in lines if line],
       "speedLimitKph": speed_limit_kph,
-      "trafficLight": traffic_light,
     }
 
   def _write_navi_debug_param(self, obj: Any, event_type: str, event_time_ms: int):
@@ -2133,15 +1946,8 @@ class CarrotMan:
       self._safe_dispatch_handler("vrtx", self.handle_route, obj["vrtx"])
       handled = True
 
-    if "ssinf" in obj:
-      print(f"[NAVI ssinf RX] {json.dumps(obj['ssinf'], ensure_ascii=False)}", flush=True)
-      self._safe_dispatch_handler("ssinf", self.handle_traffic_light_detail, obj["ssinf"])
-      handled = True
-
-    if "sinf" in obj:
-      print(f"[NAVI sinf RX] {json.dumps(obj['sinf'], ensure_ascii=False)}", flush=True)
-      self._safe_dispatch_handler("sinf", self.handle_traffic_light, obj["sinf"])
-      handled = True
+    if "ssinf" in obj or "sinf" in obj:
+      handled = True  # traffic-light packets from the navigation app are intentionally ignored
 
     if "route" in obj:
       self._safe_dispatch_handler("route", self.handle_route, obj["route"])

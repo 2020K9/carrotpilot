@@ -1,5 +1,16 @@
 # Repository memory
 
+- On 2026-10-20, user (2020K9 carrot-wip) requests removing all traffic-light
+  functions. Removed signalcolord camera worker, modeld signal shadow, signal
+  assist/start-guard/stop-prepare/lead-brake-lamp modules, SignalAssistMode/
+  LeadBrakeLights, nav/phone traffic-light inputs, green auto-departure, signal
+  alerts/sounds/UI icons and tools/signal_analysis. Model-native no-lead stop is
+  kept (not light-specific; weights may still encode lights): TrafficLightDetectMode
+  key retained, 0 off/1 on, saved 2 treated as 1, departure needs gas or lead
+  handover. Capnp signal fields/enums retained inert. K9 logs: removed worker used
+  ~45% of one little core/76MiB; no GPU reclaimed, no camera latency change and
+  no validated camera optimization. See docs/signal_removal_20261020.md.
+
 - On 2026-10-20, user requests comma-to-Jetson HUD/navigation over Wi-Fi,
   no USB fallback, and complete ESP32-S3 display retirement. S3 code, firmware,
   pairing tools and installer routes removed both branches; shared renderer

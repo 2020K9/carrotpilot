@@ -5,7 +5,7 @@
 > [!NOTE]
 > This is the canonical English user guide maintained with the `carrot-wip` code. When user-visible behavior changes, update this document together with the related code and tests.
 
-This page explains all **23 speed and deceleration settings** in the current code: event targets, deceleration distance, stock-navigation CAN, road-limit adjustment, speed bumps, curve/route/model speed, and traffic-light stop adjustment.
+This page explains all **23 speed and deceleration settings** in the current code: event targets, deceleration distance, stock-navigation CAN, road-limit adjustment, speed bumps, curve/route/model speed, and model stop-prediction adjustment.
 
 Change them in **Carrot Web → Settings → Driving control → Speed and deceleration**.
 
@@ -18,7 +18,7 @@ Change them in **Carrot Web → Settings → Driving control → Speed and decel
 2. [Road speed limit](#road-speed-limit)
 3. [Speed bumps](#speed-bump)
 4. [Curves and turns](#curve-turn)
-5. [Traffic-light detection](#traffic-light)
+5. [Model stop prediction](#traffic-light)
 
 ## The lowest candidate becomes the final desired speed
 
@@ -330,22 +330,22 @@ This is not curve-only. It applies the driving model's `desiredVelocity` to crui
 For isolated tuning, start with mode 1 and `ApplyModelSpeed=0`; adjust the curve factor, then the floor, and then check route-turn control. Test `ApplyModelSpeed` separately because it changes cruise set speed.
 
 <a id="traffic-light"></a>
-## 5. Traffic-light detection
+## 5. Model stop prediction
 
-This uses the model's predicted path end and future speed changes, together with incoming signal events. It is not a simple direct camera color reader.
+This follows the driving model's own predicted stop (predicted path end and future speed decline) when there is no lead. The model may predict a stop for a traffic light, stop line, stop sign, obstacle or other reason; Carrot does not read traffic-light colours and has no separate traffic-light detector.
 
 ### `TrafficLightDetectMode`
 
-| Value | Intended behavior | Current-code note |
-|---:|---|---|
-| `0` | Disabled | Detection state forced off |
-| `1` | Detect stops only | Blocks automatic departure from a complete stop |
-| `2` | Detect stop and go | May transition to departure on a green decision |
+The key name is retained for saved-settings compatibility. It is shown as **Model Stop Prediction**.
 
-> [!IMPORTANT]
-> While decelerating, mode `1` still has a branch that can cancel the stop plan after a green decision. It cannot be interpreted as “never use any departure judgment.”
+| Value | Behavior |
+|---:|---|
+| `0` | Off: the model's stop prediction does not slow or stop the vehicle |
+| `1` | On (default): slow and stop on the model's stop prediction with no lead |
 
-Detection is disabled or limited in high-speed driving mode (`MyDrivingMode=4`), above roughly 20 degrees of steering angle, when the model lacks stop-path confidence, during selected strong-deceleration conditions, or when a lead is ahead of the stop target.
+A saved legacy value `2` (former Stop & Go) is treated as `1`. There is no automatic departure after a model-predicted stop: press the accelerator to depart. When following a lead, the lead moving away still departs through normal lead following.
+
+Model stop prediction is not used in high-speed driving mode (`MyDrivingMode=4`), above roughly 20 degrees of steering angle, when the model lacks stop-path confidence, during selected strong-deceleration conditions, or when a lead is ahead of the stop target. The driver must always check signals and the road.
 
 ### `TrafficStopDistanceAdjust`
 
@@ -360,9 +360,9 @@ The stored value is divided by 100 and added to the stop-obstacle position in me
 
 Near a complete stop, the current code uses a fixed -2.0 m instead of the user value, so the final position may not exactly match the setting.
 
-There is one vehicle-relative exception. During an E2E stop with no active `leadOne`, a high-probability, low-speed camera-model vehicle must remain 0–3 m ahead of the planned stop endpoint for five frames (about 0.25 s). For that stop only, the planner uses a +2.0 m virtual-obstacle offset instead of the signal adjustment, allowing the MPC to preserve `StopDistanceCarrot` from the inferred vehicle position. It does not create an SCC/radar object or promote `leadOne`; if confirmation fails, the existing signal-stop and fixed -2.0 m behavior remain unchanged.
+There is one vehicle-relative exception. During an E2E stop with no active `leadOne`, a high-probability, low-speed camera-model vehicle must remain 0–3 m ahead of the planned stop endpoint for five frames (about 0.25 s). For that stop only, the planner uses a +2.0 m virtual-obstacle offset instead of the stop-position adjustment, allowing the MPC to preserve `StopDistanceCarrot` from the inferred vehicle position. It does not create an SCC/radar object or promote `leadOne`; if confirmation fails, the existing model-stop and fixed -2.0 m behavior remain unchanged.
 
-Adjust by 100 (1 m) at a time under comparable no-lead signal stops, because the automatic vehicle-relative correction can take priority when a stopped vehicle is present. If false signal detection is the problem, diagnose the mode/model decision instead of the distance offset.
+Adjust by 100 (1 m) at a time under comparable no-lead model stops, because the automatic vehicle-relative correction can take priority when a stopped vehicle is present. If an unwanted model stop is the problem, diagnose the mode/model decision instead of the distance offset.
 
 ## Quick troubleshooting
 
@@ -374,7 +374,7 @@ Adjust by 100 (1 m) at a time under comparable no-lead signal stops, because the
 | No speed-bump slowing | Mode 2+, event type, road category |
 | Curve slowing on a straight road | Which of vision, route, or model selected the minimum |
 | Slowing with turn mode 0 | Future-model speed, applied-model speed, separate ATC |
-| Unwanted traffic-light stop/go | Detection mode, driving mode, model decision |
+| Unwanted model stop | `TrafficLightDetectMode`, driving mode, model decision |
 
 Automatic CAN diagnostic logs are generated only when currently received vehicle or radar state from the present onroad session reports an actual error. CAN timeouts from the previous drive's shutdown are not used, and capture occurs five seconds after detection to include the immediate aftermath. When investigating a speed or deceleration issue, upload the affected drive from Carrot Web even if no automatic diagnostic log was generated.
 
@@ -384,8 +384,8 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 - Vision-curve speed: `openpilot/selfdrive/carrot/carrot_man.py`
 - Future-model speed: `openpilot/selfdrive/controls/lib/desire_helper.py`
 - Automatic road/model set speed: `openpilot/selfdrive/car/cruise.py`
-- Traffic-stop state and adjustment: `openpilot/selfdrive/carrot/carrot_functions.py`
-- Traffic-stop MPC: `openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py`
+- Model-stop state and adjustment: `openpilot/selfdrive/carrot/carrot_functions.py`
+- Model-stop MPC: `openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py`
 - Setting ranges/defaults: `openpilot/selfdrive/carrot_settings.json`, `openpilot/common/params_keys.h`
 
 [Back to Understanding Settings](settings.md)

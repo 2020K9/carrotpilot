@@ -200,7 +200,6 @@ class NaviLiveState:
     lane_current: NaviLaneInfo | None = None
     lane_ahead: tuple[NaviLaneInfo, ...] = ()
     speed: NaviSpeedInfo | None = None
-    traffic_light: NaviTrafficLightInfo | None = None
     crossroad: NaviCrossroadInfo | None = None
     route: NaviRouteInfo | None = None
     status: NaviStatusInfo | None = None
@@ -212,24 +211,7 @@ class NaviDebugInfo:
     lines: tuple[str, ...] = ()
     severity: str = "normal"
     speed_limit_kph: int | None = None
-    traffic_light: NaviTrafficLightInfo | None = None
     guidance_image: NaviGuidanceImage | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class NaviTrafficLightInfo:
-    distance_m: int | None = None
-    red_s: int | None = None
-    straight_s: int | None = None
-    left_s: int | None = None
-    right_s: int | None = None
-    uturn_s: int | None = None
-    red_on: bool | None = None
-    straight_on: bool | None = None
-    left_on: bool | None = None
-    right_on: bool | None = None
-    uturn_on: bool | None = None
-    meta: NaviItemMeta | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,7 +465,6 @@ class ClusterUiState:
     lateral_plan_curvatures: tuple[float, ...] = ()
     lateral_plan_curvature_rates: tuple[float, ...] = ()
     display_speed_kph: float | None = None
-    traffic_state: int = 0
     driving_mode: int | None = None
     git_status: GitBranchStatus | None = None
     actual_fps: float | None = None

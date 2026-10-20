@@ -41,12 +41,10 @@ function selectedSourceState(state = {}) {
     },
     longitudinalPlan: {
       cruiseTarget: longitudinalPlan.cruiseTarget ?? null,
-      trafficState: longitudinalPlan.trafficState ?? null,
     },
     carrotMan: {
       desiredSpeed: carrotMan.desiredSpeed ?? null,
       desiredSource: carrotMan.desiredSource ?? null,
-      trafficState: carrotMan.trafficState ?? null,
       xSpdType: carrotMan.xSpdType ?? null,
       xSpdLimit: carrotMan.xSpdLimit ?? null,
       xSpdDist: carrotMan.xSpdDist ?? null,
@@ -106,7 +104,6 @@ export function createHudDebugFacade(target = globalThis, overlay = target.Carro
     const source = target.CarrotHudState || {};
     const root = overlay?.root || target.document?.querySelector?.("[data-carrot-hud='overlay']") || null;
     const stage = target.document?.getElementById?.("carrotStage") || null;
-    const trafficLights = root?.querySelectorAll?.(".chud-speed-traffic") || [];
     return {
       version: 1,
       capturedAt: new Date().toISOString(),
@@ -126,8 +123,6 @@ export function createHudDebugFacade(target = globalThis, overlay = target.Carro
         lane: nodeState(target, root?.querySelector?.(".chud-lfa-lane")),
         cruiseOverride: nodeState(target, root?.querySelector?.(".chud-t-override"), { text: true }),
         cruiseOverrideLabel: nodeState(target, root?.querySelector?.(".chud-t-override-label"), { text: true }),
-        trafficRed: nodeState(target, trafficLights[0]),
-        trafficGreen: nodeState(target, trafficLights[1]),
       },
     };
   }

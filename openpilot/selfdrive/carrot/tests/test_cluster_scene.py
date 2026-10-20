@@ -636,9 +636,7 @@ def test_ev_mode_indicator_draws_green_only_when_valid_and_active(valid, active,
     assert kwargs == {"anchor": "center", "cache": True}
 
 
-def test_ev_mode_indicator_fits_between_three_digit_speeds(monkeypatch) -> None:
-  # Layout test: select the model indicator without consulting device Params.
-  monkeypatch.setattr("openpilot.selfdrive.carrot.signal_display.display_requested", lambda: False)
+def test_ev_mode_indicator_fits_between_three_digit_speeds() -> None:
   renderer = object.__new__(ClusterUiRenderer)
   renderer._current_theme = lambda: LIGHT_CLUSTER_THEME
   renderer._speed_bg_texture = None
@@ -736,33 +734,6 @@ def test_driving_mode_indicator_hides_unknown_values(mode) -> None:
   assert draws == []
 
 
-@pytest.mark.parametrize("traffic_state", (1, 2))
-def test_traffic_states_share_the_slot_beside_driving_mode(monkeypatch, traffic_state) -> None:
-  monkeypatch.setattr("openpilot.selfdrive.carrot.signal_display.display_requested", lambda: False)
-  renderer = object.__new__(ClusterUiRenderer)
-  renderer._traffic_red_texture = SimpleNamespace(width=56, height=56)
-  renderer._traffic_green_texture = SimpleNamespace(width=56, height=56)
-  draws = []
-  monkeypatch.setattr(cluster_renderer.rl, "draw_texture_pro", lambda *args: draws.append(args))
-
-  renderer._draw_model_traffic_state(traffic_state)
-
-  assert len(draws) == 1
-  destination = draws[0][2]
-  assert destination.x == pytest.approx(
-    cluster_renderer.SPEED_MODEL_TRAFFIC_CENTER_X - cluster_renderer.SPEED_MODEL_TRAFFIC_ICON_SIZE * 0.5
-  )
-  assert destination.y == pytest.approx(
-    cluster_renderer.SPEED_MODEL_TRAFFIC_CENTER_Y - cluster_renderer.SPEED_MODEL_TRAFFIC_ICON_SIZE * 0.5
-  )
-  assert destination.width == pytest.approx(cluster_renderer.SPEED_MODEL_TRAFFIC_ICON_SIZE)
-  assert destination.height == pytest.approx(cluster_renderer.SPEED_MODEL_TRAFFIC_ICON_SIZE)
-  traffic_right = destination.x + destination.width
-  assert cluster_renderer.SPEED_DRIVING_MODE_CENTER_X - traffic_right == pytest.approx(
-    cluster_renderer.SPEED_DRIVING_MODE_BASE_CENTER_OFFSET_X
-  )
-
-
 def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
   lfa_lane_left = (
     cluster_renderer.LFA_STATUS_CENTER_X
@@ -841,7 +812,7 @@ def test_speed_gear_badge_returns_to_white_after_brake_lights_turn_off_or_disapp
     (WHITE, (5, 9, 12), WHITE),
   ]
 
-def test_speed_block_draws_driving_mode_before_traffic_state() -> None:
+def test_speed_block_draws_driving_mode_indicator() -> None:
   renderer = object.__new__(ClusterUiRenderer)
   renderer._current_theme = lambda: LIGHT_CLUSTER_THEME
   renderer._speed_bg_texture = None
@@ -852,11 +823,10 @@ def test_speed_block_draws_driving_mode_before_traffic_state() -> None:
   renderer._draw_tpms_status = lambda *_args, **_kwargs: None
   order = []
   renderer._draw_driving_mode_indicator = lambda *_args, **_kwargs: order.append("driving_mode")
-  renderer._draw_model_traffic_state = lambda *_args, **_kwargs: order.append("traffic")
 
-  renderer._draw_speed_block(_cluster_state(driving_mode=2, traffic_state=2))
+  renderer._draw_speed_block(_cluster_state(driving_mode=2))
 
-  assert order == ["driving_mode", "traffic"]
+  assert order == ["driving_mode"]
 
 
 def test_full_navi_does_not_draw_speed_mode_indicators() -> None:

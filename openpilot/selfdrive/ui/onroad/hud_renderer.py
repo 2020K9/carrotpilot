@@ -165,10 +165,6 @@ class HudRenderer(Widget):
 
     self._txt_speed_bg = gui_app.texture('images/speed_bg.png')
 
-    # traffic light icon들 이름은 실제 프로젝트 리소스 이름에 맞춰 수정 가능
-    self._traffic_red_icon = gui_app.texture('images/traffic_red.png')
-    self._traffic_green_icon = gui_app.texture('images/traffic_green.png')
-
     self._ic_turn_l = gui_app.texture('images/turn_l.png')
     self._ic_turn_r = gui_app.texture('images/turn_r.png')
     self._ic_lane_change_l = gui_app.texture('images/lane_change_l.png')
@@ -584,20 +580,6 @@ class HudRenderer(Widget):
       return 0
 
 
-  def _get_traffic_state(self) -> int:
-    try:
-      return int(ui_state.sm["carrotMan"].trafficState)
-    except Exception:
-      return 0
-
-
-  def _get_traffic_state_carrot(self) -> int:
-    try:
-      return int(ui_state.sm["carrotMan"].trafficStateCarrot)
-    except Exception:
-      return 0
-
-
   def _get_speed_limit_info(self) -> tuple[int, int, int]:
     """
     return:
@@ -640,37 +622,6 @@ class HudRenderer(Widget):
       pass
 
     return False
-
-  def _draw_carrot_traffic_light(self, bx: int, by: int):
-    from openpilot.selfdrive.ui.signal_status import signal_detection_paused, draw_signal_pause, draw_signal_assist
-    if signal_detection_paused(ui_state.sm):
-      draw_signal_pause(bx, by + 270, 32)
-      return
-    traffic_state = self._get_traffic_state()
-    traffic_state_carrot = self._get_traffic_state_carrot()
-
-    icon_size = 64
-    red_light = traffic_state == 1
-    green_light = traffic_state == 2
-
-    icon_red = icon_size
-    icon_green = icon_size
-
-    if traffic_state_carrot == 1:
-      red_light = True
-      icon_red = int(icon_red * 1.5)
-    elif traffic_state_carrot == 2:
-      green_light = True
-      icon_green = int(icon_green * 1.5)
-
-    x = bx
-    y = by + 270
-
-    if red_light:
-      self._draw_texture_rect(self._traffic_red_icon, x - icon_red / 2, y - icon_red / 2, icon_red, icon_red)
-    elif green_light:
-      self._draw_texture_rect(self._traffic_green_icon, x - icon_green / 2, y - icon_green / 2, icon_green, icon_green)
-    draw_signal_assist(ui_state.sm, x, y, max(icon_red, icon_green) / 2)
 
   def _draw_carrot_speed_panel(self, bx: int, by: int):
     sm = ui_state.sm
@@ -1394,7 +1345,6 @@ class HudRenderer(Widget):
 
     speed_limit_info = self._get_speed_limit_info()
     self._draw_carrot_main_background(bx, by, speed_limit_info)
-    self._draw_carrot_traffic_light(bx, by)
     self._draw_carrot_speed_panel(bx, by)
 
     self._draw_carrot_lower_status(bx, by)

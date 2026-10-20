@@ -18,7 +18,6 @@ from cluster_models import (
     ModelPathPoint,
     NaviDebugInfo,
     NaviGuidanceImage,
-    NaviTrafficLightInfo,
 )
 from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_speed_limit
 from cluster_navi_source import NaviIpcMediaSource
@@ -106,7 +105,6 @@ LIVE_SERVICES_BASE = (
     "wideRoadCameraState",
 )
 LIVE_CAN_SERVICES = ("can", "sendcan")
-NAVI_TRAFFIC_LIGHT_HOLD_SECONDS = 10.0
 
 
 def live_route_parser() -> RouteLogParser:
@@ -151,8 +149,6 @@ class OpenpilotLiveSource:
         self._cached_live_debug: LiveDebugInfo | None = None
         self._cached_navi_debug: NaviDebugInfo | None = None
         self._cached_navi_image: NaviGuidanceImage | None = None
-        self._held_navi_traffic_light: NaviTrafficLightInfo | None = None
-        self._held_navi_traffic_light_received_t: float | None = None
         self._show_plot_mode = 0
         self._egpu_active = False
         self._next_egpu_param_read_t = 0.0
@@ -850,11 +846,9 @@ class OpenpilotLiveSource:
 
     def _navi_debug_info(self) -> NaviDebugInfo | None:
         self._refresh_debug_params()
-        traffic_light = self._held_navi_traffic_light_at(time.monotonic())
         if self._cached_navi_debug is not None:
             return replace(
                 self._cached_navi_debug,
-                traffic_light=traffic_light,
                 guidance_image=self._cached_navi_image,
             )
         route_count = len(self._nav_route_coords)
@@ -863,7 +857,6 @@ class OpenpilotLiveSource:
             title="NAVI receiver",
             lines=lines,
             severity="normal",
-            traffic_light=traffic_light,
             guidance_image=self._cached_navi_image,
         )
 
@@ -890,20 +883,11 @@ class OpenpilotLiveSource:
         raw_lines = data.get("lines", ())
         lines = tuple(str(line)[:80] for line in raw_lines if str(line).strip()) if isinstance(raw_lines, list) else ()
         speed_limit_kph = self._parse_positive_int(data.get("speedLimitKph"), maximum=300)
-        now = time.monotonic()
-        received_t = finite_float(data.get("receivedMono"))
-        if received_t is None:
-            received_t = now
-        parsed_traffic_light = self._parse_navi_traffic_light(data.get("trafficLight"))
-        if parsed_traffic_light is not None:
-            self._update_held_navi_traffic_light(parsed_traffic_light, received_t, now)
-        traffic_light = self._held_navi_traffic_light_at(now)
         return NaviDebugInfo(
             title=title[:80],
             lines=lines[:12],
             severity=severity[:16],
             speed_limit_kph=speed_limit_kph,
-            traffic_light=traffic_light,
             guidance_image=self._cached_navi_image,
         )
 
@@ -948,60 +932,6 @@ class OpenpilotLiveSource:
             height=height,
         )
 
-    def _parse_navi_traffic_light(self, value: Any) -> NaviTrafficLightInfo | None:
-        if not isinstance(value, dict):
-            return None
-        return NaviTrafficLightInfo(
-            distance_m=self._parse_positive_int(value.get("distanceM"), maximum=10000),
-            red_s=self._parse_positive_int(value.get("redS"), maximum=999),
-            straight_s=self._parse_positive_int(value.get("straightS"), maximum=999),
-            left_s=self._parse_positive_int(value.get("leftS"), maximum=999),
-            right_s=self._parse_positive_int(value.get("rightS"), maximum=999),
-            uturn_s=self._parse_positive_int(value.get("uturnS"), maximum=999),
-            red_on=self._parse_optional_bool(value.get("redOn")),
-            straight_on=self._parse_optional_bool(value.get("straightOn")),
-            left_on=self._parse_optional_bool(value.get("leftOn")),
-            right_on=self._parse_optional_bool(value.get("rightOn")),
-            uturn_on=self._parse_optional_bool(value.get("uturnOn")),
-        )
-
-    def _update_held_navi_traffic_light(
-        self,
-        traffic_light: NaviTrafficLightInfo,
-        received_t: float,
-        now: float,
-    ) -> None:
-        if now - received_t > NAVI_TRAFFIC_LIGHT_HOLD_SECONDS:
-            return
-        self._held_navi_traffic_light = traffic_light
-        self._held_navi_traffic_light_received_t = received_t
-
-    def _held_navi_traffic_light_at(self, now: float) -> NaviTrafficLightInfo | None:
-        traffic_light = self._held_navi_traffic_light
-        received_t = self._held_navi_traffic_light_received_t
-        if traffic_light is None or received_t is None:
-            return None
-        age_s = max(0.0, now - received_t)
-        if age_s > NAVI_TRAFFIC_LIGHT_HOLD_SECONDS:
-            self._held_navi_traffic_light = None
-            self._held_navi_traffic_light_received_t = None
-            return None
-        elapsed_s = int(age_s)
-
-        def countdown(seconds: int | None) -> int | None:
-            if seconds is None:
-                return None
-            return max(0, int(seconds) - elapsed_s)
-
-        return replace(
-            traffic_light,
-            red_s=countdown(traffic_light.red_s),
-            straight_s=countdown(traffic_light.straight_s),
-            left_s=countdown(traffic_light.left_s),
-            right_s=countdown(traffic_light.right_s),
-            uturn_s=countdown(traffic_light.uturn_s),
-        )
-
     @staticmethod
     def _parse_positive_int(value: Any, maximum: int) -> int | None:
         try:
@@ -1011,198 +941,6 @@ class OpenpilotLiveSource:
         if parsed <= 0 or parsed > maximum:
             return None
         return parsed
-
-    @staticmethod
-    def _parse_optional_bool(value: Any) -> bool | None:
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in ("1", "true", "yes", "on"):
-                return True
-            if normalized in ("0", "false", "no", "off"):
-                return False
-        try:
-            return bool(int(value))
-        except Exception:
-            return None
-
-    def _update_nav_route(self, data: Any) -> None:
-        coords = safe_get(data, "coordinates")
-        if not coords:
-            self._nav_route_coords = ()
-            self._nav_route_model_path = ()
-            self._nav_route_anchor = None
-            return
-
-        parsed: list[tuple[float, float]] = []
-        for coord in _limited_items(coords, LIVE_NAV_ROUTE_MAX_POINTS):
-            lat = finite_float(safe_get(coord, "latitude"))
-            lon = finite_float(safe_get(coord, "longitude"))
-            if lat is None or lon is None:
-                continue
-            if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
-                continue
-            parsed.append((lat, lon))
-
-        self._nav_route_coords = tuple(parsed)
-        self._nav_route_model_path = ()
-        self._nav_route_anchor = None
-
-    def _with_external_nav_route(self, state: ClusterUiState) -> ClusterUiState:
-        path = self._external_nav_route_model_path()
-        if len(path) < 2:
-            return state
-        return replace(
-            state,
-            model_path=path,
-            planned_speed_kph=None,
-            planned_accel_mps2=None,
-            planned_curvature_m_inv=None,
-        )
-
-    def _with_navi_speed_limit(self, state: ClusterUiState, navi_debug: NaviDebugInfo | None) -> ClusterUiState:
-        if state.speed_limit_kph is not None:
-            return state
-        if navi_debug is None or navi_debug.speed_limit_kph is None:
-            return state
-        return replace(state, speed_limit_kph=navi_debug.speed_limit_kph, speed_limit_source="n")
-
-    def _external_nav_route_model_path(self) -> tuple[ModelPathPoint, ...]:
-        anchor = self._nav_route_anchor_from_carrot_man()
-        if anchor is None or len(self._nav_route_coords) < 2:
-            return ()
-        if self._nav_route_anchor == anchor and self._nav_route_model_path:
-            return self._nav_route_model_path
-
-        lat0, lon0, heading_deg = anchor
-        heading_rad = math.radians(heading_deg)
-        cos_h = math.cos(heading_rad)
-        sin_h = math.sin(heading_rad)
-        meters_per_lat = 40008000.0 / 360.0
-        meters_per_lon = meters_per_lat * math.cos(math.radians(lat0))
-        points: list[ModelPathPoint] = [ModelPathPoint(forward_m=0.0, lateral_m=0.0)]
-        previous_forward = 0.0
-
-        for lat, lon in self._nav_route_coords:
-            east_m = (lon - lon0) * meters_per_lon
-            north_m = (lat - lat0) * meters_per_lat
-            lateral_m = east_m * cos_h - north_m * sin_h
-            forward_m = east_m * sin_h + north_m * cos_h
-            if forward_m < 0.0 or forward_m > 180.0:
-                continue
-            if abs(lateral_m) > 40.0:
-                continue
-            if forward_m <= previous_forward + 0.25:
-                continue
-            points.append(ModelPathPoint(forward_m=forward_m, lateral_m=lateral_m))
-            previous_forward = forward_m
-            if len(points) >= 96:
-                break
-
-        self._nav_route_anchor = anchor
-        self._nav_route_model_path = tuple(points)
-        return self._nav_route_model_path
-
-    def _nav_route_anchor_from_carrot_man(self) -> tuple[float, float, float] | None:
-        carrot_man = self._service_data("carrotMan")
-        lat = self._finite_attr(carrot_man, "xPosLat", 0.0)
-        lon = self._finite_attr(carrot_man, "xPosLon", 0.0)
-        heading = self._finite_attr(carrot_man, "xPosAngle", 0.0)
-        if abs(lat) < 0.000001 or abs(lon) < 0.000001:
-            return None
-        if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
-            return None
-        return (lat, lon, heading % 360.0)
-
-    def _read_cached_live_debug(self) -> LiveDebugInfo | None:
-        if self.params is None:
-            return None
-
-        live_delay = self._event_service_from_param("LiveDelay", "liveDelay")
-        live_torque = self._event_service_from_param("LiveTorqueParameters", "liveTorqueParameters")
-        live_parameters = self._event_service_from_param("LiveParametersV2", "liveParameters")
-        live_steer_ratio = None
-        if live_parameters is not None:
-            live_steer_ratio = safe_optional_float(live_parameters, "steerRatio")
-        if live_steer_ratio is None:
-            live_steer_ratio = self._legacy_live_parameters_steer_ratio()
-
-        live_torque_valid = None
-        if live_torque is not None:
-            live_valid = safe_get(live_torque, "liveValid")
-            live_torque_valid = bool(live_valid) if live_valid is not None else None
-
-        info = LiveDebugInfo(
-            live_delay_calibration_percent=safe_optional_float(live_delay, "calPerc") if live_delay is not None else None,
-            live_delay_lateral_s=safe_optional_float(live_delay, "lateralDelay") if live_delay is not None else None,
-            live_torque_calibration_percent=(
-                safe_optional_float(live_torque, "calPerc") if live_torque is not None else None
-            ),
-            live_torque_valid=live_torque_valid,
-            live_torque_lat_accel_factor=(
-                safe_optional_float(live_torque, "latAccelFactorFiltered") if live_torque is not None else None
-            ),
-            live_torque_friction=(
-                safe_optional_float(live_torque, "frictionCoefficientFiltered") if live_torque is not None else None
-            ),
-            live_steer_ratio=live_steer_ratio,
-        )
-        values = (
-            info.live_delay_calibration_percent,
-            info.live_delay_lateral_s,
-            info.live_torque_calibration_percent,
-            info.live_torque_valid,
-            info.live_torque_lat_accel_factor,
-            info.live_torque_friction,
-            info.live_steer_ratio,
-        )
-        return info if any(value is not None for value in values) else None
-
-    def _event_service_from_param(self, param_key: str, service_name: str) -> Any | None:
-        if self.params is None or self.log is None:
-            return None
-        try:
-            data = self.params.get(param_key)
-        except Exception:
-            return None
-        if not data:
-            return None
-        try:
-            event = self.messaging.log_from_bytes(data, self.log.Event)
-            return safe_get(event, service_name)
-        except Exception:
-            return None
-
-    def _legacy_live_parameters_steer_ratio(self) -> float | None:
-        if self.params is None:
-            return None
-        try:
-            data = self.params.get("LiveParameters")
-        except Exception:
-            return None
-        if not data:
-            return None
-        if isinstance(data, dict):
-            return finite_float(data.get("steerRatio"))
-        try:
-            if isinstance(data, (bytes, bytearray)):
-                data = data.decode("utf-8")
-            parsed = json.loads(data)
-        except Exception:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return finite_float(parsed.get("steerRatio"))
-
-    def _effective_steer_actuator_delay(self, live_delay_lateral_s: float | None) -> float | None:
-        if self._steer_actuator_delay_param_s is not None and self._steer_actuator_delay_param_s > 0.0:
-            return self._steer_actuator_delay_param_s
-        if live_delay_lateral_s is not None:
-            return live_delay_lateral_s
-        return self._steer_actuator_delay_param_s
 
     @staticmethod
     def _first_present(value: Any | None, fallback: Any | None) -> Any | None:

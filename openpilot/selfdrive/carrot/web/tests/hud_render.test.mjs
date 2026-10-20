@@ -114,21 +114,14 @@ function renderFromCereal(state) {
 }
 
 // 당근비전(라이브): EV 켜짐 + 레인모드 + 감속(카메라) 오버라이드.
-test("live and replay traffic lights render from the active planner state", () => {
-  const red = renderFromCereal({
-    longitudinalPlan: { trafficState: 1 },
-    carrotMan: { trafficState: 0 },
-  });
-  assert.equal(red.trafficLights.length, 2);
-  assert.ok(isVisible(red.trafficLights[0]), "red light visible");
-  assert.ok(!isVisible(red.trafficLights[1]), "green light hidden");
-
-  const green = renderFromCereal({
-    longitudinalPlan: { trafficState: 2 },
-    carrotMan: { trafficState: 0 },
-  });
-  assert.ok(!isVisible(green.trafficLights[0]), "red light hidden");
-  assert.ok(isVisible(green.trafficLights[1]), "green light visible");
+test("speed panel renders no traffic-light icons for planner stop states", () => {
+  for (const trafficState of [1, 2]) {
+    const r = renderFromCereal({
+      longitudinalPlan: { trafficState },
+      carrotMan: { trafficState },
+    });
+    assert.equal(r.trafficLights.length, 0);
+  }
 });
 
 test("live: EV + green lane wings + orange external navigation reason all render", () => {

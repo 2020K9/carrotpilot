@@ -35,7 +35,7 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	xPosLon @20 : Float32;
 	xPosAngle @21 : Float32;
 	xPosSpeed @22 : Float32;
-	trafficState @23 : Int32;
+	trafficState @23 : Int32; # DEPRECATED 2026-10-20: traffic-light removal, never populated
 	nGoPosDist @24 : Int32;
 	nGoPosTime @25 : Int32;
 	szSdiDescr @26 : Text;

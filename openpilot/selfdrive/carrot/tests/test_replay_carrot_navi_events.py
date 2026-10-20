@@ -98,7 +98,6 @@ def test_initial_carrot_navi_snapshot_emits_semantic_replay_markers_once():
     "lane_guidance_shown",
     "speed_alert_shown",
     "section_control_started",
-    "traffic_signal_shown",
     "crossroad_guidance_shown",
   ]
 
@@ -143,7 +142,6 @@ def test_carrot_navi_distance_bands_and_state_changes_are_distinct_events():
     "speed_alert_cleared",
     "road_speed_limit_changed",
     "section_control_ended",
-    "traffic_signal_changed",
     "crossroad_guidance_hidden",
   ):
     assert expected in types
@@ -186,7 +184,7 @@ def test_carrot_navi_connection_and_route_end_transitions_are_indexed():
   assert "navigation_ended" in types
   assert "navigation_maneuver_current_cleared" in types
   assert "lane_guidance_hidden" in types
-  assert "traffic_signal_hidden" in types
+  assert not any(t.startswith("traffic_signal_") for t in types)  # traffic lights are not replay events
 
 
 def test_rich_carrot_navi_events_replace_only_the_legacy_navigation_marker():

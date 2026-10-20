@@ -199,7 +199,7 @@ Force-sensor trends do not establish loss of hand contact or driver consent to h
 | [Road speed limit](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | Desired-speed adjustment from the road limit |
 | [Speed bumps](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | Completion time, crossing speed, and early-release distance |
 | [Curves and turns](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | Curve slowing from curvature and distance, prompt recovery after confirmed easing, and route-turn speed |
-| [Traffic lights](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | Stop/go detection, stop-position adjustment, and automatic stopped-vehicle alignment |
+| [Model stop](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | Model stop-prediction slowing, stop-position adjustment, and automatic stopped-vehicle alignment |
 
 `AutoNaviSpeedCtrlMode` is `0` off, `1` fixed speed cameras, `2` cameras plus speed bumps, or `3` those events plus mobile-camera events.
 
@@ -209,7 +209,7 @@ While external navigation is connected, deceleration, countdowns, and navigation
 
 `AutoNaviSpeedDecelRate` defaults to `120` (1.20 m/s²); a lower value begins slowing farther away. Updating the software does not change an existing saved value. `AutoNaviSpeedSafetyFactor` applies a percentage of the event limit as the target. Before tuning either value, confirm that the event type, limit, and remaining distance are being received correctly.
 
-`TrafficLightDetectMode` is `0` off, `1` stop detection, or `2` stop and go detection. This is model-based assistance; the driver must always verify the signal.
+`TrafficLightDetectMode` (Model Stop Prediction) is `0` off or `1` on (default). With no lead, it slows and stops when the driving model predicts a stop; the model may stop for traffic lights, stop lines, stop signs or obstacles and is not a traffic-light detector. There is no automatic departure after such a stop: press the accelerator (a lead moving away still departs through normal lead following). A saved legacy value `2` is treated as `1`. The driver must always verify signals and the road.
 
 ### Cruise and following gap — 29 settings overall, 26 on Hyundai/Kia/Genesis
 
@@ -223,7 +223,7 @@ While external navigation is connected, deceleration, countdowns, and navigation
 | [Following responsiveness](cruise-gap.md#lead-response) | `LeadAccelResponse`, `LeadAccelResponseTF1`–`LeadAccelResponseTF4` | Lead-start, acceleration and approach response at every following-distance level |
 | [Carrot cruise](cruise-gap.md#carrot-cruise) | `CruiseEcoControl`, `CruiseCoastingPercent`, `CarrotCruiseDecel`, `CarrotCruiseAtcDecel` | Economy control, coasting margin with a fixed entry reference (default 0%: existing control), and cruise deceleration limits |
 
-`MyDrivingMode` is `1` eco, `2` safe, `3` normal, or `4` high speed. High-speed mode ignores traffic-light control and increases acceleration tendency, so read its behavior before selecting it.
+`MyDrivingMode` is `1` eco, `2` safe, `3` normal, or `4` high speed. High-speed mode disables model stop prediction and increases acceleration tendency, so read its behavior before selecting it.
 
 Eco caps lead response at 2 and Safe at 3; Normal and High retain the selected value. Caps follow common/gap-specific selection and never raise lower choices or 0. Eco ×1.1 and Safe ×1.2 TF multipliers remain, with gradual release of mode allowance. Automatic selection uses Safe for stopping approaches and sustained slow following. Outside a stopping approach, lead acceleration above 1.0 m/s² for about 0.5 seconds restores Normal/Eco; otherwise, it requires three seconds of flow recovery or four seconds with no lead at 15 km/h or above.
 
@@ -414,16 +414,6 @@ Check storage use for recording and network use, heat, and privacy before enabli
 
 Experimental DM switches to standard monitoring for 20 seconds only when moving traffic first appears after an absence. Additional vehicles do not extend it; experimental monitoring then resumes, with no empty-road bonus while traffic remains.
 
-## Signal Assistance Mode (Trial)
-
-`SignalAssistMode` defaults to `0`. Mode `0` disables auxiliary signals; `1` enables recognition, display, alerts and the stopped-red departure veto; `2` also enables moving-red preparation.
-
-The stopped-red departure veto is limited to stopping and creeping at up to 5km/h. Above 5km/h, its previous stop memory is cleared so losing a lead after departure cannot reactivate that stop. This does not confirm green or authorize acceleration; normal model and lead control and explicit driver holds remain active.
-
-Mode `2` gradually requests acceleration toward approximately −0.5m/s² after qualifying red evidence, with no lead, pedal input or turn and a speed above 5km/h and below 82km/h. At night, at least two persistent red lamps must have compatible placement and road-direction support; inferred housing size is not used as a stopping distance.
-
-Preparation releases when red evidence disappears or conflicts with green. The existing driving model still controls stopping toward the stop line; this trial does not guarantee deceleration or stopping at every red signal.
-
 ## Safe adjustment order
 
 1. Record the current value in Carrot Web.
@@ -435,17 +425,3 @@ Preparation releases when red evidence disappears or conflicts with green. The e
 7. Restore the previous value or baseline profile immediately if the result is worse or unclear.
 
 See the Wiki [Tuning introduction](https://github.com/ajouatom/openpilot/wiki/Guide-Tuning) for the recommended steering and longitudinal adjustment order.
-
-# Lead brake lamp observation (trial)
-
-**Lead Brake Lamp Observation** (`LeadBrakeLights`) in Traffic Light settings
-defaults OFF. ON displays/logs a central brake-lamp candidate on the immediate
-radar/vision-matched lead in signal assistance modes 1/2. The USB/HUD road-camera
-view shows `BRAKE?` for a candidate and `BRK ?` for unknown; unknown never means
-verified brake-off. Mode 0 disables this processing too. Turns, uncertain or
-missing leads, and busy signal iterations are skipped.
-
-This is display/logging only, with no braking, stop or departure command.
-The new Params key requires the normal build after updating. The current road
-camera supplies 20fps. Reduced processing overhead does not establish sustained
-20Hz detection; this change does not promise 20Hz or 50Hz detection.

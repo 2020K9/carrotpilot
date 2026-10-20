@@ -1,6 +1,5 @@
 """One shared, cheap invalidation snapshot for both onroad display layers."""
 from openpilot.system.ui.lib.application import gui_app
-from openpilot.selfdrive.carrot.signal_display import signal_display_status
 
 
 class OverlayState:
@@ -12,7 +11,7 @@ class OverlayState:
   def update(self, ui, camera, stream, mode):
     sm = ui.sm
     cs, ss, lp = sm['carState'], sm['selfdriveState'], sm['longitudinalPlan']
-    cm, radar = sm['carrotMan'], sm['radarState']
+    radar = sm['radarState']
     # Warnings, BSD and touch processing never wait for a layer's next turn.
     self.enabled = ui.started
     self.urgent = (ss.alertSize.raw != 0 or ss.alertHudVisual.raw != 0 or cs.leftBlindspot or cs.rightBlindspot or
@@ -21,10 +20,7 @@ class OverlayState:
       ui.started_frame, ui.status, camera, camera.is_connected(), stream, mode,
       ss.enabled, ss.experimentalMode, cs.vCruiseCluster, cs.gearShifter.raw,
       cs.brakePressed, cs.gasPressed, cs.brakeHoldActive, cs.softHoldActive, cs.carrotCruise,
-      lp.xState, lp.trafficState, lp.allowThrottle, cm.trafficState,
-      getattr(lp, 'signalDetectionSuspended', False),
-      getattr(lp, 'signalObservationColor', 0), getattr(lp, 'signalAssistAction', 0),
-      signal_display_status(),
+      lp.xState, lp.allowThrottle,
       radar.leadOne.status, radar.leadOne.radarTrackId, radar.leadTwo.status,
       sm.recv_frame['liveCalibration'],
       sm.valid['modelV2'], sm.alive['modelV2'], sm.valid['carState'], sm.alive['carState'],

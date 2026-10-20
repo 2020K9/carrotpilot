@@ -162,9 +162,9 @@ def test_camera_and_critical_states_invalidate_both_layers(layer_env):
   ss = SimpleNamespace(alertSize=SimpleNamespace(raw=0), alertHudVisual=SimpleNamespace(raw=0), enabled=True, experimentalMode=True)
   class Messages(dict):
     pass
-  sm = Messages(carState=cs, selfdriveState=ss, longitudinalPlan=SimpleNamespace(xState=0, trafficState=1, allowThrottle=True),
+  sm = Messages(carState=cs, selfdriveState=ss, longitudinalPlan=SimpleNamespace(xState=0, allowThrottle=True),
                 modelV2=SimpleNamespace(meta=SimpleNamespace(laneChangeState=SimpleNamespace(raw=0))),
-                carrotMan=SimpleNamespace(trafficState=1), radarState=SimpleNamespace(
+                carrotMan=SimpleNamespace(), radarState=SimpleNamespace(
                   leadOne=SimpleNamespace(status=True, radarTrackId=12), leadTwo=SimpleNamespace(status=False)))
   services = ['modelV2', 'carState', 'radarState', 'longitudinalPlan', 'carrotMan', 'liveCalibration']
   sm.recv_frame = dict.fromkeys(services, 1)
@@ -178,7 +178,7 @@ def test_camera_and_critical_states_invalidate_both_layers(layer_env):
   state.update(ui, camera, 0, 0)
   assert state.enabled and not state.urgent
   old = state.key
-  sm['longitudinalPlan'].trafficState = 2
+  sm['longitudinalPlan'].xState = 2
   state.update(ui, camera, 0, 0)
   assert state.key != old
 

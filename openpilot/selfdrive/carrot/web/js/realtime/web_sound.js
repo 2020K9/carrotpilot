@@ -20,8 +20,6 @@
     9: { file: "audio_turn.wav" },
     10: { file: "tici_engaged.wav" },
     11: { file: "tici_disengaged.wav" },
-    12: { file: "traffic_sign_green.wav" },
-    13: { file: "traffic_sign_changed.wav" },
     14: { file: "audio_lane_change.wav" },
     15: { file: "audio_stopping.wav" },
     16: { file: "audio_auto_hold.wav" },

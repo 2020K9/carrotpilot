@@ -316,7 +316,6 @@ def test_fullscreen_3d_uses_full_width_hud_layout_even_when_panels_are_swapped()
   assert fullscreen_offset_x == 796.0
   assert renderer._tpms_offset_design_x(CLUSTER_SCREEN_MODE_FULLSCREEN_3D) == fullscreen_offset_x
   assert renderer._center_clock_x(CLUSTER_SCREEN_MODE_FULLSCREEN_3D) == 960.0
-  assert renderer._traffic_panel_right(CLUSTER_SCREEN_MODE_FULLSCREEN_3D) == 1892.0
   assert renderer._core_usage_right_x(CLUSTER_SCREEN_MODE_FULLSCREEN_3D) == 1788.0
   assert (
     cluster_renderer.DESIGN_WIDTH

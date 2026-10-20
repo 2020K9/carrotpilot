@@ -20,7 +20,6 @@ def warm_internal_model(model, bufs):
   transforms = {name: np.eye(3, dtype=np.float32) for name in bufs}
   inputs = {'desire_pulse': np.zeros(8, np.float32), 'traffic_convention': np.array([1., 0.], np.float32),
             'action_t': np.zeros(2, np.float32)}
-  shadow, model.signal_shadow = model.signal_shadow, None
   try:
     # Exercise warp, policy dispatch and synchronous readback. Constructing the
     # model alone leaves expensive first-use work on the future fallback path.
@@ -29,4 +28,3 @@ def warm_internal_model(model, bufs):
         raise RuntimeError('internal standby warmup produced no output')
   finally:
     model.reset()  # synthetic warmup must not become live recurrent history
-    model.signal_shadow = shadow

@@ -20,7 +20,6 @@ export function createRoadOverlayLeadModel(options = {}) {
     const carrotMan = overlayState?.carrotMan || hudState?.carrotMan || {};
     const carState = hudState?.carState || {};
     const xState = finiteNumber(longPlan?.xState, finiteNumber(carrotMan?.xState, -1));
-    const trafficState = finiteNumber(longPlan?.trafficState, finiteNumber(carrotMan?.trafficState, -1));
     const longActive = Boolean(hudState?.controlsState?.enabled);
     const vEgoMps = finiteNumber(carState?.vEgo, finiteNumber(carState?.vEgoCluster, 0));
     const brakeHoldActive = Boolean(carState?.brakeHoldActive);
@@ -39,7 +38,7 @@ export function createRoadOverlayLeadModel(options = {}) {
     }
     if (xState === 3 || xState === 5) {
       return {
-        text: vEgoMps < 1.0 ? (trafficState >= 1000 ? "Signal Error" : "Signal Ready") : "Signal slowing",
+        text: vEgoMps < 1.0 ? "E2E Stop" : "E2E slowing",
         xState,
         showDistanceBadge: false,
       };

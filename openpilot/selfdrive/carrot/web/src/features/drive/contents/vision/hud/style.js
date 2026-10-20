@@ -113,12 +113,6 @@ html:not([data-carrot-mini-hud="1"]) #carrotMiniHud { display:none !important; }
 @keyframes chud-blink{0%,50%{opacity:1}50.01%,100%{opacity:.12}}
 @media (prefers-reduced-motion:reduce){.chud-blinker{animation:none;opacity:1}}
 
-/* 신호등 */
-.chud-tlight{width:clamp(26px,4.4cqw,40px);height:auto;display:block;margin-bottom:2px;
-  filter:drop-shadow(0 2px 6px rgba(0,0,0,.55))}
-.chud-tlight-halo{opacity:.28}
-.chud-tlight-dot{stroke:rgba(255,255,255,.85);stroke-width:3}
-
 /* LFA 아이콘의 flex 점유 폭은 모드와 무관하게 휠 크기로 고정한다.
  * 2x 레인 날개는 absolute overflow로만 그려 옆 Wi-Fi/시계가 움직이지 않는다. */
 .chud-lfa{position:relative;display:flex;align-items:center;justify-content:center;
@@ -181,7 +175,6 @@ html:not([data-carrot-mini-hud="1"]) #carrotMiniHud { display:none !important; }
   letter-spacing:.02em}
 .chud-gear-box{fill:rgba(5,9,12,.82);stroke:#fff;stroke-width:3}
 .chud-gear-box.is-muted{stroke:var(--chud-muted)}
-.chud-speed-traffic{overflow:visible}
 
 /* degradation: 좁으면 우선순위 낮은 것부터 숨김(P0 속도판은 항상 유지) */
 .chud[data-shed~="p5"] .chud-zone--br{display:none}

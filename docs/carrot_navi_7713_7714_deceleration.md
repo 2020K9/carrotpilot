@@ -268,7 +268,7 @@ SDI를 지울 때는 더 큰 sequence로 `present: false`, `value: null`, 비어
 | 현재 TBT | `nTBTTurnType/nTBTDist` | `guidance_current.turn_type/distance_m` | 지원 turn type이 `xTurnInfo`로 변환되고 `AutoTurnControl`이 2 또는 3일 때 속도 목표 계산 | `atc` / 주황 `turn` |
 | 다음 TBT | `nTBTTurnTypeNext/nTBTDistNext` | `guidance_next` | 현재 거리 + 다음 거리를 사용하고 같은 ATC 설정 적용 | `atc2` / 주황 `turn` |
 | route 곡률 | `route`/`vrtx`, 최대 4096점 | route polyline, 최대 256점 | 동일 경로 곡률 계산. `TurnSpeedControlMode=2`는 TBT ±500 m, mode 3/4는 항상. 기본값 mode 1에서는 route 감속 미적용 | `route` / 주황 `route` |
-| 신호등 | `sinf/ssinf` | `traffic_signal` | `TrafficLight` shared-memory param과 cluster/UI 표시에만 전달. `desiredSpeed`나 longitudinal stop target에는 직접 연결되지 않음 | 감속 source 없음 |
+| 신호등 | `sinf/ssinf` | `traffic_signal` | 2026-10-20 신호등 기능 제거로 무시함. `TrafficLight` param, cluster/UI 표시, replay 이벤트 모두 없음. 7714 파서는 wire 호환을 위해 필드만 읽음 | 감속 source 없음 |
 
 공통 감속 속도는 목표 지점의 안전속도와 안전시간을 기준으로
 `sqrt(v_target^2 + 2 * decel_rate * decel_distance)` 형태로 계산한다. 모든 후보 중 최솟값을

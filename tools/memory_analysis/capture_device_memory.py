@@ -68,7 +68,7 @@ def detail():
     # Keep the executable/process title only, never arbitrary command arguments.
     cmd = read(path / "cmdline")
     name = cmd.split("\0", 1)[0]
-    role = next((key for key in ("cluster_autorun", "precompiled_worker", "signal_shadow", "signal_color_shadow", "carrot_server", "carrot_navi") if key in cmd), name)
+    role = next((key for key in ("cluster_autorun", "precompiled_worker", "carrot_server", "carrot_navi") if key in cmd), name)
     process = {"pid": int(path.name), "name": name, "role": role, "status_kib": {key: value for key, value in status.items() if key.startswith("Vm")}, "threads": status.get("Threads")}
     process["start_ticks"] = read(path / "stat").rpartition(")")[2].split()[19:20]
     smaps = memory_fields(read(path / "smaps"))
@@ -130,8 +130,7 @@ def main():
         mem = memory_fields(read("/proc/meminfo"))
         row = {"mono": now, "wall": time.time(), "boot": read("/proc/sys/kernel/random/boot_id").strip(), "mem_kib": mem}
         row["flags"] = {key: read(Path("/data/params/d") / key).strip() for key in
-                        ("IsOnroad", "ClusterHud", "ClusterHudConnected", "UsbGpuActive", "SignalAssistMode")}
-        row["flags"]["SignalShadowComparison"] = read("/data/signal-model-shadow/enabled").strip()
+                        ("IsOnroad", "ClusterHud", "ClusterHudConnected", "UsbGpuActive")}
         interval = 15 if mem.get("MemAvailable", 0) < mem.get("MemTotal", 0) * .09 else 60
         if now - last_detail >= interval:
           row["detail"] = detail()

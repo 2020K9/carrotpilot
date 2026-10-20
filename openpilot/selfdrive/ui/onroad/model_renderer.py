@@ -454,7 +454,6 @@ class ModelRenderer(Widget):
     self._carrot_radar_dist = 0.0
     self._carrot_vision_dist = 0.0
     self._carrot_x_state = 0
-    self._carrot_traffic_state = 0
     self._carrot_v_ego = 0.0
     self._carrot_brake_hold_active = False
     self._carrot_soft_hold_active = 0
@@ -724,7 +723,6 @@ class ModelRenderer(Widget):
     self._carrot_carrot_cruise = car_state.carrotCruise
     self._carrot_long_active = selfdrive_state.enabled
     self._carrot_x_state = lp.xState
-    self._carrot_traffic_state = lp.trafficState
 
     max_distance = np.clip(line[-1, 0], MIN_DRAW_DISTANCE, MAX_DRAW_DISTANCE)
     idx = self._get_path_length_idx(line[:, 0], max_distance)
@@ -820,14 +818,11 @@ class ModelRenderer(Widget):
       if self._carrot_long_active:
         if self._carrot_x_state in (3, 5):
           if self._carrot_v_ego < 1.0:
-            text = "Signal Error" if self._carrot_traffic_state >= 1000 else "Signal Ready"
-            draw_text_ui_style(text, x, disp_y, 50, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
+            draw_text_ui_style("E2E Stop", x, disp_y, 50, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
           else:
-            draw_text_ui_style("Signal slowing", x, disp_y, 50, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
+            draw_text_ui_style("E2E slowing", x, disp_y, 50, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
         elif self._carrot_x_state == 4:
           draw_text_ui_style("E2E주행중", x, disp_y, 50, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
-        elif self._carrot_x_state == 6:
-          draw_text_ui_style("신호 감속 준비", x, disp_y, 50, rl.Color(255, 190, 80, 255), align="center", y_offset=0.0)
         elif self._carrot_x_state in (0, 1, 2):
           draw_dist = True
       else:

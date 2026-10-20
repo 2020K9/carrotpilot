@@ -361,7 +361,6 @@ window.HomeDrive = (() => {
       overlayState?.lateralPlan?.laneChangeDirection ?? "-",
       Boolean(overlayState?.carControl?.longActive) ? 1 : 0,
       longPlan?.xState ?? "-",
-      longPlan?.trafficState ?? "-",
       longPlan?.longitudinalPlanSource ?? "-",
       showLaneInfo,
       pathStyle?.mode ?? 0,

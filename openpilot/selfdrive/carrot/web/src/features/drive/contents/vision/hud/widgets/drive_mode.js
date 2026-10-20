@@ -6,13 +6,13 @@ import { DRIVE_MODE_COLORS } from "../tokens.js";
 /* 주행모드 배지(연비/안전/일반/고속). 클러스터 _draw_driving_mode_indicator 그대로 이식.
  * - 색/모양: 솔리드 모드색(배경 α 200/255) 둥근사각형 + 흰 테두리 + 흰 글자(어두운 외곽선). 색=토큰.
  * - 로케일: 라벨 길이에 맞춰 박스 폭을 동적 조정(한글 "안전" 2자 ↔ 영문 "Normal" 6자 모두 정합).
- * - 위치: 신호등 오른쪽에 넉넉한 간격으로 붙되, 좌표계는 패널(클러스터) 1:1. */
+ * - 위치: 속도 패널 상태 슬롯 오른쪽에 넉넉한 간격으로 붙되, 좌표계는 패널(클러스터) 1:1. */
 
 const SPEED_VALUE_CENTER_X = 85.2;                 // = speed_panel SPEED_X
-const TRAFFIC_CENTER_X = SPEED_VALUE_CENTER_X - 38; // 신호등 중심(=speed_panel TRAFFIC_CENTER_X)
-const TRAFFIC_RIGHT = TRAFFIC_CENTER_X + 34 * 0.5;  // 신호등 우측 끝(아이콘 34)
+const STATUS_SLOT_CENTER_X = SPEED_VALUE_CENTER_X - 38; // 상태 슬롯 중심(클러스터 SPEED_STATUS_SLOT_CENTER_X)
+const STATUS_SLOT_RIGHT = STATUS_SLOT_CENTER_X + 34 * 0.5;  // 상태 슬롯 우측 끝(폭 34)
 const GAP = 16;                                     // 좌측 HUD와의 간격(클러스터 5 → web에서 넉넉히)
-const X_LEFT = TRAFFIC_RIGHT + GAP;                 // 배지 왼쪽 시작(고정), 폭은 우측으로 성장
+const X_LEFT = STATUS_SLOT_RIGHT + GAP;                 // 배지 왼쪽 시작(고정), 폭은 우측으로 성장
 const PAD_X = 10;                                   // 텍스트 좌우 여백
 const MIN_W = 46;                                   // 최소 폭(2자 한글도 답답하지 않게)
 const Y = 271;                                      // 클러스터 SPEED_DRIVING_MODE_Y

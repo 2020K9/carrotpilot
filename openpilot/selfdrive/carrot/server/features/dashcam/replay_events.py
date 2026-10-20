@@ -647,36 +647,6 @@ class ReplayEventIndexer:
         "nav", "section_control_off_route", "section_control_recovered", params=section_params,
       )
 
-  def _ingest_traffic_signal(self, signal: Any, log_mono_ns: int) -> None:
-    visible = _bool(signal, "visible")
-    signal_key = tuple(
-      (_bool(signal, f"{name}Valid"), _bool(signal, f"{name}On"))
-      for name in ("red", "left", "green", "right", "uturn")
-    )
-    previous_visible = self._previous.get("carrotNavi.signal.visible")
-    previous_key = self._previous.get("carrotNavi.signal.key")
-    self._previous["carrotNavi.signal.visible"] = visible
-    self._previous["carrotNavi.signal.key"] = signal_key
-    params = {
-      "distanceM": max(0, _int(signal, "distanceM")),
-      "red": signal_key[0][1] if signal_key[0][0] else None,
-      "left": signal_key[1][1] if signal_key[1][0] else None,
-      "green": signal_key[2][1] if signal_key[2][0] else None,
-      "right": signal_key[3][1] if signal_key[3][0] else None,
-      "uturn": signal_key[4][1] if signal_key[4][0] else None,
-    }
-    if visible and (previous_visible is not True or signal_key != previous_key):
-      self._push(
-        log_mono_ns,
-        "nav",
-        "traffic_signal_shown" if previous_visible is not True else "traffic_signal_changed",
-        params=params,
-        dedupe_key=str(signal_key),
-        cooldown_ns=0,
-      )
-    elif not visible and previous_visible is True:
-      self._push(log_mono_ns, "nav", "traffic_signal_hidden", cooldown_ns=0)
-
   def _ingest_crossroad(self, crossroad: Any, log_mono_ns: int) -> None:
     visible = _bool(crossroad, "visible")
     image_code = _int(crossroad, "imageCode")
@@ -739,7 +709,6 @@ class ReplayEventIndexer:
     self._push_guidance(_get(source, "guidanceNext"), "next", log_mono_ns)
     self._ingest_lane_guidance(_get(source, "laneCurrent"), log_mono_ns)
     self._ingest_navigation_speed(_get(source, "speed"), log_mono_ns)
-    self._ingest_traffic_signal(_get(source, "trafficSignal"), log_mono_ns)
     self._ingest_crossroad(_get(source, "crossroad"), log_mono_ns)
 
   def _ingest_carrotMan(self, value: Any, log_mono_ns: int) -> None:
@@ -852,7 +821,7 @@ class ReplayEventIndexer:
           }
           else "CarrotNavi" if item.event_type.startswith((
             "navigation_", "navi_", "lane_guidance_", "speed_alert_", "road_speed_",
-            "section_control_", "traffic_signal_", "crossroad_guidance_",
+            "section_control_", "crossroad_guidance_",
           ))
           else ""
         ),

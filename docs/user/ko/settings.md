@@ -201,7 +201,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 | [도로 제한속도](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | 도로 제한속도에 맞춘 목표 속도 조절 |
 | [과속방지턱](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | 방지턱 감속 완료 시점, 통과 속도와 조기 종료 거리 |
 | [커브·턴](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | 곡률·남은 거리 기반 감속, 회전 완화 확인 후 빠른 복구와 경로 턴 속도 |
-| [신호감지](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | 신호 정지·출발 감지, 정지 위치 및 정지차 기준 자동 보정 |
+| [모델 정지](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | 모델 정지 예측 감속, 정지 위치 및 정지차 기준 자동 보정 |
 
 `AutoNaviSpeedCtrlMode`는 `0` 미사용, `1` 과속카메라, `2` 과속카메라+방지턱, `3` 과속카메라+방지턱+이동식카메라입니다.
 
@@ -211,7 +211,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 
 `AutoNaviSpeedDecelRate`의 기본값은 `120`(1.20m/s²)이며, 값이 낮을수록 더 먼 거리에서 감속을 시작합니다. 기존 저장값은 업데이트만으로 변경되지 않습니다. `AutoNaviSpeedSafetyFactor`는 감속 목표에 적용하는 제한속도 비율입니다. 감속이 이상하면 값부터 바꾸지 말고 이벤트 종류, 제한속도와 남은 거리가 정상 수신되는지 먼저 확인하세요.
 
-`TrafficLightDetectMode`는 `0` 미사용, `1` 정지만 감지, `2` 정지와 출발을 모두 감지합니다. 모델 판단에 의존하므로 운전자가 항상 직접 확인해야 합니다.
+`TrafficLightDetectMode`(모델 정지 예측 감속)는 `0` 끔, `1` 켬(기본)입니다. 앞차가 없을 때 주행 모델이 정지를 예측하면 감속·정지합니다. 모델은 신호등뿐 아니라 정지선, 일시정지 표지, 장애물 등으로도 정지를 예측할 수 있으며 신호등 색을 판독하는 기능이 아닙니다. 이렇게 정지한 뒤에는 자동 출발하지 않으므로 가속 페달로 출발합니다(앞차 추종 중 앞차가 출발하면 일반 앞차 추종으로 출발). 예전 값 `2`는 `1`로 처리합니다. 운전자가 항상 신호와 도로 상황을 직접 확인해야 합니다.
 
 ### 크루즈·차간 — 전체 29개, 현대·기아·제네시스 26개
 
@@ -227,7 +227,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 | [추종응답성](cruise-gap.md#lead-response) | `LeadAccelResponse`, `LeadAccelResponseTF1`–`LeadAccelResponseTF4` | 모든 차간 단계의 앞차 출발·가속 추종과 접근 반응 |
 | [당근 크루즈](cruise-gap.md#carrot-cruise) | `CruiseEcoControl`, `CruiseCoastingPercent`, `CarrotCruiseDecel`, `CarrotCruiseAtcDecel` | 연비 제어, 진입 기준속도를 고정하는 코스팅 여유(기본 0%: 기존 제어), 당근 크루즈 감속 특성 |
 
-`MyDrivingMode`는 `1` 연비, `2` 안전, `3` 일반, `4` 고속 모드입니다. 고속 모드는 신호 감지를 무시하고 가속 성향을 높이므로 모드 이름만 보고 선택하지 말고 설명을 확인하세요.
+`MyDrivingMode`는 `1` 연비, `2` 안전, `3` 일반, `4` 고속 모드입니다. 고속 모드는 모델 정지 예측 감속을 사용하지 않고 가속 성향을 높이므로 모드 이름만 보고 선택하지 말고 설명을 확인하세요.
 
 모드별 앞차 반응 상한은 연비 2, 안전 3이며 일반·고속은 선택값을 유지합니다. 공통값과 TF별 반응을 먼저 선택한 뒤 적용하고 낮은 값과 0은 올리지 않습니다. TF 배율은 연비 ×1.1·안전 ×1.2를 유지하며 모드 여유는 복귀 때 서서히 줄입니다. 자동전환은 정지 접근·지속 서행에서 안전을 선택합니다. 정지 접근이 아니며 앞차 가속도가 1.0m/s² 초과로 약 0.5초 유지되면 일반/연비로 복귀하고, 그 외에는 흐름 회복 3초 또는 앞차 없이 15km/h 이상 주행 4초를 확인합니다.
 
@@ -444,16 +444,6 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 - `LateralTorqueCustom`, `CustomSteer*`
 - `DriverMonitoringMode`
 
-## 신호보조 모드 (시험)
-
-`SignalAssistMode`의 기본값은 `0`입니다. `0`은 신호보조를 끄고, `1`은 판정·표시·알림과 정차 중 적색 출발 제한을 사용하며, `2`는 여기에 주행 중 감속 준비를 추가합니다.
-
-정차 중 적색 출발 제한은 5km/h 이하의 정차·저속 출발 구간에서만 유지합니다. 5km/h를 넘으면 이전 정지 기억을 해제하므로, 출발 후 앞차 인식이 끊겨도 그 기억으로 다시 정지시키지 않습니다. 이는 녹색 확인이나 가속 허가가 아니며, 기존 모델·앞차 제어와 운전자가 지정한 정지는 유지됩니다.
-
-모드 `2`는 앞차·페달 조작·회전이 없고 속도가 5km/h 초과, 82km/h 미만일 때 유효한 적색을 확인하면 약 −0.5m/s²를 향해 점진적으로 감속을 요청합니다. 야간에는 두 개 이상의 적색 램프가 같은 방향에 지속해서 보이고 도로 범위의 지지를 얻어야 하며, 신호등 외곽 크기를 정지거리로 사용하지 않습니다.
-
-적색 증거가 없어지거나 녹색과 충돌하면 감속 준비를 해제합니다. 정지선까지의 제어는 기존 주행 모델이 담당하므로, 이 시험 기능이 모든 적색 신호의 감속·정지를 보장하지는 않습니다.
-
 ## 안전한 변경 순서
 
 1. Carrot Web에서 현재 값을 확인합니다.
@@ -465,17 +455,3 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 7. 나빠지거나 판단하기 어렵다면 즉시 이전 값 또는 기준 프로필로 복원합니다.
 
 조향과 가감속의 실제 조정 순서는 [튜닝 입문](https://github.com/ajouatom/openpilot/wiki/Guide-Tuning)을 참고하세요.
-
-# 앞차 브레이크등 관찰 (시험)
-
-신호감지 설정의 **앞차 브레이크등 관찰**(`LeadBrakeLights`)은 기본 OFF입니다.
-ON으로 설정하면 신호보조 모드 1/2에서 바로 앞차의 중앙 제동등 후보를
-USB/HUD 일반 카메라 화면에 `BRAKE?`로 표시하고 기록합니다. `BRK ?`는
-미확인이며 제동등이 꺼졌다는 뜻이 아닙니다. 신호보조 모드 0에서는 이
-검사도 실행하지 않습니다. 앞차가 없거나 연결이 불확실한 경우, 회전 중,
-신호 처리에 여유가 없는 경우는 검사를 건너뜁니다.
-
-이 설정은 표시·기록용이며 감속, 정지 또는 출발을 명령하지 않습니다.
-새 Params 키를 사용하므로 업데이트 후 정상 빌드가 필요합니다.
-현재 도로 카메라는 20fps 입력입니다. 처리 지연 개선과 전체 검출 20Hz
-달성은 다른 검증 항목이며, 이번 변경으로 20Hz 또는 50Hz 검출을 보장하지 않습니다.

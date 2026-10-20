@@ -409,7 +409,6 @@ function drivingHudUpdateFromCarPayload(j) {
     vSetKph: j.vSetKph,
     temp: j.temp,
     redDot: j.redDot,
-    tlight: j.tlight,
     tfGap: j.tfGap,
     tfBars: j.tfBars,
     gear: j.gear,
@@ -425,7 +424,6 @@ function drivingHudUpdateFromCarPayload(j) {
     fuelGauge: j.fuelGauge,
     ureaGauge: j.ureaGauge,
     tpms: j.tpms,
-    trafficState: j.trafficState,
     gpsOk: j.gpsOk,
     driveMode: j.driveMode,
     speedLimitKph: j.speedLimitKph,
@@ -466,7 +464,6 @@ function drivingHudUpdateFromCarPayload(j) {
     payload.temp?.speed ?? "-",
     payload.temp?.is_decel ? 1 : 0,
     payload.redDot ?? "-",
-    payload.tlight ?? "-",
     payload.tfGap ?? "-",
     payload.tfBars ?? "-",
     payload.gear ?? "-",
@@ -490,7 +487,6 @@ function drivingHudUpdateFromCarPayload(j) {
     Math.round(Number(payload.tpms?.fr) || 0),
     Math.round(Number(payload.tpms?.rl) || 0),
     Math.round(Number(payload.tpms?.rr) || 0),
-    payload.trafficState ?? "-",
     payload.gpsOk ?? "-",
     payload.driveMode?.name ?? "-",
     payload.driveMode?.kind ?? "-",
@@ -712,7 +708,6 @@ function deriveCompactHudPayload(state) {
     ? Math.round(Number(carState.gearStep))
     : null;
   const vehiclePayload = window.CarrotHudDataBridge?.deriveVehicleHudPayload?.(state) || {};
-  const trafficState = Number(vehiclePayload.trafficState);
   const cruiseKph = compactHudCruiseKph(state);
   const payload = {
     cpuTempC,
@@ -723,9 +718,7 @@ function deriveCompactHudPayload(state) {
     vSetKph: cruiseKph,
     temp: compactHudTemp(state),
     redDot: false,
-    // 미니 HUD용 문자열. 신규 오버레이용 numeric trafficState 등
     // 클러스터 전용 필드는 아래 withVehicleHudFields 가 vehiclePayload 로부터 일괄 채운다.
-    tlight: trafficState === 1 ? "red" : (trafficState === 2 ? "green" : "off"),
     tfGap,
     tfBars: tfGap,
     gear: vehiclePayload.gear ?? compactHudGear(state),
@@ -748,8 +741,8 @@ function deriveCompactHudPayload(state) {
     apm: Number(carrotMan?.activeCarrot) >= 2 ? "APN" : (Number(carrotMan?.activeCarrot) >= 1 ? "APM" : ""),
   };
 
-  // 클러스터 전용 필드(evActive/activeLaneLine/cruiseOverride/trafficState/drivingMode)를
-  // 한 곳에서 채워 "한 필드만 누락" 회귀를 원천 차단한다(이전 trafficState 누락처럼).
+  // 클러스터 전용 필드(evActive/activeLaneLine/cruiseOverride/drivingMode)를
+  // 한 곳에서 채워 "한 필드만 누락" 회귀를 원천 차단한다.
   // 브리지 미로드 시(부팅 극초기) 동등한 폴백으로 채운다.
   const withVehicleHudFields = window.CarrotHudDataBridge?.withVehicleHudFields;
   if (typeof withVehicleHudFields === "function") return withVehicleHudFields(payload, vehiclePayload);
@@ -761,7 +754,6 @@ function deriveCompactHudPayload(state) {
     laneModePlanned: vehiclePayload.laneModePlanned ?? null,
     laneModePresentation: vehiclePayload.laneModePresentation ?? null,
     cruiseOverride: vehiclePayload.cruiseOverride ?? null,
-    trafficState: Number.isFinite(trafficState) ? trafficState : 0,
     drivingMode: vehiclePayload.drivingMode ?? null,
   };
 }

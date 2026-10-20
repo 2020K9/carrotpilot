@@ -85,7 +85,6 @@ export function mapPayload(p = {}) {
     fuelGauge: num(p.fuelGauge),
     ureaGauge: num(p.ureaGauge),
     tpms: p.tpms && typeof p.tpms === "object" ? p.tpms : null,
-    trafficState: num(p.trafficState),
     networkConnected: p.networkConnected,
     clock: p.clock,
     // 가장 뜨거운 코어(네이티브 패리티). 평균값만 오는 경로가 있어 폴백을 둔다.
