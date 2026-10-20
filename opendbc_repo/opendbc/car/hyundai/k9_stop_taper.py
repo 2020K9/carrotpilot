@@ -50,7 +50,7 @@ from enum import IntEnum
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 
 DT = 0.01  # CarController.update period
-TAPER_SPEED = 1.0  # m/s
+TAPER_SPEED = 1.0 / 3.6  # m/s, strictly below 1 km/h (user-selected 2026-10-20; was 1.0 m/s = 3.6 km/h)
 END_DECEL = 0.3  # m/s^2, floor magnitude at v -> 0
 FLOOR_SLOPE = 1.0  # 1/s, floor = -(END_DECEL + FLOOR_SLOPE * v)
 STRONG_ACCEL = -1.5  # m/s^2

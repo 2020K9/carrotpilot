@@ -51,20 +51,28 @@ def test_applies_only_to_k9_camera_scc_openpilot_long():
 
 
 def test_not_armed_without_prior_motion():
+  ctrl = armed()
+  assert step(ctrl, v=0.2) > -1.0 and ctrl.phase == TaperPhase.taper  # valid-entry control at the same speed
   t = K9StopTaper()
   for _ in range(50):
-    assert step(t, v=0.5) == -1.0
+    assert step(t, v=0.2) == -1.0
   assert t.phase == TaperPhase.idle
 
 
 def test_taper_weakens_rate_limited_never_stronger_and_floor():
   t = armed()
-  outs = [step(t, v=0.8)]
-  for _ in range(100):
+  outs = [step(t, v=0.25)]
+  assert t.phase == TaperPhase.taper  # genuine entry inside the < 1 km/h window
+  floor = kt.taper_floor(0.2, 0, 0, False)
+  n_floor = math.ceil((floor - -1.0) / (kt.RELEASE_RATE * kt.DT))  # frames the release-rate limit needs to the floor
+  n = 2 * n_floor + 10  # observe well past the floor
+  assert 0.25 * kt.DT + n * 0.2 * kt.DT < t.budget  # examined interval fits the actual distance budget
+  for _ in range(n):
     outs.append(step(t, v=0.2))
-  assert t.phase == TaperPhase.taper
+    assert t.phase == TaperPhase.taper  # no distance_budget expiry during the examined interval
   diffs = [b - a for a, b in zip(outs, outs[1:], strict=False)]
   assert max(diffs) <= kt.RELEASE_RATE * kt.DT + 1e-9
+  assert sum(d == pytest.approx(kt.RELEASE_RATE * kt.DT) for d in diffs) >= 1  # the rate limit actually binds
   assert all(o >= -1.0 - 1e-12 for o in outs)  # never stronger than the original
   assert outs[-1] == pytest.approx(kt.taper_floor(0.2, 0, 0, False))  # -0.5
 
@@ -72,30 +80,32 @@ def test_taper_weakens_rate_limited_never_stronger_and_floor():
 def test_original_strengthening_is_immediate_and_weaker_original_wins():
   t = armed()
   for _ in range(30):
-    step(t, v=0.3)
-  assert step(t, accel=-1.2, a_target=-1.0, v=0.3) > -1.2  # small increase stays within the taper
-  assert step(t, accel=-0.1, a_target=-0.1, v=0.3) == -0.1  # weaker original (e.g. plan release)
+    step(t, v=0.2)
+  assert step(t, accel=-1.2, a_target=-1.0, v=0.2) > -1.2  # small increase stays within the taper
+  assert step(t, accel=-0.1, a_target=-0.1, v=0.2) == -0.1  # weaker original (e.g. plan release)
   t = armed()
   for _ in range(30):
-    step(t, v=0.3)
-  assert step(t, accel=-1.31, a_target=-1.0, v=0.3) == -1.31 and t.phase == TaperPhase.done
+    step(t, v=0.2)
+  assert step(t, accel=-1.31, a_target=-1.0, v=0.2) == -1.31 and t.phase == TaperPhase.done
 
 
 @pytest.mark.parametrize("entry", [True, False])
 def test_strong_braking_precedence(entry):
   t = armed()
   if entry:
-    assert step(t, accel=-1.6, v=0.5) == -1.6
+    ctrl = armed()
+    assert step(ctrl, v=0.2) > -1.0 and ctrl.phase == TaperPhase.taper  # valid-entry control at the same speed
+    assert step(t, accel=-1.6, v=0.2) == -1.6
     assert t.phase == TaperPhase.idle
-    assert step(t, accel=-1.0, a_target=-1.5, v=0.5) == -1.0 and t.phase == TaperPhase.idle
+    assert step(t, accel=-1.0, a_target=-1.5, v=0.2) == -1.0 and t.phase == TaperPhase.idle
   else:
     for _ in range(20):
-      step(t, v=0.5)
+      step(t, v=0.2)
     assert t.phase == TaperPhase.taper
-    assert step(t, accel=-1.0, a_target=-2.0, v=0.5) == -1.0
+    assert step(t, accel=-1.0, a_target=-2.0, v=0.2) == -1.0
     assert t.phase == TaperPhase.done
     for _ in range(20):  # no re-entry in the same episode
-      assert step(t, v=0.4) == -1.0
+      assert step(t, v=0.15) == -1.0
 
 
 def test_lead_kinematic_need_bounds_floor():
@@ -130,21 +140,21 @@ def test_complete_standstill_restores_original_hold_then_done():
 def test_motion_or_departure_during_restore_returns_original_immediately():
   t = armed()
   for _ in range(40):
-    step(t, v=0.3)
+    step(t, v=0.2)
   step(t, v=0.0, standstill=True)
   assert t.phase == TaperPhase.restore
   assert step(t, v=0.2, standstill=False) == -1.0 and t.phase == TaperPhase.done
   t = armed()
   for _ in range(40):
-    step(t, v=0.3)
+    step(t, v=0.2)
   step(t, v=0.0, standstill=True)
   assert step(t, accel=1.0, a_target=0.5, v=0.0, standstill=True) == 1.0  # restart not delayed
 
 
 def _in_restore(entry_accel=-1.0):
   t = armed()
-  for _ in range(30):  # 0.09 m travelled, inside the 0.165 m budget
-    step(t, accel=entry_accel, a_target=entry_accel, v=0.3)
+  for _ in range(30):  # 0.06 m travelled, inside the 0.14 m budget
+    step(t, accel=entry_accel, a_target=entry_accel, v=0.2)
   assert t.phase == TaperPhase.taper and t.out > entry_accel + 0.3
   out = step(t, accel=entry_accel, a_target=entry_accel, v=0.0, standstill=True)
   assert t.phase == TaperPhase.restore and out > entry_accel
@@ -184,12 +194,12 @@ def test_restore_precedence_passes_original_immediately(kw, expected, reason):
 def test_too_close_or_invalid_lead_passes_original_in_taper_and_blocks_entry(lead):
   t = armed()
   for _ in range(30):
-    step(t, v=0.5)
+    step(t, v=0.2)
   assert t.phase == TaperPhase.taper and t.out > -1.0
-  assert step(t, v=0.5, lead=lead) == -1.0 and t.reason == "lead_too_close" and t.phase == TaperPhase.done
+  assert step(t, v=0.2, lead=lead) == -1.0 and t.reason == "lead_too_close" and t.phase == TaperPhase.done
   t = armed()
   for _ in range(30):
-    assert step(t, v=0.5, lead=lead) == -1.0
+    assert step(t, v=0.2, lead=lead) == -1.0
   assert t.phase == TaperPhase.idle
 
 
@@ -208,19 +218,20 @@ def test_restore_hold_accel_is_modified_only_transiently():
 def test_interlocks_pass_original_and_disarm(kw):
   t = armed()
   for _ in range(30):
-    step(t, v=0.4)
+    step(t, v=0.2)
   assert t.phase == TaperPhase.taper
-  assert step(t, v=0.4, **kw) == -1.0 and t.phase == TaperPhase.done and not t.armed
+  assert step(t, v=0.2, **kw) == -1.0 and t.phase == TaperPhase.done and not t.armed
   for _ in range(30):  # pedal return while still slow: original (needs re-arm)
-    assert step(t, v=0.4) == -1.0
+    assert step(t, v=0.2) == -1.0
 
 
 @pytest.mark.parametrize("field", ["accel", "a_target", "v", "a_ego", "lead_d", "lead_v"])
 def test_non_finite_inputs_pass_original(field):
   t = armed()
   for _ in range(30):
-    step(t, v=0.4)
-  kw = {"accel": -1.0, "a_target": -1.0, "v": 0.4, "a_ego": -0.5, "lead": (10.0, -0.4)}
+    step(t, v=0.2)
+  assert t.phase == TaperPhase.taper and t.out > -1.0  # anti-vacuity: active and modified before the hazard
+  kw = {"accel": -1.0, "a_target": -1.0, "v": 0.2, "a_ego": -0.5, "lead": (10.0, -0.2)}
   bad = float("nan")
   if field == "lead_d":
     kw["lead"] = (bad, -0.4)
@@ -235,13 +246,13 @@ def test_non_finite_inputs_pass_original(field):
 def test_rearm_after_moving_again():
   t = armed()
   for _ in range(40):
-    step(t, v=0.3)
+    step(t, v=0.2)
   for _ in range(100):
     step(t, v=0.0, standstill=True)
   assert t.phase == TaperPhase.done
   step(t, accel=0.5, a_target=0.5, v=2.0)
   assert t.phase == TaperPhase.idle and t.armed
-  step(t, v=0.6)
+  step(t, v=0.2)
   assert t.phase == TaperPhase.taper
 
 
@@ -273,15 +284,15 @@ def test_added_stop_distance_bound_without_lead(a_cmd, g):
 def test_no_progress_and_max_time_return_original():
   t = armed()
   for _ in range(10):
-    step(t, v=0.5)
+    step(t, v=0.2)
   for _ in range(19):
-    assert step(t, v=0.5, a_ego=-0.1) > -1.0
-  assert step(t, v=0.5, a_ego=-0.1) == -1.0 and t.reason == "no_progress" and t.phase == TaperPhase.done
+    assert step(t, v=0.2, a_ego=-0.1) > -1.0
+  assert step(t, v=0.2, a_ego=-0.1) == -1.0 and t.reason == "no_progress" and t.phase == TaperPhase.done
   t = armed()
   outs = [step(t, v=0.05) for _ in range(round(kt.TAPER_MAX_TIME / kt.DT) + 5)]
   assert outs[-1] == -1.0 and t.reason == "no_progress"  # max time
   t = armed()
-  outs = [step(t, v=0.5) for _ in range(150)]  # constant speed: travel exceeds 0.5^2/2 + margin
+  outs = [step(t, v=0.2) for _ in range(150)]  # constant speed: travel exceeds 0.2^2/2 + margin
   assert outs[-1] == -1.0 and t.reason == "distance_budget"
 
 
@@ -321,35 +332,56 @@ def test_radar_lead_without_plan_has_lead_is_respected(lead):
   # hasLead False with a non-zero distance (down to ~1.5 m) for up to ~60 ms.
   t = armed()
   for _ in range(30):
-    step(t, v=0.5)
+    step(t, v=0.2)
   assert t.phase == TaperPhase.taper and t.out > -1.0
-  assert step(t, v=0.5, lead=lead, lead_visible=False) == -1.0 and t.reason == "lead_too_close"
+  assert step(t, v=0.2, lead=lead, lead_visible=False) == -1.0 and t.reason == "lead_too_close"
   t = armed()
   for _ in range(30):
-    assert step(t, v=0.5, lead=lead, lead_visible=False) == -1.0
+    assert step(t, v=0.2, lead=lead, lead_visible=False) == -1.0
   assert t.phase == TaperPhase.idle
 
 
 def test_radar_lead_without_plan_has_lead_bounds_floor():
   t = armed()
-  outs = [step(t, accel=-1.2, v=0.8, lead=(2.2, -0.8), lead_visible=False) for _ in range(30)]  # inside the budget
-  assert t.phase == TaperPhase.taper and all(o == -1.2 for o in outs)  # need 1.6 m/s^2 > original: kept
+  # Physically stationary lead (vRel = -vEgo) near the window top. Gap clamp 0.05 m caps the below-1 km/h need at
+  # ~0.772 m/s^2, so the old "need 1.6 > original -1.2: kept" input is impossible here; the expectation is recomputed
+  # from the same formula: output never weaker than the lead-required decel, and that floor binds below no-lead.
+  v, lead = 0.27, (2.05, -0.27)
+  need = -(0.27 ** 2) / (2.0 * (2.05 - kt.LEAD_MIN_GAP))
+  floor = kt.taper_floor(v, *lead, True)
+  assert floor == pytest.approx(need) and floor < kt.taper_floor(v, 0, 0, False)  # lead floor binds
+  outs = [step(t, accel=-1.2, v=v, lead=lead, lead_visible=False) for _ in range(30)]  # 0.081 m, inside the budget
+  assert t.phase == TaperPhase.taper and outs[0] > -1.2  # genuine entry, output modified
+  assert all(-1.2 - 1e-12 <= o <= floor + 1e-9 for o in outs)  # never weaker than the lead need, never stronger
+  assert outs[-1] == pytest.approx(floor)
 
 
-@pytest.mark.parametrize("leave", [{"accel": 0.0, "a_target": 0.0}, {"accel": 0.2, "a_target": 0.2}, {"v": 1.0}])
+@pytest.mark.parametrize("leave", [{"accel": 0.0, "a_target": 0.0}, {"accel": 0.2, "a_target": 0.2}, {"v": 0.3}])
 def test_leaving_window_ends_episode_until_rearm(leave):
   t = armed()
   for _ in range(30):
-    step(t, v=0.6)
+    step(t, v=0.2)
   assert t.phase == TaperPhase.taper and t.out > -1.0
-  args = {"v": 0.6} | leave
+  args = {"v": 0.2} | leave
   assert step(t, **args) == args.get("accel", -1.0) and t.reason == "left_window" and t.phase == TaperPhase.done
   for _ in range(300):  # back inside the window in the same stop: original, no fresh budget/time
-    assert step(t, v=0.6) == -1.0
+    assert step(t, v=0.2) == -1.0
   step(t, v=kt.REARM_SPEED)
   assert t.armed and t.phase == TaperPhase.idle
-  step(t, v=0.6)
+  step(t, v=0.2)
   assert t.phase == TaperPhase.taper
+
+
+def test_window_upper_boundary_exact_and_nextafter():
+  # exact TAPER_SPEED is outside (strict <), the next float below is inside
+  t = armed()
+  assert step(t, v=kt.TAPER_SPEED) == -1.0 and t.phase == TaperPhase.idle
+  t = armed()
+  assert step(t, v=math.nextafter(kt.TAPER_SPEED, 0.0)) > -1.0 and t.phase == TaperPhase.taper
+  t = armed()
+  step(t, v=0.2)
+  assert t.phase == TaperPhase.taper
+  assert step(t, v=kt.TAPER_SPEED) == -1.0 and t.reason == "left_window" and t.phase == TaperPhase.done
 
 
 def test_oscillating_original_cannot_restart_distance_budget():
@@ -358,10 +390,11 @@ def test_oscillating_original_cannot_restart_distance_budget():
   tapered_travel = 0.0
   for i in range(400):
     a = 0.0 if i % 40 == 39 else -1.0
-    out = step(t, accel=a, a_target=a, v=0.6)
+    out = step(t, accel=a, a_target=a, v=0.2)
     if out != a:
-      tapered_travel += 0.6 * kt.DT
-  assert tapered_travel <= 0.6 ** 2 / 2.0 + kt.DISTANCE_MARGIN
+      tapered_travel += 0.2 * kt.DT
+  assert tapered_travel > 0.0  # anti-vacuity: the taper did modify output
+  assert tapered_travel <= 0.2 ** 2 / 2.0 + kt.DISTANCE_MARGIN
 
 
 @pytest.mark.parametrize("seq", [
@@ -371,7 +404,7 @@ def test_oscillating_original_cannot_restart_distance_budget():
 def test_standstill_edge_flicker_and_lagging_vego_pass_original(seq):
   t = armed()
   for _ in range(30):
-    step(t, v=0.3)
+    step(t, v=0.2)
   assert t.phase == TaperPhase.taper
   outs = [step(t, v=v, standstill=ss) for v, ss in seq]
   assert t.phase == TaperPhase.done and t.reason == "moving" and outs[-1] == -1.0
@@ -574,37 +607,277 @@ ORIG = pytest.approx(-1.2, abs=1e-6)  # original command after float32 CarContro
 def _taper_until_active(rig):
   for _ in range(100):
     rig.step(-1.0, LCS.pid, 5.0)
-  for i in range(60):
-    accel, _ = rig.step(-1.2, LCS.stopping, max(1.4 - 0.01 * i, 0.3))
-  assert rig.cc.k9_stop_taper.phase == TaperPhase.taper and accel > -1.2
+  for i in range(_ENTRY_MAX_FRAMES):  # clean 1 m/s^2 deceleration until the actual taper entry
+    accel, _ = rig.step(-1.2, LCS.stopping, max(1.4 - 0.01 * i, 0.2))
+    if rig.cc.k9_stop_taper.phase == TaperPhase.taper and accel > -1.2:
+      return i
+  raise AssertionError("no taper entry within bounded frames")
 
 
-def test_live_switch_off_mid_taper_returns_original_within_one_read(monkeypatch):
-  rig = Rig(monkeypatch)
-  _taper_until_active(rig)
-  rig.params.values["K9StopTaper"] = False
-  outs = [rig.step(-1.2, LCS.stopping, 0.3) for _ in range(51)]
-  first_original = next(i for i, (a, _) in enumerate(outs) if a == ORIG)
-  assert 0 < first_original <= 50 and all(a == ORIG for a, _ in outs[first_original:])
-  assert all(s is None or s["aReqValue"] == pytest.approx(a, abs=0.006) for a, s in outs)
-  assert rig.cc.k9_stop_taper.phase == TaperPhase.idle and not rig.cc.k9_stop_taper.armed
-  for _ in range(200):  # stays original while OFF, including standstill and restart
-    assert rig.step(-1.2, LCS.stopping, 0.0, standstill=True)[0] == ORIG
+_ENTRY_MAX_FRAMES = 130
+
+
+class ReadSpy:
+  """Counts CarController reads of K9StopTaper per step: the read frame is observed, not assumed."""
+  def __init__(self, rig):
+    self.rig, self.read_frames = rig, []
+    get_bool = rig.params.get_bool
+
+    def spy(key):
+      if key == "K9StopTaper":
+        self.read_frames.append(rig.cc.frame)
+      return get_bool(key)
+    rig.params.get_bool = spy
+
+  def step(self, *args, **kw):
+    n = len(self.read_frames)
+    frame = self.rig.cc.frame
+    accel, sent = self.rig.step(*args, **kw)
+    return frame, len(self.read_frames) > n, accel, sent
+
+
+def _stop_profile(n=400, pad=0, dv=0.01):
+  """(1 s + pad frames) cruise at 5 m/s, then a clean stop from 1.4 m/s at a measured dv / DT m/s^2 (aEgo matches the
+  speed slope) to standstill and hold (frame-indexed inputs)."""
+  rows = [(-1.0, LCS.pid, 5.0, False, -1.0)] * (100 + pad)
+  for i in range(n):
+    v = max(1.4 - dv * i, 0.0)
+    rows.append((-1.2, LCS.stopping, v, v == 0.0, -dv / kt.DT if v > 0.0 else 0.0))
+  return rows
+
+
+def _run(spy, rows, flip=None, value=None, when=None):
+  """Step rows; set K9StopTaper to value immediately BEFORE or AFTER the controller step of frame flip."""
+  out = []
+  for row in rows:
+    accel, state, v, standstill, a_ego = row
+    frame = spy.rig.cc.frame
+    if when == "before" and frame == flip:
+      spy.rig.params.values["K9StopTaper"] = value
+    out.append((*spy.step(accel, state, v, standstill=standstill, a_ego=a_ego),
+                spy.rig.cc.k9_stop_taper_enabled, spy.rig.cc.k9_stop_taper.phase, spy.rig.cc.k9_stop_taper.armed))
+    if when == "after" and frame == flip:
+      spy.rig.params.values["K9StopTaper"] = value
+  return out
+
+
+def _reference_off(monkeypatch, rows):
+  ref = Rig(monkeypatch, taper=False)
+  for accel, state, v, standstill, a_ego in rows:
+    ref.step(accel, state, v, standstill=standstill, a_ego=a_ego)
+  return ref
+
+
+def _assert_safe_vs_off(rig, ref):
+  ka = [i for i, f in enumerate(ref.can) if any(a == 1057 for a, _, _ in f)]
+  parser_r, parser_c = CANParser("hyundai_kia_generic", [("SCC12", 0)], 0), CANParser("hyundai_kia_generic", [("SCC12", 0)], 0)
+  for i in ka:
+    parser_r.update([i * 10_000_000, [m for m in ref.can[i] if m[0] == 1057]])
+    parser_c.update([i * 10_000_000, [m for m in rig.can[i] if m[0] == 1057]])
+    r, c = parser_r.vl["SCC12"], parser_c.vl["SCC12"]
+    assert (c["StopReq"], c["ACCMode"]) == (r["StopReq"], r["ACCMode"]) and c["aReqValue"] >= r["aReqValue"] - 0.011
+
+
+# Production reads K9StopTaper when CarController.frame % 50 == 0 (asserted from the observed reads). With a measured
+# 0.4 m/s^2 final deceleration this stop naturally tapers on frames 381..449 and restores on 450..493 (unpadded), long
+# enough that both a read and the next read can fall inside one episode. Each case is padded so that the frame where
+# OFF actually takes effect (the flip read itself BEFORE, the next read AFTER) is inside the stays-ON control's
+# taper/restore with a modified output, so natural completion cannot be mistaken for the switch effect.
+OFF_CASES = {  # (phase, when): (cruise pad, frame of the read the flip is adjacent to)
+  (TaperPhase.taper, "before"): (10, 400),  # taper 391..459: flip read 400, effect 400
+  (TaperPhase.taper, "after"): (10, 400),  # flip right after read 400 (taper), effect at read 450 (taper)
+  (TaperPhase.restore, "before"): (30, 500),  # restore 480..523: flip read 500, effect 500
+  (TaperPhase.restore, "after"): (30, 450),  # flip right after read 450 (taper 411..479), effect at read 500 (restore)
+}
+OFF_DV = 0.004
+
+
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("phase", [TaperPhase.taper, TaperPhase.restore], ids=["taper", "restore"])
+def test_live_switch_off_at_exact_read_frame(monkeypatch, when, phase):
+  pad, flip = OFF_CASES[(phase, when)]
+  rows = _stop_profile(n=500, pad=pad, dv=OFF_DV)
+  assert all(r[4] == pytest.approx(-(r_prev[2] - r[2]) / kt.DT) for r_prev, r in zip(rows[100 + pad:], rows[101 + pad:])
+             if r[2] > 0.0)  # measured aEgo is the actual speed slope, no held/unrealizable state
+  ref = Rig(monkeypatch, taper=False)
+  ref_accel = [ref.step(a, s, v, standstill=ss, a_ego=ae)[0] for a, s, v, ss, ae in rows]
+  monkeypatch.undo()
+
+  def run(flip_frame):
+    rig = Rig(monkeypatch)
+    spy = ReadSpy(rig)
+    trace = []
+    for frame, row in enumerate(rows):
+      accel, state, v, standstill, a_ego = row
+      if when == "before" and frame == flip_frame:
+        rig.params.values["K9StopTaper"] = False
+      f, did, out, sent = spy.step(accel, state, v, standstill=standstill, a_ego=a_ego)
+      t = rig.cc.k9_stop_taper
+      trace.append({"frame": f, "read": did, "accel": out, "stop_req": None if sent is None else sent["StopReq"],
+                    "enabled": rig.cc.k9_stop_taper_enabled, "phase": t.phase, "reason": t.reason})
+      if when == "after" and frame == flip_frame:
+        rig.params.values["K9StopTaper"] = False
+    monkeypatch.undo()
+    return rig, spy, trace
+
+  ctl, ctl_spy, ctl_tr = run(None)  # matched control: same inputs, switch never touched (stays ON)
+  rig, spy, tr = run(flip)
+  reads = list(range(0, len(rows), 50))
+  assert [e["frame"] for e in tr if e["read"]] == reads == spy.read_frames == ctl_spy.read_frames  # every 50 frames
+  assert tr[flip]["read"]  # the flip is adjacent to an actual read: before its step, or right after it
+  effective = flip if when == "before" else flip + 50
+  assert tr[effective]["read"] and not any(tr[f]["read"] for f in range(flip + 1, effective))
+
+  # counterfactual: at the effect frame the stays-ON control is still in the requested phase, not finished by
+  # distance_budget/no_progress or any other end reason, and still sends a modified (weaker) accel
+  c = ctl_tr[effective]
+  assert c["enabled"] and c["phase"] == phase and c["reason"] == phase.name
+  assert c["accel"] > ref_accel[effective] + 1e-3
+  assert c["reason"] not in ("distance_budget", "no_progress")
+  if when == "after":  # the flip read itself is inside the episode too (taper), and the control stays active between
+    assert ctl_tr[flip]["phase"] == TaperPhase.taper and ctl_tr[flip]["accel"] > ref_accel[flip] + 1e-3
+    assert all(ctl_tr[f]["phase"] in (TaperPhase.taper, TaperPhase.restore) for f in range(flip, effective + 1))
+
+  # before the effect frame the switched rig is exactly the control (AFTER: stale cached ON, value already False)
+  for f in range(effective):
+    assert (tr[f]["accel"], tr[f]["phase"], tr[f]["enabled"]) == (ctl_tr[f]["accel"], ctl_tr[f]["phase"], True)
+    assert rig.can[f] == ctl.can[f]
+    if when == "after" and f > flip:
+      assert rig.params.values["K9StopTaper"] is False
+  # first restored output: exactly the effect read, caused by the switch (reset), not a natural end reason
+  first = next(f for f in range(len(rows)) if tr[f]["accel"] != ctl_tr[f]["accel"])
+  assert first == effective
+  e = tr[effective]
+  assert not e["enabled"] and e["phase"] == TaperPhase.idle and e["reason"] == "init"
+  assert e["accel"] == ORIG and e["accel"] == ref_accel[effective]
+  # from the effect frame on: original accel, CAN identical to the untouched OFF reference (StopReq included)
+  for f in range(effective, len(rows)):
+    assert tr[f]["accel"] == ref_accel[f] and rig.can[f] == ref.can[f]
+  sent = [f for f in range(effective, len(rows)) if tr[f]["stop_req"] is not None]
+  assert sent and all(tr[f]["stop_req"] == ctl_tr[f]["stop_req"] for f in sent)
+  assert any(ctl_tr[f]["accel"] > ref_accel[f] + 1e-3 for f in sent)  # control still modifies while switched is OFF
+  _assert_safe_vs_off(rig, ref)
+  _assert_safe_vs_off(ctl, ref)
   assert rig.step(1.0, LCS.pid, 0.0, standstill=True)[0] == pytest.approx(1.0)
 
 
-def test_live_switch_on_mid_stop_waits_for_new_run(monkeypatch):
-  rig = Rig(monkeypatch, taper=False)
-  for _ in range(100):
-    rig.step(-1.0, LCS.pid, 5.0)
-  for i in range(20):
-    rig.step(-1.2, LCS.stopping, 1.4 - 0.01 * i)
-  rig.params.values["K9StopTaper"] = True
-  for i in range(100):  # already below REARM_SPEED when switched on: original for the rest of this stop
-    assert rig.step(-1.2, LCS.stopping, max(1.2 - 0.01 * i, 0.05))[0] == ORIG
-  for _ in range(100):
-    assert rig.step(-1.2, LCS.stopping, 0.0, standstill=True)[0] == ORIG
-  _taper_until_active(rig)  # next stop after a fresh run: active
+STALE_ON_RESTORE = (45, 500)  # (cruise pad, read): natural restore starts before read 500 and finishes before 550
+
+
+def test_live_switch_off_after_read_stale_on_restore_completes_naturally_before_next_read(monkeypatch):
+  pad, read = STALE_ON_RESTORE
+  rows = _stop_profile(n=500, pad=pad, dv=OFF_DV)
+  ref = Rig(monkeypatch, taper=False)
+  ref_accel = [ref.step(a, s, v, standstill=ss, a_ego=ae)[0] for a, s, v, ss, ae in rows]
+  monkeypatch.undo()
+
+  def run(flip):
+    rig = Rig(monkeypatch)
+    spy = ReadSpy(rig)
+    tr = []
+    for frame, (accel, state, v, standstill, a_ego) in enumerate(rows):
+      f, did, out, sent = spy.step(accel, state, v, standstill=standstill, a_ego=a_ego)
+      t = rig.cc.k9_stop_taper
+      tr.append({"read": did, "accel": out, "stop_req": None if sent is None else sent["StopReq"],
+                 "enabled": rig.cc.k9_stop_taper_enabled, "phase": t.phase, "reason": t.reason})
+      if frame == flip:
+        rig.params.values["K9StopTaper"] = False  # right AFTER the actual read: cached value stays ON until read + 50
+    monkeypatch.undo()
+    return rig, spy, tr
+
+  ctl, ctl_spy, ctl_tr = run(None)  # matched control: same inputs, switch stays ON for the whole stop
+  rig, spy, tr = run(read)
+  assert spy.read_frames == ctl_spy.read_frames == list(range(0, len(rows), 50)) and tr[read]["read"]
+  # until the next read the switched rig is frame-for-frame the stays-ON control (accel, phase, enabled, CAN)
+  for f in range(read + 50):
+    assert (tr[f]["accel"], tr[f]["phase"], tr[f]["reason"], tr[f]["enabled"]) == \
+           (ctl_tr[f]["accel"], ctl_tr[f]["phase"], ctl_tr[f]["reason"], True) and rig.can[f] == ctl.can[f]
+  restore = [f for f, e in enumerate(tr) if e["phase"] == TaperPhase.restore]
+  start, end = restore[0], restore[-1]
+  assert restore == list(range(start, end + 1)) and start < read <= end < read + 50  # flip lands inside restore
+  assert tr[start - 1]["phase"] == TaperPhase.taper
+  ctl_restore = [f for f, e in enumerate(ctl_tr) if e["phase"] == TaperPhase.restore]
+  assert ctl_restore == restore and ctl_tr[end + 1]["phase"] == TaperPhase.done and ctl_tr[end + 1]["reason"] == "restored"
+  # restore length derived from code constants for THIS scenario's actual restore delta (not a universal bound):
+  # it must be < 50 frames (one read period) so that a flip anywhere in it still ends naturally before the next read
+  n_restore = math.ceil((tr[start]["accel"] - ref_accel[start]) / (kt.REAPPLY_RATE * kt.DT) - 1e-6)
+  assert n_restore == end - start + 1 < 50
+  # derived duration: first restore output above the original, reapplied at REAPPLY_RATE * DT per frame
+  assert end - start + 1 == math.ceil((tr[start]["accel"] - ref_accel[start]) / (kt.REAPPLY_RATE * kt.DT) - 1e-6)
+  for f in range(start + 1, end + 1):
+    assert tr[f]["accel"] == pytest.approx(max(tr[f - 1]["accel"] - kt.REAPPLY_RATE * kt.DT, ref_accel[f]), abs=1e-6)
+  # natural completion by the stale cached ON before the next read, not the switch
+  assert all(tr[f]["enabled"] for f in range(read + 1, read + 50)) and rig.params.values["K9StopTaper"] is False
+  assert tr[end + 1]["phase"] == TaperPhase.done and tr[end + 1]["reason"] == "restored"
+  assert not any(tr[f]["read"] for f in range(read + 1, read + 50))
+  for f in range(end + 1, read + 50):
+    assert tr[f]["accel"] == ref_accel[f] == ORIG and tr[f]["phase"] == TaperPhase.done
+  # next actual read: true OFF, full original, CAN identical to the OFF reference from natural completion on
+  e = tr[read + 50]
+  assert e["read"] and not e["enabled"] and e["phase"] == TaperPhase.idle and e["accel"] == ref_accel[read + 50]
+  for f in range(end + 1, len(rows)):
+    assert tr[f]["accel"] == ref_accel[f] and rig.can[f] == ref.can[f]
+  for f in range(len(rows)):
+    assert tr[f]["accel"] >= ref_accel[f] - 1e-6  # never stronger
+  sent = [f for f in range(len(rows)) if tr[f]["stop_req"] is not None]
+  assert sent and any(start <= f <= end for f in sent)
+  _assert_safe_vs_off(rig, ref)  # StopReq/ACCMode invariant over the whole stop
+  _assert_safe_vs_off(ctl, ref)
+  for f in range(len(rows)):
+    assert ctl_tr[f]["accel"] >= ref_accel[f] - 1e-6
+
+def test_live_switch_off_mid_taper_original_no_later_than_next_read_natural_or_switch(monkeypatch):
+  # Restored former short stale-ON taper check, renamed honestly: in this scene the taper may end naturally (stale
+  # cached ON) before the switch takes effect, so it does NOT prove the switch caused the restore; it proves that,
+  # either way, output is original by the next read and never stronger, matched to a stays-ON control until then.
+  def run(flip):
+    rig = Rig(monkeypatch)
+    spy = ReadSpy(rig)
+    _taper_until_active(rig)
+    if flip:
+      rig.params.values["K9StopTaper"] = False
+    start = rig.cc.frame
+    outs = [spy.step(-1.2, LCS.stopping, 0.3) for _ in range(51)]
+    monkeypatch.undo()
+    return rig, start, outs
+
+  ctl, c_start, c_outs = run(False)
+  rig, start, outs = run(True)
+  assert start == c_start
+  next_read = next(i for i, (_, did, _, _) in enumerate(outs) if did)
+  assert 0 <= next_read <= 50 and (start + next_read) % 50 == 0
+  for i in range(next_read):  # stale cached ON: identical to the stays-ON control until the next read
+    assert outs[i][2] == c_outs[i][2] and rig.can[start + i] == ctl.can[start + i]
+  first_original = next(i for i, o in enumerate(outs) if o[2] == ORIG)
+  assert first_original <= next_read and all(o[2] == ORIG for o in outs[first_original:])
+  assert all(o[2] >= -1.2 - 1e-6 and (o[3] is None or o[3]["aReqValue"] == pytest.approx(o[2], abs=0.006)) for o in outs)
+  assert rig.cc.k9_stop_taper.phase == TaperPhase.idle and not rig.cc.k9_stop_taper_enabled
+
+
+ON_READ = 150  # v = 0.9 m/s: below REARM_SPEED, above TAPER_SPEED, before standstill
+
+
+@pytest.mark.parametrize("when", ["before", "after"])
+def test_live_switch_on_at_exact_read_frame_waits_for_true_rearm(monkeypatch, when):
+  rows = _stop_profile()
+  ref = _reference_off(monkeypatch, rows)
+  monkeypatch.undo()
+  rig = Rig(monkeypatch, taper=False, K9StopTaper=False)
+  spy = ReadSpy(rig)
+  out = _run(spy, rows, flip=ON_READ, value=True, when=when)
+  by = {f: o for f, *o in out}
+  assert [f for f, did, *_ in out if did] == list(range(0, len(rows), 50))
+  assert rows[ON_READ][2] == pytest.approx(0.9) and kt.TAPER_SPEED < rows[ON_READ][2] < kt.REARM_SPEED
+  effective = ON_READ if when == "before" else ON_READ + 50
+  assert by[effective - 1][3] is False and by[effective][3] is True  # stale OFF until exactly this read
+  for f in range(len(rows)):  # rest of this stop (taper window, standstill): original, never armed, CAN as OFF
+    assert by[f][1] == ORIG or f < 100
+    assert not by[f][5] and by[f][4] == TaperPhase.idle
+  assert rig.can == ref.can[:len(rig.can)] and len(rig.can) == len(rows)
+  _assert_safe_vs_off(rig, ref)
+  # true re-arm: depart and move at >= REARM_SPEED, then the next stop actually tapers
+  out2 = _run(spy, _stop_profile())
+  assert any(o[5] == TaperPhase.taper and o[2] > -1.2 + 1e-3 for o in out2)
 
 
 def test_setting_registered_in_experimental_menu_default_off():

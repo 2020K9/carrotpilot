@@ -26,8 +26,59 @@ INTERLOCKS = ("long_active", "override", "gas", "brake", "can_valid", "stopping_
 FINITE_KEYS = ("accel", "a_target", "v_ego", "a_ego", "lead_distance", "lead_rel_speed")
 
 
-def frames(seed, n=6000):
-  """Regime chain cruise -> approach -> standstill -> depart with sparse fault/edge events; yields update kwargs."""
+def clean_stop_prefix():
+  """Deterministic fault-free stop (cruise 3 m/s -> -0.6 m/s^2 to standstill -> hold -> depart to 3 m/s).
+
+  Added for the 1 km/h window: the speed is observed input only (no internal state seeding) and the prefix draws no
+  random numbers, so the seeded random stream that follows is frame-for-frame the original one."""
+  base = {"standstill": False, "long_active": True, "override": False, "gas": False, "brake": False,
+          "can_valid": True, "stopping_or_pid": True, "lead_visible": False, "lead_distance": 0.0, "lead_rel_speed": 0.0}
+  v = 3.0
+  for _ in range(30):
+    yield base | {"accel": -0.6, "a_target": -0.6, "v_ego": v, "a_ego": 0.0}
+  while v > 0.0:
+    v = max(v - 0.6 * kt.DT, 0.0)
+    yield base | {"accel": -0.6, "a_target": -0.6, "v_ego": v, "a_ego": -0.6, "standstill": v == 0.0}
+  for _ in range(150):
+    yield base | {"accel": -0.6, "a_target": -0.6, "v_ego": 0.0, "a_ego": 0.0, "standstill": True}
+  while v < 3.0:
+    v = min(v + 0.04, 3.0)
+    yield base | {"accel": 0.3, "a_target": 0.3, "v_ego": v, "a_ego": 0.4}
+
+
+def coverage_prelude():
+  """Deterministic coverage prelude (no random draws): one distance_budget episode (hold 0.27 m/s with decel reported)
+  and one interlock episode (gas pressed in taper), each after a real rearm run at 3 m/s, then clean_stop_prefix().
+  Reasons from here are deterministic by construction and are counted separately from the seeded random frames."""
+  base = {"accel": -1.0, "a_target": -1.0, "a_ego": -0.5, "standstill": False, "long_active": True, "override": False,
+          "gas": False, "brake": False, "can_valid": True, "stopping_or_pid": True, "lead_visible": False,
+          "lead_distance": 0.0, "lead_rel_speed": 0.0}
+  for kind in ("distance_budget", "interlock"):
+    for _ in range(30):
+      yield base | {"v_ego": 3.0, "a_ego": 0.0}
+    v = 3.0
+    while v > 0.27:
+      v = max(v - 1.0 * kt.DT, 0.27)
+      yield base | {"v_ego": v}
+    for i in range(200):
+      yield base | {"v_ego": 0.27, "gas": kind == "interlock" and i >= 20}
+  yield from clean_stop_prefix()
+
+
+PRELUDE_LEN = sum(1 for _ in coverage_prelude())
+# Seeded random frames per coverage stream. 6000 left 7/32 seeds (3,7,11,13,14,19,24) with no random-frame episode:
+# an invalid/interlock draw below REARM_SPEED during a slow approach disarms until the next >=1.5 m/s run, which never
+# came before the stream ended. 12000 continues the same RNG sequence (first 6000 random frames unchanged, same fault
+# draws/distribution and decel ranges) so later stops can rearm; no seed selection.
+RANDOM_N = 12000
+
+
+def frames(seed, n=6000, prefix=True):
+  """Regime chain cruise -> approach -> standstill -> depart with sparse fault/edge events; yields update kwargs.
+
+  With prefix=True the deterministic clean_stop_prefix() runs first, then the unchanged n seeded random frames."""
+  if prefix:
+    yield from coverage_prelude()
   r = random.Random(seed)
   v, regime, left, a_cmd, lead, grip = 4.0, "cruise", 0, -1.0, None, 1.0
   for _ in range(n):
@@ -97,10 +148,11 @@ def _same(a, b):
 
 
 def check_stream(seed):
-  """Asserts the frame contract over one stream; returns (episodes entered, modified frames)."""
+  """Asserts the frame contract over every frame (prelude included); returns (episodes entered, modified frames)
+  counted ONLY on seeded random frames i >= PRELUDE_LEN, so the deterministic prelude earns no coverage credit."""
   t = K9StopTaper()
   armed_ref, entries, changed, prev_out = False, 0, 0, 0.0
-  for i, kw in enumerate(frames(seed)):
+  for i, kw in enumerate(frames(seed, RANDOM_N)):
     before = t.phase
     out = t.update(**kw)
     accel, v = kw["accel"], kw["v_ego"]
@@ -115,9 +167,9 @@ def check_stream(seed):
       armed_ref = True  # also true for a finite 1e9 spike: open owner question Q1, not changed here
     if before == TaperPhase.idle and t.phase in (TaperPhase.taper, TaperPhase.restore):
       assert armed_ref, (seed, i)  # every episode needs a run at REARM_SPEED since the last end/disarm
-      entries += 1
+      entries += i >= PRELUDE_LEN
     if out != accel:
-      changed += 1
+      changed += i >= PRELUDE_LEN
       assert accel < out < 0.0, (seed, i)  # only weaker, never released to zero or positive
       assert accel > kt.STRONG_ACCEL and kw["a_target"] > kt.STRONG_ACCEL and not lead_too_close, (seed, i)
       if t.phase == TaperPhase.taper:
@@ -142,18 +194,70 @@ def test_seeded_stream_frame_contract(seed):
 
 
 def test_seeded_streams_reach_every_exit_reason():
-  reasons = set()
+  """Seeded stream WITH a deterministic coverage prelude: reasons are tallied per source (prelude vs seeded random)."""
+  reasons, prelude_counts, random_counts = set(), {}, {}
   for seed in SEEDS:
     t = K9StopTaper()
-    for kw in frames(seed):
+    for i, kw in enumerate(frames(seed, RANDOM_N)):
       before = t.phase
       t.update(**kw)
       if before in (TaperPhase.taper, TaperPhase.restore) and t.phase == TaperPhase.done:
         reasons.add(t.reason)
+        counts = prelude_counts if i < PRELUDE_LEN else random_counts
+        counts[t.reason] = counts.get(t.reason, 0) + 1
+  print("prelude", sorted(prelude_counts.items()), "random", sorted(random_counts.items()))
+  assert prelude_counts.get("distance_budget", 0) == len(SEEDS) and prelude_counts.get("interlock", 0) == len(SEEDS)
+  # required random-frame reasons (subset, not a freeze of observed outcomes: extra valid random reasons are allowed;
+  # distance_budget/interlock/restored also have separate deterministic scenes below)
+  assert set(random_counts) >= {"strong_braking", "strengthened", "lead_too_close", "invalid", "left_window",
+                                "no_progress", "moving", "release"}
   stats = [check_stream(seed) for seed in SEEDS]
-  assert sum(e > 0 for e, _ in stats) >= 28 and sum(c > 0 for _, c in stats) >= 22  # contract checked on real tapers
+  print("random-only (entries, changed) per seed", stats)
+  assert sum(e > 0 for e, _ in stats) >= 28 and sum(c > 0 for _, c in stats) >= 22  # random frames only, no prelude credit
   assert reasons == {"strong_braking", "strengthened", "lead_too_close", "interlock", "invalid", "left_window",
                      "distance_budget", "no_progress", "moving", "release", "restored"}
+
+
+def _taper_base(**kw):
+  return {"accel": -1.0, "a_target": -1.0, "a_ego": -0.5, "standstill": False, "long_active": True, "override": False,
+          "gas": False, "brake": False, "can_valid": True, "stopping_or_pid": True, "lead_visible": False,
+          "lead_distance": 0.0, "lead_rel_speed": 0.0} | kw
+
+
+def _enter_taper(t, v=0.27):
+  t.update(**_taper_base(v_ego=3.0))
+  outs = [t.update(**_taper_base(v_ego=v)) for _ in range(10)]
+  assert t.phase == TaperPhase.taper and outs[-1] > -1.0 and outs[-1] < 0.0  # real taper, modified output
+  return outs[-1]
+
+
+@pytest.mark.parametrize("reason", ["distance_budget", "strengthened", "interlock", "restored"])
+def test_deterministic_exit_reason_scenes(reason):
+  """Deterministic coverage, separate from the random streams above."""
+  t = K9StopTaper()
+  _enter_taper(t)
+  if reason == "distance_budget":  # observed 0.27 m/s with decel reported: budget ends the episode (~0.5 s)
+    for i in range(200):
+      out = t.update(**_taper_base(v_ego=0.27))
+      if t.phase == TaperPhase.done:
+        break
+    assert 0.3 <= i * kt.DT <= 1.0 and out == -1.0
+  elif reason == "strengthened":
+    assert t.update(**_taper_base(v_ego=0.25, accel=-1.4, a_target=-1.4)) == -1.4
+  elif reason == "interlock":
+    assert t.update(**_taper_base(v_ego=0.25, gas=True)) == -1.0
+  else:
+    v = 0.27
+    while v > 0.0:
+      v = max(v - 0.006, 0.0)
+      t.update(**_taper_base(v_ego=v, standstill=v == 0.0))
+    assert t.phase == TaperPhase.restore and t.out > -1.0
+    for _ in range(300):
+      out = t.update(**_taper_base(v_ego=0.0, standstill=True, a_ego=0.0))
+      if t.phase == TaperPhase.done:
+        break
+    assert out == -1.0
+  assert t.phase == TaperPhase.done and t.reason == reason
 
 
 @pytest.mark.parametrize("seed", SEEDS[:8])
@@ -180,25 +284,31 @@ def test_q1_single_finite_speed_spike_rearms_after_abort_characterization():
           "lead_rel_speed": 0.0}
   t.update(accel=-1.0, v_ego=3.0, **base)
   for _ in range(20):
-    t.update(accel=-1.0, v_ego=0.5, **base)
+    t.update(accel=-1.0, v_ego=0.2, **base)
   assert t.phase == TaperPhase.taper
-  assert t.update(accel=-1.0, v_ego=0.5, **(base | {"a_target": -2.0})) == -1.0 and t.phase == TaperPhase.done
-  assert t.update(accel=-1.0, v_ego=0.5, **base) == -1.0  # same stop: original
+  assert t.update(accel=-1.0, v_ego=0.2, **(base | {"a_target": -2.0})) == -1.0 and t.phase == TaperPhase.done
+  assert t.update(accel=-1.0, v_ego=0.2, **base) == -1.0  # same stop: original
   t.update(accel=-1.0, v_ego=1e9, **(base | {"standstill": True}))  # with the standstill flag: no re-arm
   assert not t.armed and t.phase == TaperPhase.done
   t.update(accel=-1.0, v_ego=1e9, **base)  # finite outlier
   assert t.armed and t.phase == TaperPhase.idle
-  assert t.update(accel=-1.0, v_ego=0.5, **base) > -1.0 and t.phase == TaperPhase.taper
+  assert t.update(accel=-1.0, v_ego=0.2, **base) > -1.0 and t.phase == TaperPhase.taper
 
 
 # --- CarController: diverse seeded streams -------------------------------------------------------------------------
+
+# CarController random frames. 1200 gave seed 21 zero random-frame output changes: all 60 of its in-window random frames
+# came while the taper was done/disarmed (an interlock/invalid draw below REARM_SPEED), so `base != cand` was carried by
+# the deterministic prelude only. 3600 continues the same frames()/cc_stream RNG sequences (first 1200 unchanged).
+CC_RANDOM_N = 3600
+
 
 def cc_stream(rig, seed):
   """CarController-level stream: longActive drops, gas/brake, override, lead disagreement, standstill flicker."""
   r = random.Random(f"k9-taper-props-{seed}")
   parser = CANParser("hyundai_kia_generic", [("SCC12", 0)], 0)
   rows = []
-  for kw in frames(seed, 1200):
+  for kw in frames(seed, CC_RANDOM_N):
     cc = structs.CarControl(enabled=True, longActive=kw["long_active"])
     accel = kw["accel"] if math.isfinite(kw["accel"]) else -1.0  # carControl accel comes from LongControl: finite
     cc.actuators.accel, cc.actuators.aTarget = accel, kw["a_target"] if math.isfinite(kw["a_target"]) else accel
@@ -231,7 +341,7 @@ def test_off_diverse_stream_can_identical_to_pre_candidate(monkeypatch, base_cc,
   ref, _ = cc_stream(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), taper=False, module=base_cc), seed)
   monkeypatch.undo()
   new, _ = cc_stream(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), taper=False, **values), seed)
-  assert len(ref) == len(new) == 1200 and ref == new
+  assert len(ref) == len(new) == len(list(frames(seed, CC_RANDOM_N))) and ref == new
 
 
 @pytest.mark.parametrize("seed", [4, 21, 28])
@@ -242,7 +352,51 @@ def test_on_diverse_stream_keeps_stopreq_and_never_strengthens(monkeypatch, base
   monkeypatch.undo()
   _, base = cc_stream(Rig(monkeypatch, taper=False, module=base_cc), seed)
   monkeypatch.undo()
-  _, cand = cc_stream(Rig(monkeypatch), seed)
+  old = list(frames(seed, 1200))
+  assert list(frames(seed, CC_RANDOM_N))[:len(old)] == old  # extension keeps the original 1200 random frames
+  rig, update, changed = Rig(monkeypatch), K9StopTaper.update, [0]
+
+  def counted(self, **kw):  # random-frame output changes only; the prelude earns no credit
+    out = update(self, **kw)
+    changed[0] += rig.frame >= PRELUDE_LEN and out != kw["accel"]
+    return out
+  monkeypatch.setattr(K9StopTaper, "update", counted)
+  _, cand = cc_stream(rig, seed)
+  assert changed[0] > 0, seed
   assert len(base) == len(cand) and base != cand
   for (bs, bm, ba), (cs, cm, ca) in zip(base, cand, strict=True):
     assert (cs, cm) == (bs, bm) and ca >= ba - 0.011  # StopReq/ACCMode kept; aReq never stronger (2 LSB)
+
+
+def _to_restore(t):
+  _enter_taper(t)
+  t.update(**_taper_base(v_ego=0.0, standstill=True))
+  assert t.phase == TaperPhase.restore and -1.0 < t.out < 0.0  # real restore from a changed output
+
+
+@pytest.mark.parametrize("reason", ["strong_braking", "lead_too_close", "invalid", "left_window", "no_progress",
+                                    "moving", "release"])
+def test_deterministic_other_exit_reason_scenes(reason):
+  """The remaining 7 reasons, each after an actual entry with a changed output; separate from random credit."""
+  t = K9StopTaper()
+  if reason in ("moving", "release"):
+    _to_restore(t)
+    kw = {"moving": _taper_base(v_ego=0.2, standstill=False), "release": _taper_base(v_ego=0.0, standstill=True, accel=-0.1)}
+    assert t.update(**kw[reason]) == kw[reason]["accel"]
+  else:
+    _enter_taper(t)
+    if reason == "strong_braking":
+      assert t.update(**_taper_base(v_ego=0.25, accel=kt.STRONG_ACCEL, a_target=kt.STRONG_ACCEL)) == kt.STRONG_ACCEL
+    elif reason == "lead_too_close":
+      assert t.update(**_taper_base(v_ego=0.25, lead_visible=True, lead_distance=kt.LEAD_MIN_GAP)) == -1.0
+    elif reason == "invalid":
+      assert t.update(**_taper_base(v_ego=0.25, a_ego=float("nan"))) == -1.0
+    elif reason == "left_window":
+      assert t.update(**_taper_base(v_ego=kt.TAPER_SPEED)) == -1.0
+    else:
+      for i in range(100):
+        out = t.update(**_taper_base(v_ego=0.27, a_ego=0.0))
+        if t.phase == TaperPhase.done:
+          break
+      assert out == -1.0 and abs((i + 1) * kt.DT - kt.PROGRESS_TIME) < 1e-9
+  assert t.phase == TaperPhase.done and t.reason == reason
