@@ -13,12 +13,19 @@
   `ModelStopPrediction`(`0` 끔, `1` 켬·기본)으로 바꿨습니다. 폐지된 `TrafficLightDetectMode`는
   시작 시 새 키가 없을 때만 한 번 옮겨집니다(`0`→`0`, `1`/`2`→`1`). 옛 키는 이 마이그레이션에서만
   읽으며 플래너는 읽지 않습니다. 이 정지 후에는 자동 출발하지 않으며 가속 페달 또는 일반 앞차 추종으로
-  출발합니다. `TrafficStopDistanceAdjust`는 일반 모델 정지 위치 보정으로 남습니다.
+  출발합니다. 제거된 재출발은 신호 기반 경로(내비·폰 신호 상태, 카메라 녹색 확인)와, 신호와 구분할 수 없는
+  모델 속도 기반 정지 후 녹색 출발(기존 모드 2)입니다. 가속 페달, 정지점 앞차 추종 전환, 브레이크·소프트 홀드·
+  사용자 정지 처리와 주행 중 정지 계획 취소는 그대로입니다. 부수 효과: 신호가 없는 곳에서 모델이 잘못 멈춘 경우에도
+  가속 페달을 밟거나 정지점에 앞차가 나타날 때까지 정지 상태를 유지합니다. `TrafficStopDistanceAdjust`는 일반 모델 정지 위치 보정으로 남습니다.
   The driving model's generic no-lead stop prediction is kept for safety and renamed
   `ModelStopPrediction` (`0` off, `1` on, default). The retired `TrafficLightDetectMode` is copied once at
   startup only when the new key is unset (`0`->`0`, `1`/`2`->`1`); the old key is read only by that
   migration, never by the planner. No automatic departure follows such a stop: use the accelerator or
-  ordinary lead following. `TrafficStopDistanceAdjust` remains the generic model stop-position offset.
+  ordinary lead following. Removed restarts are the signal paths (nav/phone traffic state, camera green
+  confirmation) and the model-velocity green restart after a stop (former mode 2), which cannot be told
+  apart from a signal. Accelerator, stop-point lead handover, brake/soft-hold/user-stop handling and
+  cancelling a moving stop plan are unchanged. Side effect: a mistaken model stop where no signal exists
+  also stays stopped until the accelerator is pressed or a lead appears at the stop point. `TrafficStopDistanceAdjust` remains the generic model stop-position offset.
 - 사전학습 모델 가중치에 담긴 신호 관련 학습은 코드 삭제로 지울 수 없습니다. 현재 모델은 신호 앞에서 스스로
   정지를 예측할 수 있습니다. `ModelStopPrediction=0`은 그 예측을 감속에 쓰지 않을 뿐 모델을 바꾸지 않습니다.
   Signal semantics learned by the pretrained model cannot be removed by deleting code; the current model

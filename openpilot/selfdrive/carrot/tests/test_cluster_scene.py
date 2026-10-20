@@ -734,6 +734,16 @@ def test_driving_mode_indicator_hides_unknown_values(mode) -> None:
   assert draws == []
 
 
+def test_traffic_states_share_the_slot_beside_driving_mode() -> None:
+  # The traffic icon was removed; its former slot still anchors driving mode.
+  destination_x = cluster_renderer.SPEED_STATUS_SLOT_CENTER_X - cluster_renderer.SPEED_STATUS_SLOT_SIZE * 0.5
+  destination_width = cluster_renderer.SPEED_STATUS_SLOT_SIZE
+  traffic_right = destination_x + destination_width
+  assert cluster_renderer.SPEED_DRIVING_MODE_CENTER_X - traffic_right == pytest.approx(
+    cluster_renderer.SPEED_DRIVING_MODE_BASE_CENTER_OFFSET_X
+  )
+
+
 def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
   lfa_lane_left = (
     cluster_renderer.LFA_STATUS_CENTER_X
