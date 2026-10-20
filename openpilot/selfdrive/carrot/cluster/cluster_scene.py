@@ -11,6 +11,7 @@ from cluster_config import (
     AMBER,
     BLUE,
     BLUE_SOFT,
+    CLUSTER_CAMERA_VIEW_MODE_DEFAULT,
     CLUSTER_CAMERA_VIEW_MODE_EGO_BOTTOM,
     CLUSTER_RADAR_DISPLAY_DETAIL,
     CLUSTER_RADAR_SOURCE_COLOR_BY_SOURCE,
@@ -42,6 +43,7 @@ from cluster_config import (
     VEHICLE_LENGTH_M,
     VEHICLE_WIDTH_M,
     cluster_camera_view_is_road_camera,
+    normalize_cluster_camera_view_mode,
 )
 from cluster_models import (
     ClusterUiState,
@@ -240,6 +242,7 @@ class VehicleBox:
     cut_in: bool = False
     primary: bool = False
     annotate: bool = False
+    ego: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -3683,6 +3686,13 @@ def build_cluster_scene(
         camera_active,
         target_offset,
     )
+    # The K9 photo sprite is only for ClusterHudCameraViewMode 0 (default chase view);
+    # mode 1, camera modes and the surround orbit keep the 3D model.
+    if (
+        normalize_cluster_camera_view_mode(state.camera_view_mode) == CLUSTER_CAMERA_VIEW_MODE_DEFAULT
+        and not state.surround_view_active
+    ):
+        ego_vehicle = replace(ego_vehicle, ego=True)
     show_ego_vehicle = not cluster_camera_view_is_road_camera(state.camera_view_mode)
     merged_radar_labels = frozenset[str]()
     if route_mode:

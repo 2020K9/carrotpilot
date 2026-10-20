@@ -110,6 +110,10 @@ KAIGEN_GOTHIC_KR_BOLD_FONT_PATH = OPENPILOT_FONT_DIR / "KaiGenGothicKR-Bold.ttf"
 JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
+EGO_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "k9_ego_car.png"
+# Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
+# the ego vehicle only. Leads/cut-ins keep the shared OBJ model.
+EGO_CAR_ICON_MAX_ROLL_DEG = 12.0
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
 TRAFFIC_RED_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_red.png"
 TRAFFIC_GREEN_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_green.png"
@@ -952,6 +956,7 @@ class ClusterUiRenderer:
         self._nv12_dmabuf_pool_disabled = False
         self._vehicle_model = None
         self._vehicle_model_load_attempted = False
+        self._ego_car_texture = None
         self._scene_cache_key: tuple[object, ...] | None = None
         self._scene_cache: ClusterScene | None = None
         self._speed_bg_texture = None
@@ -1316,6 +1321,9 @@ class ClusterUiRenderer:
         if self._tpms_car_texture is not None:
             rl.unload_texture(self._tpms_car_texture)
             self._tpms_car_texture = None
+        if getattr(self, "_ego_car_texture", None) is not None:
+            rl.unload_texture(self._ego_car_texture)
+            self._ego_car_texture = None
         if self._navi_guidance_texture is not None:
             rl.unload_texture(self._navi_guidance_texture)
             self._navi_guidance_texture = None
@@ -2857,6 +2865,8 @@ class ClusterUiRenderer:
         if self._vehicle_model_load_attempted:
             return
         self._vehicle_model_load_attempted = True
+        if getattr(self, "_ego_car_texture", None) is None:
+            self._ego_car_texture = self._load_icon_texture(EGO_CAR_ICON_PATH, "K9 ego car")
         if not VEHICLE_MODEL_PATH.exists():
             return
         try:
@@ -3125,7 +3135,12 @@ class ClusterUiRenderer:
                 self._draw_radar_point(point)
             self._profile_add("draw_scene.radar_points", profile_stage)
             profile_stage = self._profile_start()
+            ego_sprite_vehicle = None
             for vehicle in scene.vehicles:
+                if vehicle.ego and getattr(self, "_ego_car_texture", None) is not None:
+                    self._draw_vehicle_shadow(vehicle)
+                    ego_sprite_vehicle = vehicle
+                    continue
                 self._draw_vehicle(vehicle)
             self._profile_add("draw_scene.vehicles", profile_stage)
         finally:
@@ -3138,6 +3153,8 @@ class ClusterUiRenderer:
             rl.rl_push_matrix()
             rl.rl_translatef(scene_offset_x, 0.0, 0.0)
         try:
+            if ego_sprite_vehicle is not None:
+                self._draw_ego_car_sprite(ego_sprite_vehicle, camera, scene.scene_shift_x_m)
             profile_stage = self._profile_start()
             self._draw_radar_point_labels(
                 scene.radar_points,
@@ -3426,6 +3443,77 @@ class ClusterUiRenderer:
             self._draw_vehicle_marker(vehicle)
             return
         self._draw_vehicle_box(vehicle)
+
+    def _ego_car_sprite_rect(
+        self,
+        vehicle: VehicleBox,
+        camera,
+        scene_shift_x_m: float,
+        texture_width: int,
+        texture_height: int,
+    ) -> tuple[float, float, float, float, float] | None:
+        """Screen (anchor_x, anchor_y, width, height, roll_deg) for the ego cutout.
+
+        The sprite spans the projected width of the ego box and sits on its
+        projected rear-bottom edge, so it keeps the 3D model's position and scale.
+        """
+        if texture_width <= 0 or texture_height <= 0:
+            return None
+        half_width = vehicle.width_m * 0.5
+        half_length = vehicle.length_m * 0.5
+        base_z = max(0.0, vehicle.center.z - vehicle.height_m * 0.5)
+        points = []
+        for local_x in (-half_width, half_width):
+            for local_y in (-half_length, half_length):
+                for z in (base_z, base_z + vehicle.height_m):
+                    world = rl.Vector3(
+                        vehicle.center.x + scene_shift_x_m + vehicle.right_x * local_x + vehicle.forward_x * local_y,
+                        vehicle.center.y + vehicle.right_y * local_x + vehicle.forward_y * local_y,
+                        z,
+                    )
+                    screen = world_to_screen_label_anchor(world, camera, self.width, self.height)
+                    if screen is None:
+                        return None
+                    points.append((float(screen.x), float(screen.y)))
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        width = max(xs) - min(xs)
+        if width < 1.0:
+            return None
+        height = width * texture_height / texture_width
+        rear = world_to_screen_label_anchor(
+            rl.Vector3(vehicle.center.x + scene_shift_x_m - vehicle.forward_x * half_length,
+                       vehicle.center.y - vehicle.forward_y * half_length, base_z),
+            camera, self.width, self.height,
+        )
+        front = world_to_screen_label_anchor(
+            rl.Vector3(vehicle.center.x + scene_shift_x_m + vehicle.forward_x * half_length,
+                       vehicle.center.y + vehicle.forward_y * half_length, base_z),
+            camera, self.width, self.height,
+        )
+        roll_deg = 0.0
+        if rear is not None and front is not None and rear.y - front.y > 1.0:
+            roll_deg = clamp(math.degrees(math.atan2(front.x - rear.x, rear.y - front.y)),
+                             -EGO_CAR_ICON_MAX_ROLL_DEG, EGO_CAR_ICON_MAX_ROLL_DEG)
+        return (min(xs) + max(xs)) * 0.5, max(ys), width, height, roll_deg
+
+    def _draw_ego_car_sprite(self, vehicle: VehicleBox, camera, scene_shift_x_m: float) -> None:
+        texture = getattr(self, "_ego_car_texture", None)
+        if texture is None:
+            return
+        rect = self._ego_car_sprite_rect(vehicle, camera, scene_shift_x_m, texture.width, texture.height)
+        if rect is None:
+            return
+        anchor_x, anchor_y, width, height, roll_deg = rect
+        alpha = int(92 + 163 * clamp(vehicle.confidence, 0.0, 1.0))
+        rl.draw_texture_pro(
+            texture,
+            rl.Rectangle(0.0, 0.0, float(texture.width), float(texture.height)),
+            rl.Rectangle(anchor_x, anchor_y, width, height),
+            rl.Vector2(width * 0.5, height),
+            roll_deg,
+            rl_color(WHITE, alpha),
+        )
 
     def _draw_vehicle_marker(self, vehicle: VehicleBox) -> None:
         alpha = int(80 + 150 * clamp(vehicle.confidence, 0.0, 1.0))
