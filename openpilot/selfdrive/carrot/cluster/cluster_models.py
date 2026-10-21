@@ -493,6 +493,10 @@ class ClusterUiState:
     recorded_cutin_active: bool = False
     recorded_cutin_sound: bool = False
     alert: ClusterAlert | None = None
+    # Fresh modelV2 inner lane-line probabilities (0..1). None means unknown:
+    # absent, invalid, nonfinite, out of range or stale model data.
+    left_lane_line_confidence: float | None = None
+    right_lane_line_confidence: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

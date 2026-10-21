@@ -34,6 +34,7 @@ from cluster_config import (
     AMBER,
     BLUE,
     BLUE_SOFT,
+    CLUSTER_CAMERA_VIEW_MODE_DEFAULT,
     CLUSTER_PANEL_LAYOUT_DRIVING_LEFT,
     CLUSTER_PANEL_LAYOUT_DRIVING_RIGHT,
     CLUSTER_RADAR_INFO_ALL_SPEED,
@@ -67,6 +68,7 @@ from cluster_config import (
     cluster_camera_view_prefers_wide,
     cluster_wide_camera_zoom_factor,
     current_cluster_theme,
+    normalize_cluster_camera_view_mode,
     normalize_cluster_screen_mode,
     normalize_cluster_panel_layout,
     normalize_cluster_theme_mode,
@@ -274,6 +276,18 @@ SPEED_GEAR_W = 45.0
 SPEED_GEAR_H = 58.0
 SPEED_GEAR_CENTER_Y = SPEED_PANEL_Y + SPEED_PANEL_H - SPEED_GEAR_H * 0.5
 SPEED_GEAR_FONT_SIZE = 48.0
+# Model lane-line confidence (not accuracy) is centered under each turn arrow at one
+# shared height, below the gear badge the shifted left arrow sits over. A small opaque
+# box sized from the measured text keeps it readable over lane lines.
+LANE_CONFIDENCE_FONT_SIZE = 28.0
+LANE_CONFIDENCE_BOX_PAD_X = 4.0
+LANE_CONFIDENCE_BOX_H = LANE_CONFIDENCE_FONT_SIZE + 4.0
+LANE_CONFIDENCE_GAP_Y = 3.0
+LANE_CONFIDENCE_CENTER_Y = (
+    SPEED_GEAR_CENTER_Y + SPEED_GEAR_H * 0.5 + LANE_CONFIDENCE_GAP_Y + LANE_CONFIDENCE_BOX_H * 0.5
+)
+LANE_CONFIDENCE_BOX_COLOR = (8, 10, 12, 255)
+LANE_CONFIDENCE_UNKNOWN_COLOR = (170, 180, 188, 255)
 # A compact EV telltale fits between three-digit vehicle and cruise-set speeds.
 SPEED_EV_CENTER_X = 181.0
 SPEED_EV_CENTER_Y = SPEED_VALUE_CENTER_Y
@@ -4031,24 +4045,35 @@ class ClusterUiRenderer:
                 if side_gauges_translated:
                     rl.rl_pop_matrix()
             profile_stage = self._profile_start()
+            left_center_x_offset = self._turn_signal_center_x_offset(state, "left")
             self._draw_turn_signal(
                 "left",
                 left_signal_lit,
                 show_inactive=state.debug_ui_visible,
-                center_x_offset=self._turn_signal_center_x_offset(state, "left"),
+                center_x_offset=left_center_x_offset,
             )
             self._profile_add("hud.turn_signal_left", profile_stage)
             profile_stage = self._profile_start()
             self._draw_drive_status(state)
             self._profile_add("hud.drive_status", profile_stage)
             profile_stage = self._profile_start()
+            right_center_x_offset = self._turn_signal_center_x_offset(state, "right")
             self._draw_turn_signal(
                 "right",
                 right_signal_lit,
                 show_inactive=state.debug_ui_visible,
-                center_x_offset=self._turn_signal_center_x_offset(state, "right"),
+                center_x_offset=right_center_x_offset,
             )
             self._profile_add("hud.turn_signal_right", profile_stage)
+            if self._lane_confidence_visible(state):
+                profile_stage = self._profile_start()
+                self._draw_lane_confidence(
+                    "left", getattr(state, "left_lane_line_confidence", None), left_center_x_offset,
+                )
+                self._draw_lane_confidence(
+                    "right", getattr(state, "right_lane_line_confidence", None), right_center_x_offset,
+                )
+                self._profile_add("hud.lane_confidence", profile_stage)
             profile_stage = self._profile_start()
             self._draw_center_clock(state, center_x=self._center_clock_x(screen_mode))
             self._profile_add("hud.center_clock", profile_stage)
@@ -7277,6 +7302,52 @@ class ClusterUiRenderer:
                 self._right_turn_signal_started_at = now
             started_at = self._right_turn_signal_started_at
         return blink_visible(now, started_at, float("inf"))
+
+    def _lane_confidence_visible(self, state: ClusterUiState) -> bool:
+        # Only the user's default HUD: default screen mode (automatic trip-report
+        # panel included) and default 3D camera view. Other modes stay unchanged.
+        if getattr(self, "screen_mode", CLUSTER_SCREEN_MODE_DEFAULT) != CLUSTER_SCREEN_MODE_DEFAULT:
+            return False
+        return normalize_cluster_camera_view_mode(
+            getattr(state, "camera_view_mode", CLUSTER_CAMERA_VIEW_MODE_DEFAULT)
+        ) == CLUSTER_CAMERA_VIEW_MODE_DEFAULT
+
+    @staticmethod
+    def _lane_confidence_text(confidence: float | None) -> str:
+        if confidence is None or not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            return "--%"
+        return f"{int(round(confidence * 100.0))}%"
+
+    @staticmethod
+    def _lane_confidence_anchor(side: str, center_x_offset: float = 0.0) -> tuple[float, float]:
+        """Center of a side's label: its arrow's center x, shared label height."""
+        center_x = LANE_TURN_SIGNAL_LEFT_CENTER_X if side == "left" else LANE_TURN_SIGNAL_RIGHT_CENTER_X
+        return center_x + center_x_offset, LANE_CONFIDENCE_CENTER_Y
+
+    @staticmethod
+    def _lane_confidence_box(center_x: float, center_y: float, text_width: float) -> tuple[float, float, float, float]:
+        box_w = text_width + LANE_CONFIDENCE_BOX_PAD_X * 2.0
+        return center_x - box_w * 0.5, center_y - LANE_CONFIDENCE_BOX_H * 0.5, box_w, LANE_CONFIDENCE_BOX_H
+
+    def _draw_lane_confidence(self, side: str, confidence: float | None, center_x_offset: float = 0.0) -> None:
+        text = self._lane_confidence_text(confidence)
+        x, y = self._lane_confidence_anchor(side, center_x_offset)
+        size = LANE_CONFIDENCE_FONT_SIZE
+        text_width, _text_height = self._measure_text(text, size, max(1.0, size * 0.02), self._font_for_text(text))
+        rl.draw_rectangle_rounded(
+            rl.Rectangle(*self._lane_confidence_box(x, y, text_width)), 0.3, 6, rl_color(LANE_CONFIDENCE_BOX_COLOR),
+        )
+        self._draw_text_with_stroke(
+            text,
+            x,
+            y,
+            size,
+            LANE_CONFIDENCE_UNKNOWN_COLOR if text == "--%" else WHITE,
+            (0, 0, 0, 255),
+            2,
+            anchor="center",
+            cache=True,
+        )
 
     def _draw_turn_signal(
         self,

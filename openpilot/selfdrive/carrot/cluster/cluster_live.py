@@ -48,6 +48,8 @@ ACCELERATION_DUE_TO_GRAVITY = 9.80665
 DEFAULT_MAX_LATERAL_ACCEL = 3.0
 SELFDRIVE_STATE_TIMEOUT_SECONDS = 5.0
 SELFDRIVE_UNRESPONSIVE_TIMEOUT_SECONDS = 10.0
+# modelV2 publishes at 20 Hz; older lane-line confidence is shown as unknown.
+LANE_LINE_CONFIDENCE_MAX_AGE_S = 0.5
 
 
 def deceleration_source_display_label(source: str | None) -> str:
@@ -452,6 +454,8 @@ class OpenpilotLiveSource:
                     cruise_override_kph = desired_speed
                     cruise_override_label, cruise_override_color_mode = deceleration_source_presentation(desired_source)
 
+        left_lane_line_confidence, right_lane_line_confidence = self._live_lane_line_confidence(now)
+
         return replace(
             state,
             onroad=onroad,
@@ -474,7 +478,26 @@ class OpenpilotLiveSource:
             cruise_override_kph=cruise_override_kph,
             cruise_override_label=cruise_override_label,
             cruise_override_color_mode=cruise_override_color_mode,
+            left_lane_line_confidence=left_lane_line_confidence,
+            right_lane_line_confidence=right_lane_line_confidence,
         )
+
+    def _live_lane_line_confidence(self, now: float) -> tuple[float | None, float | None]:
+        # modelV2.laneLineProbs is [outer left, inner left, inner right, outer right].
+        # Report unknown instead of the parser's sticky defaults/last values.
+        if not self._service_valid("modelV2"):
+            return None, None
+        receive_t = self._service_receive_time("modelV2")
+        if receive_t is None or not 0.0 <= now - receive_t <= LANE_LINE_CONFIDENCE_MAX_AGE_S:
+            return None, None
+        lane_probs = safe_get(self._service_data("modelV2"), "laneLineProbs")
+        try:
+            if lane_probs is None or len(lane_probs) < 3:
+                return None, None
+            values = (finite_float(lane_probs[1]), finite_float(lane_probs[2]))
+        except Exception:
+            return None, None
+        return tuple(value if value is not None and 0.0 <= value <= 1.0 else None for value in values)
 
     def _live_cluster_alert(self, current_alert: ClusterAlert | None, onroad: bool) -> ClusterAlert | None:
         now = time.monotonic()
