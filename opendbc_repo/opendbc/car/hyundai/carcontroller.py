@@ -197,9 +197,9 @@ class CarController(CarControllerBase):
 
     self.hyundai_jerk = HyundaiJerk()
     self.k9_stop_taper = K9StopTaper() if k9_stop_taper_applies(CP) else None
-    self.k9_stop_taper_enabled = False  # K9StopTaper param, default OFF, read live every 0.5 s
-    # K9CreepMode single selector, read live every 0.5 s: 0 = existing behaviour (K9StopTaper param as before),
-    # 1 = creep v8, 2 = creep v9, 3 = K9StopTaper explicitly; other values act as 0. Modes never stack.
+    self.k9_stop_taper_enabled = False  # True only in K9CreepMode 3; the old K9StopTaper param is no longer read
+    # K9CreepMode single selector, read live every 0.5 s: 0 = base braking without the taper, 1 = creep v8,
+    # 2 = creep v9, 3 = the existing K9StopTaper taper; other values act as 0. Modes never stack.
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
     self.k9_creep = None
@@ -308,14 +308,13 @@ class CarController(CarControllerBase):
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
-      if self.k9_stop_taper is not None:
-        self.k9_stop_taper_enabled = params.get_bool("K9StopTaper")
       if self.k9_creep_applies:
         mode = params.get_int("K9CreepMode")
         mode = mode if mode in (1, 2, 3) else 0
         if mode != self.k9_creep_mode:  # any change starts every profile fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(mode) if mode in (1, 2) else None
+          self.k9_stop_taper_enabled = mode == 3
           if self.k9_stop_taper is not None:
             self.k9_stop_taper.reset()
 
@@ -512,7 +511,7 @@ class CarController(CarControllerBase):
     # accel + longitudinal
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
-    taper_on = self.k9_creep_mode == 3 or (self.k9_creep_mode == 0 and self.k9_stop_taper_enabled)
+    taper_on = self.k9_stop_taper_enabled  # K9CreepMode 3 only
     if self.k9_creep is not None:
       # modes 1/2: creep v8/v9 replaces the taper (never stacked); changes accel AND StopReq timing. See k9_creep.py.
       if self.k9_stop_taper is not None:

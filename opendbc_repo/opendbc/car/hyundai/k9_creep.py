@@ -5,8 +5,8 @@ No license is stated on that page; this is an independent re-implementation of t
 published constants. It was designed for an EV with motor creep and is NOT verified on the K9.
 
 Modes 0/3 (or any other car) never call update(), so the creep never changes accel, StopReq, jerk or ComfortBand
-there; mode 3 (and mode 0 with K9StopTaper ON) still runs the existing K9StopTaper accel taper in the caller. In
-modes 1/2 the creep replaces K9StopTaper (the caller resets the taper; modes never stack). v8 and v9 differ only in the FEATHER,
+there; only mode 3 runs the existing K9StopTaper accel taper in the caller (mode 0 never does, and the old K9StopTaper
+param is ignored). In modes 1/2 the creep replaces the taper (the caller resets it; modes never stack). v8 and v9 differ only in the FEATHER,
 MIN_DECEL and CREEP tables and the down/up step rules (PROFILES); latch, boost, fade and jerk are shared.
 
 What it changes while ON and active:

@@ -608,5 +608,7 @@ def test_k9_creep_mode_is_one_click_select_with_four_choices(settings, params):
     options = creep["options"][locale]
     assert len(options) == 4
     assert [option.split(" ", 1)[0] for option in options] == ["0", "1", "2", "3"]
-  assert creep["options"]["ko"] == ["0 현재 기본설정", "1 v8", "2 v9", "3 기존 정차 제동 풀기"]
+  assert creep["options"]["ko"] == ["0 기본 제동(제동 풀기 없음)", "1 v8", "2 v9", "3 기존 정차 제동 풀기"]
   assert "K9CreepMode" in json.dumps(settings["menu"])
+  assert "K9StopTaper" not in json.dumps(settings["menu"])  # unread compatibility param, out of the menu
+  assert next(p for p in params if p["name"] == "K9StopTaper")["search_only"] is True

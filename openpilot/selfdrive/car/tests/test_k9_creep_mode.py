@@ -1,4 +1,4 @@
-"""K9CreepMode single selector: 0 existing behaviour, 1 creep v8, 2 creep v9, 3 K9StopTaper explicitly.
+"""K9CreepMode single selector: 0 base braking (no taper), 1 creep v8, 2 creep v9, 3 the existing K9StopTaper taper.
 
 Checks source logic and SCC12 encoding through the real CarController, not K9 vehicle behaviour.
 """
@@ -119,8 +119,10 @@ def parent_cc(tmp_path_factory):
 @pytest.mark.parametrize("taper", [False, True])
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
 def test_mode0_identical_can_to_actual_parent(monkeypatch, parent_cc, values, taper, fingerprint):
-  # reference: the real parent e04c05e4 controller under the same K9StopTaper value (it never reads K9CreepMode)
-  ref = mixed_sequence(rig(monkeypatch, None, taper=taper, cp=make_cp(fingerprint=fingerprint), module=parent_cc))
+  # reference: the real parent e04c05e4 controller (it never reads K9CreepMode). On K9 mode 0 is the parent with the
+  # taper OFF whatever the old K9StopTaper value; other cars keep the parent under the same old value.
+  ref_taper = False if fingerprint == CAR.KIA_K9 else taper
+  ref = mixed_sequence(rig(monkeypatch, None, taper=ref_taper, cp=make_cp(fingerprint=fingerprint), module=parent_cc))
   monkeypatch.undo()
   new = mixed_sequence(rig(monkeypatch, values, taper=taper, cp=make_cp(fingerprint=fingerprint)))
   assert len(new.can) == 1800 and ref.can == new.can
@@ -254,8 +256,8 @@ def test_jerk_band_original_on_interlocked_frames(monkeypatch, parent_cc, mode):
   assert cand[102:] == ref[102:]  # gas interlock: creep reset, original jerk/ComfortBand (make_jerk runs every 2nd frame)
 
 
-def test_mode3_equals_taper_param_on_regardless_of_param(monkeypatch):
-  ref = mixed_sequence(rig(monkeypatch, 0, taper=True))
+def test_mode3_equals_taper_param_on_regardless_of_param(monkeypatch, parent_cc):
+  ref = mixed_sequence(rig(monkeypatch, None, taper=True, module=parent_cc))  # parent with the taper ON
   monkeypatch.undo()
   for taper in (False, True):
     assert mixed_sequence(rig(monkeypatch, 3, taper=taper)).can == ref.can

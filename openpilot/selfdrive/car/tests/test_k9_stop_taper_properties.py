@@ -348,13 +348,13 @@ def test_off_diverse_stream_can_identical_to_pre_candidate(monkeypatch, base_cc,
 def test_on_diverse_stream_keeps_stopreq_and_never_strengthens(monkeypatch, base_cc, seed):  # noqa: F811
   ref7, _ = cc_stream(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), taper=False, module=base_cc), seed)
   monkeypatch.undo()
-  assert cc_stream(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7)), seed)[0] == ref7  # other cars untouched
+  assert cc_stream(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9CreepMode=3), seed)[0] == ref7  # other cars untouched
   monkeypatch.undo()
   _, base = cc_stream(Rig(monkeypatch, taper=False, module=base_cc), seed)
   monkeypatch.undo()
   old = list(frames(seed, 1200))
   assert list(frames(seed, CC_RANDOM_N))[:len(old)] == old  # extension keeps the original 1200 random frames
-  rig, update, changed = Rig(monkeypatch), K9StopTaper.update, [0]
+  rig, update, changed = Rig(monkeypatch, K9CreepMode=3), K9StopTaper.update, [0]
 
   def counted(self, **kw):  # random-frame output changes only; the prelude earns no credit
     out = update(self, **kw)

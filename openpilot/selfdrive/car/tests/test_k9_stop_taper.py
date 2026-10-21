@@ -1,7 +1,8 @@
 """K9 terminal stop taper (candidate B): state transitions, precedence, standstill hold and CarController CAN.
 
-The K9StopTaper param (default OFF) is checked against the pre-candidate CarController for identical CAN while OFF,
-and for the live ON/OFF switch. Model-only constants; these tests check source logic, not K9 vehicle behaviour.
+The taper is selected only by K9CreepMode 3 (the old K9StopTaper param is kept but no longer read). It is checked
+against the pre-candidate CarController for identical CAN while not selected, and for the live 3 <-> 0 switch.
+Model-only constants; these tests check source logic, not K9 vehicle behaviour.
 """
 import importlib.util
 import json
@@ -468,9 +469,9 @@ def stop_sequence(rig):
 
 
 def test_carcontroller_k9_taper_changes_only_terminal_accel_and_keeps_stopreq(monkeypatch):
-  base = stop_sequence(Rig(monkeypatch, taper=False))
+  base = stop_sequence(Rig(monkeypatch, taper=False, K9CreepMode=0))
   monkeypatch.undo()
-  cand = stop_sequence(Rig(monkeypatch))
+  cand = stop_sequence(Rig(monkeypatch, K9CreepMode=3))
   assert len(base) == len(cand)
   changed = 0
   for i, ((ba, bs), (ca, cs)) in enumerate(zip(base, cand, strict=True)):
@@ -543,11 +544,11 @@ def test_off_sends_identical_can_to_pre_candidate_controller(monkeypatch, base_c
 def test_on_k7_identical_and_on_k9_differs_from_pre_candidate(monkeypatch, base_cc):
   ref = mixed_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), taper=False, module=base_cc))
   monkeypatch.undo()
-  assert mixed_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7))).can == ref.can
+  assert mixed_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9CreepMode=3)).can == ref.can
   monkeypatch.undo()
   ref9 = mixed_sequence(Rig(monkeypatch, taper=False, module=base_cc))
   monkeypatch.undo()
-  assert mixed_sequence(Rig(monkeypatch)).can != ref9.can  # the scenario really exercises the taper
+  assert mixed_sequence(Rig(monkeypatch, K9CreepMode=3)).can != ref9.can  # the scenario really exercises the taper
 
 
 def edge_sequence(rig, seed="k9-stop-taper-edges"):
@@ -581,7 +582,7 @@ def test_off_edge_sequence_identical_to_pre_candidate_controller(monkeypatch, ba
 def test_on_edge_sequence_k7_identical_k9_never_stronger_and_stopreq_kept(monkeypatch, base_cc):
   ref7 = edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), taper=False, module=base_cc))
   monkeypatch.undo()
-  assert edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7))).can == ref7.can
+  assert edge_sequence(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9CreepMode=3)).can == ref7.can
   monkeypatch.undo()
   parser = CANParser("hyundai_kia_generic", [("SCC12", 0)], 0)
 
@@ -595,7 +596,7 @@ def test_on_edge_sequence_k7_identical_k9_never_stronger_and_stopreq_kept(monkey
     return out
   base, cand = scc12(edge_sequence(Rig(monkeypatch, taper=False, module=base_cc)).can), None
   monkeypatch.undo()
-  cand = scc12(edge_sequence(Rig(monkeypatch)).can)
+  cand = scc12(edge_sequence(Rig(monkeypatch, K9CreepMode=3)).can)
   assert len(base) == len(cand) and base != cand
   for (bs, bm, ba), (cs, cm, ca) in zip(base, cand, strict=True):
     assert (cs, cm) == (bs, bm) and ca >= ba - 0.011  # StopReq/ACCMode kept; aReq never stronger (2 LSB)
@@ -618,16 +619,16 @@ _ENTRY_MAX_FRAMES = 130
 
 
 class ReadSpy:
-  """Counts CarController reads of K9StopTaper per step: the read frame is observed, not assumed."""
+  """Counts CarController reads of K9CreepMode per step: the read frame is observed, not assumed."""
   def __init__(self, rig):
     self.rig, self.read_frames = rig, []
-    get_bool = rig.params.get_bool
+    get_int = rig.params.get_int
 
     def spy(key):
-      if key == "K9StopTaper":
+      if key == "K9CreepMode":
         self.read_frames.append(rig.cc.frame)
-      return get_bool(key)
-    rig.params.get_bool = spy
+      return get_int(key)
+    rig.params.get_int = spy
 
   def step(self, *args, **kw):
     n = len(self.read_frames)
@@ -647,22 +648,22 @@ def _stop_profile(n=400, pad=0, dv=0.01):
 
 
 def _run(spy, rows, flip=None, value=None, when=None):
-  """Step rows; set K9StopTaper to value immediately BEFORE or AFTER the controller step of frame flip."""
+  """Step rows; set K9CreepMode to value immediately BEFORE or AFTER the controller step of frame flip."""
   out = []
   for row in rows:
     accel, state, v, standstill, a_ego = row
     frame = spy.rig.cc.frame
     if when == "before" and frame == flip:
-      spy.rig.params.values["K9StopTaper"] = value
+      spy.rig.params.values["K9CreepMode"] = value
     out.append((*spy.step(accel, state, v, standstill=standstill, a_ego=a_ego),
                 spy.rig.cc.k9_stop_taper_enabled, spy.rig.cc.k9_stop_taper.phase, spy.rig.cc.k9_stop_taper.armed))
     if when == "after" and frame == flip:
-      spy.rig.params.values["K9StopTaper"] = value
+      spy.rig.params.values["K9CreepMode"] = value
   return out
 
 
 def _reference_off(monkeypatch, rows):
-  ref = Rig(monkeypatch, taper=False)
+  ref = Rig(monkeypatch, taper=False, K9CreepMode=0)
   for accel, state, v, standstill, a_ego in rows:
     ref.step(accel, state, v, standstill=standstill, a_ego=a_ego)
   return ref
@@ -678,7 +679,7 @@ def _assert_safe_vs_off(rig, ref):
     assert (c["StopReq"], c["ACCMode"]) == (r["StopReq"], r["ACCMode"]) and c["aReqValue"] >= r["aReqValue"] - 0.011
 
 
-# Production reads K9StopTaper when CarController.frame % 50 == 0 (asserted from the observed reads). With a measured
+# Production reads K9CreepMode when CarController.frame % 50 == 0 (asserted from the observed reads). With a measured
 # 0.4 m/s^2 final deceleration this stop naturally tapers on frames 381..449 and restores on 450..493 (unpadded), long
 # enough that both a read and the next read can fall inside one episode. Each case is padded so that the frame where
 # OFF actually takes effect (the flip read itself BEFORE, the next read AFTER) is inside the stays-ON control's
@@ -699,24 +700,24 @@ def test_live_switch_off_at_exact_read_frame(monkeypatch, when, phase):
   rows = _stop_profile(n=500, pad=pad, dv=OFF_DV)
   assert all(r[4] == pytest.approx(-(r_prev[2] - r[2]) / kt.DT) for r_prev, r in zip(rows[100 + pad:], rows[101 + pad:])
              if r[2] > 0.0)  # measured aEgo is the actual speed slope, no held/unrealizable state
-  ref = Rig(monkeypatch, taper=False)
+  ref = Rig(monkeypatch, taper=False, K9CreepMode=0)
   ref_accel = [ref.step(a, s, v, standstill=ss, a_ego=ae)[0] for a, s, v, ss, ae in rows]
   monkeypatch.undo()
 
   def run(flip_frame):
-    rig = Rig(monkeypatch)
+    rig = Rig(monkeypatch, K9CreepMode=3)
     spy = ReadSpy(rig)
     trace = []
     for frame, row in enumerate(rows):
       accel, state, v, standstill, a_ego = row
       if when == "before" and frame == flip_frame:
-        rig.params.values["K9StopTaper"] = False
+        rig.params.values["K9CreepMode"] = 0
       f, did, out, sent = spy.step(accel, state, v, standstill=standstill, a_ego=a_ego)
       t = rig.cc.k9_stop_taper
       trace.append({"frame": f, "read": did, "accel": out, "stop_req": None if sent is None else sent["StopReq"],
                     "enabled": rig.cc.k9_stop_taper_enabled, "phase": t.phase, "reason": t.reason})
       if when == "after" and frame == flip_frame:
-        rig.params.values["K9StopTaper"] = False
+        rig.params.values["K9CreepMode"] = 0
     monkeypatch.undo()
     return rig, spy, trace
 
@@ -743,7 +744,7 @@ def test_live_switch_off_at_exact_read_frame(monkeypatch, when, phase):
     assert (tr[f]["accel"], tr[f]["phase"], tr[f]["enabled"]) == (ctl_tr[f]["accel"], ctl_tr[f]["phase"], True)
     assert rig.can[f] == ctl.can[f]
     if when == "after" and f > flip:
-      assert rig.params.values["K9StopTaper"] is False
+      assert rig.params.values["K9CreepMode"] == 0
   # first restored output: exactly the effect read, caused by the switch (reset), not a natural end reason
   first = next(f for f in range(len(rows)) if tr[f]["accel"] != ctl_tr[f]["accel"])
   assert first == effective
@@ -767,12 +768,12 @@ STALE_ON_RESTORE = (45, 500)  # (cruise pad, read): natural restore starts befor
 def test_live_switch_off_after_read_stale_on_restore_completes_naturally_before_next_read(monkeypatch):
   pad, read = STALE_ON_RESTORE
   rows = _stop_profile(n=500, pad=pad, dv=OFF_DV)
-  ref = Rig(monkeypatch, taper=False)
+  ref = Rig(monkeypatch, taper=False, K9CreepMode=0)
   ref_accel = [ref.step(a, s, v, standstill=ss, a_ego=ae)[0] for a, s, v, ss, ae in rows]
   monkeypatch.undo()
 
   def run(flip):
-    rig = Rig(monkeypatch)
+    rig = Rig(monkeypatch, K9CreepMode=3)
     spy = ReadSpy(rig)
     tr = []
     for frame, (accel, state, v, standstill, a_ego) in enumerate(rows):
@@ -781,7 +782,7 @@ def test_live_switch_off_after_read_stale_on_restore_completes_naturally_before_
       tr.append({"read": did, "accel": out, "stop_req": None if sent is None else sent["StopReq"],
                  "enabled": rig.cc.k9_stop_taper_enabled, "phase": t.phase, "reason": t.reason})
       if frame == flip:
-        rig.params.values["K9StopTaper"] = False  # right AFTER the actual read: cached value stays ON until read + 50
+        rig.params.values["K9CreepMode"] = 0  # right AFTER the actual read: cached value stays ON until read + 50
     monkeypatch.undo()
     return rig, spy, tr
 
@@ -807,7 +808,7 @@ def test_live_switch_off_after_read_stale_on_restore_completes_naturally_before_
   for f in range(start + 1, end + 1):
     assert tr[f]["accel"] == pytest.approx(max(tr[f - 1]["accel"] - kt.REAPPLY_RATE * kt.DT, ref_accel[f]), abs=1e-6)
   # natural completion by the stale cached ON before the next read, not the switch
-  assert all(tr[f]["enabled"] for f in range(read + 1, read + 50)) and rig.params.values["K9StopTaper"] is False
+  assert all(tr[f]["enabled"] for f in range(read + 1, read + 50)) and rig.params.values["K9CreepMode"] == 0
   assert tr[end + 1]["phase"] == TaperPhase.done and tr[end + 1]["reason"] == "restored"
   assert not any(tr[f]["read"] for f in range(read + 1, read + 50))
   for f in range(end + 1, read + 50):
@@ -831,11 +832,11 @@ def test_live_switch_off_mid_taper_original_no_later_than_next_read_natural_or_s
   # cached ON) before the switch takes effect, so it does NOT prove the switch caused the restore; it proves that,
   # either way, output is original by the next read and never stronger, matched to a stays-ON control until then.
   def run(flip):
-    rig = Rig(monkeypatch)
+    rig = Rig(monkeypatch, K9CreepMode=3)
     spy = ReadSpy(rig)
     _taper_until_active(rig)
     if flip:
-      rig.params.values["K9StopTaper"] = False
+      rig.params.values["K9CreepMode"] = 0
     start = rig.cc.frame
     outs = [spy.step(-1.2, LCS.stopping, 0.3) for _ in range(51)]
     monkeypatch.undo()
@@ -862,9 +863,9 @@ def test_live_switch_on_at_exact_read_frame_waits_for_true_rearm(monkeypatch, wh
   rows = _stop_profile()
   ref = _reference_off(monkeypatch, rows)
   monkeypatch.undo()
-  rig = Rig(monkeypatch, taper=False, K9StopTaper=False)
+  rig = Rig(monkeypatch, taper=False, K9StopTaper=False, K9CreepMode=0)
   spy = ReadSpy(rig)
-  out = _run(spy, rows, flip=ON_READ, value=True, when=when)
+  out = _run(spy, rows, flip=ON_READ, value=3, when=when)
   by = {f: o for f, *o in out}
   assert [f for f, did, *_ in out if did] == list(range(0, len(rows), 50))
   assert rows[ON_READ][2] == pytest.approx(0.9) and kt.TAPER_SPEED < rows[ON_READ][2] < kt.REARM_SPEED
@@ -885,9 +886,11 @@ def test_setting_registered_in_experimental_menu_default_off():
   driving = next(m for m in catalog["menu"] if m["id"] == "DRIVING")
   experimental = next(g for g in driving["groups"] if g["id"] == "EXPERIMENTAL")
   # owner 2026-10-21: the visible Korean group label is 실험중; the internal id stays EXPERIMENTAL
-  assert experimental["ko"] == "실험중" and experimental["params"] == ["K9StopTaper", "K9CreepMode"]
+  assert experimental["ko"] == "실험중" and experimental["params"] == ["K9CreepMode"]
   assert driving["ko"] == "주행 제어"
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopTaper")
   assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 1, 0, 1)
+  # owner 2026-10-22: the unread K9StopTaper toggle is out of every menu (search_only), only the param name is kept
+  assert "K9StopTaper" not in json.dumps(catalog["menu"]) and entry["search_only"] is True
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopTaper", {PERSISTENT, BOOL, "0"}},' in keys
