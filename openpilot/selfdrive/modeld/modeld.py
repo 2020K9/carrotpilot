@@ -13,6 +13,7 @@ from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.modeld.egpu_events import log_event
 from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
+from openpilot.selfdrive.modeld.gpu_sampler import GpuTimingDiag
 from openpilot.common.params import Params
 from openpilot.common.stopping_params import get_stopping_speed
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -210,7 +211,12 @@ class ModelState:
     outs, = self.run_policy(
       **{k: self.input_queues[k] for k in POLICY_INPUTS if k in self.input_queues}, warped=warped
     )
+    # gpu_sync_wait: run_policy only enqueues GPU work, so .numpy() blocks until the
+    # queued warp+policy kernels finish, then copies the output to host. This is the
+    # wall time spent waiting for the GPU plus copy-out (diagnostics only).
+    sync_start = time.perf_counter()
     model_output = outs.numpy()[0]
+    self.last_gpu_sync_wait_ms = (time.perf_counter() - sync_start) * 1000
     if self.usbgpu and not np.all(np.isfinite(model_output)):
       raise RuntimeError("eGPU model output is not finite")
     outputs_dict = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
@@ -410,6 +416,7 @@ def main(demo=False):
   camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
   lat_delay_dynamic = lat_smooth_seconds
   diagnostics = RuntimeDiagnostics('modeld', cloudlog.event)
+  gpu_diag = GpuTimingDiag()
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
     frame += 1
@@ -489,6 +496,7 @@ def main(demo=False):
       'action_t': np.array([lat_action_t, long_action_t], dtype=np.float32),
     }
 
+    run_start_mono = time.monotonic()
     mt1 = time.perf_counter()
     camera_age_at_run_ms = (time.monotonic() - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
@@ -523,6 +531,7 @@ def main(demo=False):
       last_vipc_frame_id = meta_main.frame_id
       continue
     mt2 = time.perf_counter()
+    run_end_mono = time.monotonic()
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
     model_execution_time = mt2 - mt1
     inference_backend, inference_usbgpu = type(model).__name__, model.usbgpu
@@ -612,8 +621,17 @@ def main(demo=False):
         if egpu_recovery.task is not None:
           egpu_recovery.task.cancel.set()
         egpu_recovery = None
+    gpu_sync_wait_ms = float('nan')
+    try:
+      gpu_diag.add_run(run_start_mono, run_end_mono)
+      gpu_diag.poll()
+      gpu_sync_wait_ms = getattr(model, 'last_gpu_sync_wait_ms', None)
+      gpu_sync_wait_ms = float(gpu_sync_wait_ms) if gpu_sync_wait_ms is not None and model_output is not None else float('nan')
+    except Exception:
+      pass
     diagnostics.record(
-      context={'backend': inference_backend, 'usbgpu': inference_usbgpu, 'frame_id': meta_main.frame_id},
+      context=gpu_diag.context({'backend': inference_backend, 'usbgpu': inference_usbgpu, 'frame_id': meta_main.frame_id}),
+      run_start_mono=run_start_mono, run_end_mono=run_end_mono, gpu_sync_wait_ms=gpu_sync_wait_ms,
       camera_wait_ms=(camera_ready - loop_start) * 1000,
       camera_age_at_run_ms=camera_age_at_run_ms,
       inference_ms=model_execution_time * 1000, inference_thread_cpu_ms=inference_cpu_ms,
@@ -621,6 +639,7 @@ def main(demo=False):
       loop_ms=(time.monotonic() - loop_start) * 1000, thread_cpu_ms=(time.thread_time() - cpu_start) * 1000,
       dropped_frames=vipc_dropped_frames, published=int(model_output is not None),
     )
+    gpu_diag.after_record(diagnostics)
 
 
 if __name__ == "__main__":
