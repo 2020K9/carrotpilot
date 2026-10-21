@@ -144,7 +144,7 @@ def test_catalog_param_keys_and_experimental_menu_removed():
   assert (stopping["min"], stopping["max"], stopping["default"]) == (-100, -50, -50)
   assert '{"StoppingAccel", {PERSISTENT, INT, "-50"}}' in keys
   # EXPERIMENTAL 묶음의 옛 항목(K9 약제동 3개·LongMpcJerkCost)은 지워졌고, 지금은 화면 이름 "실행중" 아래
-  # K9CreepMode만 있다(읽지 않는 K9StopTaper는 2026-10-22 메뉴에서 빠짐).
+  # K9CreepMode만 있다(옛 K9StopTaper 항목은 2026-10-22 삭제됨).
   experimental = [x for x in entries if x.get("id") == "EXPERIMENTAL"]
   assert len(experimental) == 1 and experimental[0]["params"] == ["K9CreepMode", "K9LaneFix"]
   assert "LongMpcJerkCost" not in text

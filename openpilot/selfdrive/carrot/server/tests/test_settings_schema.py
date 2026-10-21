@@ -600,15 +600,20 @@ def test_declared_numeric_bounds_stay_intact(params):
   assert by_name["TFollowDecelBoost"]["unit"] == 10
 
 
-def test_k9_creep_mode_is_one_click_select_with_four_choices(settings, params):
+def test_k9_creep_mode_is_one_click_select_with_five_choices(settings, params):
   creep = next(p for p in params if p["name"] == "K9CreepMode")
-  assert (creep["min"], creep["max"], creep["default"]) == (0, 3, 0)
+  assert (creep["min"], creep["max"], creep["default"]) == (0, 4, 0)
   assert creep["control"] == "select"
   for locale in ("ko", "en", "zh"):
     options = creep["options"][locale]
-    assert len(options) == 4
-    assert [option.split(" ", 1)[0] for option in options] == ["0", "1", "2", "3"]
-  assert creep["options"]["ko"] == ["0 기본 제동(제동 풀기 없음)", "1 v8", "2 v9", "3 기존 정차 제동 풀기"]
+    assert len(options) == 5
+    assert [option.split(" ", 1)[0] for option in options] == ["0", "1", "2", "3", "4"]
+  assert creep["options"]["ko"] == ["0 기본 제동", "1 v8", "2 v9", "3 v9+떨림 수정1(저속 ComfortBand)",
+                                    "4 v9+떨림 수정2(+정지 직전 유지)"]
+  for key in ("descr", "edescr", "cdescr"):
+    assert "K9StopTaper" not in creep[key]
+  assert "실차에서는 아직 확인하지 않았습니다" in creep["descr"] and "not been checked on the vehicle yet" in creep["edescr"]
   assert "K9CreepMode" in json.dumps(settings["menu"])
-  assert "K9StopTaper" not in json.dumps(settings["menu"])  # unread compatibility param, out of the menu
-  assert next(p for p in params if p["name"] == "K9StopTaper")["search_only"] is True
+  # the old taper switch is deleted: not in the menu, not in the catalog (search) and not a params key
+  assert "K9StopTaper" not in json.dumps(settings["menu"])
+  assert not any(p["name"] == "K9StopTaper" for p in params)

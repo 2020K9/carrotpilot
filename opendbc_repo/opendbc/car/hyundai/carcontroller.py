@@ -7,8 +7,7 @@ from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_f
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.carstate import CarState
-from opendbc.car.hyundai.k9_creep import K9Creep, k9_creep_applies, read_long_accel
-from opendbc.car.hyundai.k9_stop_taper import K9StopTaper, k9_stop_taper_applies
+from opendbc.car.hyundai.k9_creep import K9Creep, MODES as K9_CREEP_MODES, k9_creep_applies, read_long_accel
 from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
@@ -196,10 +195,8 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
-    self.k9_stop_taper = K9StopTaper() if k9_stop_taper_applies(CP) else None
-    self.k9_stop_taper_enabled = False  # True only in K9CreepMode 3; the old K9StopTaper param is no longer read
-    # K9CreepMode single selector, read live every 0.5 s: 0 = base braking without the taper, 1 = creep v8,
-    # 2 = creep v9, 3 = the existing K9StopTaper taper; other values act as 0. Modes never stack.
+    # K9CreepMode single selector, read live every 0.5 s: 0 = base braking, 1 = creep v8, 2 = creep v9,
+    # 3 = v9 + shudder fix 1 (C2), 4 = v9 + shudder fix 2 (C2 + C3); other values act as 0. See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
     self.k9_creep = None
@@ -309,14 +306,14 @@ class CarController(CarControllerBase):
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
       if self.k9_creep_applies:
-        mode = params.get_int("K9CreepMode")
-        mode = mode if mode in (1, 2, 3) else 0
+        try:
+          mode = params.get_int("K9CreepMode")
+        except (TypeError, ValueError, OverflowError):
+          mode = 0
+        mode = mode if mode in K9_CREEP_MODES else 0  # 5+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts every profile fresh
           self.k9_creep_mode = mode
-          self.k9_creep = K9Creep(mode) if mode in (1, 2) else None
-          self.k9_stop_taper_enabled = mode == 3
-          if self.k9_stop_taper is not None:
-            self.k9_stop_taper.reset()
+          self.k9_creep = K9Creep(mode) if mode in K9_CREEP_MODES else None
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -511,11 +508,8 @@ class CarController(CarControllerBase):
     # accel + longitudinal
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
-    taper_on = self.k9_stop_taper_enabled  # K9CreepMode 3 only
     if self.k9_creep is not None:
-      # modes 1/2: creep v8/v9 replaces the taper (never stacked); changes accel AND StopReq timing. See k9_creep.py.
-      if self.k9_stop_taper is not None:
-        self.k9_stop_taper.reset()
+      # K9CreepMode 1-4: creep v8/v9 (3/4 = v9 + shudder fix); changes accel AND StopReq timing. See k9_creep.py.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -525,18 +519,6 @@ class CarController(CarControllerBase):
         long_active=bool(CC.longActive), override=bool(CC.cruiseControl.override), gas=bool(CS.out.gasPressed),
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid),
         lead_visible=bool(hud_control.leadVisible), lead_distance=float(hud_control.leadDistance))
-    elif self.k9_stop_taper is not None and not taper_on:
-      self.k9_stop_taper.reset()  # OFF: original accel; turning ON again needs a fresh run at REARM_SPEED
-    elif self.k9_stop_taper is not None:
-      # Sent accel only; StopReq/longControlState unchanged. See k9_stop_taper.py for precedence and limits.
-      accel = self.k9_stop_taper.update(
-        accel=accel, a_target=float(actuators.aTarget), v_ego=float(CS.out.vEgo), a_ego=float(CS.out.aEgo),
-        standstill=bool(CS.out.standstill),
-        long_active=bool(CC.longActive), override=bool(CC.cruiseControl.override), gas=bool(CS.out.gasPressed),
-        brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid),
-        stopping_or_pid=actuators.longControlState in (LongCtrlState.stopping, LongCtrlState.pid),
-        lead_visible=bool(hud_control.leadVisible), lead_distance=float(hud_control.leadDistance),
-        lead_rel_speed=float(hud_control.leadRelSpeed))
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
 
     # HUD messages
@@ -676,7 +658,7 @@ class CarController(CarControllerBase):
       casper_ev = self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV
       if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:
         self.hyundai_jerk.make_jerk(self.CP, CS, accel, actuators, hud_control,
-                                    creep=self.k9_creep is not None and self.k9_creep.active)
+                                    creep=self.k9_creep is not None and self.k9_creep.active, creep_obj=self.k9_creep)
         self.hyundai_jerk.check_carrot_cruise(CC, CS, hud_control, stopping, accel, actuators.aTarget)
         #jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
         use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
@@ -920,8 +902,9 @@ class HyundaiJerk:
     if self.carrot_cruise == 0:
       self.carrot_cruise_accel = CS.out.aEgo
 
-  def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False):
+  def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None):
     canfd = bool(CP.flags & HyundaiFlags.CANFD)
+    cb_prev = self.cb_upper  # K9CreepMode 3/4 (C2) band ramp start only; unused otherwise
     jerk_u_min = CANFD_JERK_UPPER_MIN if canfd else self.jerk_u_min
     if actuators.longControlState == LongCtrlState.stopping:
       self.jerk = jerk_u_min / 2 - CS.out.aEgo
@@ -971,6 +954,9 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-        if creep:  # K9CreepMode 1/2 and applied this frame only
+        if creep and creep_obj is not None:  # K9CreepMode 1-4 and applied this frame only
+          self.jerk_u, self.cb_upper, self.cb_lower = creep_obj.bands(self.jerk_u, CS.out.vEgo, self.cb_upper,
+                                                                      self.cb_lower, cb_prev)
+        elif creep:  # caller without the object (tests): modes 1/2 band
           self.jerk_u, self.cb_upper, self.cb_lower = K9Creep.jerk_bands(self.jerk_u, CS.out.vEgo)
 

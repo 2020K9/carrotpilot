@@ -2808,9 +2808,18 @@
       "unit": 1,
       "control": "select",
       "options": {
-        "ko": ["정상", "좌우 반전"],
-        "en": ["Normal", "Invert left/right"],
-        "zh": ["正常", "左右反转"]
+        "ko": [
+          "정상",
+          "좌우 반전"
+        ],
+        "en": [
+          "Normal",
+          "Invert left/right"
+        ],
+        "zh": [
+          "正常",
+          "左右反转"
+        ]
       },
       "risk": "high"
     },
@@ -2927,9 +2936,21 @@
       "unit": 1,
       "control": "select",
       "options": {
-        "ko": ["2단계", "3단계", "4단계"],
-        "en": ["2 levels", "3 levels", "4 levels"],
-        "zh": ["2级", "3级", "4级"]
+        "ko": [
+          "2단계",
+          "3단계",
+          "4단계"
+        ],
+        "en": [
+          "2 levels",
+          "3 levels",
+          "4 levels"
+        ],
+        "zh": [
+          "2级",
+          "3级",
+          "4级"
+        ]
       }
     },
     {
@@ -3379,56 +3400,41 @@
     },
     {
       "group": "주행튜닝",
-      "name": "K9StopTaper",
-      "title": "K9 정지 직전 제동 풀기 (사용 안 함: 정차 방식 3으로 선택)",
-      "descr": "메뉴에서 빠진 호환용 항목입니다(파라미터 이름만 남김). 이 스위치는 더 이상 읽지 않습니다(켜든 끄든 동작이 바뀌지 않음). 아래 기능은 'K9 정차 방식 선택(K9CreepMode)'에서 3을 골랐을 때만 동작하고 0·1·2에서는 꺼집니다. 기능 설명(3): 기아 K9 일반 CAN 카메라 SCC 오픈파일럿 종방향에서만 동작하는 시험 기능입니다. 1.5m/s 넘게 달린 뒤 1.0m/s 미만으로 서는 보통 정차에서 보내는 감속 요청(aReq)만 초당 2m/s³ 이하로 -(0.3+속도)m/s²까지 풀어, 바퀴가 서는 순간의 끄덕임을 줄이려 합니다(그 순간 감속이 작으면 끄덕임도 작다는 가정이며 증명되지 않음). 원래 명령보다 세게 잡지 않습니다. StopReq와 정차 유지·소프트홀드 시점, 다른 차종은 바뀌지 않지만, 멈춘 직후(대개 0.5초 이하) 보내는 정차 제동 aReq는 원래보다 약하며 초당 2m/s³로 원래 값까지 되돌립니다. 푸는 중과 되돌리는 중 모두 원래 명령이나 계획 감속 -1.5m/s² 이하, 원래 제동이 0.3m/s² 넘게 세짐, 앞차 2m 이하 또는 거리값 이상, 페달·오버라이드·제어 해제·CAN 또는 값 이상, 멈춘 뒤 움직임이 있으면 즉시 원래 명령으로 돌아갑니다. 푸는 중에는 감속이 안 됨(0.2초)·2초 초과·정지거리 예산 초과·다시 1.0m/s 이상 또는 원래 명령 0 이상일 때도 돌아가며, 그 정차에서는 다시 풀지 않습니다. 앞차가 보이거나 레이더 앞차 거리값이 있으면 앞차 2m 앞에서 서는 데 필요한 등감속 계산값보다 약하게 풀지 않지만, 지연을 무시한 어림값이라 2m 앞 정지를 보장하지 않습니다. 정지선 거리 입력이 없어 정지 위치를 보정하지 않으며, 0.25m는 지정한 단순 시뮬레이터 시험(평지·5/8% 경사)에만 해당하는 늘어난 정지거리 상한이며 실차 보장값이 아닙니다. 12% 내리막 확장 모델에서는 약 0.45m까지 늘었고, 확장 시험 일부(204건)는 원래 명령과 이 기능 모두 서지 못해 모든 정차 성공을 말할 수 없습니다(원래보다 추가로 못 선 경우는 없음). 단순 피치 모델의 흔들림은 일부 경우 최대 약 1.77배 커졌으며, 이는 실차 끄덕임 개선·악화의 증거가 아닙니다. 정지 직후 보수적 취소와 정지거리 예산 중단으로 효과가 줄거나 없을 수 있으며 임계값은 완화하지 않았습니다. 주행 중에도 약 0.5초 안에 반영되며, 3에서 다른 번호로 바꾸면 즉시 원래 명령이고 3으로 바꾸면 다음 정차부터 동작합니다. 기록된 K9 정차 4건(짝지은 비교 아님)에서는 StopReq 뒤 제동이 빠졌다가 다시 걸렸고 보낸 aReq가 달라도 되튐이 비슷해, 효과가 작거나 없을 수 있습니다. 끄덕임 감소·승차감·안전은 실차에서 검증되지 않았습니다.",
-      "egroup": "LONG",
-      "etitle": "K9 Pre-stop Brake Release (Unused: select Stop Method 3)",
-      "edescr": "Compatibility-only entry removed from the menu (parameter name kept). This switch is no longer read (ON or OFF changes nothing). The feature below runs only when 'K9 Stop Method Selector (K9CreepMode)' is 3, and is off in 0/1/2. Feature (3): Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only. In an ordinary stop after driving above 1.5 m/s, below 1.0 m/s only the sent decel request (aReq) is eased at most 2 m/s³ toward -(0.3 + speed) m/s² to try to reduce the nod at wheel stop (assumes a smaller decel at that instant gives a smaller nod; unproven). Never stronger than the original. StopReq, standstill hold/soft hold timing and other cars are unchanged, but right after stopping (usually 0.5 s or less) the sent hold aReq is still weaker than the original and is restored at 2 m/s³. Both while easing and while restoring it returns to the original at once for original or planned decel <= -1.5 m/s², original braking more than 0.3 m/s² stronger, a lead at 2 m or less or invalid lead range, pedal/override/disengage, invalid CAN or values, or motion after stopping. While easing it also returns for no deceleration for 0.2 s, over 2 s, the stop-distance budget, speeding up to 1.0 m/s or an original command of 0 or above, and does not ease again in that stop. With a visible lead or a radar lead distance it never eases below a constant-decel estimate of what is needed to stop 2 m short; that estimate ignores lag and does not guarantee a 2 m gap. There is no stop-line distance input, so the stop position is not corrected; 0.25 m applies only to the specified simplified simulator tests (flat, 5/8 % grades) and is not a real-vehicle guarantee; on a 12 % downhill an expanded model added up to about 0.45 m, and in some expanded cases (204) neither the original nor this feature stopped, so every stop succeeding is not claimed (no additional non-stops versus the original). Simplified pitch swing grew up to about 1.77x in some cases; this is not evidence of real nod improvement or worsening. Conservative cancellation right after stopping and the stop-distance budget abort can limit or remove the effect; thresholds were not relaxed. Applies within about 0.5 s while driving; leaving 3 returns the original at once, selecting 3 acts from the next stop. In four recorded K9 stops (observational, not a paired test) braking fell off and returned after StopReq with similar rebounds for different sent aReq, so the effect may be small or none. Nod reduction, comfort and safety are not vehicle-validated.",
-      "cgroup": "纵向控制",
-      "ctitle": "K9 停车前制动释放（不再使用：请选停车方式3）",
-      "cdescr": "已从菜单移除，仅为兼容保留参数名。此开关已不再读取（开或关都不改变行为）。下述功能仅在'K9停车方式选择(K9CreepMode)'选3时生效，0/1/2时关闭。功能说明(3)：仅限起亚K9非CAN-FD摄像头SCC openpilot纵向：普通停车低于1.0m/s时，只以不超过2m/s³的速率放松发送的减速请求(aReq)，试图减轻车轮停止瞬间的点头（假设，未证明）。不会比原命令更强。StopReq与停车保持时机不变，但停车后短时间（通常≤0.5秒）发送的保持制动aReq仍弱于原值，并以2m/s³恢复。放松与恢复期间，遇急刹(≤-1.5m/s²)、原制动增强超过0.3、前车≤2m或距离异常、踏板、接管、CAN或数值异常、停车后移动时立即恢复原命令。前车约束是忽略延迟的估算，不保证停在前车2m外；0.25m只是简化仿真测试的增加距离上限，不是实车保证。约0.5秒内生效。点头减轻、舒适性与安全均未经实车验证，效果可能很小或没有。",
-      "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1,
-      "risk": "high",
-      "search_only": true
-    },
-    {
-      "group": "주행튜닝",
       "name": "K9CreepMode",
       "title": "K9 정차 방식 선택 (실험)",
-      "descr": "하나만 고르는 선택(겹치지 않음). 기아 K9 일반 CAN 카메라 SCC 오픈파일럿 종방향에서만 동작하고 다른 차는 항상 0과 같습니다. 0: 기본 제동(기본값). 기존 'K9 정지 직전 제동 풀기'를 끈 것 말고는 이전과 같습니다. 예전 'K9StopTaper' 스위치 값은 읽지 않으므로 켜져 있어도 제동 풀기는 걸리지 않습니다. 1: creep_fix v8, 2: creep_fix v9 — 니로 EV용으로 공개된 creep_fix(https://leegrt.org/oppo/creep_fix/)의 v8/v9를 독립 구현. 정지(stopping) 상태에서 실제 정지·계획 감속 -1.0m/s² 이하·감속 부족·aEgo>0.06·앞차 3m 이하 중 하나가 나올 때까지 StopReq를 보내지 않고 감속 요청을 속도별 목표로 천천히 바꾼 뒤, StopReq와 -0.50m/s² 이상 감속을 보냅니다. 저속 pid 감속에 제동을 더하고, 종방향 제어가 꺼짐(off)이 아니고 1/2가 실제로 적용된 프레임에서만 1.4m/s 미만 저크 상한을 올리고 ComfortBand 상·하한을 0으로 합니다(제어 꺼짐·인터록 프레임은 원래 값). StopReq 시점·정지 거리·질감이 바뀝니다. 1/2에서는 기존 제동 풀기를 쓰지 않습니다. 3: creep(1/2)는 쓰지 않고, 기존 'K9 정지 직전 제동 풀기'를 예전 K9StopTaper 스위치 값과 관계없이 사용(기존 조건 그대로, 원래 명령이 아님). 기존 제동 풀기는 3에서만 걸립니다. 페달·오버라이드·제어 해제·CAN 이상이면 즉시 원래 명령. 값을 바꾸면 약 0.5초 안에 반영되고 모든 방식이 처음 상태로 초기화됩니다. EV 기준 값이며 K9에서 효과·승차감·안전은 검증되지 않았습니다.",
+      "descr": "하나만 고르는 선택(겹치지 않음). 기아 K9 일반 CAN 카메라 SCC 오픈파일럿 종방향에서만 동작하고 다른 차는 항상 0과 같습니다. 0: 기본 제동(기본값). 1: creep_fix v8, 2: creep_fix v9 — 니로 EV용으로 공개된 creep_fix(https://leegrt.org/oppo/creep_fix/)의 v8/v9를 독립 구현. 정지(stopping) 상태에서 실제 정지·계획 감속 -1.0m/s² 이하·감속 부족·aEgo>0.06·앞차 3m 이하 중 하나가 나올 때까지 StopReq를 보내지 않고 감속 요청을 속도별 목표로 천천히 바꾼 뒤, StopReq와 -0.50m/s² 이상 감속을 보냅니다. 저속 pid 감속에 제동을 더하고, 종방향 제어가 꺼짐(off)이 아니고 실제로 적용된 프레임에서만 1.4m/s 미만 저크 상한을 올리고 ComfortBand(ESC가 요청값에서 벗어나도 되는 폭) 상·하한을 0으로 합니다(제어 꺼짐·인터록 프레임은 원래 값). StopReq 시점·정지 거리·질감이 바뀝니다. 3: v9 + 떨림 수정 1안 — v9와 같지만, 2.0m/s(약 7km/h) 이하에서는 ComfortBand를 0 대신 원래 값(0번 기본 제동과 같은 식)으로 보냅니다. 2.0~3.0m/s 사이는 섞어서 보내고 3.0m/s 이상은 v9와 같습니다. 0.5초에 걸쳐 서서히 바뀌어 갑자기 튀지 않습니다. 보내는 감속 요청(aReq), StopReq 보류·시점, 안전 래치는 v9와 같습니다. 4: v9 + 떨림 수정 2안 — 3번에 더해, 0.14m/s(약 0.5km/h) 이하에서는 감속 요청을 더 풀지 않고 그대로 유지합니다. 그래서 v9보다 서기 직전 제동이 조금 세고(기록 재현에서 약 0.1m/s²), 정지 순간 래치 단차가 작아집니다. 3·4번은 2026-10-22 v9 주행 기록 분석과 시뮬레이션으로 만든 후보이며, 실차에서는 아직 확인하지 않았습니다(떨림이 실제로 줄어드는지 모름). 5 이상·음수 등 다른 값은 0으로 동작합니다. 페달·오버라이드·제어 해제·CAN 이상이면 즉시 원래 명령. 값을 바꾸면 약 0.5초 안에 반영되고 모든 방식이 처음 상태로 초기화됩니다. EV 기준 값을 바탕으로 하며 K9에서 효과·승차감·안전은 검증되지 않았습니다.",
       "egroup": "LONG",
       "etitle": "K9 Stop Method Selector (Trial)",
-      "edescr": "Single choice (never stacked). Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only; other cars always behave as 0. 0: base braking (default) — same as before except that the existing K9 pre-stop brake release is off; the old K9StopTaper switch is not read, so it never enables the release. 1: creep_fix v8, 2: creep_fix v9 — independent re-implementations of creep_fix v8/v9 published for a Niro EV (https://leegrt.org/oppo/creep_fix/). In the stopping state StopReq is withheld and the decel request is rate-limited toward a speed-scheduled target until real standstill, planned decel <= -1.0 m/s², weak decel, aEgo > 0.06 or a lead within 3 m; then StopReq is sent with at least -0.50 m/s². Low-speed pid braking gets extra decel, only on frames where 1/2 actually applies and longitudinal control is not off, the jerk upper limit is raised below 1.4 m/s and ComfortBand upper/lower are set to 0 (control-off and interlocked frames keep the original). StopReq timing, stop distance and feel change. The existing release is not used in 1/2. 3: creep (1/2) is bypassed and the existing K9 pre-stop brake release is used regardless of the old K9StopTaper switch (its existing conditions; not the original command). The existing release runs only in 3. Pedal, override, disengage or invalid CAN return the original at once. Changes apply within about 0.5 s and reset every method. EV-origin values; effect, comfort and safety are not verified on the K9.",
+      "edescr": "Single choice (never stacked). Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only; other cars always behave as 0. 0: base braking (default). 1: creep_fix v8, 2: creep_fix v9 — independent re-implementations of creep_fix v8/v9 published for a Niro EV (https://leegrt.org/oppo/creep_fix/). In the stopping state StopReq is withheld and the decel request is rate-limited toward a speed-scheduled target until real standstill, planned decel <= -1.0 m/s², weak decel, aEgo > 0.06 or a lead within 3 m; then StopReq is sent with at least -0.50 m/s². Low-speed pid braking gets extra decel; only on frames where it actually applies and longitudinal control is not off, the jerk upper limit is raised below 1.4 m/s and ComfortBand (how far the ESC may deviate from the request) upper/lower are set to 0 (control-off and interlocked frames keep the original). StopReq timing, stop distance and feel change. 3: v9 + shudder fix 1 — same as v9, but at or below 2.0 m/s (about 7 km/h) ComfortBand is sent at its original value (the same formula as base braking 0) instead of 0; blended between 2.0 and 3.0 m/s and equal to v9 at 3.0 m/s and above, changing gradually over 0.5 s so it never jumps. The sent decel request (aReq), StopReq hold/timing and safety latches are the same as v9. 4: v9 + shudder fix 2 — fix 1 plus, at or below 0.14 m/s (about 0.5 km/h), the decel request is held instead of being released further, so braking just before the stop is slightly stronger than v9 (about 0.1 m/s² in log replay) and the latch step at standstill is smaller. 3 and 4 are candidates from the 2026-10-22 v9 drive-log analysis and simulation; they have not been checked on the vehicle yet (whether the shudder is reduced is unknown). Any other value (5 or more, negative) acts as 0. Pedal, override, disengage or invalid CAN return the original at once. Changes apply within about 0.5 s and reset every method. EV-origin values; effect, comfort and safety are not verified on the K9.",
       "cgroup": "纵向控制",
       "ctitle": "K9 停车方式选择（试验）",
-      "cdescr": "单选（不叠加）。仅限起亚K9非CAN-FD摄像头SCC openpilot纵向。0：基本制动（默认，与以前相同，仅关闭现有K9停车前制动释放；不再读取旧K9StopTaper开关）。1：creep_fix v8，2：creep_fix v9（为Niro EV发布，独立实现，会改变StopReq时机与停车距离）。3：无论旧K9StopTaper开关如何都使用现有K9停车前制动释放（仅3启用）。基于EV数值，在K9上的效果与安全未经验证。",
+      "cdescr": "单选（不叠加）。仅限起亚K9非CAN-FD摄像头SCC openpilot纵向，其他车辆始终等同0。0：基本制动（默认）。1：creep_fix v8，2：creep_fix v9（为Niro EV发布，独立实现，会改变StopReq时机与停车距离，并把ComfortBand设为0）。3：v9+抖动修正1——与v9相同，但在2.0m/s以下把ComfortBand恢复为原值（与0相同的公式），2.0~3.0m/s之间混合，3.0m/s以上与v9相同，0.5秒内逐渐变化；aReq、StopReq与安全锁定与v9相同。4：v9+抖动修正2——在3的基础上，0.14m/s以下不再继续放松减速请求而是保持，停车前制动比v9略强（日志重放约0.1m/s²）。3、4是根据2026-10-22 v9日志分析与仿真得到的候选，尚未经实车确认。其他值（5以上、负数）按0处理。基于EV数值，在K9上的效果与安全未经验证。",
       "min": 0,
-      "max": 3,
+      "max": 4,
       "default": 0,
       "unit": 1,
       "control": "select",
       "options": {
         "ko": [
-          "0 기본 제동(제동 풀기 없음)",
+          "0 기본 제동",
           "1 v8",
           "2 v9",
-          "3 기존 정차 제동 풀기"
+          "3 v9+떨림 수정1(저속 ComfortBand)",
+          "4 v9+떨림 수정2(+정지 직전 유지)"
         ],
         "en": [
-          "0 Base braking (no release)",
+          "0 Base braking",
           "1 v8",
           "2 v9",
-          "3 Existing pre-stop brake release"
+          "3 v9 + shudder fix 1 (low-speed ComfortBand)",
+          "4 v9 + shudder fix 2 (+ hold before stop)"
         ],
         "zh": [
-          "0 基本制动（无制动释放）",
+          "0 基本制动",
           "1 v8",
           "2 v9",
-          "3 现有停车前制动释放"
+          "3 v9+抖动修正1（低速ComfortBand）",
+          "4 v9+抖动修正2（+停车前保持）"
         ]
       },
       "risk": "high"
