@@ -1,5 +1,13 @@
 # Repository memory
 
+- On 2026-10-21, external HUD presentation-only hold: thin lane confidence-dip
+  hold, steady wide highlight, road edges T/4 existing hold, 2/3 bounded hold
+  only for valid non-crossing geometry (rejects <2 points/out-of-range/touching
+  or crossing), 1 unchanged. Colours/alpha, path, radar bounds untouched. Offline
+  helper: right edge toggles 14->4 on 1 of 5 K9 logs; colour flicker not fixed;
+  no in-car test. Tree-first suite 535 pass (snapshot 511). See
+  docs/hud_lane_edge_hold_20261021.md.
+
 - On 2026-10-20, user (2020K9 carrot-wip) requests removing all traffic-light
   functions. Removed signalcolord camera worker, modeld signal shadow, signal
   assist/start-guard/stop-prepare/lead-brake-lamp modules, SignalAssistMode/

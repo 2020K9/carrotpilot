@@ -417,8 +417,10 @@ def test_lfa_icon_uses_active_color_rotation_and_c4_lane_overlay(monkeypatch):
   assert draws[1][7] == 0.0
 
 
-def test_lane_floor_keeps_blinking_after_physical_signal_ends(monkeypatch):
-  renderer = ClusterUiRenderer()
+def test_lane_floor_keeps_blinking_after_physical_signal_ends_outside_default_hud(monkeypatch):
+  # The default HUD (screen 0 / camera view 0) keeps the lane floor steady; see
+  # test_cluster_lane_highlight_steady.py. Other modes keep the blink.
+  renderer = ClusterUiRenderer(screen_mode=cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG)
   times = iter((100.0, 100.75, 101.0))
   monkeypatch.setattr(cluster_renderer.time, "perf_counter", lambda: next(times))
   state = replace(

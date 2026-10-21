@@ -49,6 +49,10 @@ class LaneMarking:
     width: int = 5
     model_points: tuple[ModelPathPoint, ...] = ()
     model_lateral_shift_m: float = 0.0
+    # Presentation-only: inner detected line side and whether it is hidden only by
+    # a confidence dip with current valid geometry (default-HUD short hold).
+    confidence_hold_side: str | None = None
+    confidence_dip: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +389,12 @@ class ClusterUiState:
     right_road_edge_points: tuple[ModelPathPoint, ...] = ()
     left_road_edge_lateral_shift_m: float = 0.0
     right_road_edge_lateral_shift_m: float = 0.0
+    # Presentation-only: current edge points hidden only by the near-lane gate,
+    # for the default HUD's short road-edge hold. Not read by radar/objects.
+    left_road_edge_hold_points: tuple[ModelPathPoint, ...] = ()
+    right_road_edge_hold_points: tuple[ModelPathPoint, ...] = ()
+    left_road_edge_hold_lateral_shift_m: float = 0.0
+    right_road_edge_hold_lateral_shift_m: float = 0.0
     throttle: float = 0.0
     brake: float = 0.0
     model_path: tuple[ModelPathPoint, ...] = ()

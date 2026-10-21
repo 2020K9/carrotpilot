@@ -568,6 +568,10 @@ class RouteReplayFrame:
     model_execution_time_ms: float | None = None
     vision_speed_mps: float | None = None
     vision_yaw_rate_rps: float | None = None
+    left_lane_confidence_dip: bool = False
+    right_lane_confidence_dip: bool = False
+    left_road_edge_gate_dip: bool = False
+    right_road_edge_gate_dip: bool = False
     vision_speed_std_mps: float | None = None
     vision_yaw_rate_std_rps: float | None = None
     camera_device_type: str | None = None
@@ -1504,6 +1508,12 @@ class RouteLogParser:
         self.right_road_edge_y_m: float | None = None
         self.left_lane_prob = 1.0
         self.right_lane_prob = 1.0
+        # Latest modelV2 inner lane lines were complete, finite and not crossed.
+        # Only gates the default HUD's presentation-only confidence-dip hold.
+        self.inner_lane_geometry_current = False
+        # Latest modelV2 carried both road edges with finite, drawable points.
+        # Only gates the default HUD's presentation-only road-edge short hold.
+        self.road_edge_geometry_current = False
         self.outer_left_lane_prob = 0.0
         self.outer_right_lane_prob = 0.0
         self.left_road_edge_confidence = 0.0
@@ -1786,6 +1796,10 @@ class RouteLogParser:
             right_lane_visible=lane_values["right_visible"],
             extra_left_lane_visible=lane_values["extra_left_visible"],
             extra_right_lane_visible=lane_values["extra_right_visible"],
+            left_lane_confidence_dip=lane_values["left_confidence_dip"],
+            right_lane_confidence_dip=lane_values["right_confidence_dip"],
+            left_road_edge_gate_dip=lane_values["left_road_edge_gate_dip"],
+            right_road_edge_gate_dip=lane_values["right_road_edge_gate_dip"],
             left_road_edge_offset=lane_values["left_road_edge_offset"],
             right_road_edge_offset=lane_values["right_road_edge_offset"],
             left_lane_style=self.left_lane_style,
@@ -1929,6 +1943,7 @@ class RouteLogParser:
         lane_probs = safe_get(model, "laneLineProbs")
         if lane_lines is not None:
             self.model_lane_lines = tuple(model_line_points(lane_lines[index]) for index in range(len(lane_lines)))
+        self.inner_lane_geometry_current = inner_lane_geometry_is_current(lane_lines)
         if lane_lines is not None and len(lane_lines) >= 3:
             self.cutin_lane_xs = tuple(float(value) for value in safe_get(lane_lines[1], "x", ()))
             self.cutin_left_ys = tuple(float(value) for value in safe_get(lane_lines[1], "y", ()))
@@ -1954,6 +1969,7 @@ class RouteLogParser:
         road_edge_stds = safe_get(model, "roadEdgeStds")
         if road_edges is not None:
             self.model_road_edges = tuple(model_line_points(road_edges[index]) for index in range(min(len(road_edges), 2)))
+        self.road_edge_geometry_current = road_edge_geometry_is_current(road_edges)
         if road_edges is not None and len(road_edges) >= 2:
             self.left_road_edge_y_m = first_list_value(safe_get(road_edges[0], "y"))
             self.right_road_edge_y_m = first_list_value(safe_get(road_edges[1], "y"))
@@ -3410,6 +3426,10 @@ class RouteLogParser:
                 "extra_right_visible": False,
                 "left_road_edge_offset": None,
                 "right_road_edge_offset": None,
+                "left_confidence_dip": False,
+                "right_confidence_dip": False,
+                "left_road_edge_gate_dip": False,
+                "right_road_edge_gate_dip": False,
             }
 
         center_m = (left_y + right_y) * 0.5
@@ -3444,17 +3464,45 @@ class RouteLogParser:
             and self.outer_right_lane_prob >= LANE_LINE_PROBABILITY_MIN
             and lane_offset_inside_road_edges(outer_right_offset, left_edge_bound, right_edge_bound)
         )
+        left_inside_edges = lane_offset_inside_road_edges(left_offset, left_edge_bound, right_edge_bound)
+        right_inside_edges = lane_offset_inside_road_edges(right_offset, left_edge_bound, right_edge_bound)
+        geometry_current = self.inner_lane_geometry_current
+        # Edge hidden only by the near-lane/crossing gate while this message's
+        # edge geometry is current and still outside its own inner lane line
+        # (never inside or across the ego lane).
+        edge_geometry_current = self.road_edge_geometry_current and geometry_current
+        edges_ordered = (
+            self.left_road_edge_y_m is not None
+            and self.right_road_edge_y_m is not None
+            and self.left_road_edge_y_m < left_y
+            and right_y < self.right_road_edge_y_m
+        )
+        # The first point alone is not enough: the edge must stay outside its own
+        # inner lane line over its whole forward horizon (hold only).
+        lane_lines, road_edges = self.model_lane_lines, self.model_road_edges
+        left_edge_clear = len(lane_lines) >= 3 and len(road_edges) >= 2 and road_edge_outside_lane_line(
+            road_edges[0], lane_lines[1], left=True
+        )
+        right_edge_clear = len(lane_lines) >= 3 and len(road_edges) >= 2 and road_edge_outside_lane_line(
+            road_edges[1], lane_lines[2], left=False
+        )
         return {
             "width": width,
             "center": center_m,
             "left_offset": left_offset,
             "right_offset": right_offset,
-            "left_visible": self.left_lane_prob >= LANE_LINE_PROBABILITY_MIN and lane_offset_inside_road_edges(left_offset, left_edge_bound, right_edge_bound),
-            "right_visible": self.right_lane_prob >= LANE_LINE_PROBABILITY_MIN and lane_offset_inside_road_edges(right_offset, left_edge_bound, right_edge_bound),
+            "left_visible": self.left_lane_prob >= LANE_LINE_PROBABILITY_MIN and left_inside_edges,
+            "right_visible": self.right_lane_prob >= LANE_LINE_PROBABILITY_MIN and right_inside_edges,
+            # Hidden only by low confidence: current geometry is valid and inside the
+            # road edges. Presentation-only hint for the default HUD's short hold.
+            "left_confidence_dip": geometry_current and self.left_lane_prob < LANE_LINE_PROBABILITY_MIN and left_inside_edges,
+            "right_confidence_dip": geometry_current and self.right_lane_prob < LANE_LINE_PROBABILITY_MIN and right_inside_edges,
             "extra_left_visible": extra_left_visible,
             "extra_right_visible": extra_right_visible,
             "left_road_edge_offset": left_edge_bound,
             "right_road_edge_offset": right_edge_bound,
+            "left_road_edge_gate_dip": edge_geometry_current and edges_ordered and left_edge_clear and left_edge_bound is None,
+            "right_road_edge_gate_dip": edge_geometry_current and edges_ordered and right_edge_clear and right_edge_bound is None,
         }
 
     def _lane_change_values(
@@ -3735,6 +3783,18 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         lane_grid_offset,
         use_animated_lane_grid,
     )
+    # Presentation-only: this message's own edge points when only the near-lane
+    # gate hid the edge. Never set during the lane-change grid animation.
+    left_road_edge_hold_points = (
+        model_line_at(frame.model_road_edges, 0)
+        if frame.left_road_edge_gate_dip and frame.left_road_edge_offset is None and not use_animated_lane_grid
+        else ()
+    )
+    right_road_edge_hold_points = (
+        model_line_at(frame.model_road_edges, 1)
+        if frame.right_road_edge_gate_dip and frame.right_road_edge_offset is None and not use_animated_lane_grid
+        else ()
+    )
 
     return ClusterUiState(
         speed_kph=frame.speed_kph,
@@ -3774,6 +3834,14 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         right_road_edge_points=right_road_edge_points,
         left_road_edge_lateral_shift_m=left_road_edge_lateral_shift_m,
         right_road_edge_lateral_shift_m=right_road_edge_lateral_shift_m,
+        left_road_edge_hold_points=left_road_edge_hold_points,
+        right_road_edge_hold_points=right_road_edge_hold_points,
+        left_road_edge_hold_lateral_shift_m=model_line_lateral_shift(
+            left_road_edge_hold_points, frame, None, lane_grid_offset, False
+        ),
+        right_road_edge_hold_lateral_shift_m=model_line_lateral_shift(
+            right_road_edge_hold_points, frame, None, lane_grid_offset, False
+        ),
         throttle=frame.throttle,
         brake=frame.brake,
         brake_lights=frame.brake_lights,
@@ -3969,6 +4037,10 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
         right_lane_visible=discrete.right_lane_visible,
         extra_left_lane_visible=discrete.extra_left_lane_visible,
         extra_right_lane_visible=discrete.extra_right_lane_visible,
+        left_lane_confidence_dip=discrete.left_lane_confidence_dip,
+        right_lane_confidence_dip=discrete.right_lane_confidence_dip,
+        left_road_edge_gate_dip=discrete.left_road_edge_gate_dip,
+        right_road_edge_gate_dip=discrete.right_road_edge_gate_dip,
         left_road_edge_offset=lerp_optional(left.left_road_edge_offset, right.left_road_edge_offset),
         right_road_edge_offset=lerp_optional(left.right_road_edge_offset, right.right_road_edge_offset),
         left_lane_style=discrete.left_lane_style,
@@ -4105,17 +4177,23 @@ def lanes_for_frame(
     for index, points in enumerate(frame.model_lane_lines):
         if not points:
             continue
+        hold_side: str | None = None
+        confidence_dip = False
         if index == 1:
             offset = left_inner
             color = left_inner_color
             style = frame.left_lane_style
             visible = left_inner_visible
+            hold_side = "left"
+            confidence_dip = frame.left_lane_confidence_dip and not use_animated_lane_grid
             width = 7
         elif index == 2:
             offset = right_inner
             color = right_inner_color
             style = frame.right_lane_style
             visible = right_inner_visible
+            hold_side = "right"
+            confidence_dip = frame.right_lane_confidence_dip and not use_animated_lane_grid
             width = 7
         elif index == 0:
             offset = model_lane_offset_for_index(
@@ -4160,11 +4238,12 @@ def lanes_for_frame(
             style = model_lane_style_for_index(index)
             visible = True
             width = 5
-        visible = visible and lane_offset_inside_road_edges(
+        inside_road_edges = lane_offset_inside_road_edges(
             offset,
             left_road_edge_offset,
             right_road_edge_offset,
         )
+        visible = visible and inside_road_edges
         markings.append(
             LaneMarking(
                 offset,
@@ -4173,6 +4252,8 @@ def lanes_for_frame(
                 visible=visible,
                 width=width,
                 model_points=points,
+                confidence_hold_side=hold_side,
+                confidence_dip=confidence_dip and inside_road_edges and not visible,
                 model_lateral_shift_m=model_line_lateral_shift(
                     points,
                     frame,
@@ -4368,6 +4449,84 @@ def model_line_points(line: Any) -> tuple[ModelPathPoint, ...]:
         points.append(ModelPathPoint(forward_m=forward_m, lateral_m=lateral_m))
         previous_forward_m = forward_m
     return tuple(points)
+
+
+def inner_lane_geometry_is_current(lane_lines: Any) -> bool:
+    """True only if this message's inner lane lines (1, 2) are complete and usable.
+
+    Every raw x/y must be finite, both lines must keep at least two drawable
+    points, and the right line must stay right of the left line at every sample.
+    Missing, partial, non-finite or crossed input returns False.
+    """
+    try:
+        if lane_lines is None or len(lane_lines) < 3:
+            return False
+        raw: list[tuple[list[float], list[float]]] = []
+        for line in (lane_lines[1], lane_lines[2]):
+            xs = safe_get(line, "x")
+            ys = safe_get(line, "y")
+            if xs is None or ys is None or len(xs) == 0 or len(xs) != len(ys):
+                return False
+            values_x = [finite_float(value) for value in xs]
+            values_y = [finite_float(value) for value in ys]
+            if any(value is None for value in values_x) or any(value is None for value in values_y):
+                return False
+            if len(model_line_points(line)) < 2:
+                return False
+            raw.append((values_x, values_y))
+    except Exception:
+        return False
+    (_, left_ys), (_, right_ys) = raw
+    if len(left_ys) != len(right_ys):
+        return False
+    return all(right_y > left_y for left_y, right_y in zip(left_ys, right_ys))
+
+
+def road_edge_outside_lane_line(
+    edge_points: tuple[ModelPathPoint, ...],
+    lane_points: tuple[ModelPathPoint, ...],
+    left: bool,
+) -> bool:
+    """True only if every edge point lies strictly outside its own inner lane line.
+
+    The lane lateral is interpolated at each edge point's forward distance.
+    Fewer than two points on either line, or an edge point beyond the lane's
+    forward range (cannot be checked), returns False.
+    """
+    if len(edge_points) < 2 or len(lane_points) < 2:
+        return False
+    lane_xs = [point.forward_m for point in lane_points]
+    lane_ys = [point.lateral_m for point in lane_points]
+    for point in edge_points:
+        if not lane_xs[0] <= point.forward_m <= lane_xs[-1]:
+            return False
+        lane_y = float(np.interp(point.forward_m, lane_xs, lane_ys))
+        if (point.lateral_m >= lane_y) if left else (point.lateral_m <= lane_y):
+            return False
+    return True
+
+
+def road_edge_geometry_is_current(road_edges: Any) -> bool:
+    """True only if this message's road edges 0 and 1 are complete and finite.
+
+    Missing, partial or non-finite input, or fewer than two drawable points on
+    either edge, returns False.
+    """
+    try:
+        if road_edges is None or len(road_edges) < 2:
+            return False
+        for line in (road_edges[0], road_edges[1]):
+            xs = safe_get(line, "x")
+            ys = safe_get(line, "y")
+            if xs is None or ys is None or len(xs) == 0 or len(xs) != len(ys):
+                return False
+            if any(finite_float(value) is None for value in xs) or any(finite_float(value) is None for value in ys):
+                return False
+            if len(model_line_points(line)) < 2:
+                return False
+    except Exception:
+        return False
+    return True
 
 
 def model_path_points_from_model_v2(model: Any) -> tuple[ModelPathPoint, ...]:

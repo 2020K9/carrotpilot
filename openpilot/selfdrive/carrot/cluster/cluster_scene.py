@@ -3311,6 +3311,7 @@ def road_edge_strips(
     road_end_m: float,
     theme: ClusterTheme = LIGHT_CLUSTER_THEME,
     profile_add: ProfileAdd | None = None,
+    held_road_edge_sides: frozenset[str] = frozenset(),
 ) -> tuple[MeshStrip, ...]:
     longitudinal_scale = longitudinal_render_distance_scale(state)
 
@@ -3344,6 +3345,31 @@ def road_edge_strips(
         return default_road_edge_strips()
 
     strips: list[MeshStrip] = []
+
+    def held_road_edge_strips(side_name: str) -> tuple[MeshStrip, ...]:
+        # Default-HUD short hold (renderer decides sides): an edge hidden only by
+        # the near-lane gate is drawn from this message's own points, in the same
+        # place and style the baseline uses for drawn model edges.
+        left = side_name == "left"
+        points = state.left_road_edge_hold_points if left else state.right_road_edge_hold_points
+        if side_name not in held_road_edge_sides or not points:
+            return ()
+        return road_edge_model_strips(
+            points,
+            state.left_road_edge_hold_lateral_shift_m if left else state.right_road_edge_hold_lateral_shift_m,
+            road_edge_color(
+                state.left_road_edge_distance_m if left else state.right_road_edge_distance_m,
+                state.left_road_edge_confidence if left else state.right_road_edge_confidence,
+                theme,
+            ),
+            -1.0 if left else 1.0,
+            road_start_m,
+            road_end_m,
+            longitudinal_scale,
+            theme,
+            profile_add,
+        )
+
     if state.left_road_edge_offset is not None or state.left_road_edge_points:
         left_color = road_edge_color(state.left_road_edge_distance_m, state.left_road_edge_confidence, theme)
         if state.left_road_edge_points:
@@ -3373,6 +3399,8 @@ def road_edge_strips(
                     theme,
                 )
             )
+    else:
+        strips.extend(held_road_edge_strips("left"))
     if state.right_road_edge_offset is not None or state.right_road_edge_points:
         right_color = road_edge_color(state.right_road_edge_distance_m, state.right_road_edge_confidence, theme)
         if state.right_road_edge_points:
@@ -3402,6 +3430,8 @@ def road_edge_strips(
                     theme,
                 )
             )
+    else:
+        strips.extend(held_road_edge_strips("right"))
     return tuple(strips)
 
 
@@ -3497,6 +3527,10 @@ SCENE_STATE_FIELDS = (
     "right_road_edge_points",
     "left_road_edge_lateral_shift_m",
     "right_road_edge_lateral_shift_m",
+    "left_road_edge_hold_points",
+    "right_road_edge_hold_points",
+    "left_road_edge_hold_lateral_shift_m",
+    "right_road_edge_hold_lateral_shift_m",
     "left_road_edge_distance_m",
     "right_road_edge_distance_m",
     "left_road_edge_confidence",
@@ -3516,7 +3550,13 @@ def build_cluster_scene(
     profile_add: ProfileAdd | None = None,
     highlight_lane_lit: bool = True,
     theme: ClusterTheme = LIGHT_CLUSTER_THEME,
+    held_lane_indices: frozenset[int] = frozenset(),
+    held_road_edge_sides: frozenset[str] = frozenset(),
 ) -> ClusterScene:
+    # held_lane_indices: default-HUD presentation hold. It only re-draws those
+    # state.lanes entries as thin lane markings below; radar/object filtering,
+    # lane-floor highlight and every other state.lanes consumer keep the
+    # original visibility.
     profile_stage = profile_scene_start(profile_add)
     lane_width_m = max(2.4, min(4.6, state.lane_width_m or DEFAULT_LANE_WIDTH_M))
     longitudinal_scale = longitudinal_render_distance_scale(state)
@@ -3615,8 +3655,8 @@ def build_cluster_scene(
     lane_offset_ms = 0.0
     lane_collect_ms = 0.0
     bsd_marking_offsets = bsd_lane_marking_offsets(state)
-    for marking in state.lanes:
-        if not marking.visible:
+    for marking_index, marking in enumerate(state.lanes):
+        if not marking.visible and marking_index not in held_lane_indices:
             continue
         marking_specs = (
             (
@@ -3790,7 +3830,10 @@ def build_cluster_scene(
 
     profile_stage = profile_scene_start(profile_add)
     profile_geometry = profile_scene_start(profile_add)
-    road_edges_raw = road_edge_strips(state, route_mode, lane_width_m, road_start_m, road_end_m, theme, profile_add)
+    road_edges_raw = road_edge_strips(
+        state, route_mode, lane_width_m, road_start_m, road_end_m, theme, profile_add,
+        held_road_edge_sides if route_mode else frozenset(),
+    )
     profile_scene_add(profile_add, "scene.build.road_edges.geometry", profile_geometry)
     profile_merge = profile_scene_start(profile_add)
     road_edges = merge_mesh_strips_by_style(road_edges_raw)

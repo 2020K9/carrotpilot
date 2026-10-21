@@ -279,6 +279,12 @@ SPEED_GEAR_FONT_SIZE = 48.0
 # Model lane-line confidence (not accuracy) is centered under each turn arrow at one
 # shared height, below the gear badge the shifted left arrow sits over. A small opaque
 # box sized from the measured text keeps it readable over lane lines.
+# Default HUD only: briefly keep an inner detected lane line drawn through a short
+# confidence dip (below the parser's 0.4 visibility threshold) while its current
+# geometry stays valid and inside the road edges. Expires by monotonic render
+# time; missing/stale confidence, invalid geometry or a mode change drop it at once.
+LANE_CONFIDENCE_HOLD_MAX_S = 0.3
+LANE_CONFIDENCE_HOLD_PROBABILITY_MIN = 0.4
 LANE_CONFIDENCE_FONT_SIZE = 28.0
 LANE_CONFIDENCE_BOX_PAD_X = 4.0
 LANE_CONFIDENCE_BOX_H = LANE_CONFIDENCE_FONT_SIZE + 4.0
@@ -978,6 +984,10 @@ class ClusterUiRenderer:
         self._hazard_signal_started_at: float | None = None
         self._lane_highlight_side: str | None = None
         self._lane_highlight_started_at: float | None = None
+        self._lane_confidence_last_visible_at: dict[str, float | None] = {"left": None, "right": None}
+        self._lane_confidence_held_indices: frozenset[int] = frozenset()
+        self._road_edge_last_visible_at: dict[str, float | None] = {"left": None, "right": None}
+        self._road_edge_held_sides: frozenset[str] = frozenset()
         self._triangle_strip_point_cache: OrderedDict[
             tuple[int, int],
             tuple[tuple[Vec3, ...], tuple[Vec3, ...], object, int],
@@ -1483,6 +1493,10 @@ class ClusterUiRenderer:
         """Draw one frame into the currently active raylib render target."""
         if signal_lights is None:
             signal_lights = self._turn_signal_lights(state)
+        # Indices only: the incoming state is not modified, so radar/object
+        # decisions, sprites and the HUD see the original lane visibility.
+        self._lane_confidence_held_indices = self._lane_confidence_hold_indices(state)
+        self._road_edge_held_sides = self._road_edge_hold_sides(state)
         profile_stage = self._profile_start()
         if self.screen_mode in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI):
             self._clear_world()
@@ -1564,7 +1578,13 @@ class ClusterUiRenderer:
             self._close_live_road_camera()
         theme = self._current_theme()
         profile_stage = self._profile_start()
-        scene = self._scene_for_state(state, self._highlight_lane_lit(state, signal_lights), theme)
+        scene = self._scene_for_state(
+            state,
+            self._highlight_lane_lit(state, signal_lights),
+            theme,
+            getattr(self, "_lane_confidence_held_indices", frozenset()),
+            getattr(self, "_road_edge_held_sides", frozenset()),
+        )
         self._profile_add("render_world.build_scene", profile_stage)
         profile_stage = self._profile_start()
         rl.clear_background(rl_color(theme.bg))
@@ -1589,8 +1609,16 @@ class ClusterUiRenderer:
         state: ClusterUiState,
         highlight_lane_lit: bool,
         theme: ClusterTheme,
+        held_lane_indices: frozenset[int] = frozenset(),
+        held_road_edge_sides: frozenset[str] = frozenset(),
     ) -> ClusterScene:
-        cache_key = (*cluster_scene_state_key(state), highlight_lane_lit, theme)
+        cache_key = (
+            *cluster_scene_state_key(state),
+            highlight_lane_lit,
+            theme,
+            held_lane_indices,
+            held_road_edge_sides,
+        )
         if self._scene_cache is not None and cache_key == self._scene_cache_key:
             return self._scene_cache
         scene = build_cluster_scene(
@@ -1598,6 +1626,8 @@ class ClusterUiRenderer:
             self._profile_add_elapsed if self.profile_enabled else None,
             highlight_lane_lit=highlight_lane_lit,
             theme=theme,
+            held_lane_indices=held_lane_indices,
+            held_road_edge_sides=held_road_edge_sides,
         )
         self._scene_cache_key = cache_key
         self._scene_cache = scene
@@ -7254,6 +7284,15 @@ class ClusterUiRenderer:
         )
 
     def _highlight_lane_lit(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> bool:
+        lit = self._highlight_lane_blink_lit(state, signal_lights)
+        # Default HUD (same scope as the lane-confidence labels): the lane highlight
+        # beside the car stays steady. Blinker arrows and other modes still blink;
+        # the strip is still only built while highlight_lane_offset is present.
+        if self._lane_confidence_visible(state):
+            return True
+        return lit
+
+    def _highlight_lane_blink_lit(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> bool:
         left_signal_lit, right_signal_lit = signal_lights
         side = state.highlight_lane if state.highlight_lane in ("left", "right") else None
         if side is not None and state.highlight_lane_offset is not None:
@@ -7302,6 +7341,85 @@ class ClusterUiRenderer:
                 self._right_turn_signal_started_at = now
             started_at = self._right_turn_signal_started_at
         return blink_visible(now, started_at, float("inf"))
+
+    def _lane_confidence_hold_indices(self, state: ClusterUiState, now: float | None = None) -> frozenset[int]:
+        """state.lanes indices to keep drawing as thin lines through a confidence dip.
+
+        Presentation-only and never mutates state. The hold window starts at the
+        last render where the line was drawn by the existing rules with a known
+        (non-None) live confidence; that confidence already allows modelV2 up to
+        cluster_live's 0.5 s age, and a repeated visible frame re-arms the start.
+        """
+        last_visible_at = self._lane_confidence_last_visible_at
+        if not self._lane_confidence_visible(state):
+            last_visible_at["left"] = None
+            last_visible_at["right"] = None
+            return frozenset()
+        if now is None:
+            now = time.monotonic()
+        lanes = state.lanes
+        held: list[int] = []
+        seen: set[str] = set()
+        for index, marking in enumerate(lanes):
+            side = marking.confidence_hold_side
+            if side not in last_visible_at or side in seen:
+                continue
+            seen.add(side)
+            confidence = state.left_lane_line_confidence if side == "left" else state.right_lane_line_confidence
+            if confidence is None:
+                # Stale/invalid/missing model confidence: never add or arm a hold.
+                # An already-visible line keeps its existing (baseline) drawing.
+                last_visible_at[side] = None
+                continue
+            if marking.visible:
+                last_visible_at[side] = now
+                continue
+            started_at = last_visible_at[side]
+            if (
+                marking.confidence_dip
+                and confidence < LANE_CONFIDENCE_HOLD_PROBABILITY_MIN
+                and started_at is not None
+                and 0.0 <= now - started_at <= LANE_CONFIDENCE_HOLD_MAX_S
+            ):
+                held.append(index)
+            else:
+                last_visible_at[side] = None
+        for side in ("left", "right"):
+            if side not in seen:
+                # No current geometry for this side: drop any pending hold.
+                last_visible_at[side] = None
+        return frozenset(held)
+
+    def _road_edge_hold_sides(self, state: ClusterUiState, now: float | None = None) -> frozenset[str]:
+        """Road-edge sides to keep drawing through a short near-lane gate drop.
+
+        Same rules as the inner-lane confidence hold: default HUD only, both
+        live lane confidences known (fresh modelV2), the edge's current points
+        present, and at most LANE_CONFIDENCE_HOLD_MAX_S since the last render
+        where the existing rules drew it. Holding never re-arms the start.
+        """
+        last_visible_at = self._road_edge_last_visible_at
+        fresh = state.left_lane_line_confidence is not None and state.right_lane_line_confidence is not None
+        if not self._lane_confidence_visible(state) or not fresh:
+            last_visible_at["left"] = None
+            last_visible_at["right"] = None
+            return frozenset()
+        if now is None:
+            now = time.monotonic()
+        held: list[str] = []
+        for side, offset, points, hold_points in (
+            ("left", state.left_road_edge_offset, state.left_road_edge_points, state.left_road_edge_hold_points),
+            ("right", state.right_road_edge_offset, state.right_road_edge_points, state.right_road_edge_hold_points),
+        ):
+            if offset is not None or points:
+                last_visible_at[side] = now
+                continue
+            started_at = last_visible_at[side]
+            if hold_points and started_at is not None and 0.0 <= now - started_at <= LANE_CONFIDENCE_HOLD_MAX_S:
+                held.append(side)
+            else:
+                last_visible_at[side] = None
+        return frozenset(held)
 
     def _lane_confidence_visible(self, state: ClusterUiState) -> bool:
         # Only the user's default HUD: default screen mode (automatic trip-report
