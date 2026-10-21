@@ -395,7 +395,8 @@
           "zh": "试验中",
           "params": [
             "K9CreepMode",
-            "K9LaneFix"
+            "K9LaneFix",
+            "K9LRView"
           ]
         }
       ]
@@ -3467,6 +3468,38 @@
         "zh": [
           "0 关闭（现有）",
           "1 F1"
+        ]
+      },
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9LRView",
+      "title": "K9 차선 인식 후처리 선택 (실험)",
+      "descr": "번호 하나만 고릅니다. 0: 끔(기본값). 기존과 똑같습니다(모델 출력을 그대로 씁니다). 1(P1g): 모델이 낸 차선 4개의 위치를 프레임마다 그대로 쓰지 않고, 모델이 알려준 흔들림 크기(std)에 맞춰 칼만 필터로 다듬어 씁니다. 차선 확률도 짧게(약 0.15초) 평균합니다. 한 프레임에 차선이 1m 넘게 뛰면(차선 변경 등) 그 차선은 바로 모델 값으로 되돌립니다. 차선 높이, 도로 끝, 모델 경로, 조향·속도 안전 제한은 바꾸지 않습니다. GPU 추가 계산은 없고 CPU도 거의 쓰지 않습니다. 차선을 쓰는 곳(레인모드, 차선 변경 판단, 화면)은 다듬은 차선을 보게 되며, 확률 변화가 약 0.1~0.2초 늦게 반영될 수 있습니다. 값은 5초 안에 반영되고 바꾸면 처음부터 다시 시작합니다. 저화질 녹화 영상 재생 시뮬로만 확인했고 실차 미검증입니다.",
+      "egroup": "LANE",
+      "etitle": "K9 Lane-Line Post-Processing Selector (Trial)",
+      "edescr": "Single choice. 0: off (default), identical to before (raw model output). 1 (P1g): the four lane lines are smoothed per point with a Kalman filter driven by the model's own std, and lane-line probabilities are averaged over about 0.15 s. If a lane line jumps more than 1 m in one frame (lane change etc.) it is reset to the raw model value at once. Lane height, road edges, the model path and all steering/speed safety limits are unchanged. No extra GPU work and negligible CPU. Everything that reads lane lines (lane mode, lane-change logic, UI) sees the smoothed lines; probability changes may arrive about 0.1-0.2 s later. Applied within 5 s; changing the number restarts the filter. Checked only by low-resolution recorded-video replay simulation; not vehicle-validated.",
+      "cgroup": "转向",
+      "ctitle": "K9 车道线后处理选择（试验）",
+      "cdescr": "单选。0：关闭（默认），与以前相同。1（P1g）：按模型给出的标准差对四条车道线逐点做卡尔曼平滑，车道线概率做约0.15秒平均；某条车道线一帧内跳动超过1米（变道等）时立即恢复为模型原值。车道高度、道路边缘、模型路径和转向/速度安全限制不变。无额外GPU计算。仅通过低分辨率录像回放仿真确认，未经实车验证。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(기존 그대로)",
+          "1 P1g 차선 칼만 추적"
+        ],
+        "en": [
+          "0 Off (existing)",
+          "1 P1g lane Kalman tracking"
+        ],
+        "zh": [
+          "0 关闭（现有）",
+          "1 P1g 车道线卡尔曼跟踪"
         ]
       },
       "risk": "high"
