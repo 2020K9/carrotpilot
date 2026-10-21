@@ -109,7 +109,7 @@ The current `carrot_settings.json` contains **189 parameters**. The driver-monit
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 124 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap, running |
+| Driving control | 125 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap, experimental |
 | Vehicle and hardware | 17 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 34 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
@@ -249,13 +249,14 @@ For Hyundai/Kia CANFD openpilot longitudinal control, aReqRaw and aReqValue beco
 On supported Tesla vehicles with the additional vehicle bus detected, the device's **alpha longitudinal** (`AlphaLongitudinalEnabled`) toggle also enables [automatic cruise set-speed adjustment](tesla.md#automatic-cruise-speed) to the vehicle-reported limit. Navigation/Carrot speed control takes precedence and pauses DAS-based adjustment until it ends and the limit is stable again; any manual pause remains in effect. Turning the right speed wheel pauses it; an opposite-direction wheel gesture within one second or disengaging and re-engaging resumes it. There is no separate Carrot Web setting for this feature.
 
 <a id="experimental"></a>
-### Running — 1 setting
+### Experimental — 2 settings
 
-Carrot Web path: **Driving control > Running** (Korean UI: **주행 제어 > 실행중**; internal group ID `EXPERIMENTAL`). Trial features whose effect and safety are not validated on a vehicle. Read the description and change one item at a time.
+Carrot Web path: **Driving control > Experimental** (Korean UI: **주행 제어 > 실험중**; internal group ID `EXPERIMENTAL`). Trial features whose effect and safety are not validated on a vehicle. Read the description and change one item at a time.
 
 | Subsection | Parameters | Purpose |
 |---|---|---|
 | K9 pre-stop brake release | `K9StopTaper` | Default `0` (off); sent CAN is then identical to the original. `1`: Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only. In an ordinary stop after driving above 1.5 m/s, below 1.0 m/s the sent decel request (aReq) is eased at most 2 m/s³ toward `-(0.3 + speed)` m/s², and briefly after stopping the sent hold aReq is restored at 2 m/s³. Never stronger than the original. StopReq, hold/soft-hold timing and other cars are unchanged. Not vehicle-validated |
+| K9 stop method selector | `K9CreepMode` | Single choice; methods never stack. Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only. `0` (default): current default settings unchanged, and `K9StopTaper` is still honoured as before (not forced off). `1` creep_fix v8, `2` creep_fix v9 (independent re-implementation of code published for a Niro EV): StopReq is withheld and the decel request rate-limited until real standstill, planned decel <= -1.0 m/s², weak decel, aEgo > 0.06 or a lead within 3 m, so StopReq timing and stop distance change; `K9StopTaper` is not used. `3`: use the existing K9 pre-stop brake release with its existing conditions regardless of `K9StopTaper`. Changes apply within about 0.5 s and reset every method. Pedal, override, disengage or invalid CAN return the original at once. Not vehicle-validated |
 
 `K9StopTaper` (K9 pre-stop brake release) is a trial intended to reduce the body nod at the instant the wheels stop. It assumes a smaller deceleration at that instant gives a smaller nod; this is not proven.
 

@@ -390,11 +390,12 @@
         },
         {
           "id": "EXPERIMENTAL",
-          "ko": "실행중",
-          "en": "Running",
-          "zh": "运行中",
+          "ko": "실험중",
+          "en": "Experimental",
+          "zh": "试验中",
           "params": [
-            "K9StopTaper"
+            "K9StopTaper",
+            "K9CreepMode"
           ]
         }
       ]
@@ -3389,6 +3390,23 @@
       "cdescr": "默认关闭（发送的CAN与原来相同）。仅限起亚K9非CAN-FD摄像头SCC openpilot纵向：普通停车低于1.0m/s时，只以不超过2m/s³的速率放松发送的减速请求(aReq)，试图减轻车轮停止瞬间的点头（假设，未证明）。不会比原命令更强。StopReq与停车保持时机不变，但停车后短时间（通常≤0.5秒）发送的保持制动aReq仍弱于原值，并以2m/s³恢复。放松与恢复期间，遇急刹(≤-1.5m/s²)、原制动增强超过0.3、前车≤2m或距离异常、踏板、接管、CAN或数值异常、停车后移动时立即恢复原命令。前车约束是忽略延迟的估算，不保证停在前车2m外；0.25m只是简化仿真测试的增加距离上限，不是实车保证。约0.5秒内生效。点头减轻、舒适性与安全均未经实车验证，效果可能很小或没有。",
       "min": 0,
       "max": 1,
+      "default": 0,
+      "unit": 1,
+      "risk": "high"
+    },
+    {
+      "group": "주행튜닝",
+      "name": "K9CreepMode",
+      "title": "K9 정차 방식 선택 (실험)",
+      "descr": "하나만 고르는 선택(겹치지 않음). 기아 K9 일반 CAN 카메라 SCC 오픈파일럿 종방향에서만 동작하고 다른 차는 항상 0과 같습니다. 0: 현재 기본 설정(기본값). 지금까지와 똑같고, 'K9 정지 직전 제동 풀기(K9StopTaper)' 값도 예전처럼 그대로 따릅니다(강제로 끄지 않음). 1: creep_fix v8, 2: creep_fix v9 — 니로 EV용으로 공개된 creep_fix(https://leegrt.org/oppo/creep_fix/)의 v8/v9를 독립 구현. 정지(stopping) 상태에서 실제 정지·계획 감속 -1.0m/s² 이하·감속 부족·aEgo>0.06·앞차 3m 이하 중 하나가 나올 때까지 StopReq를 보내지 않고 감속 요청을 속도별 목표로 천천히 바꾼 뒤, StopReq와 -0.50m/s² 이상 감속을 보냅니다. 저속 pid 감속에 제동을 더하고, 1.4m/s 미만 저크 상한을 올리며 ComfortBand를 0으로 합니다. StopReq 시점·정지 거리·질감이 바뀝니다. 1/2에서는 K9StopTaper를 쓰지 않습니다. 3: 기존 'K9 정지 직전 제동 풀기'를 K9StopTaper 값과 관계없이 사용(기존 조건 그대로). 페달·오버라이드·제어 해제·CAN 이상이면 즉시 원래 명령. 값을 바꾸면 약 0.5초 안에 반영되고 모든 방식이 처음 상태로 초기화됩니다. EV 기준 값이며 K9에서 효과·승차감·안전은 검증되지 않았습니다.",
+      "egroup": "LONG",
+      "etitle": "K9 Stop Method Selector (Trial)",
+      "edescr": "Single choice (never stacked). Kia K9 non-CAN-FD camera-SCC openpilot longitudinal only; other cars always behave as 0. 0: current default settings (default) — unchanged, and the K9StopTaper setting is still honoured as before (not forced off). 1: creep_fix v8, 2: creep_fix v9 — independent re-implementations of creep_fix v8/v9 published for a Niro EV (https://leegrt.org/oppo/creep_fix/). In the stopping state StopReq is withheld and the decel request is rate-limited toward a speed-scheduled target until real standstill, planned decel <= -1.0 m/s², weak decel, aEgo > 0.06 or a lead within 3 m; then StopReq is sent with at least -0.50 m/s². Low-speed pid braking gets extra decel, the jerk upper limit is raised below 1.4 m/s and ComfortBand is 0. StopReq timing, stop distance and feel change. K9StopTaper is not used in 1/2. 3: use the existing K9 pre-stop brake release regardless of the K9StopTaper setting (its existing conditions). Pedal, override, disengage or invalid CAN return the original at once. Changes apply within about 0.5 s and reset every method. EV-origin values; effect, comfort and safety are not verified on the K9.",
+      "cgroup": "纵向控制",
+      "ctitle": "K9 停车方式选择（试验）",
+      "cdescr": "单选（不叠加）。仅限起亚K9非CAN-FD摄像头SCC openpilot纵向。0：当前默认设置（默认，K9StopTaper照旧生效）。1：creep_fix v8，2：creep_fix v9（为Niro EV发布，独立实现，会改变StopReq时机与停车距离）。3：无论K9StopTaper如何都使用现有K9停车前制动释放。基于EV数值，在K9上的效果与安全未经验证。",
+      "min": 0,
+      "max": 3,
       "default": 0,
       "unit": 1,
       "risk": "high"

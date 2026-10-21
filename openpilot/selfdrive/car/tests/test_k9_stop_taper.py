@@ -884,8 +884,8 @@ def test_setting_registered_in_experimental_menu_default_off():
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   driving = next(m for m in catalog["menu"] if m["id"] == "DRIVING")
   experimental = next(g for g in driving["groups"] if g["id"] == "EXPERIMENTAL")
-  # user wrote "메뉴실행중 안에넣을것": the visible Korean group label is 실행중; the internal id stays EXPERIMENTAL
-  assert experimental["ko"] == "실행중" and experimental["params"] == ["K9StopTaper"]
+  # owner 2026-10-21: the visible Korean group label is 실험중; the internal id stays EXPERIMENTAL
+  assert experimental["ko"] == "실험중" and experimental["params"] == ["K9StopTaper", "K9CreepMode"]
   assert driving["ko"] == "주행 제어"
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopTaper")
   assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 1, 0, 1)
