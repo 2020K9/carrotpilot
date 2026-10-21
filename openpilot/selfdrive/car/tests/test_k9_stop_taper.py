@@ -886,7 +886,7 @@ def test_setting_registered_in_experimental_menu_default_off():
   driving = next(m for m in catalog["menu"] if m["id"] == "DRIVING")
   experimental = next(g for g in driving["groups"] if g["id"] == "EXPERIMENTAL")
   # owner 2026-10-21: the visible Korean group label is 실험중; the internal id stays EXPERIMENTAL
-  assert experimental["ko"] == "실험중" and experimental["params"] == ["K9CreepMode"]
+  assert experimental["ko"] == "실험중" and experimental["params"] == ["K9CreepMode", "K9LaneFix"]
   assert driving["ko"] == "주행 제어"
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopTaper")
   assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 1, 0, 1)

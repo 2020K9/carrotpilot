@@ -394,7 +394,8 @@
           "en": "Experimental",
           "zh": "试验中",
           "params": [
-            "K9CreepMode"
+            "K9CreepMode",
+            "K9LaneFix"
           ]
         }
       ]
@@ -3428,6 +3429,38 @@
           "1 v8",
           "2 v9",
           "3 现有停车前制动释放"
+        ]
+      },
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9LaneFix",
+      "title": "K9 레인모드 쏠림 수정안 선택 (실험)",
+      "descr": "번호 하나만 고릅니다. 레인모드(차선 경로를 따라갈 때)에서만 동작이 바뀝니다. 0: 끔(기본값). 기존 동작과 같습니다. 1(F1): ① 차선 경로를 따라갈 때 경로를 지금 차 위치(모델 경로 시작점)에서 시작해 2초에 걸쳐 차선 경로로 부드럽게 합류시킵니다. 처음 어긋남이 크면 합류 시간을 최대 4초까지 늘리지만, 합류 곡률이 작게 유지되는 만큼만 늘리므로 고속에서는 2초 그대로입니다. 레인모드가 막 켜질 때는 이 보정을 0.5초에 걸쳐 서서히 넣습니다. ② 레인모드가 꺼져 모델 경로로 돌아가는 순간부터 조향 명령 변화를 옆 저크 2.5m/s³ 이하로 묶습니다(기존 안전 제한 5m/s³보다 낮음). 평소 변화가 그 안에 들어오면 바로 풀리고 길어도 2초입니다. 차선 변경 중이나 조향이 꺼진 동안에는 쓰지 않습니다. 곡률·저크·가속 안전 제한, 레인리스 경로, 레인모드 켜짐/꺼짐 조건, 정차 기능은 바꾸지 않습니다. 값을 바꾸면 곧바로(0.05초 안) 반영되고 전환 상태가 처음으로 돌아갑니다. 로그 재생·시뮬레이션으로만 확인했고 실차 미검증입니다.",
+      "egroup": "LANE",
+      "etitle": "K9 Lane-Mode Drift Fix Selector (Trial)",
+      "edescr": "Single choice. Only lane mode (following the lane-line path) changes. 0: off (default), same as before. 1 (F1): (1) the lane-mode path starts at the car (model path start) and merges into the lane-line path over 2 s; a large initial offset extends the merge up to 4 s, but only as far as the merge curvature stays small, so at high speed it stays 2 s. When lane mode just turns on, this correction is ramped in over 0.5 s. (2) From the moment lane mode turns off and the model path takes over, the steering command change is limited to 2.5 m/s³ lateral jerk (below the existing 5 m/s³ safety limit); it is released as soon as the normal change fits, at most 2 s. Not used during a lane change or while steering is off. Curvature/jerk/accel safety limits, the laneless path, lane-mode on/off conditions and stop functions are unchanged. Changes apply at once (within 0.05 s) and reset the transition state. Checked only by log replay and simulation; not vehicle-validated.",
+      "cgroup": "转向",
+      "ctitle": "K9 车道模式偏移修正选择（试验）",
+      "cdescr": "单选。仅改变车道模式（沿车道线路径行驶时）。0：关闭（默认），与以前相同。1（F1）：①车道模式路径从车辆当前位置（模型路径起点）开始，在2秒内平滑并入车道线路径；初始偏差大时并入时间最多延长到4秒，但只在并入曲率保持较小的范围内延长，高速时仍为2秒。车道模式刚开启时，该修正在0.5秒内逐渐加入。②车道模式关闭、回到模型路径的瞬间起，转向指令变化限制在横向加加速度2.5m/s³以内（低于现有安全限制5m/s³），正常变化进入该范围即解除，最长2秒。变道中或转向关闭时不使用。曲率/加加速度/加速度安全限制、无车道线路径、车道模式开关条件和停车功能不变。更改立即生效（0.05秒内）并重置过渡状态。仅通过日志回放与仿真确认，未经实车验证。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(기존 그대로)",
+          "1 F1"
+        ],
+        "en": [
+          "0 Off (existing)",
+          "1 F1"
+        ],
+        "zh": [
+          "0 关闭（现有）",
+          "1 F1"
         ]
       },
       "risk": "high"

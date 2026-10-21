@@ -6,6 +6,7 @@ from openpilot.common.realtime import DT_MDL
 # from openpilot.common.swaglog import cloudlog
 # from openpilot.common.logger import sLogger
 from openpilot.common.params import Params
+from openpilot.selfdrive.controls.lib.k9_lane_fix import k9_lane_fix_mode, k9_lane_fix_profile
 
 TRAJECTORY_SIZE = 33
 # positive numbers go right
@@ -36,6 +37,23 @@ def lerp(start, end, t):
 
 def max_abs(a, b):
   return a if abs(a) > abs(b) else b
+
+def lane_converge_weight(t, mode, T):
+  # K9LaneFix: s(t) = 1 at t=0 -> 0 at the end; fraction of the initial lane-path offset e0 still removed at time t.
+  t = np.asarray(t, dtype=float)
+  if mode == "smoothstep":
+    u = np.clip(t / T, 0.0, 1.0)
+    return 1.0 - u * u * (3.0 - 2.0 * u)
+  if mode == "smootherstep":
+    u = np.clip(t / T, 0.0, 1.0)
+    return 1.0 - u * u * u * (u * (6.0 * u - 15.0) + 10.0)
+  if mode == "exp":
+    return np.exp(-np.maximum(t, 0.0) / T)
+  return np.zeros_like(t)
+
+def lane_ramp_step(u):
+  u = min(max(u, 0.0), 1.0)
+  return u * u * (3.0 - 2.0 * u)
 
 class LanePlanner:
   def __init__(self):
@@ -72,7 +90,26 @@ class LanePlanner:
     self.lanefull_mode = False
     self.d_prob_count = 0
 
+    # K9LaneFix (experimental, see k9_lane_fix.py). Mode 0 = off: none of the state below is used.
+    self.k9_lane_fix_mode = None
+    self.k9_lane_fix_reset()
+
     self.params = Params()
+
+  def k9_lane_fix_reset(self):
+    self.lane_converge_e0 = 0.0
+    self.lane_ramp_g = 0.0
+    self.lane_ramp_from = 0.0
+    self.lane_ramp_k = 0
+    self.lane_ramp_phase = 0   # 0 idle, 1 ramp in, 2 on
+
+  def k9_lane_fix_update(self):
+    # read every model frame (same as LatMpcInputOffset); a changed number restarts the transition state
+    mode = k9_lane_fix_mode(self.params)
+    if mode != self.k9_lane_fix_mode:
+      self.k9_lane_fix_mode = mode
+      self.k9_lane_fix_reset()
+    return k9_lane_fix_profile(mode)
 
   def parse_model(self, md):
 
@@ -232,6 +269,12 @@ class LanePlanner:
 
     adjustLaneTime = self.params.get_float("LatMpcInputOffset") * 0.01 # 0.06 
     laneline_active = False
+    fix = self.k9_lane_fix_update()
+    lane_blended = False
+    if fix is not None:
+      model_path_y0 = float(path_xyz[0, 1])
+      model_path_y = path_xyz[:, 1].copy() if fix["ramp_in_t"] > 0.0 else None
+      self.lane_converge_e0 = 0.0
     self.d_prob_count = self.d_prob_count + 1 if self.d_prob > 0.3 else 0
     if self.lanefull_mode and self.d_prob_count > int(1 / DT_MDL):
       laneline_active = True
@@ -244,13 +287,52 @@ class LanePlanner:
         if safe_idxs[0]:
           lane_path_y_interp = np.interp(path_t * (1.0 + adjustLaneTime), self.ll_t[safe_idxs], lane_path_y[safe_idxs])
           path_xyz[:,1] = self.d_prob * lane_path_y_interp + (1.0 - self.d_prob) * path_xyz[:,1]
+          lane_blended = True
 
 
     path_xyz[:, 1] += (CAMERA_OFFSET + self.lane_offset_filtered.x)
 
+    if fix is not None:
+      self.k9_lane_fix_apply(fix, v_ego, path_t, path_xyz, lane_blended, model_path_y0, model_path_y)
+
     self.offset_total = self.lane_offset_filtered.x
 
     return path_xyz, laneline_active
+
+  def k9_lane_fix_apply(self, fix, v_ego, path_t, path_xyz, lane_blended, model_path_y0, model_path_y):
+    # K9LaneFix reference shaping, only when the lane path was blended into path_xyz (lane-mode branch above).
+    if lane_blended:
+      # start the lane-mode reference at the model path start and merge into the lane path over converge_t
+      self.lane_converge_e0 = float(path_xyz[0, 1]) - model_path_y0
+      e0 = self.lane_converge_e0
+      T = fix["converge_t"]
+      converge_t = T
+      if fix["t_eref"] > 0.0:
+        # longer merge for a large offset (same peak lateral accel as |e0| = t_eref at T), limited to the time at which
+        # the merge curvature stays under t_kref (high speed keeps T), and to t_max
+        t_acc = T * np.sqrt(abs(self.lane_converge_e0) / fix["t_eref"])
+        if t_acc >= T:
+          t_ext = t_acc
+          if fix["t_kref"] > 0.0:
+            t_ext = min(t_acc, np.sqrt(5.7735 * abs(self.lane_converge_e0) / (fix["t_kref"] * max(v_ego, 1.0) ** 2)))
+          converge_t = float(np.clip(t_ext, T, max(fix["t_max"], T)))
+      path_xyz[:, 1] -= e0 * lane_converge_weight(path_t, fix["converge_mode"], converge_t)
+    if model_path_y is not None:
+      # lane-mode start: ramp the lane-mode correction in over ramp_in_t (laneless_ref = what the laneless branch outputs)
+      laneless_ref = model_path_y + (CAMERA_OFFSET + self.lane_offset_filtered.x)
+      if lane_blended:
+        if self.lane_ramp_phase == 0:
+          self.lane_ramp_phase, self.lane_ramp_from, self.lane_ramp_k = 1, self.lane_ramp_g, 0
+        delta = path_xyz[:, 1] - laneless_ref
+        if self.lane_ramp_phase == 1:
+          self.lane_ramp_k += 1
+          u = self.lane_ramp_k * DT_MDL / fix["ramp_in_t"]
+          self.lane_ramp_g = self.lane_ramp_from + (1.0 - self.lane_ramp_from) * lane_ramp_step(u)
+          if u >= 1.0:
+            self.lane_ramp_phase, self.lane_ramp_g = 2, 1.0
+          path_xyz[:, 1] = laneless_ref + self.lane_ramp_g * delta
+      else:
+        self.lane_ramp_phase, self.lane_ramp_g = 0, 0.0
 
   def calculate_plan_yaw_and_yaw_rate(self, path_xyz):
     if path_xyz.shape[0] < 3:

@@ -201,6 +201,7 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    lane_cmd_active = False
     if not CC.latActive:
       new_desired_curvature = self.curvature
     elif self.is_vw_meb:
@@ -214,6 +215,7 @@ class Controls:
       else:
         new_desired_curvature = float(model_v2.action.desiredCurvature)  # raw 모델곡률 (if2 기본과 동일)
     elif self.lanefull_mode_enabled:
+      lane_cmd_active = True
       if len(lat_plan.curvatures) == 0:
         new_desired_curvature = self.curvature
       else:
@@ -221,6 +223,34 @@ class Controls:
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
       new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+
+    # K9LaneFix (experimental, see controls/lib/k9_lane_fix.py): read every control tick like the other lateral params
+    # here; a changed number restarts the hand-over state. 0 / unknown = off (fix is None and nothing below runs).
+    from openpilot.selfdrive.controls.lib.k9_lane_fix import k9_lane_fix_mode, k9_lane_fix_profile
+    k9_mode = k9_lane_fix_mode(self.params)
+    if k9_mode != getattr(self, 'k9_lane_fix_mode', None):
+      self.k9_lane_fix_mode = k9_mode
+      self.k9_handover_k = -1
+      self.k9_lane_cmd_prev = None
+    fix = k9_lane_fix_profile(k9_mode)
+    if fix is not None:
+      # K9LaneFix hand-over: from the first tick after controlsd stops following the lane-mode plan and goes back to the
+      # model desiredCurvature, cap the per-tick command change at entry_jerk (lateral jerk, m/s^3) until the normal step
+      # fits under the cap or entry_t s have passed. clip_curvature below is applied unchanged.
+      if not CC.latActive or self.is_vw_meb or model_v2.meta.laneChangeState != LaneChangeState.off:
+        self.k9_handover_k = -1
+      elif lane_cmd_active != (self.k9_lane_cmd_prev if self.k9_lane_cmd_prev is not None else lane_cmd_active):
+        self.k9_handover_k = -1 if lane_cmd_active else 0
+      k = self.k9_handover_k
+      if k >= 0:
+        max_dk = fix["entry_jerk"] * DT_CTRL / max(CS.vEgo, 1.0) ** 2
+        step = new_desired_curvature - self.desired_curvature
+        if abs(step) <= max_dk or k * DT_CTRL >= fix["entry_t"]:
+          self.k9_handover_k = -1
+        else:
+          new_desired_curvature = self.desired_curvature + float(np.clip(step, -max_dk, max_dk))
+          self.k9_handover_k = k + 1
+      self.k9_lane_cmd_prev = lane_cmd_active
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
