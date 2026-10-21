@@ -598,3 +598,15 @@ def test_declared_numeric_bounds_stay_intact(params):
   assert (by_name["ApplyModelSpeed"]["min"], by_name["ApplyModelSpeed"]["max"]) == (-120, 120)
   assert by_name["ApplyModelSpeed"]["default"] == 0
   assert by_name["TFollowDecelBoost"]["unit"] == 10
+
+
+def test_k9_creep_mode_is_one_click_select_with_four_choices(settings, params):
+  creep = next(p for p in params if p["name"] == "K9CreepMode")
+  assert (creep["min"], creep["max"], creep["default"]) == (0, 3, 0)
+  assert creep["control"] == "select"
+  for locale in ("ko", "en", "zh"):
+    options = creep["options"][locale]
+    assert len(options) == 4
+    assert [option.split(" ", 1)[0] for option in options] == ["0", "1", "2", "3"]
+  assert creep["options"]["ko"] == ["0 현재 기본설정", "1 v8", "2 v9", "3 기존 정차 제동 풀기"]
+  assert "K9CreepMode" in json.dumps(settings["menu"])

@@ -4,8 +4,9 @@ Source: https://leegrt.org/oppo/creep_fix/ (selectMode v8/v9 carcontroller.py di
 No license is stated on that page; this is an independent re-implementation of the described algorithm and its
 published constants. It was designed for an EV with motor creep and is NOT verified on the K9.
 
-Modes 0/3 (or any other car) never call update(): accel, StopReq, jerk and ComfortBand are the original. In modes
-1/2 it replaces K9StopTaper (the caller resets the taper; modes never stack). v8 and v9 differ only in the FEATHER,
+Modes 0/3 (or any other car) never call update(), so the creep never changes accel, StopReq, jerk or ComfortBand
+there; mode 3 (and mode 0 with K9StopTaper ON) still runs the existing K9StopTaper accel taper in the caller. In
+modes 1/2 the creep replaces K9StopTaper (the caller resets the taper; modes never stack). v8 and v9 differ only in the FEATHER,
 MIN_DECEL and CREEP tables and the down/up step rules (PROFILES); latch, boost, fade and jerk are shared.
 
 What it changes while ON and active:
@@ -15,7 +16,10 @@ What it changes while ON and active:
   0.14 m/s or aEgo > 0.06 is seen, StopReq is sent as the original and accel = min(original, -0.50) until the
   stopping state ends;
 - pid below 1.6 m/s with aTarget < -0.05: extra braking creep_comp, faded by aTarget and the accel itself;
-- jerk (non-CAN-FD): jerk_u is raised below 1.4 m/s and ComfortBand upper/lower are 0 at every speed.
+- jerk: only in HyundaiJerk.make_jerk's non-CAN-FD branch with longControlState != off (pid, stopping or starting),
+  on frames where update() applied (active), jerk_u is raised to at least the JERK_U table below 1.4 m/s and
+  ComfortBand upper/lower are set to 0; longControlState off, CAN-FD, interlocked frames and modes 0/3 keep the
+  original jerk/ComfortBand.
 eff_ac = min(ESP12 LONG_ACCEL [m/s^2], aEgo + 0.10); LONG_ACCEL missing or non-finite falls back to aEgo.
 
 Deviations from the source, all fail toward the original command (documented, not calibrated):
@@ -27,6 +31,7 @@ import math
 import numpy as np
 
 from opendbc.car.hyundai.k9_stop_taper import k9_stop_taper_applies
+from opendbc.car.hyundai.values import CarControllerParams
 
 V8, V9 = 1, 2  # K9CreepMode values
 
@@ -82,7 +87,7 @@ class K9Creep:
   def reset(self):
     self.latched = False
     self.last = None  # previous sent accel; None means "start from the current command"
-    self.active = False  # True only on a frame where update() applied v9 (jerk/band change follows it)
+    self.active = False  # True only on a frame where update() applied v8/v9 (jerk/band change follows it)
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
@@ -102,7 +107,7 @@ class K9Creep:
       if pid and v_ego < p["creep"][0][-1] and a_target < FADE_TARGET_BP[-1]:
         comp = np.interp(v_ego, *p["creep"]) * np.interp(a_target, FADE_TARGET_BP, FADE_TARGET_V)
         comp *= np.interp(accel, FADE_ACCEL_BP, FADE_ACCEL_V)
-        accel = float(min(accel, max(accel + comp, -4.0)))  # comp <= 0; -4.0 = CarControllerParams.ACCEL_MIN
+        accel = float(min(accel, max(accel + comp, CarControllerParams.ACCEL_MIN)))  # comp <= 0
       self.last = float(accel)
       return accel, stopping
 

@@ -2,13 +2,19 @@
 
 Checks source logic and SCC12 encoding through the real CarController, not K9 vehicle behaviour.
 """
+import importlib.util
+import subprocess
+
 import pytest
 
 from opendbc.car.hyundai import k9_creep as kc
 from opendbc.car.hyundai.k9_creep import K9Creep, V8, V9
-from opendbc.car.hyundai.values import CAR
-from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import make_cp
-from openpilot.selfdrive.car.tests.test_k9_stop_taper import LCS, Rig, base_cc, mixed_sequence  # noqa: F401
+from opendbc.car import structs
+from opendbc.car.hyundai import carcontroller
+from opendbc.car.hyundai.values import CAR, HyundaiFlags
+from openpilot.selfdrive.car.tests import test_k9_stop_taper as tst
+from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import K9_FLAGS, make_cp
+from openpilot.selfdrive.car.tests.test_k9_stop_taper import CC_REL, LCS, ROOT, Rig, mixed_sequence
 
 
 def upd(c, **kw):
@@ -87,18 +93,165 @@ def rig(monkeypatch, mode, taper=False, cp=None, module=None):
   return Rig(monkeypatch, cp=cp, taper=taper, **({"module": module} if module else {}), **kw)
 
 
-@pytest.mark.parametrize("values", [None, 0, 7, -1])
+PARENT_COMMIT = "e04c05e4"  # actual parent of the K9CreepMode commit (K9StopTaper param only, no selector)
+
+
+@pytest.fixture(scope="module")
+def parent_cc(tmp_path_factory):
+  """Frozen parent CarController. k9_stop_taper.py, hyundaican.py etc. are byte-identical at HEAD (only
+  carcontroller.py/k9_creep.py changed under opendbc_repo), so the parent module runs against the same deps."""
+  changed = subprocess.run(["git", "diff", "--name-only", PARENT_COMMIT, "HEAD", "--", "opendbc_repo"], cwd=ROOT,
+                           check=True, capture_output=True, text=True).stdout.split()
+  assert set(changed) <= {CC_REL, "opendbc_repo/opendbc/car/hyundai/k9_creep.py"}, changed
+  source = subprocess.run(["git", "show", f"{PARENT_COMMIT}:{CC_REL}"], cwd=ROOT, check=True, capture_output=True,
+                          text=True, encoding="utf-8").stdout
+  assert "k9_stop_taper_enabled" in source and "K9CreepMode" not in source and "k9_creep" not in source
+  path = tmp_path_factory.mktemp("parent_cc") / "carcontroller_parent.py"
+  path.write_text(source, encoding="utf-8")
+  spec = importlib.util.spec_from_file_location("carcontroller_k9_creep_parent", path)
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  assert module.__file__ == str(path) and module.__file__ != carcontroller.__file__
+  return module
+
+
+@pytest.mark.parametrize("values", [None, 0, 4, 7, -1])
 @pytest.mark.parametrize("taper", [False, True])
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-def test_mode0_identical_can_to_head_controller(monkeypatch, base_cc, values, taper, fingerprint):  # noqa: F811
-  # base_cc is the pre-taper controller; with taper=True compare against the HEAD path (K9StopTaper only, mode absent)
-  if taper:
-    ref = mixed_sequence(rig(monkeypatch, None, taper=True, cp=make_cp(fingerprint=fingerprint)))
-  else:
-    ref = mixed_sequence(rig(monkeypatch, None, cp=make_cp(fingerprint=fingerprint), module=base_cc))
+def test_mode0_identical_can_to_actual_parent(monkeypatch, parent_cc, values, taper, fingerprint):
+  # reference: the real parent e04c05e4 controller under the same K9StopTaper value (it never reads K9CreepMode)
+  ref = mixed_sequence(rig(monkeypatch, None, taper=taper, cp=make_cp(fingerprint=fingerprint), module=parent_cc))
   monkeypatch.undo()
   new = mixed_sequence(rig(monkeypatch, values, taper=taper, cp=make_cp(fingerprint=fingerprint)))
   assert len(new.can) == 1800 and ref.can == new.can
+
+
+@pytest.mark.parametrize("taper", [False, True])
+def test_mode3_identical_can_to_actual_parent_taper_on(monkeypatch, parent_cc, taper):
+  ref = mixed_sequence(rig(monkeypatch, None, taper=True, module=parent_cc))
+  monkeypatch.undo()
+  assert mixed_sequence(rig(monkeypatch, 3, taper=taper)).can == ref.can
+
+
+@pytest.mark.parametrize("mode", [1, 2, 3])
+def test_no_camera_scc_k9_identical_to_parent(monkeypatch, parent_cc, mode):
+  flags = int(K9_FLAGS & ~HyundaiFlags.CAMERA_SCC)
+  assert not kc.k9_creep_applies(make_cp(flags=flags))
+  ref = mixed_sequence(rig(monkeypatch, None, taper=True, cp=make_cp(flags=flags), module=parent_cc))
+  monkeypatch.undo()
+  r = rig(monkeypatch, mode, taper=True, cp=make_cp(flags=flags))
+  assert mixed_sequence(r).can == ref.can and r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
+
+
+@pytest.mark.parametrize("mode", [1, 2, 3])
+def test_canfd_k9_guard_false(monkeypatch, mode):
+  # the shared Rig cannot drive a full CAN-FD update (no CAN-FD CarState fixture); check the guard at construction
+  cp = make_cp(flags=int(K9_FLAGS | HyundaiFlags.CANFD))
+  assert not kc.k9_creep_applies(cp)
+  r = rig(monkeypatch, mode, taper=True, cp=cp)
+  assert r.cc.k9_creep_applies is False and r.cc.k9_creep is None and r.cc.k9_stop_taper is None
+
+
+def test_canfd_jerk_branch_ignores_creep_flag():
+  # even if creep=True reached make_jerk, the CAN-FD branch never applies jerk_bands
+  def run(creep):
+    j = carcontroller.HyundaiJerk()
+    cp = make_cp(flags=int(K9_FLAGS | HyundaiFlags.CANFD))
+    cs = tst.make_ci_state()
+    cs.out = structs.CarState(vEgo=0.5, aEgo=-0.3)
+    act = structs.CarControl().actuators
+    act.longControlState, act.accel = LCS.stopping, -0.6
+    j.make_jerk(cp, cs, -0.6, act, structs.CarControl().hudControl, creep=creep)
+    return j.jerk_u, j.jerk_l, j.cb_upper, j.cb_lower
+  assert run(True) == run(False)
+
+
+class FakeCp:
+  def __init__(self, vl):
+    self.vl = vl
+
+
+def patch_state(monkeypatch, **attrs):
+  orig = tst.make_ci_state
+
+  def make():
+    cs = orig()
+    for k, v in attrs.items():
+      setattr(cs, k, v)
+    return cs
+  monkeypatch.setattr(tst, "make_ci_state", make)
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+def test_soft_hold_mode2_keeps_stopreq_like_parent(monkeypatch, parent_cc, mode):
+  # hyundaican: StopReq = stopping or (softHoldActive > 0 and soft_hold_mode == 2); the creep must not defeat it
+  patch_state(monkeypatch, softHoldActive=1)
+  ref = gentle_stop(rig(monkeypatch, None, module=parent_cc))
+  cand = gentle_stop(rig(monkeypatch, mode))
+  assert all(c is None or c["StopReq"] == 1 for _, c in cand)
+  assert [r[1]["StopReq"] for r in ref if r[1]] == [c[1]["StopReq"] for c in cand if c[1]]
+
+
+@pytest.mark.parametrize("vl", [{}, {"ESP12": {}}, {"ESP12": {"LONG_ACCEL": float("nan")}, "TCS13": {"StandStill": 0}},
+                                {"ESP12": {"LONG_ACCEL": float("inf")}}], ids=["absent", "no_signal", "nan", "inf"])
+@pytest.mark.parametrize("mode", [1, 2])
+def test_missing_or_invalid_esp12_tcs13_falls_back_to_aego(monkeypatch, mode, vl):
+  assert kc.read_long_accel(FakeCp(vl)) is None and kc.read_long_accel(None) is None
+  ref = gentle_stop(rig(monkeypatch, mode))  # make_ci_state has no cp: same aEgo fallback, no TCS13 standstill
+  monkeypatch.undo()
+  patch_state(monkeypatch, cp=FakeCp(vl))
+  assert gentle_stop(rig(monkeypatch, mode)) == ref
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+def test_tcs13_standstill_latches_stopreq(monkeypatch, mode):
+  patch_state(monkeypatch, cp=FakeCp({"TCS13": {"StandStill": 1}, "ESP12": {"LONG_ACCEL": -0.3}}))
+  rows = gentle_stop(rig(monkeypatch, mode))
+  assert all(c is None or c["StopReq"] == 1 for _, c in rows[184:])  # first stopping frame (v <= 0.5) onwards
+
+
+def jerk_trace(monkeypatch, mode, module=None):
+  r = rig(monkeypatch, mode, module=module)
+  out = []
+  for state, n in ((LCS.pid, 100), (LCS.stopping, 150), (LCS.off, 50)):
+    for i in range(n):
+      v = max(1.0 - 0.006 * i, 0.06) if state != LCS.pid else 3.0
+      r.step(-0.6, state, v, a_target=-0.4, a_ego=-0.3)
+      j = r.cc.hyundai_jerk
+      out.append((state, float(j.jerk_u), float(j.jerk_l), float(j.cb_upper), float(j.cb_lower)))
+  return out
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+def test_jerk_comfortband_override_only_on_applied_non_off_frames(monkeypatch, parent_cc, mode):
+  ref = jerk_trace(monkeypatch, None, module=parent_cc)
+  monkeypatch.undo()
+  cand = jerk_trace(monkeypatch, mode)
+  monkeypatch.undo()
+  assert jerk_trace(monkeypatch, 0) == ref  # mode 0 jerk/ComfortBand identical to the actual parent
+  for (st, *r), (_, ju, jl, cu, cl) in zip(ref, cand, strict=True):
+    assert jl == r[1]  # jerk_l never touched
+    if st == LCS.off:
+      assert (ju, cu, cl) == (r[0], r[2], r[3])
+    else:
+      assert cu == 0.0 and cl == 0.0 and ju >= r[0]
+  assert any(r[2] > 0 for r in ref)  # parent really had a non-zero band there
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+def test_jerk_band_original_on_interlocked_frames(monkeypatch, parent_cc, mode):
+  def trace(m, module=None):
+    r = rig(monkeypatch, m, module=module)
+    out = []
+    for i in range(200):
+      r.step(-0.6, LCS.stopping, 0.4, a_target=-0.4, a_ego=-0.3, gas=i >= 100)
+      j = r.cc.hyundai_jerk
+      out.append((float(j.jerk_u), float(j.cb_upper), float(j.cb_lower)))
+    return out
+  ref = trace(None, parent_cc)
+  monkeypatch.undo()
+  cand = trace(mode)
+  assert cand[102:] == ref[102:]  # gas interlock: creep reset, original jerk/ComfortBand (make_jerk runs every 2nd frame)
 
 
 def test_mode3_equals_taper_param_on_regardless_of_param(monkeypatch):
