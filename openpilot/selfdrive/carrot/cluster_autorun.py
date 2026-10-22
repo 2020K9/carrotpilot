@@ -11,6 +11,7 @@ import traceback
 from pathlib import Path
 
 from openpilot.common.params import Params
+from openpilot.selfdrive.carrot.ext_hud import ExtHudReconciler, read_effective_cluster_hud_mode
 from openpilot.system.hardware import TICI
 
 
@@ -18,6 +19,14 @@ CARROT_DIR = Path(__file__).resolve().parent
 CLUSTER_DIR = CARROT_DIR / "cluster"
 OPENPILOT_ROOT = CARROT_DIR.parents[1]
 HUD_PARAM = "ClusterHud"
+_EXT_HUD_RECONCILER = ExtHudReconciler()
+
+
+def _report_ext_hud_reconcile(action: str | None) -> None:
+    if action:
+        print(f"[cluster_autorun] external HUD conflict fixed: {action}", flush=True)
+
+
 HUD_DEBUG_PARAM = "ClusterHudDebug"
 HUD_ENCODER_PARAM = "ClusterHudEncoder"
 HUD_ORIENTATION_PARAM = "ClusterHudOrientation"
@@ -90,8 +99,10 @@ def _report_cluster_failure(exc: BaseException) -> None:
 
 
 def _read_hud_mode(params: Params) -> int:
+    # K9ExtHud 0/1 runs the same HUD as ClusterHud=1; -1 (default) = old read.
+    _report_ext_hud_reconcile(_EXT_HUD_RECONCILER.step(params))
     try:
-        return int(params.get_int(HUD_PARAM))
+        return int(read_effective_cluster_hud_mode(params))
     except Exception as exc:
         print(f"[cluster_autorun] failed to read {HUD_PARAM}: {exc}", flush=True)
         return 0

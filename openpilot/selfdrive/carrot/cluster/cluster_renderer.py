@@ -98,6 +98,7 @@ from cluster_scene import (
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
+from cluster_taxi_meter import TaxiMeterPanel
 from cluster_utils import blink_visible, clamp
 
 
@@ -1043,6 +1044,34 @@ class ClusterUiRenderer:
         self.panel_layout = normalize_cluster_panel_layout(panel_layout)
         self._invalidate_trip_report_cache()
 
+    # K9ExtHud=1: the right information panel shows the taxi meter. Off (the
+    # default, K9ExtHud -1/0) leaves every draw call exactly as before.
+    taxi_meter_enabled = False
+    _taxi_meter_panel: TaxiMeterPanel | None = None
+
+    def set_taxi_meter_enabled(self, enabled: bool) -> None:
+        self.taxi_meter_enabled = bool(enabled)
+        if self.taxi_meter_enabled and self._taxi_meter_panel is None:
+            self._taxi_meter_panel = TaxiMeterPanel()
+        self._invalidate_trip_report_cache()
+
+    def _taxi_meter_panel_active(self, screen_mode: int) -> bool:
+        return self.taxi_meter_enabled and self._taxi_meter_panel is not None and screen_mode not in (
+            CLUSTER_SCREEN_MODE_NAVI,
+            CLUSTER_SCREEN_MODE_DEBUG_GRAPH,
+            CLUSTER_SCREEN_MODE_FULLSCREEN_3D,
+        )
+
+    def _prepare_taxi_meter_cache(self, state: ClusterUiState) -> None:
+        """Outside the frame target: meter update + static layer cache."""
+        if not self.taxi_meter_enabled or self._taxi_meter_panel is None:
+            return
+        self._taxi_meter_panel.update(state)
+        self._taxi_meter_panel.prepare_static_layer(self, rl)
+
+    def _draw_taxi_meter_panel(self) -> None:
+        self._taxi_meter_panel.draw(self, rl, self._information_panel_x(NAVI_LIVE_PANEL_X), NAVI_LIVE_PANEL_Y)
+
     def set_display_preferences(self, language: str, is_metric: bool) -> None:
         self.language = normalize_cluster_language(language, default=CLUSTER_LANGUAGE_KO)
         self.is_metric = bool(is_metric)
@@ -1247,6 +1276,8 @@ class ClusterUiRenderer:
         if self._capture_target is not None:
             rl.unload_render_texture(self._capture_target)
             self._capture_target = None
+        if self._taxi_meter_panel is not None:
+            self._taxi_meter_panel.close(rl)
         if self._trip_report_target is not None:
             rl.unload_render_texture(self._trip_report_target)
             self._trip_report_target = None
@@ -1355,6 +1386,7 @@ class ClusterUiRenderer:
 
     def render_frame(self, state: ClusterUiState) -> None:
         self.open()
+        self._prepare_taxi_meter_cache(state)
         self._prepare_trip_report_cache(state)
         profile_stage = self._profile_start()
         rl.begin_drawing()
@@ -1376,6 +1408,7 @@ class ClusterUiRenderer:
         paused: bool = False,
     ) -> None:
         self.open()
+        self._prepare_taxi_meter_cache(state)
         self._prepare_trip_report_cache(state)
         profile_stage = self._profile_start()
         rl.begin_drawing()
@@ -1512,6 +1545,9 @@ class ClusterUiRenderer:
 
     def _prepare_trip_report_cache(self, state: ClusterUiState, now: float | None = None) -> None:
         """Refresh the expensive trip-report panel outside the active frame target."""
+        if self.taxi_meter_enabled and self._taxi_meter_panel_active(self._effective_screen_mode(state)):
+            self._trip_report_cache_visible = False
+            return
         if self._effective_screen_mode(state) != CLUSTER_SCREEN_MODE_TRIP_REPORT:
             self._trip_report_cache_visible = False
             return
@@ -2311,6 +2347,7 @@ class ClusterUiRenderer:
         if uv_offset < stride * y_scanlines or byte_count < uv_offset + stride * uv_scanlines:
             raise RuntimeError("NV12 render target byte layout is inconsistent")
 
+        self._prepare_taxi_meter_cache(state)
         self._prepare_trip_report_cache(state)
         profile_stage = self._profile_start()
         target = self._get_capture_target()
@@ -2557,6 +2594,7 @@ class ClusterUiRenderer:
         output_height: int | None = None,
     ):
         self.open(hidden=self.hidden)
+        self._prepare_taxi_meter_cache(state)
         self._prepare_trip_report_cache(state)
         profile_stage = self._profile_start()
         target = self._get_capture_target()
@@ -3921,6 +3959,12 @@ class ClusterUiRenderer:
                 right_signal_lit,
             )
             if screen_mode == CLUSTER_SCREEN_MODE_FULLSCREEN_3D:
+                self._draw_status_footer(state)
+                return
+            if self.taxi_meter_enabled and self._taxi_meter_panel_active(screen_mode):
+                profile_stage = self._profile_start()
+                self._draw_taxi_meter_panel()
+                self._profile_add("hud.taxi_meter", profile_stage)
                 self._draw_status_footer(state)
                 return
             if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_SYSTEM:

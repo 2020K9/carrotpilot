@@ -4,6 +4,7 @@ import importlib.util
 
 from openpilot.cereal import car
 from openpilot.common.params import Params
+from openpilot.selfdrive.carrot.ext_hud import ext_hud_active, read_ext_hud
 from openpilot.system.hardware import PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
@@ -89,10 +90,13 @@ def enable_xiaoge_data(started, params, CP: car.CarParams) -> bool:
   return started and params.get_bool("ShareData")
 
 def cluster_hud_active(params: Params) -> bool:
+  # One carrot_cluster process for both ClusterHud=1 and K9ExtHud 0/1
+  # (K9ExtHud -1 = default -> exactly the old ClusterHud==1 check).
   try:
-    return params.get_int("ClusterHud") == 1
+    cluster_on = params.get_int("ClusterHud") == 1
   except Exception:
-    return False
+    cluster_on = False
+  return cluster_on or ext_hud_active(read_ext_hud(params))
 
 def enable_webrtc(started, params, CP: car.CarParams) -> bool:
   # Cluster HUD and Carrot Vision can consume the road camera concurrently.

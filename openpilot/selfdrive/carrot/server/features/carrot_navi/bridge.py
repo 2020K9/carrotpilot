@@ -13,6 +13,7 @@ from ...services.params import HAS_PARAMS, Params
 from .client_hub import CarrotNaviClientHub
 from .media_pipeline import CarrotNaviMediaPipeline
 from .protocol import MEDIA_WIRE_VERSION, encode_media_frame
+from openpilot.selfdrive.carrot.ext_hud import read_effective_cluster_hud_mode
 
 
 STATE_STALE_SECONDS = 3.0
@@ -76,7 +77,7 @@ class CarrotNaviWebBridge:
     try:
       self._stream_allowed = bool(
         self._params is not None
-        and self._params.get_int("ClusterHud") != 1
+        and read_effective_cluster_hud_mode(self._params) != 1
       )
     except Exception:
       self._stream_allowed = False

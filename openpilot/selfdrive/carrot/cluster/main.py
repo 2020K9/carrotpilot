@@ -10,6 +10,7 @@ import threading
 import time
 from pathlib import Path
 
+from openpilot.selfdrive.carrot.ext_hud import ExtHudReconciler, read_effective_cluster_hud_mode, taxi_meter_selected
 from cluster_config import (
     CLUSTER_BRIGHTNESS_PARAM,
     CLUSTER_CAMERA_VIEW_MODE_PARAM,
@@ -495,6 +496,7 @@ class ClusterRadarSourceColorParamReader:
 
 class ClusterHudModeParamReader:
     def __init__(self) -> None:
+        self._ext_hud_reconciler = ExtHudReconciler()
         self._params = None
         try:
             from openpilot.common.params import Params
@@ -506,10 +508,20 @@ class ClusterHudModeParamReader:
     def read(self) -> int | None:
         if self._params is None:
             return None
+        # K9ExtHud 0/1 keeps the same HUD session (no restart on 0<->1 or on the
+        # ClusterHud 1->0 write that selecting it causes); -1 = old read.
+        action = self._ext_hud_reconciler.step(self._params)
+        if action:
+            print(f"external HUD conflict fixed: {action}", flush=True)
         try:
-            return int(self._params.get_int(CLUSTER_HUD_PARAM))
+            return int(read_effective_cluster_hud_mode(self._params))
         except Exception:
             return None
+
+    def read_taxi_meter(self) -> bool:
+        if self._params is None:
+            return False
+        return taxi_meter_selected(self._params)
 
 
 class ClusterHudOutputGateParamReader:
@@ -856,6 +868,9 @@ def run_demo(
         language=active_language,
         is_metric=active_is_metric,
     )
+    if hud_mode_param_reader is not None and hud_mode_param_reader.read_taxi_meter():
+        renderer.set_taxi_meter_enabled(True)
+        print("K9ExtHud initial: 1 (taxi meter panel)", flush=True)
     print(
         f"Display preferences initial: language={active_language} units={'metric' if active_is_metric else 'imperial'}",
         flush=True,
@@ -1282,6 +1297,11 @@ def run_demo(
                         flush=True,
                     )
                     break
+                if hud_mode_param_reader is not None:
+                    next_taxi_meter = hud_mode_param_reader.read_taxi_meter()
+                    if next_taxi_meter != renderer.taxi_meter_enabled:
+                        print(f"K9ExtHud taxi meter panel: {renderer.taxi_meter_enabled} -> {next_taxi_meter}", flush=True)
+                        renderer.set_taxi_meter_enabled(next_taxi_meter)
                 next_hud_encoder = hud_encoder_param_reader.read() if hud_encoder_param_reader is not None else None
                 if next_hud_encoder is not None and next_hud_encoder != hud_encoder_watch:
                     print(

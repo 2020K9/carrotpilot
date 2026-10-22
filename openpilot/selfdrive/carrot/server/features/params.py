@@ -119,6 +119,9 @@ async def api_param_set(request: web.Request) -> web.Response:
   except Exception as e:
     return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+  # K9ExtHud 0/1 and ClusterHud=1 are never on together (the HUD loop checks again).
+  linked = _apply_ext_hud_exclusive(name, value, request)
+
   # Changing settings while driving stays allowed on purpose; the history just
   # records that it happened. append_param_change never raises, so a log
   # problem cannot turn a successful write into a reported failure.
@@ -131,7 +134,24 @@ async def api_param_set(request: web.Request) -> web.Response:
       engaged=is_drive_engaged(request),
     )
 
-  return web.json_response({"ok": True, "name": name, "value": value, "has_params": HAS_PARAMS})
+  response = {"ok": True, "name": name, "value": value, "has_params": HAS_PARAMS}
+  if linked is not None:
+    response["linked"] = {linked[0]: linked[2]}
+  return web.json_response(response)
+
+
+def _apply_ext_hud_exclusive(name, value, request):
+  if name not in ("K9ExtHud", "ClusterHud") or not HAS_PARAMS:
+    return None
+  try:
+    from openpilot.common.params import Params
+    from openpilot.selfdrive.carrot.ext_hud import apply_exclusive_after_set
+    linked = apply_exclusive_after_set(Params(), name, value)
+  except Exception:
+    return None
+  if linked is not None:
+    append_param_change(linked[0], linked[1], linked[2], source="ext_hud_exclusive", engaged=is_drive_engaged(request))
+  return linked
 
 
 async def api_param_changes(request: web.Request) -> web.Response:
