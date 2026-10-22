@@ -3,17 +3,17 @@
 
 Input: the approved HTML/SVG design (taxi_meter_design.html, 보노보노 모범택시
 bono_anim 시안). Output, next to this file:
-  taxi_meter_bg.png        776x456 card: gradient, gold frame, moon, track base, goal shell
-  taxi_meter_sea.png       776x76  sea waves (drawn over the characters, like the SVG)
-  taxi_meter_porori.png    포로리 sprite (scale 0.86 of the SVG)
-  taxi_meter_bonobono.png  보노보노 sprite (scale 0.82, clipped at the sea line)
-Text, numbers, stars, progress fill and character motion are drawn live by
-cluster_taxi_meter.py. To change the design, edit the HTML (or replace the PNGs)
+  taxi_meter_bg.png            776x456 card: gradient, gold frame, moon, track base, goal shell
+  taxi_meter_porori.png        포로리 body + head (scale 0.86 of the SVG; no tail, feet, arms)
+  taxi_meter_porori_tail.png   포로리 tail (rotates around local -10,14)
+  taxi_meter_bonobono.png      보노보노 without the 조개 arm (scale 0.82; the sea covers the bottom)
+  taxi_meter_bonobono_arm.png  보노보노 arm + 조개 (rotates around local 40,80 when tapping)
+Text, numbers, stars, progress fill, 포로리 feet/arms, closed eyes, the sea waves and all
+motion are drawn live by cluster_taxi_meter.py (speed-linked phase). To change the design, edit the HTML (or replace the PNGs)
 and re-run:  python make_taxi_meter_assets.py   (needs `pip install cairosvg`).
 """
 from __future__ import annotations
 
-import math
 import re
 import sys
 from pathlib import Path
@@ -30,14 +30,6 @@ def _extract(html: str, start: str, end: str) -> str:
   return html[i:j]
 
 
-def _wave(base: float, amp: float, length: float, ph: float) -> str:
-  d = f"M0 456 L0 {base}"
-  for x in range(0, 777, 8):
-    y = base + amp * math.sin(x / length * 2 * math.pi + ph) + amp * 0.35 * math.sin(x / (length * 0.47) * 2 * math.pi - ph * 1.7)
-    d += f" L{x} {y:.2f}"
-  return d + " L776 456 Z"
-
-
 def _svg(view_box: str, width: int, height: int, body: str, defs: str = "") -> bytes:
   return (f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
           f'width="{width}" height="{height}" viewBox="{view_box}"><defs>{defs}</defs>{body}</svg>').encode()
@@ -50,6 +42,16 @@ def main() -> int:
   shell = '<use xlink:href="#shellG"/>'
   poro = _extract(html, '<g id="poro">', "<!-- Bonobono -->").replace('href="#', 'xlink:href="#')
   bono = _extract(html, '<g id="bono">', "</g></g>\n<!-- sea -->").replace('href="#', 'xlink:href="#') + "</g>"
+  # split the characters into the parts cluster_taxi_meter.py moves
+  tail = _extract(poro, '<g id="ptail">', "\n <ellipse")
+  poro_body = poro.replace(tail, "")
+  poro_body = re.sub(r'<ellipse [^>]*id="pf[LR]"/>', "", poro_body)
+  poro_body = re.sub(r'<path [^>]*id="pa[LR]"/>', "", poro_body)
+  arm = _extract(bono, '<g id="barm">', "\n <path")
+  bono_body = bono.replace(arm, "")
+  for part in ('id="pfL"', 'id="pfR"', 'id="paL"', 'id="paR"', 'id="ptail"'):
+    assert part not in poro_body, part
+  assert 'id="barm"' not in bono_body and 'id="barm"' in arm
 
   card_defs = defs + (
     '<linearGradient id="cardg" x1="0" y1="0" x2="0" y2="1">'
@@ -69,25 +71,20 @@ def main() -> int:
   )
   cairosvg.svg2png(bytestring=_svg(f"0 0 {CARD_W} {CARD_H}", CARD_W, CARD_H, bg, card_defs), write_to=str(HERE / "taxi_meter_bg.png"))
 
-  sea_top = 380
-  sea = (
-    f'<clipPath id="sc"><rect x="0" y="0" width="776" height="456" rx="18"/></clipPath><g clip-path="url(#sc)">'
-    f'<path d="{_wave(398, 4, 260, 0.0)}" fill="#13305a" opacity=".95"/>'
-    f'<path d="{_wave(406, 5, 190, 1.0)}" fill="url(#sea)"/>'
-    f'<path d="{_wave(428, 4, 150, 2.0)}" fill="#0d2246" opacity=".9"/></g>'
-  )
-  cairosvg.svg2png(bytestring=_svg(f"0 {sea_top} {CARD_W} {CARD_H - sea_top}", CARD_W, CARD_H - sea_top, sea, defs),
-                   write_to=str(HERE / "taxi_meter_sea.png"))
-
-  # 포로리: local box x -86..38, y -80..56 (4 px padding), drawn at scale 0.86 (anchor = local 0,0)
+  # 포로리 (scale 0.86, anchor = local 0,0): body box x -86..38, y -80..56; tail box x -82..-4, y -66..34
   ps = 0.86
-  cairosvg.svg2png(bytestring=_svg("-86 -80 124 136", round(124 * ps), round(136 * ps), poro, defs),
+  cairosvg.svg2png(bytestring=_svg("-86 -80 124 136", round(124 * ps), round(136 * ps), poro_body, defs),
                    write_to=str(HERE / "taxi_meter_porori.png"))
-  # 보노보노: local box x -66..66, y -80..120 (padding; the SVG clips it at the sea line), scale 0.82
+  cairosvg.svg2png(bytestring=_svg("-82 -66 78 100", round(78 * ps), round(100 * ps), tail, defs),
+                   write_to=str(HERE / "taxi_meter_porori_tail.png"))
+  # 보노보노 (scale 0.82): body box x -66..66, y -80..140 (the live sea covers it below ~y 113);
+  # arm + 조개 box x 4..70, y 60..124
   bs = 0.82
-  cairosvg.svg2png(bytestring=_svg("-66 -80 132 200", round(132 * bs), round(200 * bs), bono, defs),
+  cairosvg.svg2png(bytestring=_svg("-66 -80 132 220", round(132 * bs), round(220 * bs), bono_body, defs),
                    write_to=str(HERE / "taxi_meter_bonobono.png"))
-  for name in ("bg", "sea", "porori", "bonobono"):
+  cairosvg.svg2png(bytestring=_svg("4 60 66 64", round(66 * bs), round(64 * bs), arm, defs),
+                   write_to=str(HERE / "taxi_meter_bonobono_arm.png"))
+  for name in ("bg", "porori", "porori_tail", "bonobono", "bonobono_arm"):
     print("wrote", HERE / f"taxi_meter_{name}.png")
   return 0
 

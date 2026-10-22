@@ -6,6 +6,10 @@ Two parts, kept apart on purpose:
                     panel. All artwork comes from assets/taxi_meter/*.png (baked by
                     make_taxi_meter_assets.py from taxi_meter_design.html); swapping the
                     design = replace those PNGs / the layout constants below.
+  * MeterAnimation  speed-linked animation phase (00:52 지시): characters and the sea move
+                    on phase += dt * rate(speed) (0.35 stopped / 1.0 @30 / 2.2 @>=100 km/h,
+                    0.5 s speed low-pass); stars and eye blinks stay on the wall clock.
+                    In the time-fare zone (<= 15 km/h onroad) 보노보노 taps the 조개 (waiting).
 
 Fares: one table, TAXI_FARE_SIHEUNG. 시흥시 = 경기도 표준형 요금 (2023-07-01 04:00 적용,
 2026-08 보도 기준 그대로 유지):
@@ -174,6 +178,152 @@ def format_hms(seconds: float) -> str:
   return f"{s // 3600:02d}:{(s // 60) % 60:02d}:{s % 60:02d}"
 
 
+# ---- animation (speed-linked phase; no raylib) ----------------------------------------------
+# Character / sea motion runs on an accumulated phase, not on the wall clock:
+#   phase += dt * rate(speed),  rate 0.35 (stopped: slow breathing only) -> 1.0 at 30 km/h
+#   -> 2.2 at >= 100 km/h (cap), linear in between; speed low-passed with a 0.5 s time constant.
+# Stars twinkle and eye blinks stay on the wall clock; the +200원 pop stays on the fare tick.
+ANIM_RATE_POINTS = ((0.0, 0.35), (30.0, 1.0), (100.0, 2.2))
+ANIM_SPEED_TAU_S = 0.5
+ANIM_MAX_DT_S = 0.25          # longer frame gaps (stall, resume) count as 0.25 s
+ANIM_MOVE_FULL_KPH = 12.0     # 포로리 runs fully from here; 0 km/h = breathing only
+ANIM_MOVE_TAU_S = 0.5         # run <-> stand fade (on top of the speed filter: no pop when starting off)
+ANIM_WAIT_TAU_S = 0.5         # fade between "driving" and "waiting" (time fare) poses
+ANIM_WAIT_TAP_PERIOD = 0.8    # phase units per 조개 tap while waiting (2.3 s stopped, 1.2 s at 15 km/h)
+ANIM_WAIT_TAP_LEN = 0.3       # phase units the tap stroke lasts
+ANIM_WAVE_PERIOD = 10.0       # phase units per sea cycle (= the design's 10 s loop at rate 1.0)
+PORORI_RUN_HZ = 0.8           # strides per phase unit: 0.8 /s at 30 km/h .. 1.76 /s at 100 km/h
+                              # (the 60 fps browser design ran 2.4; the HUD draws at 5..30 fps)
+ANIM_FPS_DEFAULT = 20.0       # frame-rate estimate before any frame interval was seen
+ANIM_FPS_ALPHA = 0.1          # EMA weight of one frame interval
+PORORI_BLINKS = (1.3, 6.1, 8.4)   # wall clock, 10 s loop, 0.14 s each (design)
+BONO_BLINKS = (2.2, 6.8)          # 0.15 s each
+
+
+def anim_rate(speed_kph: float) -> float:
+  """Phase rate for a (filtered) speed: 0.35 / 1.0 @30 / 2.2 @>=100 km/h, linear between."""
+  try:
+    v = abs(float(speed_kph))
+  except (TypeError, ValueError):
+    return ANIM_RATE_POINTS[0][1]
+  if not math.isfinite(v):
+    return ANIM_RATE_POINTS[0][1]
+  pts = ANIM_RATE_POINTS
+  if v <= pts[0][0]:
+    return pts[0][1]
+  for (v0, r0), (v1, r1) in zip(pts, pts[1:]):
+    if v <= v1:
+      return r0 + (r1 - r0) * (v - v0) / (v1 - v0)
+  return pts[-1][1]
+
+
+class MeterAnimation:
+  """Accumulated animation phase driven by the low-passed vehicle speed."""
+
+  def __init__(self, wait_max_kph: float = 15.0) -> None:
+    self.wait_max_kph = float(wait_max_kph)
+    self.reset()
+
+  def reset(self) -> None:
+    self.phase = 0.0
+    self.speed_kph = 0.0      # low-passed |speed|
+    self.wait = 0.0           # 0 driving .. 1 waiting (time fare zone while onroad), low-passed
+    self.move_w = 0.0         # 0 standing .. 1 running, low-passed
+    self.rate = anim_rate(0.0)
+    self.fps = ANIM_FPS_DEFAULT  # measured draw rate (EMA), for anti-aliasing fast motion
+    self._last_now: float | None = None
+
+  def step(self, dt_s: float, speed_kph: float, onroad: bool = True) -> float:
+    dt = float(dt_s)
+    dt = min(max(dt, 0.0), ANIM_MAX_DT_S) if math.isfinite(dt) else 0.0
+    try:
+      v = abs(float(speed_kph))
+    except (TypeError, ValueError):
+      v = 0.0
+    if not math.isfinite(v):
+      v = self.speed_kph
+    if dt > 0.0:
+      self.fps += (min(60.0, max(1.0, 1.0 / dt)) - self.fps) * ANIM_FPS_ALPHA
+      self.speed_kph += (v - self.speed_kph) * (1.0 - math.exp(-dt / ANIM_SPEED_TAU_S))
+      target = 1.0 if (onroad and self.speed_kph <= self.wait_max_kph) else 0.0
+      self.wait += (target - self.wait) * (1.0 - math.exp(-dt / ANIM_WAIT_TAU_S))
+      move_target = min(1.0, max(0.0, self.speed_kph / ANIM_MOVE_FULL_KPH))
+      self.move_w += (move_target - self.move_w) * (1.0 - math.exp(-dt / ANIM_MOVE_TAU_S))
+    self.rate = anim_rate(self.speed_kph)
+    self.phase += dt * self.rate
+    return self.phase
+
+  def update(self, now_s: float, speed_kph: float, onroad: bool) -> float:
+    dt = 0.0 if self._last_now is None else now_s - self._last_now
+    self._last_now = now_s
+    return self.step(dt, speed_kph, onroad)
+
+  @property
+  def move(self) -> float:
+    """0 stopped (breathing only) .. 1 running (>= ANIM_MOVE_FULL_KPH), low-passed (continuous)."""
+    return min(1.0, max(0.0, self.move_w))
+
+
+@dataclass(frozen=True)
+class TaxiMeterPose:
+  porori_hop: float        # px up
+  porori_rot: float        # deg
+  porori_tail: float       # deg
+  porori_leg: float        # px, + = left foot up, - = right foot up
+  porori_arm: float        # deg
+  porori_blink: bool
+  bono_bob: float          # px down
+  bono_rot: float          # deg
+  bono_tap: float          # 0..1 arm/조개 stroke
+  bono_wait_tap: float     # 0..1 part of the stroke that is the "waiting" tap
+  bono_blink: bool
+  wave_ph: float           # rad
+
+
+def motion_visibility(freq_hz: float, fps: float) -> float:
+  """Anti-alias for a periodic motion drawn at fps: full amplitude up to fps/4, fades to 0 at
+  the Nyquist rate fps/2 (a faster motion sampled at fps would only flicker / run backwards)."""
+  q = max(1e-6, float(fps)) / 4.0
+  return min(1.0, max(0.0, 2.0 - float(freq_hz) / q))
+
+
+def _blinking(t: float, starts: tuple[float, ...], length: float) -> bool:
+  tt = t % 10.0
+  return any(b < tt < b + length for b in starts)
+
+
+def taxi_meter_pose(anim: MeterAnimation, t: float, tk: float) -> TaxiMeterPose:
+  """Pure pose for one frame. anim = speed-linked phase, t = wall clock (blinks),
+  tk = seconds since the last fare tick (hop / 딱!). Continuous in phase, speed and wait."""
+  ph = anim.phase
+  m = anim.move
+  run = ph * 2 * math.pi * PORORI_RUN_HZ
+  stride_hz = PORORI_RUN_HZ * anim.rate
+  m_step = m * motion_visibility(stride_hz, anim.fps)        # legs / sway / arms (1 x stride)
+  m_hop = m * motion_visibility(2.0 * stride_hz, anim.fps)   # |sin| hop (2 x stride)
+  m_tail = m * motion_visibility(0.5 * stride_hz, anim.fps)
+  breathe = math.sin(ph * 2 * math.pi / 1.6) * 1.2 * (1.0 - m)
+  b = math.sin(tk / 0.8 * math.pi) if 0.0 <= tk < 0.8 else 0.0   # fare tick hop envelope
+  run_hop = abs(math.sin(run)) * 9.0 * m_hop + breathe
+  hop = run_hop * (1.0 - b) + 30.0 * b
+  rot = math.sin(run) * 5.0 * m_step * (1.0 - b)
+  arm = math.sin(run) * 18.0 * m_step * (1.0 - b) - 30.0 * b
+  tail = math.sin(run * 0.5) * 8.0 * m_tail
+  leg = math.sin(run) * 4.0 * m_step
+  bob = math.sin(ph * 2 * math.pi / 2.5) * 4.5
+  brot = math.sin(ph * 2 * math.pi / 5.0) * 3.2
+  tick_tap = math.sin(tk / 0.45 * math.pi) if 0.0 <= tk < 0.45 else 0.0
+  u = ph % ANIM_WAIT_TAP_PERIOD
+  wait_tap = anim.wait * (math.sin(u / ANIM_WAIT_TAP_LEN * math.pi) if u < ANIM_WAIT_TAP_LEN else 0.0)
+  return TaxiMeterPose(
+    porori_hop=hop, porori_rot=rot, porori_tail=tail, porori_leg=leg, porori_arm=arm,
+    porori_blink=_blinking(t, PORORI_BLINKS, 0.14),
+    bono_bob=bob, bono_rot=brot, bono_tap=max(tick_tap, wait_tap), bono_wait_tap=wait_tap,
+    bono_blink=_blinking(t, BONO_BLINKS, 0.15),
+    wave_ph=ph * 2 * math.pi / ANIM_WAVE_PERIOD,
+  )
+
+
 # ---- drawing -------------------------------------------------------------------------------
 # Card layout in card pixels (776x456, the design's coordinates).
 CARD_W = 776.0
@@ -197,29 +347,76 @@ STARS = tuple(
   for x, y in [((i * 137.5) % 760 + 8, (i * 71.3) % 250 + 70)]
   if not ((x > 540 and y < 250) or (20 < x < 520 and 90 < y < 215))
 )
+# sprite boxes (design units) and scales, must match make_taxi_meter_assets.py
+PORORI_SCALE = 0.86
+PORORI_BOX = (-86.0, -80.0)          # body sprite top-left (local 0,0 = anchor)
+PORORI_TAIL_BOX = (-82.0, -66.0)
+PORORI_TAIL_PIVOT = (-10.0, 14.0)
+BONO_SCALE = 0.82
+BONO_BOX = (-66.0, -80.0)
+BONO_ARM_BOX = (4.0, 60.0)
+BONO_ARM_PIVOT = (40.0, 80.0)
+PORORI_SKIN = (236, 107, 125)
+PORORI_LIGHT = (253, 233, 238)
+PORORI_LINE = (91, 36, 48)
+BONO_SKIN = (63, 158, 232)
+EYE_DARK = (20, 20, 20)
+# sea: (base y, amplitude, wavelength, phase multiplier, phase offset, top colour, bottom colour)
+SEA_WAVES = (
+  (398.0, 4.0, 260.0, 2.0, 0.0, (19, 48, 90, 242), (19, 48, 90, 242)),
+  (406.0, 5.0, 190.0, -3.0, 1.0, (22, 50, 94, 255), (10, 23, 48, 255)),
+  (428.0, 4.0, 150.0, 4.0, 2.0, (13, 34, 70, 230), (13, 34, 70, 230)),
+)
+SEA_STEP_PX = 8
+SEA_CORNER_R = 18.0
+
+
+def sea_wave_y(base: float, amp: float, length: float, ph: float, x: float) -> float:
+  return base + amp * math.sin(x / length * 2 * math.pi + ph) + amp * 0.35 * math.sin(x / (length * 0.47) * 2 * math.pi - ph * 1.7)
+
+
+def _sea_bottom(x: float) -> float:
+  r = SEA_CORNER_R
+  if x < r:
+    return CARD_H - r + math.sqrt(max(0.0, r * r - (r - x) ** 2))
+  if x > CARD_W - r:
+    return CARD_H - r + math.sqrt(max(0.0, r * r - (x - (CARD_W - r)) ** 2))
+  return CARD_H
+
+
+SEA_XS = tuple(float(x) for x in range(0, int(CARD_W) + 1, SEA_STEP_PX))
+SEA_BOTTOMS = tuple(_sea_bottom(x) for x in SEA_XS)
+
+
+def _rot(px: float, py: float, deg: float) -> tuple[float, float]:
+  a = math.radians(deg)
+  c, s = math.cos(a), math.sin(a)
+  return px * c - py * s, px * s + py * c
 
 
 class TaxiMeterPanel:
   """Draws the meter. Static parts (card art + fixed labels + fare footer) are
   cached once in a render texture; per frame only numbers, the progress fill,
-  stars and the two characters are drawn."""
+  stars, the two characters and the sea are drawn."""
 
   def __init__(self, meter: TaxiMeter | None = None, clock=time.monotonic, local_hour=None) -> None:
     self.meter = meter or TaxiMeter()
+    self.anim = MeterAnimation(self.meter.fare.time_fare_max_speed_kph)
     self._clock = clock
     self._local_hour = local_hour or (lambda: time.localtime().tm_hour)
     self._textures: dict[str, object] = {}
     self._textures_loaded = False
     self._static_target = None
     self._static_key = None
-    self.freeze_animation_t: float | None = None  # PNG review only
+    self.freeze_animation_t: float | None = None  # PNG review only (wall clock + no fare tick)
+    self._sea_points = None
 
   # -- resources
   def _load_textures(self, rl) -> None:
     if self._textures_loaded:
       return
     self._textures_loaded = True
-    for name in ("bg", "sea", "porori", "bonobono"):
+    for name in ("bg", "porori", "porori_tail", "bonobono", "bonobono_arm"):
       path = TAXI_METER_ASSET_DIR / f"taxi_meter_{name}.png"
       if not path.exists():
         continue
@@ -252,7 +449,10 @@ class TaxiMeterPanel:
   # -- per frame state
   def update(self, state) -> None:
     speed = float(getattr(state, "speed_kph", 0.0) or 0.0)
-    self.meter.update(self._clock(), speed, bool(getattr(state, "onroad", False)), self._local_hour())
+    onroad = bool(getattr(state, "onroad", False))
+    now = self._clock()
+    self.meter.update(now, speed, onroad, self._local_hour())
+    self.anim.update(now, speed, onroad)
 
   def prepare_static_layer(self, renderer, rl) -> None:
     """Call outside any active render target (like the trip report cache)."""
@@ -299,13 +499,104 @@ class TaxiMeterPanel:
     source = rl.Rectangle(0.0, 0.0, float(target.texture.width), -float(target.texture.height))
     rl.draw_texture_pro(target.texture, source, rl.Rectangle(x, y, CARD_W, CARD_H), rl.Vector2(0, 0), 0.0, rl.WHITE)
 
-  def _sprite(self, rl, name: str, anchor_x: float, anchor_y: float, origin: tuple[float, float], rotation: float = 0.0) -> None:
+  def _part(self, rl, name: str, anchor: tuple[float, float], body_rot: float, scale: float,
+            box: tuple[float, float], pivot: tuple[float, float], offset: tuple[float, float] = (0.0, 0.0),
+            part_rot: float = 0.0) -> None:
+    """Sprite part of a character: character transform = translate(anchor) rotate(body_rot) scale(scale);
+    the part itself is offset in local units and rotated by part_rot around its local pivot."""
     texture = self._textures.get(name)
     if texture is None:
       return
+    lx, ly = _rot((pivot[0] + offset[0]) * scale, (pivot[1] + offset[1]) * scale, body_rot)
     w, h = float(texture.width), float(texture.height)
-    rl.draw_texture_pro(texture, rl.Rectangle(0, 0, w, h), rl.Rectangle(anchor_x, anchor_y, w, h),
-                        rl.Vector2(origin[0], origin[1]), rotation, rl.WHITE)
+    rl.draw_texture_pro(texture, rl.Rectangle(0, 0, w, h), rl.Rectangle(anchor[0] + lx, anchor[1] + ly, w, h),
+                        rl.Vector2((pivot[0] - box[0]) * scale, (pivot[1] - box[1]) * scale), body_rot + part_rot, rl.WHITE)
+
+  @staticmethod
+  def _local(anchor: tuple[float, float], rot: float, scale: float, px: float, py: float) -> tuple[float, float]:
+    lx, ly = _rot(px * scale, py * scale, rot)
+    return anchor[0] + lx, anchor[1] + ly
+
+  def _closed_eye(self, rl, anchor, rot, scale, ex, ey, r, skin) -> None:
+    cx, cy = self._local(anchor, rot, scale, ex, ey)
+    rl.draw_circle_v(rl.Vector2(cx, cy), (r + 0.9) * scale, rl.Color(*skin, 255))
+    a = self._local(anchor, rot, scale, ex - r, ey)
+    b = self._local(anchor, rot, scale, ex + r, ey)
+    rl.draw_line_ex(rl.Vector2(*a), rl.Vector2(*b), max(1.2, 0.34 * r * scale), rl.Color(*EYE_DARK, 255))
+
+  def _draw_porori(self, rl, anchor: tuple[float, float], pose: TaxiMeterPose) -> None:
+    s, rot = PORORI_SCALE, pose.porori_rot
+    self._part(rl, "porori_tail", anchor, rot, s, PORORI_TAIL_BOX, PORORI_TAIL_PIVOT, part_rot=pose.porori_tail)
+    for fx, lift in ((-9.0, max(0.0, pose.porori_leg)), (9.0, max(0.0, -pose.porori_leg))):
+      cx, cy = self._local(anchor, rot, s, fx, 46.0 - lift)
+      rl.draw_ellipse(int(round(cx)), int(round(cy)), 8.9 * s, 4.9 * s, rl.Color(*PORORI_LINE, 255))
+      rl.draw_ellipse(int(round(cx)), int(round(cy)), 7.1 * s, 3.1 * s, rl.Color(*PORORI_LIGHT, 255))
+    self._part(rl, "porori", anchor, rot, s, PORORI_BOX, (0.0, 0.0))
+    for sx, sign in ((-14.0, 1.0), (14.0, -1.0)):
+      ex, ey = _rot(sx * 1.5 - sx, 14.0, sign * pose.porori_arm)   # shoulder (sx, 6) -> hand (sx*1.5, 20)
+      a = self._local(anchor, rot, s, sx, 6.0)
+      b = self._local(anchor, rot, s, sx + ex, 6.0 + ey)
+      rl.draw_line_ex(rl.Vector2(*a), rl.Vector2(*b), 2.0 * s, rl.Color(*PORORI_LINE, 255))
+      rl.draw_circle_v(rl.Vector2(*b), 1.0 * s, rl.Color(*PORORI_LINE, 255))
+    if pose.porori_blink:
+      for ex in (-14.0, 14.0):
+        self._closed_eye(rl, anchor, rot, s, ex, -34.0, 2.6, PORORI_SKIN)
+
+  def _draw_bonobono(self, rl, anchor: tuple[float, float], pose: TaxiMeterPose) -> None:
+    s, rot = BONO_SCALE, pose.bono_rot
+    self._part(rl, "bonobono", anchor, rot, s, BONO_BOX, (0.0, 0.0))
+    self._part(rl, "bonobono_arm", anchor, rot, s, BONO_ARM_BOX, BONO_ARM_PIVOT,
+               offset=(0.0, -pose.bono_tap * 16.0), part_rot=-pose.bono_tap * 14.0)
+    if pose.bono_blink:
+      for ex in (-42.0, 42.0):
+        self._closed_eye(rl, anchor, rot, s, ex, -22.0, 4.6, BONO_SKIN)
+
+  def _draw_sea(self, rl, x: float, y: float, wave_ph: float) -> None:
+    """Three live waves (phase-driven). One triangle strip per wave (top/bottom vertex pairs);
+    the middle wave's vertical gradient is a band below its lowest crest (w3 covers the rest)."""
+    xs, bottoms = SEA_XS, SEA_BOTTOMS
+    n = len(xs)
+    strip = getattr(getattr(rl, "rl", None), "DrawTriangleStrip", None)
+    if strip is not None and self._sea_points is None:
+      self._sea_points = rl.ffi.new("struct Vector2[]", 2 * n)
+    pts = self._sea_points
+    for base, amp, length, mul, off, top_c, bot_c in SEA_WAVES:
+      ph = wave_ph * mul + off
+      ys = [sea_wave_y(base, amp, length, ph, wx) for wx in xs]
+      gradient = top_c != bot_c
+      top = base - amp * 1.35
+      span = CARD_H - top
+
+      def col(py, top_c=top_c, bot_c=bot_c, top=top, span=span):
+        f = min(1.0, max(0.0, (py - top) / span))
+        return tuple(int(round(a + (b - a) * f)) for a, b in zip(top_c, bot_c))
+
+      solid = col(base + amp * 1.35 + 0.5) if gradient else top_c   # = the band's top colour (no seam)
+      if strip is not None and pts is not None:
+        for k in range(n):
+          p0 = pts[2 * k]
+          p0.x = x + xs[k]
+          p0.y = y + ys[k]
+          p1 = pts[2 * k + 1]
+          p1.x = x + xs[k]
+          p1.y = y + bottoms[k]
+        strip(pts, 2 * n, rl.Color(*solid))   # T0,B0,T1,B1,... = the quad winding raylib draws
+      else:
+        rl.rl_check_render_batch_limit(6 * n)
+        rl.rl_begin(rl.RL_TRIANGLES)
+        rl.rl_color4ub(*solid)
+        for k in range(n - 1):
+          x0, x1 = x + xs[k], x + xs[k + 1]
+          t0, t1 = y + ys[k], y + ys[k + 1]
+          b0, b1 = y + bottoms[k], y + bottoms[k + 1]
+          for vx, vy in ((x0, t0), (x0, b0), (x1, b1), (x0, t0), (x1, b1), (x1, t1)):
+            rl.rl_vertex2f(vx, vy)
+        rl.rl_end()
+      if gradient:
+        g0 = base + amp * 1.35 + 0.5           # below every crest of this wave
+        g1 = CARD_H - SEA_CORNER_R              # above the rounded corners
+        rl.draw_rectangle_gradient_v(int(round(x)), int(round(y + g0)), int(CARD_W), int(round(g1 - g0)),
+                                     rl.Color(*col(g0)), rl.Color(*col(g1)))
 
   def draw(self, renderer, rl, panel_x: float, panel_y: float) -> None:
     self._load_textures(rl)
@@ -314,10 +605,11 @@ class TaxiMeterPanel:
     meter = self.meter
     t = self.freeze_animation_t if self.freeze_animation_t is not None else self._clock()
     tk = 9.0 if meter.last_tick_s is None or self.freeze_animation_t is not None else max(0.0, t - meter.last_tick_s)
+    pose = taxi_meter_pose(self.anim, t, tk)
     text = renderer._draw_text
     self._draw_static_cached(renderer, rl, x, y)
 
-    # stars (twinkle)
+    # stars (twinkle, wall clock)
     for sx, sy, r, i in STARS:
       alpha = int(255 * (0.35 + 0.6 * abs(math.sin(t * 1.3 + i * 1.7))))
       rl.draw_circle_v(rl.Vector2(x + sx, y + sy), r, rl.Color(255, 244, 207, alpha))
@@ -354,10 +646,8 @@ class TaxiMeterPanel:
     if px > TRACK_X0 + 1:
       rl.draw_rectangle_gradient_h(int(x + TRACK_X0), int(y + TRACK_Y - 2), int(px - TRACK_X0), 4,
                                    rl.Color(122, 95, 39, 255), rl.Color(241, 214, 143, 255))
-    run = t * 2 * math.pi * 2.4
-    hop = math.sin(tk / 0.8 * math.pi) * 30 if tk < 0.8 else abs(math.sin(run)) * 9
     pxp = max(TRACK_X0 + 50, px)
-    self._sprite(rl, "porori", x + pxp, y + 284 - hop, (86 * 0.86, 80 * 0.86), 0.0 if tk < 0.8 else math.sin(run) * 5)
+    self._draw_porori(rl, (x + pxp, y + 284 - pose.porori_hop), pose)
     remaining = max(1, int(round(meter.next_step_remaining_m)))
     nx = x + 28
     for part, color, sz in (("다음 ", GOLD_LABEL, 14), (f"+{meter.fare.distance_unit_won}원", (240, 214, 144), 14),
@@ -365,16 +655,16 @@ class TaxiMeterPanel:
       text(part, nx, y + 350, sz, color)
       nx += renderer._measure_text(part, sz)[0]
 
-    # 보노보노 (bob + tap) and 딱!
-    bob = math.sin(t * 2 * math.pi / 2.5) * 4.5
-    rot = math.sin(t * 2 * math.pi / 5) * 3.2
-    self._sprite(rl, "bonobono", x + 668, y + 306 + bob, (66 * 0.82, 80 * 0.82), rot)
+    # 보노보노 (floats on the phase; taps the 조개 on a fare tick and while waiting in the time-fare zone)
+    bono = (x + 668, y + 306 + pose.bono_bob)
+    self._draw_bonobono(rl, bono, pose)
     if tk < 0.7:
       text("딱!", x + 716, y + 330 - tk * 30, 22, (*GOLD_BRIGHT, int(255 * (1 - tk / 0.7))))
+    elif pose.bono_wait_tap > 0.3:
+      a = int(255 * min(1.0, (pose.bono_wait_tap - 0.3) / 0.7) * 0.85)
+      text("톡", x + 726, y + 344 - pose.bono_wait_tap * 8, 15, (*GOLD_BRIGHT, a))
 
-    # sea over the characters, then the fare footer
-    sea = self._textures.get("sea")
-    if sea is not None:
-      rl.draw_texture(sea, int(x), int(y + 380), rl.WHITE)
+    # sea over the characters (flows on the phase), then the fare footer
+    self._draw_sea(rl, x, y, pose.wave_ph)
     text(TAXI_METER_FOOTER_TITLE, x + 24, y + 410, 12, FOOT_TITLE)
     text(TAXI_METER_FOOTER_TEXT, x + 24, y + 432, 14, FOOT_TEXT)
