@@ -5,7 +5,7 @@
 (b) K9LaneFix=1 gives exactly the LANEFIX4 "F1" outputs (frozen copy of the replay / simulation tree_F1 files,
     lane_planner_2.py sha256 9d7bbe26..., controlsd.py sha256 1a2dbb64...). Tolerance: 0 (np.array_equal / ==).
 (c) changing the number restarts the K9LaneFix transition state.
-(d) the param is registered, in the 'EXPERIMENTAL' (실험중) menu right after K9CreepMode, and described per number.
+(d) the param is registered, in the 'EXPERIMENTAL' (실험중) menu right after K9StopMode, and described per number.
 Inputs are synthetic random sequences (several seeds) built to cross lane-mode on/off, lane change, lateral off and
 large lane offsets. Frozen references live in k9_lane_fix_ref/*.py.ref (not imported by production code).
 """
@@ -348,7 +348,7 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9CreepMode", "K9LaneFix", "K9LRView"]
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneFix", "K9LRView"]
   params = settings["params"]
   p = next(x for x in params if x["name"] == "K9LaneFix")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")
