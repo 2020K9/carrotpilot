@@ -195,7 +195,7 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
-    # K9StopMode single selector, read live every 0.5 s: 0 = base braking, 1 = v9, 2 = v9 + shudder fix;
+    # K9StopMode single selector, read live every 0.5 s: 0 = base braking, 1 = v9, 2 = v10, 3 = v9 + shudder fix;
     # other values act as 0. See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
@@ -310,7 +310,7 @@ class CarController(CarControllerBase):
           mode = params.get_int("K9StopMode")
         except (TypeError, ValueError, OverflowError):
           mode = 0
-        mode = mode if mode in K9_CREEP_MODES else 0  # 3+, negative, NaN, non-int: 0
+        mode = mode if mode in K9_CREEP_MODES else 0  # 4+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(mode) if mode in K9_CREEP_MODES else None
@@ -509,7 +509,7 @@ class CarController(CarControllerBase):
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
     if self.k9_creep is not None:
-      # K9StopMode 1/2: v9 / v9 + shudder fix; changes accel AND StopReq timing. See k9_creep.py.
+      # K9StopMode 1/2/3: v9 / v10 / v9 + shudder fix; changes accel AND StopReq timing. See k9_creep.py.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -904,7 +904,7 @@ class HyundaiJerk:
 
   def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None):
     canfd = bool(CP.flags & HyundaiFlags.CANFD)
-    cb_prev = self.cb_upper  # K9StopMode 2 band ramp start only; unused otherwise
+    cb_prev = self.cb_upper  # K9StopMode 3 band ramp start only; unused otherwise
     jerk_u_min = CANFD_JERK_UPPER_MIN if canfd else self.jerk_u_min
     if actuators.longControlState == LongCtrlState.stopping:
       self.jerk = jerk_u_min / 2 - CS.out.aEgo
@@ -954,7 +954,7 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-        if creep and creep_obj is not None:  # K9StopMode 1/2 and applied this frame only
+        if creep and creep_obj is not None:  # K9StopMode 1/2/3 and applied this frame only
           self.jerk_u, self.cb_upper, self.cb_lower = creep_obj.bands(self.jerk_u, CS.out.vEgo, self.cb_upper,
                                                                       self.cb_lower, cb_prev)
         elif creep:  # caller without the object (tests): v9 band

@@ -1,9 +1,9 @@
-"""K9StopMode single selector: 0 base braking, 1 v9, 2 v9 + shudder fix (low-speed ComfortBand restore + braking
+"""K9StopMode single selector: 0 base braking, 1 v9, 2 v10 (test_k9_stop_v10.py), 3 v9 + shudder fix (low-speed ComfortBand restore + braking
 compensation + creep_fix-method sent-value gate, never weaker than v9). Other values act as 0.
 
 K9StopMode replaced K9CreepMode (0-6) on 2026-10-22. 0 and 1 are checked byte-for-byte against the real frozen
 aeef67c6 controller (the 0-6 menu): new 0 / unset / invalid = old 0, new 1 = old 2 (v9), and a stale K9CreepMode left
-in Params is never read. Mode 2 was improved in place (2026-10-22 stop_ref: no re-press, hold at the K9 wheel stop,
+in Params is never read. Mode 3 (the former 2, renumbered 2026-10-22 23:16) was improved in place (2026-10-22 stop_ref: no re-press, hold at the K9 wheel stop,
 K9 creep floor, no release at the latch) and is checked against v9 (StopReq identical, aReq never weaker).
 Checks source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour.
 """
@@ -16,7 +16,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V9_SHUDDER_FIX
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.car.tests import k9_rig
 from openpilot.selfdrive.car.tests.k9_rig import (CC_REL, LCS, ROOT, Rig, edge_sequence, gentle_sequence, load_frozen_cc,
@@ -26,7 +26,7 @@ from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import K9_FLA
 OLD_MENU = "aeef67c6"  # K9CreepMode 0 base, 1 v8, 2 v9, 3/4/5 candidates, 6 v9 + shudder fix 4
 OLD_OF_NEW = {None: 0, 0: 0, 1: 2}  # mode 2 was improved in place (2026-10-22 stop_ref): compared with v9 below
 ALL = (V9, V9_SHUDDER_FIX)
-INVALID = (3, 4, 5, 6, 7, 99, -1, -4, float("nan"), "nan", float("inf"))
+INVALID = (4, 5, 6, 7, 99, -1, -4, float("nan"), "nan", float("inf"))
 
 
 def upd(c, **kw):
@@ -90,12 +90,12 @@ def test_constants_match_source_and_mode2():
   assert (kc.CREEP_BP, kc.CREEP_V) == ([0.25, 0.55, 1.0, 1.6], [-0.26, -0.26, -0.20, 0.0])
   assert kc.DOWN_EFF_AC == -0.02
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
-  assert kc.MODES == (1, 2) and (V9, V9_SHUDDER_FIX) == (1, 2)
+  assert kc.MODES == (1, 2, 3) and (V9, V10, V9_SHUDDER_FIX) == (1, 2, 3)
   assert (kc.BAND_FULL_SPEED, kc.BAND_OFF_SPEED, kc.BAND_RAMP_STEP) == (2.0, 3.0, 0.04)
   assert (kc.BLEND_FULL_SPEED, kc.BLEND_OFF_SPEED, kc.BLEND_GAIN) == (0.6, 0.8, 0.5)
   assert (kc.COMP_DECEL, kc.COMP_FADE_BP) == (0.10, (0.3, 0.6))
-  assert [K9Creep(m).shudder_fix for m in kc.MODES] == [False, True]
-  for bad in (0, 3, 4, 5, 6, -1):
+  assert [K9Creep(m).shudder_fix for m in kc.MODES] == [False, False, True]
+  for bad in (0, 4, 5, 6, -1):
     with pytest.raises(AssertionError):
       K9Creep(bad)
 
@@ -381,13 +381,13 @@ def test_invalid_values_act_as_0(monkeypatch, old_cc, value):
 
 
 @pytest.mark.parametrize("stale", [1, 2, 3, 4, 5, 6])
-@pytest.mark.parametrize("mode", [None, 1, 2])
+@pytest.mark.parametrize("mode", [None, 1, 3])
 def test_stale_old_key_is_never_read(monkeypatch, old_cc, stale, mode):
-  if mode == 2:  # no frozen reference for the improved mode 2: same bytes as a fresh K9StopMode=2 rig
-    ref = gentle_sequence(rig(monkeypatch, 2))
+  if mode == 3:  # no frozen reference for the improved mode 3: same bytes as a fresh K9StopMode=3 rig
+    ref = gentle_sequence(rig(monkeypatch, 3))
     monkeypatch.undo()
-    r = gentle_sequence(rig(monkeypatch, 2, K9CreepMode=stale))
-    assert r.can == ref.can and "K9CreepMode" not in r.params.reads and r.cc.k9_creep_mode == 2
+    r = gentle_sequence(rig(monkeypatch, 3, K9CreepMode=stale))
+    assert r.can == ref.can and "K9CreepMode" not in r.params.reads and r.cc.k9_creep_mode == 3
     return
   # a device that still has K9CreepMode stored: only K9StopMode decides (unset = 0)
   ref = gentle_sequence(old_rig(monkeypatch, old_cc, OLD_OF_NEW[mode]))
@@ -540,21 +540,21 @@ def test_live_mode_switch_within_half_second_and_band_does_not_jump(monkeypatch)
   for _ in range(60):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
   assert r.cc.k9_creep.mode == 1 and r.cc.hyundai_jerk.cb_upper == 0.0
-  r.params.values["K9StopMode"] = 2
+  r.params.values["K9StopMode"] = 3
   seen, bands = None, []
   for i in range(80):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
     bands.append(float(r.cc.hyundai_jerk.cb_upper))
-    if seen is None and r.cc.k9_creep.mode == 2:
+    if seen is None and r.cc.k9_creep.mode == 3:
       seen = i
   assert seen is not None and seen <= 50  # read every 0.5 s
   assert np.all(np.abs(np.diff(bands)) <= kc.BAND_RAMP_STEP * 0.8 + 0.01)  # ramp, no jump to the original band
   assert bands[-1] > 0.0
-  for value in (3, 6, float("nan"), -1):
-    r.params.values["K9StopMode"] = 2
+  for value in (4, 6, float("nan"), -1):
+    r.params.values["K9StopMode"] = 3
     for _ in range(51):
       r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-    assert r.cc.k9_creep.mode == 2
+    assert r.cc.k9_creep.mode == 3
     r.params.values["K9StopMode"] = value
     for _ in range(51):
       r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
@@ -562,12 +562,12 @@ def test_live_mode_switch_within_half_second_and_band_does_not_jump(monkeypatch)
 
 
 def test_live_mode_change_resets(monkeypatch):
-  r = rig(monkeypatch, 2)
+  r = rig(monkeypatch, 3)
   for _ in range(60):
     r.step(-1.0, LCS.pid, 3.0)
   for i in range(60):
     r.step(-1.2, LCS.stopping, max(0.5 - 0.005 * i, 0.1))
-  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == 2 and r.cc.k9_creep.last is not None
+  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == 3 and r.cc.k9_creep.last is not None
   r.params.values["K9StopMode"] = 1
   for _ in range(60):
     r.step(-1.2, LCS.stopping, 0.1)
@@ -583,8 +583,8 @@ def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 2, 0, 1)
-  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [3, 3, 3]
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 3, 0, 1)
+  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [4, 4, 4]
   assert not any(p["name"] in ("K9CreepMode", "K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopMode", {PERSISTENT, INT, "0"}},' in keys
