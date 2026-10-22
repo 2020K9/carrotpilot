@@ -1,22 +1,23 @@
-"""K9LRView (experimental menu number, NOT vehicle-validated): CPU lane-line post-processing in modeld.
+"""K9LRView (experimental, NOT vehicle-validated): CPU lane-line tracker in modeld. One finished version: 0 off / 1 on.
 
-0 (and any unknown number) = off: model outputs are passed through untouched (same object), so
-modelV2 / drivingModelData are bit-identical to the parent.
-1 = "P1g" from the lr_split_branch2_20261022 reference simulation (qcamera replay, no ground truth):
-    per lane line and per X_IDXS point a 1D Kalman filter on y (measurement variance = model std^2,
-    process noise 0.05 m^2 per 20 Hz frame), lane-line probability EMA (alpha 0.3), and a reset of a
-    lane line to the raw model output when its x=0 point jumps by more than 1.0 m in one frame
-    (lane change / lane-index swap; its prob EMA restarts too). Lane-line stds, z, road edges, path/plan and
-    every other output are unchanged (raw stds keep lane_planner_2's lane weighting as is; the smaller Kalman
-    posterior std is NOT published).
-2 = "P2m" from the lr_track_main_20261022 simulation (train/validation split by drive):
-    the same per-point Kalman filter, but before each update the previous estimate is moved with the
-    car's own motion taken from this frame's model plan (forward speed and yaw rate at t=0): shifted
-    forward by v*dt along x and rotated by yaw_rate*dt. Process noise is smaller near the car and grows
-    with distance and yaw rate (q(x) = Q * (1 + D_DIST*x/50) * (1 + C_YAW*|yaw_rate|/0.1)), and a point
-    whose innovation exceeds K_INNOV sigma gets INFLATE x the process noise for that frame.
-    Probability EMA / jump reset as listed in PROFILES. No new inputs or subscriptions: v and yaw rate
-    are read from the same parsed model output.
+0 = off (default): model outputs are passed through untouched (same object), so modelV2 / drivingModelData are
+    bit-identical to the parent.
+1 = on: the lane-line tracker. Per lane line and per X_IDXS point a 1D Kalman filter on y (measurement variance =
+    model std^2). Before each update the previous estimate is moved with the car's own motion taken from this
+    frame's model plan (forward speed and yaw rate at t=0): shifted forward by v*dt along x and rotated by
+    yaw_rate*dt. Process noise is smaller near the car and grows with distance and yaw rate
+    (q(x) = Q * (1 + D_DIST*x/50) * (1 + C_YAW*|yaw_rate|/0.1)), and a point whose innovation exceeds K_INNOV sigma
+    gets INFLATE x the process noise for that frame. Lane-line probabilities get an EMA (alpha 0.3, ~0.15 s).
+    A lane line whose x=0 point jumps by more than 1.0 m in one frame (lane change / lane-index swap) is reset to
+    the raw model output (its probability EMA restarts too). Lane-line stds, z, road edges, path/plan and every
+    other output are unchanged (raw stds keep lane_planner_2's lane weighting as is; the smaller Kalman posterior
+    std is NOT published). No new inputs or subscriptions: v and yaw rate are read from the same parsed output.
+Stored values: 1, 2 and 3 (numbers of the earlier, never-pushed trial menu) all mean 1 now; anything else
+(negative, 4 or more, non-int, unreadable) is 0.
+
+History (simulation only, qcamera replay, no ground truth): the earlier trial numbers 1 "P1g" (Kalman + prob EMA,
+no ego motion) and 2 "P2m" (ego-motion prediction, prob EMA 0.5) were merged into this one tracker
+(lane_improve_20261022 "P3": the P2m y filter with the P1g prob EMA 0.3); they are no longer selectable.
 No extra GPU work; cost is a few numpy ops on 4x33 arrays per frame.
 """
 import numpy as np
@@ -24,31 +25,45 @@ import numpy as np
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
 K9_LR_VIEW_OFF = 0
-K9_LR_VIEW_P1G = 1
-K9_LR_VIEW_P2M = 2
+K9_LR_VIEW_ON = 1
+K9_LR_VIEW_LEGACY_ON = (1, 2, 3)  # stored values that mean 1
 
 DT = 0.05  # modeld runs at 20 Hz
 X_IDXS = np.asarray(ModelConstants.X_IDXS, dtype=np.float64)
 
-PROFILES = {
-  K9_LR_VIEW_P1G: dict(q=0.05, prob_alpha=0.3, gate_m=1.0),
-  K9_LR_VIEW_P2M: dict(q=0.01, prob_alpha=0.5, gate_m=1.0, k_innov=2.0, inflate=10.0, c_yaw=3.0, d_dist=3.0, ego_predict=True),
-}
+Q = 0.01         # process noise per frame at x=0, straight driving [m^2]
+PROB_ALPHA = 0.3 # lane-line probability EMA weight of the new frame
+GATE_M = 1.0     # x=0 jump that resets a lane line to the raw model output [m]
+K_INNOV = 2.0    # innovation (sigma) above which the process noise is inflated
+INFLATE = 10.0
+C_YAW = 3.0
+D_DIST = 3.0
+
+
+def normalize_mode(mode):
+  """Stored param value -> 0 or 1 (old 1/2/3 -> 1, everything else -> 0)."""
+  try:
+    if isinstance(mode, bool) or mode is None:
+      return K9_LR_VIEW_OFF
+    if isinstance(mode, float) and not mode.is_integer():
+      return K9_LR_VIEW_OFF
+    mode = int(mode)
+  except Exception:
+    return K9_LR_VIEW_OFF
+  return K9_LR_VIEW_ON if mode in K9_LR_VIEW_LEGACY_ON else K9_LR_VIEW_OFF
 
 
 def read_mode(params):
   """Param read that can never stop modeld (e.g. a build whose params keys predate K9LRView) -> 0 (off)."""
   try:
-    return int(params.get_int("K9LRView"))
+    return normalize_mode(params.get_int("K9LRView"))
   except Exception:
     return K9_LR_VIEW_OFF
 
 
 class LaneLineTracker:
-  def __init__(self, q=0.05, prob_alpha=0.3, gate_m=1.0, k_innov=0.0, inflate=10.0, c_yaw=0.0, d_dist=0.0, ego_predict=False):
-    self.q, self.prob_alpha, self.gate_m = q, prob_alpha, gate_m
-    self.k_innov, self.inflate, self.c_yaw, self.d_dist, self.ego_predict = k_innov, inflate, c_yaw, d_dist, ego_predict
-    self.q_x = q * (1.0 + d_dist * X_IDXS / 50.0) if d_dist else None
+  def __init__(self):
+    self.q_x = Q * (1.0 + D_DIST * X_IDXS / 50.0)
     self.reset()
 
   def reset(self):
@@ -73,41 +88,32 @@ class LaneLineTracker:
       self.prev_out_y0 = self.y[:, 0].copy()
       return self.y.copy(), std.copy(), self.prob.copy()
     R = std ** 2
-    if self.ego_predict:
-      self.y = self._predict(v_ego, yaw_rate)
-    q = self.q if self.q_x is None else self.q_x
-    if self.c_yaw:
-      w = float(yaw_rate) if np.isfinite(yaw_rate) else 0.0
-      q = q * (1.0 + self.c_yaw * abs(w) / 0.1)
+    self.y = self._predict(v_ego, yaw_rate)
+    w = float(yaw_rate) if np.isfinite(yaw_rate) else 0.0
+    q = self.q_x * (1.0 + C_YAW * abs(w) / 0.1)
     P = self.P + q
-    if self.k_innov:
-      P = np.where(np.abs(y - self.y) > self.k_innov * np.sqrt(P + R), P + q * (self.inflate - 1.0), P)
+    P = np.where(np.abs(y - self.y) > K_INNOV * np.sqrt(P + R), P + q * (INFLATE - 1.0), P)
     K = P / (P + R)
     self.y = self.y + K * (y - self.y)
     self.P = (1 - K) * P
-    self.prob = self.prob_alpha * prob + (1 - self.prob_alpha) * self.prob
-    jump = np.abs(y[:, 0] - self.prev_out_y0) > self.gate_m
+    self.prob = PROB_ALPHA * prob + (1 - PROB_ALPHA) * self.prob
+    jump = np.abs(y[:, 0] - self.prev_out_y0) > GATE_M
     self.y[jump] = y[jump]; self.P[jump] = R[jump]; self.prob[jump] = prob[jump]
     self.prev_out_y0 = self.y[:, 0].copy()
     return self.y.copy(), std.copy(), np.clip(self.prob, 0.0, 1.0)
 
 
 class K9LRView:
-  """Holds the selected number and the tracker state; switching the number resets the state."""
+  """Holds the selected number (0/1) and the tracker state; switching off and on again restarts the tracker."""
   def __init__(self):
     self.mode = K9_LR_VIEW_OFF
     self.tracker = None
 
   def set_mode(self, mode):
-    try:
-      mode = int(mode)
-    except Exception:
-      mode = K9_LR_VIEW_OFF
-    if mode not in PROFILES:
-      mode = K9_LR_VIEW_OFF
+    mode = normalize_mode(mode)
     if mode != self.mode:
       self.mode = mode
-      self.tracker = LaneLineTracker(**PROFILES[mode]) if mode in PROFILES else None
+      self.tracker = LaneLineTracker() if mode == K9_LR_VIEW_ON else None
 
   def apply(self, outputs):
     """outputs: parsed model output dict (modeld). OFF -> the same dict object, untouched."""
@@ -115,10 +121,8 @@ class K9LRView:
       return outputs
     try:
       ll = outputs['lane_lines']; ls = outputs['lane_lines_stds']; lp = outputs['lane_lines_prob']
-      v_ego = yaw_rate = 0.0
-      if self.tracker.ego_predict or self.tracker.c_yaw:
-        plan = outputs['plan']
-        v_ego = float(plan[0, 0, Plan.VELOCITY][0]); yaw_rate = float(plan[0, 0, Plan.ORIENTATION_RATE][2])
+      plan = outputs['plan']
+      v_ego = float(plan[0, 0, Plan.VELOCITY][0]); yaw_rate = float(plan[0, 0, Plan.ORIENTATION_RATE][2])
       y, s, p = self.tracker.update(ll[0, :, :, 0], ls[0, :, :, 0], lp[0, 1::2], v_ego, yaw_rate)
       if not (np.all(np.isfinite(y)) and np.all(np.isfinite(p))):
         self.tracker.reset()

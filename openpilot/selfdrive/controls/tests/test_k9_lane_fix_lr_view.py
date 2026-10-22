@@ -6,7 +6,7 @@ reference in LanePlanner.get_d_path (and controlsd caps the hand-over). The two 
 neither module imports the other, so "both on" must be exactly "K9LaneFix fed the K9LRView-filtered modelV2":
 - K9LaneFix=0 on filtered input == the frozen parent lane_planner_2 on the same input (bit for bit),
 - K9LaneFix=1 on filtered input == the frozen F1 lane_planner_2 on the same input (bit for bit),
-for K9LRView 0, 1 and 2; K9LRView 0 leaves modelV2 byte-identical, and the published lane-line stds stay raw.
+for K9LRView 0 and 1; K9LRView 0 leaves modelV2 byte-identical, and the published lane-line stds stay raw.
 Inputs: synthetic model outputs (several seeds) with lanes, offsets, prob drops and a curve; synthetic plan path.
 """
 import types
@@ -150,7 +150,7 @@ def test_order_and_no_shared_state_in_code():
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
-@pytest.mark.parametrize("lr_view", [0, 1, 2])
+@pytest.mark.parametrize("lr_view", [0, 1])
 def test_lane_fix_on_lr_view_output_equals_frozen_references(seed, lr_view):
   frames = model_frames(seed)
   msgs = published(frames, lr_view)
@@ -168,7 +168,7 @@ def test_lane_fix_on_lr_view_output_equals_frozen_references(seed, lr_view):
   assert all(np.all(np.isfinite(p)) for p, _ in on)
 
 
-@pytest.mark.parametrize("lr_view", [1, 2])
+@pytest.mark.parametrize("lr_view", [1])
 def test_both_on_differs_from_each_alone_and_keeps_raw_stds(lr_view):
   frames = model_frames(7)
   msgs, raw = published(frames, lr_view), published(frames, 0)
