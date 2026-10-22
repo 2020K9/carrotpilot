@@ -19,11 +19,16 @@ Fares: one table, TAXI_FARE_SIHEUNG. 시흥시 = 경기도 표준형 요금 (202
   - https://copyking.tistory.com/entry/전국-택시-할증-시간-및-요금-총정리
   - https://outfox.tistory.com/6
 Night surcharge numbers come from a blog (https://m.blog.naver.com/simsimba89/223618430491):
-확인 필요 (not confirmed against an official 경기도 notice). 시계외 할증 is not modelled.
+출처 블로그, 확인 필요 (not confirmed against an official 경기도 notice). 시계외 할증 is not modelled.
+Night surcharge is applied on the device clock in Asia/Seoul (UTC+9, no DST; the device itself
+may run on UTC): base fare with the rate at the drive start, every +step with the rate at the
+moment it is charged (23:00 / 04:00 switch the unit price from then on, nothing already charged
+is re-priced). A clock that is not synced yet (year < 2024) = no surcharge.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import math
 from pathlib import Path
 import time
@@ -53,7 +58,7 @@ TAXI_FARE_SIHEUNG = {
     distance_unit_m=144.0, distance_unit_won=200,
     time_unit_s=35.0, time_unit_won=200,
     time_fare_max_speed_kph=15.0,
-    night_surcharges=((23, 4, 0.20),),  # 확인 필요 (blog source)
+    night_surcharges=((23, 4, 0.20),),  # 심야 23~04시 20%: 출처 블로그, 확인 필요
   ),
   # 중형
   "midsize": TaxiFare(
@@ -62,7 +67,7 @@ TAXI_FARE_SIHEUNG = {
     distance_unit_m=131.0, distance_unit_won=100,
     time_unit_s=30.0, time_unit_won=100,
     time_fare_max_speed_kph=15.0,
-    night_surcharges=((0, 2, 0.30), (23, 4, 0.20)),  # first match wins; 확인 필요 (blog source)
+    night_surcharges=((0, 2, 0.30), (23, 4, 0.20)),  # first match wins; 출처 블로그, 확인 필요
   ),
 }
 TAXI_METER_DEFAULT_FARE = TAXI_FARE_SIHEUNG["deluxe"]
@@ -71,7 +76,26 @@ TAXI_METER_FOOTER_TEXT = "기본 7,000원(3km) · 거리 144m당 200원 · 시�
 TAXI_METER_MAX_DT_S = 1.0
 
 
-def night_surcharge_rate(fare: TaxiFare, hour: int) -> float:
+SEOUL_TZ = timezone(timedelta(hours=9), "Asia/Seoul")   # KST, no daylight saving
+TAXI_METER_CLOCK_MIN_YEAR = 2024                          # earlier = clock not synced -> no surcharge
+
+
+def seoul_hour(epoch_s: float | None = None) -> int | None:
+  """Asia/Seoul hour (0..23) for the night surcharge, None when the clock is not synced."""
+  try:
+    t = time.time() if epoch_s is None else float(epoch_s)
+    local = datetime.fromtimestamp(t, SEOUL_TZ)
+  except (OverflowError, OSError, ValueError, TypeError):
+    return None
+  if local.year < TAXI_METER_CLOCK_MIN_YEAR:
+    return None
+  return local.hour
+
+
+def night_surcharge_rate(fare: TaxiFare, hour: int | None) -> float:
+  """Night rate for a local (Asia/Seoul) hour; None (clock not synced) = 0."""
+  if hour is None:
+    return 0.0
   for start, end, rate in fare.night_surcharges:
     inside = start <= hour < end if start < end else (hour >= start or hour < end)
     if inside:
@@ -129,7 +153,7 @@ class TaxiMeter:
     done = self.metered_m - self.fare.base_distance_m - self.units * unit
     return min(1.0, max(0.0, done / unit))
 
-  def step(self, dt_s: float, speed_kph: float, hour: int = 12, now_s: float | None = None) -> int:
+  def step(self, dt_s: float, speed_kph: float, hour: int | None = 12, now_s: float | None = None) -> int:
     """Advance by dt_s (clamped to 0..1 s). Returns how many +steps were charged."""
     dt = min(max(float(dt_s), 0.0), TAXI_METER_MAX_DT_S)
     self.started = True
@@ -151,7 +175,7 @@ class TaxiMeter:
       return added
     return 0
 
-  def update(self, now_s: float, speed_kph: float, onroad: bool, hour: int) -> int:
+  def update(self, now_s: float, speed_kph: float, onroad: bool, hour: int | None) -> int:
     """Real-time driver: starts at the base fare when a drive starts (onroad
     rising edge), counts while onroad, holds the last value when offroad."""
     if not onroad:
@@ -368,6 +392,11 @@ SEA_WAVES = (
   (428.0, 4.0, 150.0, 4.0, 2.0, (13, 34, 70, 230), (13, 34, 70, 230)),
 )
 SEA_STEP_PX = 8
+NIGHT_LAMP_X = 300.0   # top row, between the brand text and the moon
+NIGHT_LAMP_Y = 26.0
+NIGHT_LAMP_W = 150.0
+NIGHT_LAMP_H = 30.0
+NIGHT_LAMP_RED = (240, 104, 76)
 SEA_CORNER_R = 18.0
 
 
@@ -403,7 +432,8 @@ class TaxiMeterPanel:
     self.meter = meter or TaxiMeter()
     self.anim = MeterAnimation(self.meter.fare.time_fare_max_speed_kph)
     self._clock = clock
-    self._local_hour = local_hour or (lambda: time.localtime().tm_hour)
+    self._local_hour = local_hour or seoul_hour   # Asia/Seoul hour, None = clock not synced
+    self.night_rate = 0.0                          # surcharge in force now (lamp, +step amount)
     self._textures: dict[str, object] = {}
     self._textures_loaded = False
     self._static_target = None
@@ -458,8 +488,15 @@ class TaxiMeterPanel:
     speed = float(getattr(state, "speed_kph", 0.0) or 0.0)
     onroad = bool(getattr(state, "onroad", False))
     now = self._clock()
-    self.meter.update(now, speed, onroad, self._local_hour())
+    hour = self._local_hour()
+    self.night_rate = night_surcharge_rate(self.meter.fare, hour)
+    self.meter.update(now, speed, onroad, hour)
     self.anim.update(now, speed, onroad)
+
+  @property
+  def step_won(self) -> int:
+    """Amount of the next +step at the rate in force now (200 day / 240 night)."""
+    return int(round(self.meter.fare.distance_unit_won * (1.0 + self.night_rate)))
 
   def prepare_static_layer(self, renderer, rl) -> None:
     """Call outside any active render target (like the trip report cache)."""
@@ -605,6 +642,18 @@ class TaxiMeterPanel:
         rl.draw_rectangle_gradient_v(int(round(x)), int(round(y + g0)), int(CARD_W), int(round(g1 - g0)),
                                      rl.Color(*col(g0)), rl.Color(*col(g1)))
 
+  def _draw_night_lamp(self, renderer, rl, lx: float, ly: float, t: float) -> None:
+    """'심야 할증 20%' lamp (lit while the night surcharge is in force)."""
+    box = rl.Rectangle(lx, ly, NIGHT_LAMP_W, NIGHT_LAMP_H)
+    rl.draw_rectangle_rounded(box, 1.0, 16, rl.Color(58, 16, 12, 235))
+    rl.draw_rectangle_rounded_lines_ex(box, 1.0, 16, 1.4, rl.Color(*NIGHT_LAMP_RED, 255))
+    glow = int(70 + 40 * (0.5 + 0.5 * math.sin(t * 2.2)))
+    cx, cy = lx + 20, ly + NIGHT_LAMP_H / 2
+    rl.draw_circle_v(rl.Vector2(cx, cy), 9.0, rl.Color(*NIGHT_LAMP_RED, glow))
+    rl.draw_circle_v(rl.Vector2(cx, cy), 4.8, rl.Color(255, 138, 96, 255))
+    pct = int(round(self.night_rate * 100))
+    renderer._draw_text(f"심야 할증 {pct}%", lx + 34, cy, 15, (255, 196, 160))
+
   def draw(self, renderer, rl, panel_x: float, panel_y: float) -> None:
     self._load_textures(rl)
     x = panel_x + CARD_OFFSET_X
@@ -627,6 +676,8 @@ class TaxiMeterPanel:
     rl.draw_rectangle_rounded_lines_ex(pill, 1.0, 16, 1.2, rl.Color(201, 164, 87, 255))
     rl.draw_circle_v(rl.Vector2(pill.x + 22, pill.y + 17), 4.5, rl.Color(243, 207, 107, 255) if onroad else rl.Color(110, 98, 70, 255))
     text("주행" if onroad else "대기", pill.x + 36, pill.y + 17, 16, (240, 214, 144))
+    if self.night_rate > 0.0:
+      self._draw_night_lamp(renderer, rl, x + NIGHT_LAMP_X, y + NIGHT_LAMP_Y, t)
 
     # fare
     fare_text = format_won(meter.fare_won)
@@ -637,8 +688,7 @@ class TaxiMeterPanel:
     text("원", x + 24 + fw + 10, y + 176, 30, (217, 189, 124))
     if tk < 1.2:
       alpha = int(255 * (1.0 - tk / 1.2))
-      step_won = int(round(meter.fare.distance_unit_won * (1.0 + night_surcharge_rate(meter.fare, self._local_hour()))))
-      text(f"+{format_won(step_won)}원", x + max(372.0, 24 + fw + 60), y + 120 - tk * 40, 30, (*GOLD_BRIGHT, alpha))
+      text(f"+{format_won(self.step_won)}원", x + max(372.0, 24 + fw + 60), y + 120 - tk * 40, 30, (*GOLD_BRIGHT, alpha))
 
     # stats
     km = f"{meter.distance_m / 1000.0:.2f}"
@@ -657,7 +707,7 @@ class TaxiMeterPanel:
     self._draw_porori(rl, (x + pxp, y + 284 - pose.porori_hop), pose)
     remaining = max(1, int(round(meter.next_step_remaining_m)))
     nx = x + 28
-    for part, color, sz in (("다음 ", GOLD_LABEL, 14), (f"+{meter.fare.distance_unit_won}원", (240, 214, 144), 14),
+    for part, color, sz in (("다음 ", GOLD_LABEL, 14), (f"+{format_won(self.step_won)}원", (240, 214, 144), 14),
                             ("까지 ", GOLD_LABEL, 14), (f"{remaining}", (240, 214, 144), 14), (" m", GOLD_LABEL, 14)):
       text(part, nx, y + 350, sz, color)
       nx += renderer._measure_text(part, sz)[0]
