@@ -1,4 +1,5 @@
-"""K9StopMode 2 lead latch (2026-10-22 17:06 K9 drive, rlog 000001ad).
+"""K9StopMode 2 (v9 + shudder fix; the K9Creep kind V9_SHUDDER_FIX, "mode 2" below = that kind, menu 3 before 2026-10-23 07:25)
+lead latch (2026-10-22 17:06 K9 drive, rlog 000001ad).
 
 The K9 planner stops 2.2-3.0 m behind a lead, so the 3.0 m lead latch sent StopReq in 3 of 4 mode 2 stops while the
 car still rolled (0.23 / 0.78 / 0.23 m/s) and the K9 ESC braked hard on it (LONG_ACCEL jerk 8.2 / 10.6 / 8.6 m/s^3).
@@ -12,7 +13,8 @@ import numpy as np
 import pytest
 
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V9_SHUDDER_FIX
+from opendbc.car.hyundai import carcontroller
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX
 from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig
 
 
@@ -85,9 +87,12 @@ def test_mode2_lead_zone_then_standstill_latches():
   assert s is True and a <= before + 1e-12  # standstill latch, no release at the latch
 
 
-@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V9_SHUDDER_FIX, False)])
+@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V9_SHUDDER_FIX, False), (V10, True), (V10_SHUDDER_FIX, True)])
 def test_through_carcontroller_lead_2_9_m(monkeypatch, mode, expect_sr_rolling):
-  r = Rig(monkeypatch, K9StopMode=mode)
+  # rewritten 2026-10-23 07:25: K9StopMode values moved, so the kind is mapped to menu 1 (test only); v10 and
+  # v10 + shudder fix keep the 3.0 m lead latch (safety addition of 1d0961da 2), v9 + shudder fix latches at 2.5 m
+  monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: mode})
+  r = Rig(monkeypatch, K9StopMode=1)
   for i in range(100):
     r.step(-0.6, LCS.pid, 4.0 - 0.03 * i, a_target=-0.5, a_ego=-0.5, lead=(8.0 - 0.04 * i, -1.0))
   rolling_sr = []

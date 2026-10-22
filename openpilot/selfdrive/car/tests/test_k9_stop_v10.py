@@ -1,4 +1,4 @@
-"""K9StopMode 2 = creep_fix v10 (2026-10-22 23:16 menu change): bit-identical to a literal reference port of the page
+"""K9StopMode 1 (since the 2026-10-23 07:25 menu; 2 on 1d0961da) = the K9Creep kind V10 = creep_fix v10: bit-identical to a literal reference port of the page
 code ("구형 CAN 롱컨 통합 패치 v10", https://leegrt.org/oppo/creep_fix/). The reference below is the page's carcontroller
 block transcribed line by line (CS/actuators replaced by plain arguments, getattr defaults kept). Our safety additions
 (lead latch 3.0 m, original command on disengage/override/pedal/invalid CAN) are not in the page and are checked

@@ -7,7 +7,7 @@ from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_f
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.carstate import CarState
-from opendbc.car.hyundai.k9_creep import K9Creep, MODES as K9_CREEP_MODES, k9_creep_applies, read_long_accel
+from opendbc.car.hyundai.k9_creep import K9Creep, MENU as K9_CREEP_MENU, k9_creep_applies, read_long_accel
 from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
@@ -195,8 +195,8 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
-    # K9StopMode single selector, read live every 0.5 s: 0 = base braking, 1 = v9, 2 = v10, 3 = v9 + shudder fix;
-    # other values act as 0. See k9_creep.py.
+    # K9StopMode single selector, read live every 0.5 s: 0 = base braking, 1 = v10, 2 = v9 + shudder fix,
+    # 3 = v10 + shudder fix (k9_creep.MENU, 2026-10-23 07:25); other values act as 0. See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
     self.k9_creep = None
@@ -310,10 +310,10 @@ class CarController(CarControllerBase):
           mode = params.get_int("K9StopMode")
         except (TypeError, ValueError, OverflowError):
           mode = 0
-        mode = mode if mode in K9_CREEP_MODES else 0  # 4+, negative, NaN, non-int: 0
+        mode = mode if mode in K9_CREEP_MENU else 0  # 4+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
-          self.k9_creep = K9Creep(mode) if mode in K9_CREEP_MODES else None
+          self.k9_creep = K9Creep(K9_CREEP_MENU[mode]) if mode in K9_CREEP_MENU else None
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -509,7 +509,7 @@ class CarController(CarControllerBase):
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
     if self.k9_creep is not None:
-      # K9StopMode 1/2/3: v9 / v10 / v9 + shudder fix; changes accel AND StopReq timing. See k9_creep.py.
+      # K9StopMode 1/2/3: v10 / v9 + shudder fix / v10 + shudder fix; changes accel AND StopReq timing. See k9_creep.py.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -904,7 +904,7 @@ class HyundaiJerk:
 
   def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None):
     canfd = bool(CP.flags & HyundaiFlags.CANFD)
-    cb_prev = self.cb_upper  # K9StopMode 3 band ramp start only; unused otherwise
+    cb_prev = self.cb_upper  # K9StopMode 2/3 band ramp start only; unused otherwise
     jerk_u_min = CANFD_JERK_UPPER_MIN if canfd else self.jerk_u_min
     if actuators.longControlState == LongCtrlState.stopping:
       self.jerk = jerk_u_min / 2 - CS.out.aEgo

@@ -1,7 +1,13 @@
-"""K9 camera-SCC stop feathering ("creep fix" v9, v10 and v9 + shudder fix), selected by the K9StopMode param.
+"""K9 camera-SCC stop feathering ("creep fix" v9, v10, v9 + shudder fix, v10 + shudder fix), selected by K9StopMode.
 
-K9StopMode: 0 = base braking (default; this module is never called), 1 = v9, 2 = v10, 3 = v9 + shudder fix. Any other
-value (4 or more, negative, unreadable) acts as 0. The modes never stack.
+K9StopMode (menu, 2026-10-23 07:25): 0 = base braking (default; this module is never called), 1 = v10, 2 = v9 + shudder
+fix, 3 = v10 + shudder fix (MENU below). Any other value (4 or more, negative, unreadable) acts as 0. The modes never
+stack. The bare v9 menu entry was removed on 2026-10-23 07:25 (its code path stays: 2 is built on it); the menu numbers
+moved down by one (1d0961da: 1 v9 / 2 v10 / 3 v9 + shudder fix), so the new 1 and 2 are bit-identical to the 1d0961da
+2 and 3. Stored values are not migrated: a stored 1 (v9 before) now selects v10, a stored 2 selects v9 + shudder fix
+and a stored 3 selects v10 + shudder fix.
+Throughout this module "mode N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (no longer on the menu; the
+base of kind 3 and the test reference), 2 = v10 (menu 1), 3 = v9 + shudder fix (menu 2), 4 = v10 + shudder fix (menu 3).
 2026-10-22 23:16 menu change (driver): 2 is now a faithful port of creep_fix v10; the former 2 (v9 + shudder fix) moved
 to 3 unchanged. A stored 2 therefore now selects v10.
 K9StopMode replaces the deleted K9CreepMode (2026-10-22): its old 1 (v8) and 3/4/5 (shudder candidates) are gone,
@@ -22,6 +28,17 @@ Everything else (latch conditions, pid creep_comp, jerk_u / ComfortBand 0, eff_a
 mode 1 apply to mode 2 too: lead latch at LEAD_LATCH_GAP (3.0 m) and the original command on disengage, override,
 pedal, invalid CAN or non-finite input. Mode 2 is the page's design and may brake less than v9 (by design: weaker
 feather below 0.25 m/s and the hold ramp); it is NOT verified on the K9.
+
+Mode 4 (v10 + shudder fix, 2026-10-23 brake_v10band; log replay and simulator only, NOT verified on the vehicle):
+accel and StopReq are exactly mode 2 (the page v10: feather, 0.35 m/s^3 hold ramp, latches; update() is shared), so the
+v10 fine stepping is kept. Only ComfortBand differs: instead of v9's 0 it sends a narrow band V10_FIX_CB (upper and
+lower) at or below V10_FIX_BAND_FULL_SPEED, 0 at or above V10_FIX_BAND_OFF_SPEED, linear between, ramped by
+V10_FIX_RAMP_STEP per make_jerk call (like mode 3) and rounded to the SCC14 CAN resolution 0.02. Reason (K9 v9 logs,
+band 0): the 6-7 Hz shake of LONG_ACCEL just before the stop is 0.068 m/s^2 peak-to-peak (median; 95 % 0.12), i.e.
++-0.034 (95 % +-0.061) around the request, and is not in the request; with the original band (0.8-0.9, mode 3) it is gone
+but the ESC then tracks the request loosely. V10_FIX_CB is the smallest band on the 0.02 grid that covers the median
++-0.034 and stays far below the v10 hold ramp's request change (0.17-0.29 m/s^2 over 0.6-0.9 s). That it stops the shudder
+is an estimate from the logs (the response model cannot make the shudder).
 
 Mode 0 (or any other car) never calls update(), so accel, StopReq, jerk and ComfortBand are the base controller's.
 
@@ -84,8 +101,10 @@ import numpy as np
 
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
-V9, V10, V9_SHUDDER_FIX = 1, 2, 3  # K9StopMode values
-MODES = (V9, V10, V9_SHUDDER_FIX)  # K9StopMode values that run a K9Creep; anything else acts as 0
+V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX = 1, 2, 3, 4  # K9Creep kinds ("mode" in this module), not menu values
+KINDS = (V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX)
+MENU = {1: V10, 2: V9_SHUDDER_FIX, 3: V10_SHUDDER_FIX}  # K9StopMode value -> kind (2026-10-23 07:25 menu)
+MODES = tuple(MENU)  # K9StopMode values that run a K9Creep; anything else acts as 0
 
 # v9 profile (creep_fix source constants)
 FEATHER_BP, FEATHER_V = [0.05, 0.14, 0.25, 0.42], [-0.31, -0.35, -0.42, -0.52]
@@ -100,6 +119,12 @@ V10_FEATHER_BP, V10_FEATHER_V = [0.05, 0.11, 0.16, 0.25, 0.42], [-0.26, -0.28, -
 V10_MIN_DECEL_BP, V10_MIN_DECEL_V = [0.06, 0.12, 0.25, 0.40], [-0.02, -0.09, -0.20, -0.30]
 V10_UP_LOW_SPEED = 0.12  # m/s
 V10_HOLD_STEP = 0.0035  # per frame: latch hold ramp toward min(accel, LATCH_ACCEL)
+# Mode 4 narrow low-speed ComfortBand (2026-10-23 07:29; chosen against the K9 v9 log shake and a 16-stop replay sweep)
+V10_FIX_CB = 0.04  # m/s^2, upper and lower
+V10_FIX_BAND_FULL_SPEED = 2.0  # m/s: full band at or below (the K9 v9 shake spans 0.12-2.0 m/s)
+V10_FIX_BAND_OFF_SPEED = 3.0  # m/s: band 0 (= v10) at or above
+V10_FIX_RAMP_STEP = 0.04  # band weight change per make_jerk call (50 Hz): 0 -> 1 in 0.5 s
+CB_CAN_RES = 0.02  # SCC14 ComfortBandUpper/Lower resolution: smaller values go out as 0
 BOOST_BP, BOOST_V = [0.0, 0.15], [0.0, -0.18]
 DOWN_STEP = 0.005
 DOWN_UP_SPEED = 0.14  # m/s: down_step only above it, and the weak-decel latch
@@ -157,6 +182,13 @@ def read_long_accel(cp):
   return value if math.isfinite(value) else None
 
 
+def v10_fix_band_weight(v_ego: float) -> float:
+  """Mode 4 band weight target: 1 at or below V10_FIX_BAND_FULL_SPEED, 0 at or above V10_FIX_BAND_OFF_SPEED."""
+  if not math.isfinite(v_ego):
+    return 1.0
+  return float(np.interp(v_ego, [V10_FIX_BAND_FULL_SPEED, V10_FIX_BAND_OFF_SPEED], [1.0, 0.0]))
+
+
 def band_weight(v_ego: float) -> float:
   """Mode 3 band weight target: 1 = original band, 0 = v9 band (0). Non-finite speed fails toward the original."""
   if not math.isfinite(v_ego):
@@ -177,17 +209,18 @@ def _up_step(v_ego: float, margin: float, low_speed: float = UP_LOW_SPEED) -> fl
 
 class K9Creep:
   def __init__(self, mode: int = V9):
-    assert mode in MODES, mode
+    assert mode in KINDS, mode
     self.mode = mode
     self.shudder_fix = mode == V9_SHUDDER_FIX
-    self.v10 = mode == V10
+    self.v10 = mode in (V10, V10_SHUDDER_FIX)  # page v10 accel/StopReq (modes 2 and 4 share it bit for bit)
+    self.v10_fix = mode == V10_SHUDDER_FIX  # mode 4: + narrow low-speed ComfortBand
     self.reset()
 
   def reset(self):
     self.latched = False
     self.last = None  # previous v9 accel; None means "start from the current command"
     self.active = False  # True only on a frame where update() applied (jerk/band change follows it)
-    self.cb_w = None  # mode 3 band weight; None = start from the band sent on the previous make_jerk call
+    self.cb_w = None  # mode 3/4 band weight; None = start from the band sent on the previous make_jerk call
     self.sent = None  # mode 3 last sent accel (stopping gate); None = start from the current value
     self.bc = None  # mode 3 rate-limited extra braking; None = start from the current value
 
@@ -308,8 +341,16 @@ class K9Creep:
     """Applied non-CAN-FD, non-off frames: (jerk_u, cb_upper, cb_lower) to send. cb_upper/lower are the original
     band of this frame, cb_prev the upper band sent on the previous make_jerk call."""
     jerk_u, cu, cl = K9Creep.jerk_bands(jerk_u, v_ego)
+    if self.v10_fix:  # mode 4: the narrow band, ramped, on the CAN grid; jerk_u as v9/v10
+      target = v10_fix_band_weight(v_ego)
+      if self.cb_w is None:
+        ok = math.isfinite(cb_prev) and V10_FIX_CB > 0.0
+        self.cb_w = float(np.clip(cb_prev / V10_FIX_CB, 0.0, 1.0)) if ok else target
+      self.cb_w = float(self.cb_w + np.clip(target - self.cb_w, -V10_FIX_RAMP_STEP, V10_FIX_RAMP_STEP))
+      band = float(round(V10_FIX_CB * self.cb_w / CB_CAN_RES) * CB_CAN_RES)
+      return jerk_u, band, band
     if not self.shudder_fix:
-      return jerk_u, cu, cl  # mode 1: exactly the v9 band (0)
+      return jerk_u, cu, cl  # modes 1 and 2: exactly the v9 band (0)
     target = band_weight(v_ego)
     if self.cb_w is None:
       ok = math.isfinite(cb_prev) and math.isfinite(cb_upper) and cb_upper > 0.0
