@@ -9,17 +9,29 @@ Two parts, kept apart on purpose:
   * MeterAnimation  speed-linked animation phase (00:52 지시): characters and the sea move
                     on phase += dt * rate(speed) (0.35 stopped / 1.0 @30 / 2.2 @>=100 km/h,
                     0.5 s speed low-pass); stars and eye blinks stay on the wall clock.
-                    In the time-fare zone (<= 15 km/h onroad) 보노보노 taps the 조개 (waiting).
+                    In the time-fare zone (below 14.81 km/h onroad) 보노보노 taps the 조개 (waiting).
 
 Fares: one table, TAXI_FARE_SIHEUNG. 시흥시 = 경기도 표준형 요금 (2023-07-01 04:00 적용,
 2026-08 보도 기준 그대로 유지):
+  - https://gnews.gg.go.kr/briefing/brief_gongbo_view.do?number=57519  (경기도 공식 보도: 모범·대형
+    기본 7,000원/3km, 144m당 200원, 35초당 200원, 2023-07-01 04시부터)
   - https://m.mk.co.kr/amp/10745360  (매일경제 2023-05-25, 경기 택시요금 인상)
   - https://www.daehannoin.co.kr/news_view.jsp?ncd=3942
   - https://www.kihoilbo.co.kr/news/articleView.html?idxno=3033050  (2026-08, 경기 중형 4,800원 유지)
   - https://copyking.tistory.com/entry/전국-택시-할증-시간-및-요금-총정리
   - https://outfox.tistory.com/6
 Night surcharge numbers come from a blog (https://m.blog.naver.com/simsimba89/223618430491):
-출처 블로그, 확인 필요 (not confirmed against an official 경기도 notice). 시계외 할증 is not modelled.
+출처 블로그, 확인 필요 (not confirmed against an official 경기도 notice). The 30% in the 경기도 notice
+is the 일반(중형) rate; 공식 모범 할증률 미확인 -> 모범 20% (blog; 서울·인천 모범도 20%).
+시계외 할증: none for 경기 모범 (not modelled).
+
+Counting = real meter 시간·거리 부분 동시병산: 기준속도 = distance_unit_m / time_unit_s
+(144 m / 35 s = 4.114 m/s = 14.81 km/h, computed from the two values). v >= 기준속도: driven
+distance only; v < 기준속도 (stopped included): time only, converted to distance as dt * 144 / 35 m.
+Both go into ONE 환산거리 counter: the base fare covers the first 3 km of it, then every 144 m of it
+adds one unit (200원; night 240원). Speed = carState.vEgo (wheel speed), integrated sample by sample
+at the received rate (live HUD: every carState, not the draw rate); gaps > 0.5 s are dropped.
+Shown fare: rounded to 10원 (서울 요금표 rule; 240 / 8,400 are already round).
 Night surcharge is applied on the device clock in Asia/Seoul (UTC+9, no DST; the device itself
 may run on UTC): base fare with the rate at the drive start, every +step with the rate at the
 moment it is charged (23:00 / 04:00 switch the unit price from then on, nothing already charged
@@ -45,20 +57,32 @@ class TaxiFare:
   distance_unit_won: int
   time_unit_s: float
   time_unit_won: int
-  time_fare_max_speed_kph: float
   # (start_hour, end_hour, rate) in local time; end exclusive; wraps midnight. 확인 필요.
   night_surcharges: tuple[tuple[int, int, float], ...]
 
+  @property
+  def time_fare_below_mps(self) -> float:
+    """기준속도: below it the meter counts time, at or above it distance (144 m / 35 s)."""
+    return self.distance_unit_m / self.time_unit_s
+
+  @property
+  def time_fare_below_kph(self) -> float:
+    return self.time_fare_below_mps * 3.6
+
+
+# 심야 할증 (모범): 공식 모범 할증률 미확인 -- 경기도 공식 보도의 30%는 일반(중형) 기준. 모범 20% =
+# 출처 블로그, 확인 필요 (서울·인천 모범도 20%). Change it here only.
+TAXI_NIGHT_RATE_DELUXE = 0.20
+TAXI_NIGHT_HOURS = (23, 4)   # 23:00 ~ 04:00 (Asia/Seoul)
 
 TAXI_FARE_SIHEUNG = {
-  # 모범·대형 (meter default)
+  # 모범·대형 (meter default) -- 경기도 공식 보도 gnews.gg.go.kr number=57519 (2023-07-01 04시~)
   "deluxe": TaxiFare(
     name="보노 모범택시 요금",
     base_fare_won=7000, base_distance_m=3000.0,
     distance_unit_m=144.0, distance_unit_won=200,
     time_unit_s=35.0, time_unit_won=200,
-    time_fare_max_speed_kph=15.0,
-    night_surcharges=((23, 4, 0.20),),  # 심야 23~04시 20%: 출처 블로그, 확인 필요
+    night_surcharges=((TAXI_NIGHT_HOURS[0], TAXI_NIGHT_HOURS[1], TAXI_NIGHT_RATE_DELUXE),),
   ),
   # 중형
   "midsize": TaxiFare(
@@ -66,14 +90,16 @@ TAXI_FARE_SIHEUNG = {
     base_fare_won=4800, base_distance_m=1600.0,
     distance_unit_m=131.0, distance_unit_won=100,
     time_unit_s=30.0, time_unit_won=100,
-    time_fare_max_speed_kph=15.0,
     night_surcharges=((0, 2, 0.30), (23, 4, 0.20)),  # first match wins; 출처 블로그, 확인 필요
   ),
 }
 TAXI_METER_DEFAULT_FARE = TAXI_FARE_SIHEUNG["deluxe"]
 TAXI_METER_FOOTER_TITLE = "보노 모범택시 요금"
-TAXI_METER_FOOTER_TEXT = "기본 7,000원(3km) · 거리 144m당 200원 · 시간 35초당 200원(15km/h 이하) · 심야 23~04시 20%"
-TAXI_METER_MAX_DT_S = 1.0
+TAXI_METER_FOOTER_TEXT = (
+  f"기본 7,000원(3km) · 144m당 200원 · 35초당 200원 · "
+  f"시간·거리 동시병산({TAXI_FARE_SIHEUNG['deluxe'].time_fare_below_kph:.1f}km/h 미만 시간) · 심야 23~04시 20%"
+)
+TAXI_METER_MAX_DT_S = 0.5    # a longer gap between speed samples (frame / message stall) is dropped
 
 
 SEOUL_TZ = timezone(timedelta(hours=9), "Asia/Seoul")   # KST, no daylight saving
@@ -106,12 +132,12 @@ def night_surcharge_rate(fare: TaxiFare, hour: int | None) -> float:
 class TaxiMeter:
   """부분 동시 병산 meter.
 
-  Above time_fare_max_speed_kph the meter counts driven distance; at or below it
-  counts time, converted to the equivalent distance (time_unit_s <-> distance_unit_m).
-  The base fare covers base_distance_m of that combined distance; after it every
-  distance_unit_m adds distance_unit_won. Each step is charged with the night rate
-  active when it happens (the base fare with the rate at the start). Shown fare is
-  rounded down to 10 won.
+  At or above 기준속도 (fare.time_fare_below_mps = 144 m / 35 s) the meter counts driven
+  distance; below it (stopped included) it counts time, converted to the equivalent
+  distance (time_unit_s <-> distance_unit_m). The base fare covers base_distance_m of that
+  combined 환산거리; after it every distance_unit_m adds distance_unit_won. Each step is
+  charged with the night rate active when it happens (the base fare with the rate at the
+  start). Shown fare is rounded to 10 won.
   """
 
   def __init__(self, fare: TaxiFare = TAXI_METER_DEFAULT_FARE) -> None:
@@ -128,10 +154,19 @@ class TaxiMeter:
     self.started = False
     self.last_tick_s: float | None = None
     self._last_now: float | None = None
+    self._last_sample_t: float | None = None
+    self.mode: str | None = None   # "distance" / "time": what the last counted interval charged
+    self.dropped_gaps = 0
 
   @property
   def fare_won(self) -> int:
-    return int(math.floor(self.fare_won_exact / 10.0 + 1e-9)) * 10
+    """Shown fare, rounded (half up) to 10 won."""
+    return int(math.floor(self.fare_won_exact / 10.0 + 0.5 + 1e-9)) * 10
+
+  @property
+  def next_step_remaining_s(self) -> float:
+    """Remaining 환산거리 to the next unit as waiting time (time fare)."""
+    return self.next_step_remaining_m * self.fare.time_unit_s / self.fare.distance_unit_m
 
   def _units_for(self, metered_m: float) -> int:
     """Completed distance_unit_m steps after the base distance (charged when completed)."""
@@ -154,17 +189,33 @@ class TaxiMeter:
     return min(1.0, max(0.0, done / unit))
 
   def step(self, dt_s: float, speed_kph: float, hour: int | None = 12, now_s: float | None = None) -> int:
-    """Advance by dt_s (clamped to 0..1 s). Returns how many +steps were charged."""
-    dt = min(max(float(dt_s), 0.0), TAXI_METER_MAX_DT_S)
+    """Advance by dt_s at speed_kph. A gap > TAXI_METER_MAX_DT_S (0.5 s) is dropped (not counted).
+    Returns how many +steps were charged."""
+    try:
+      dt = float(dt_s)
+    except (TypeError, ValueError):
+      dt = 0.0
+    if not math.isfinite(dt) or dt < 0.0:
+      dt = 0.0
+    if dt > TAXI_METER_MAX_DT_S + 1e-9:
+      self.dropped_gaps += 1
+      return 0
     self.started = True
-    speed = max(0.0, float(speed_kph)) if math.isfinite(speed_kph) else 0.0
+    try:
+      speed = float(speed_kph)
+    except (TypeError, ValueError):
+      speed = 0.0
+    speed = max(0.0, speed) if math.isfinite(speed) else 0.0
+    v = speed / 3.6
     self.elapsed_s += dt
-    driven = speed / 3.6 * dt
+    driven = v * dt
     self.distance_m += driven
-    if speed <= self.fare.time_fare_max_speed_kph:
+    if speed < self.fare.time_fare_below_kph:   # same km/h scale as the caller: no rounding flip at the edge
       self.metered_m += dt * self.fare.distance_unit_m / self.fare.time_unit_s
+      self.mode = "time"
     else:
       self.metered_m += driven
+      self.mode = "distance"
     new_units = self._units_for(self.metered_m)
     added = new_units - self.units
     if added > 0:
@@ -175,22 +226,53 @@ class TaxiMeter:
       return added
     return 0
 
-  def update(self, now_s: float, speed_kph: float, onroad: bool, hour: int | None) -> int:
-    """Real-time driver: starts at the base fare when a drive starts (onroad
-    rising edge), counts while onroad, holds the last value when offroad."""
+  def _start_if_rising(self, onroad: bool, speed_kph: float, hour: int | None, now_s) -> bool:
+    """Onroad rising edge = a new drive from the base fare. Returns False while offroad."""
     if not onroad:
       self._last_now = None
+      self._last_sample_t = None
       self._was_onroad = False
-      return 0
+      return False
     if not getattr(self, "_was_onroad", False):
       self.reset(hour)
       self._was_onroad = True
-      self._last_now = now_s
       self.step(0.0, speed_kph, hour, now_s)
+    return True
+
+  def update(self, now_s: float, speed_kph: float, onroad: bool, hour: int | None) -> int:
+    """Frame-rate driver (simulator / replay without speed samples): starts at the base fare when
+    a drive starts (onroad rising edge), counts while onroad, holds the last value when offroad."""
+    was = getattr(self, "_was_onroad", False)
+    if not self._start_if_rising(onroad, speed_kph, hour, now_s):
+      return 0
+    if not was:
+      self._last_now = now_s
       return 0
     dt = 0.0 if self._last_now is None else now_s - self._last_now
     self._last_now = now_s
     return self.step(dt, speed_kph, hour, now_s)
+
+  def feed_sample(self, t_s: float, v_mps: float, hour: int | None, now_s: float | None = None) -> int:
+    """One wheel-speed sample (carState.vEgo at its logMonoTime): counts the interval since the
+    previous sample at this speed; the first sample and gaps > 0.5 s only set the time base."""
+    prev, self._last_sample_t = self._last_sample_t, float(t_s)
+    if prev is None:
+      return 0
+    try:
+      v = float(v_mps)
+    except (TypeError, ValueError):
+      v = 0.0
+    return self.step(float(t_s) - prev, v * 3.6, hour, now_s)
+
+  def update_samples(self, samples, onroad: bool, hour: int | None, now_s: float | None = None) -> int:
+    """Live driver: every carState sample since the last call, [(t_s, vEgo_mps), ...]."""
+    first_v = samples[-1][1] * 3.6 if samples else 0.0
+    if not self._start_if_rising(onroad, first_v, hour, now_s):
+      return 0
+    added = 0
+    for t_s, v in samples:
+      added += self.feed_sample(t_s, v, hour, now_s)
+    return added
 
 
 def format_won(value: int) -> str:
@@ -213,7 +295,7 @@ ANIM_MAX_DT_S = 0.25          # longer frame gaps (stall, resume) count as 0.25 
 ANIM_MOVE_FULL_KPH = 12.0     # 포로리 runs fully from here; 0 km/h = breathing only
 ANIM_MOVE_TAU_S = 0.5         # run <-> stand fade (on top of the speed filter: no pop when starting off)
 ANIM_WAIT_TAU_S = 0.5         # fade between "driving" and "waiting" (time fare) poses
-ANIM_WAIT_TAP_PERIOD = 0.8    # phase units per 조개 tap while waiting (2.3 s stopped, 1.2 s at 15 km/h)
+ANIM_WAIT_TAP_PERIOD = 0.8    # phase units per 조개 tap while waiting (2.3 s stopped, 1.2 s at 14.8 km/h)
 ANIM_WAIT_TAP_LEN = 0.3       # phase units the tap stroke lasts
 ANIM_WAVE_PERIOD = 10.0       # phase units per sea cycle (= the design's 10 s loop at rate 1.0)
 PORORI_RUN_HZ = 0.8           # strides per phase unit: 0.8 /s at 30 km/h .. 1.76 /s at 100 km/h
@@ -244,8 +326,8 @@ def anim_rate(speed_kph: float) -> float:
 class MeterAnimation:
   """Accumulated animation phase driven by the low-passed vehicle speed."""
 
-  def __init__(self, wait_max_kph: float = 15.0) -> None:
-    self.wait_max_kph = float(wait_max_kph)
+  def __init__(self, wait_below_kph: float = TAXI_METER_DEFAULT_FARE.time_fare_below_kph) -> None:
+    self.wait_below_kph = float(wait_below_kph)   # = 기준속도: below it the meter counts time
     self.reset()
 
   def reset(self) -> None:
@@ -269,7 +351,7 @@ class MeterAnimation:
     if dt > 0.0:
       self.fps += (min(60.0, max(1.0, 1.0 / dt)) - self.fps) * ANIM_FPS_ALPHA
       self.speed_kph += (v - self.speed_kph) * (1.0 - math.exp(-dt / ANIM_SPEED_TAU_S))
-      target = 1.0 if (onroad and self.speed_kph <= self.wait_max_kph) else 0.0
+      target = 1.0 if (onroad and self.speed_kph < self.wait_below_kph) else 0.0
       self.wait += (target - self.wait) * (1.0 - math.exp(-dt / ANIM_WAIT_TAU_S))
       move_target = min(1.0, max(0.0, self.speed_kph / ANIM_MOVE_FULL_KPH))
       self.move_w += (move_target - self.move_w) * (1.0 - math.exp(-dt / ANIM_MOVE_TAU_S))
@@ -397,6 +479,10 @@ NIGHT_LAMP_Y = 26.0
 NIGHT_LAMP_W = 150.0
 NIGHT_LAMP_H = 30.0
 NIGHT_LAMP_RED = (240, 104, 76)
+FARE_MODE_DISTANCE = (240, 214, 144)   # gold: 거리요금
+FARE_MODE_TIME = (130, 200, 255)       # sky blue: 시간요금 (waiting / slow)
+FOOTER_TEXT_SIZE = 14.0
+FOOTER_TEXT_MAX_W = 776.0 - 24 - 20
 SEA_CORNER_R = 18.0
 
 
@@ -430,7 +516,9 @@ class TaxiMeterPanel:
 
   def __init__(self, meter: TaxiMeter | None = None, clock=time.monotonic, local_hour=None) -> None:
     self.meter = meter or TaxiMeter()
-    self.anim = MeterAnimation(self.meter.fare.time_fare_max_speed_kph)
+    self.anim = MeterAnimation(self.meter.fare.time_fare_below_kph)
+    self._speed_samples: list[tuple[float, float]] = []
+    self._speed_samples_live = False   # True once a live carState feed exists (frame path off)
     self._clock = clock
     self._local_hour = local_hour or seoul_hour   # Asia/Seoul hour, None = clock not synced
     self.night_rate = 0.0                          # surcharge in force now (lamp, +step amount)
@@ -440,6 +528,7 @@ class TaxiMeterPanel:
     self._static_key = None
     self.freeze_animation_t: float | None = None  # PNG review only (wall clock + no fare tick)
     self._sea_points = None
+    self._footer_size: float | None = None
 
   # -- resources
   def _load_textures(self, rl) -> None:
@@ -477,6 +566,7 @@ class TaxiMeterPanel:
     self._static_key = None
 
   def restart(self) -> None:
+    self._speed_samples = []
     """K9ExtHud changed (non-1 -> 1, and 1 -> non-1 so nothing stale is kept): fare, distance and
     time back to 0 / the base fare; the next onroad frame starts a fresh drive from the base fare."""
     self.meter.reset()
@@ -490,8 +580,20 @@ class TaxiMeterPanel:
     now = self._clock()
     hour = self._local_hour()
     self.night_rate = night_surcharge_rate(self.meter.fare, hour)
-    self.meter.update(now, speed, onroad, hour)
+    if self._speed_samples_live:
+      samples, self._speed_samples = self._speed_samples, []
+      self.meter.update_samples(samples, onroad, hour, now)
+    else:
+      self.meter.update(now, speed, onroad, hour)
     self.anim.update(now, speed, onroad)
+
+  def feed_speed_samples(self, samples) -> None:
+    """Live HUD: every carState since the last frame as [(logMonoTime_s, vEgo_mps), ...].
+    From the first call on, the meter integrates these instead of the frame-rate speed."""
+    self._speed_samples_live = True
+    self._speed_samples.extend(samples)
+    if len(self._speed_samples) > 2000:          # ~20 s of carState without a frame: keep the tail
+      self._speed_samples = self._speed_samples[-2000:]
 
   @property
   def step_won(self) -> int:
@@ -642,6 +744,17 @@ class TaxiMeterPanel:
         rl.draw_rectangle_gradient_v(int(round(x)), int(round(y + g0)), int(CARD_W), int(round(g1 - g0)),
                                      rl.Color(*col(g0)), rl.Color(*col(g1)))
 
+  def _draw_fare_mode_badge(self, renderer, rl, bx: float, cy: float, time_mode: bool) -> float:
+    """'거리요금' / '시간요금' badge: which counter runs now. Returns the x after it."""
+    label = "시간요금" if time_mode else "거리요금"
+    color = FARE_MODE_TIME if time_mode else FARE_MODE_DISTANCE
+    tw, _ = renderer._measure_text(label, 13)
+    box = rl.Rectangle(bx, cy - 11, tw + 18, 22)
+    rl.draw_rectangle_rounded(box, 1.0, 12, rl.Color(*color, 46))
+    rl.draw_rectangle_rounded_lines_ex(box, 1.0, 12, 1.2, rl.Color(*color, 255))
+    renderer._draw_text(label, bx + 9, cy, 13, color)
+    return bx + tw + 18 + 10
+
   def _draw_night_lamp(self, renderer, rl, lx: float, ly: float, t: float) -> None:
     """'심야 할증 20%' lamp (lit while the night surcharge is in force)."""
     box = rl.Rectangle(lx, ly, NIGHT_LAMP_W, NIGHT_LAMP_H)
@@ -705,10 +818,16 @@ class TaxiMeterPanel:
                                    rl.Color(122, 95, 39, 255), rl.Color(241, 214, 143, 255))
     pxp = max(TRACK_X0 + 50, px)
     self._draw_porori(rl, (x + pxp, y + 284 - pose.porori_hop), pose)
-    remaining = max(1, int(round(meter.next_step_remaining_m)))
     nx = x + 28
+    time_mode = onroad and meter.mode == "time"
+    if onroad and meter.mode is not None:
+      nx = self._draw_fare_mode_badge(renderer, rl, nx, y + 350, time_mode)
+    if time_mode:
+      remaining, unit = max(1, int(math.ceil(meter.next_step_remaining_s - 1e-6))), "초"
+    else:
+      remaining, unit = max(1, int(round(meter.next_step_remaining_m))), " m"
     for part, color, sz in (("다음 ", GOLD_LABEL, 14), (f"+{format_won(self.step_won)}원", (240, 214, 144), 14),
-                            ("까지 ", GOLD_LABEL, 14), (f"{remaining}", (240, 214, 144), 14), (" m", GOLD_LABEL, 14)):
+                            ("까지 ", GOLD_LABEL, 14), (f"{remaining}", (240, 214, 144), 14), (unit, GOLD_LABEL, 14)):
       text(part, nx, y + 350, sz, color)
       nx += renderer._measure_text(part, sz)[0]
 
@@ -724,4 +843,7 @@ class TaxiMeterPanel:
     # sea over the characters (flows on the phase), then the fare footer
     self._draw_sea(rl, x, y, pose.wave_ph)
     text(TAXI_METER_FOOTER_TITLE, x + 24, y + 410, 12, FOOT_TITLE)
-    text(TAXI_METER_FOOTER_TEXT, x + 24, y + 432, 14, FOOT_TEXT)
+    if self._footer_size is None:                 # fit the fare line into the card once
+      w, _ = renderer._measure_text(TAXI_METER_FOOTER_TEXT, FOOTER_TEXT_SIZE)
+      self._footer_size = FOOTER_TEXT_SIZE if w <= FOOTER_TEXT_MAX_W else max(11.0, FOOTER_TEXT_SIZE * FOOTER_TEXT_MAX_W / w)
+    text(TAXI_METER_FOOTER_TEXT, x + 24, y + 432, self._footer_size, FOOT_TEXT)

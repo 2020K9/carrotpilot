@@ -224,8 +224,10 @@ def drive(meter, seconds, kph, hour=12, dt=0.05):
 
 def test_fare_table_values():
   d = TAXI_FARE_SIHEUNG["deluxe"]
-  assert (d.base_fare_won, d.base_distance_m, d.distance_unit_m, d.distance_unit_won, d.time_unit_s, d.time_unit_won,
-          d.time_fare_max_speed_kph) == (7000, 3000.0, 144.0, 200, 35.0, 200, 15.0)
+  # 01:06: the old fixed 15 km/h threshold is gone; 기준속도 = 144 m / 35 s (= 14.81 km/h)
+  assert (d.base_fare_won, d.base_distance_m, d.distance_unit_m, d.distance_unit_won, d.time_unit_s,
+          d.time_unit_won) == (7000, 3000.0, 144.0, 200, 35.0, 200)
+  assert d.time_fare_below_mps == pytest.approx(144.0 / 35.0)
   m = TAXI_FARE_SIHEUNG["midsize"]
   assert (m.base_fare_won, m.base_distance_m, m.distance_unit_m, m.distance_unit_won, m.time_unit_s, m.time_unit_won) == (
     4800, 1600.0, 131.0, 100, 30.0, 100)
@@ -260,7 +262,7 @@ def test_partial_simultaneous_not_double():
   m.metered_m = 3000.0
   drive(m, 30.0, 50.0)
   assert m.units == 2 and m.fare_won == 7400
-  # exactly 15 km/h is time-charged ("15km/h 이하")
+  # 01:06: 15 km/h is above 기준속도 14.81 km/h -> distance-charged (35.05 s = 146 m = 1 step either way)
   m2 = TaxiMeter(); m2.metered_m = 3000.0
   drive(m2, 35.0 + 0.05, 15.0)
   assert m2.units == 1
@@ -294,8 +296,8 @@ def test_night_surcharge_and_rounding():
 def test_realtime_update_restarts_each_drive_and_clamps_dt():
   m = TaxiMeter()
   assert m.update(0.0, 50.0, True, 12) == 0 and m.fare_won == 7000
-  m.update(100.0, 50.0, True, 12)  # 100 s gap (frame stall) -> clamped to 1 s
-  assert m.elapsed_s == pytest.approx(1.0)
+  m.update(100.0, 50.0, True, 12)  # 100 s gap (frame stall) -> 01:06: dropped (gaps > 0.5 s are not counted)
+  assert m.elapsed_s == pytest.approx(0.0)
   m.update(100.5, 50.0, False, 12)  # offroad holds the value
   held = (m.fare_won, m.distance_m)
   m.update(200.0, 50.0, False, 12)

@@ -2,7 +2,7 @@
 
 - phase rate = 0.35 stopped / 1.0 at 30 km/h / 2.2 at >= 100 km/h (cap), linear between
 - speed is low-passed (0.5 s): a speed step never makes the characters / sea jump
-- stopped = slow breathing + blinks only; time-fare zone (<= 15 km/h onroad) = 보노보노 taps the 조개
+- stopped = slow breathing + blinks only; time-fare zone (below 14.81 km/h onroad; was <= 15 before 01:06) = 보노보노 taps the 조개
 - stars / blinks stay on the wall clock, the +200원 hop stays on the fare tick
 """
 from __future__ import annotations
@@ -120,15 +120,16 @@ def test_speed_step_never_jumps(v0, v1, fps):
 def test_wait_tap_fades_in_and_out_without_jumps(fps):
   """Entering / leaving the time-fare zone (and onroad toggling) fades the 조개 tap in and out."""
   anim = MeterAnimation()
-  # fastest steady waiting tap = at the top of the time-fare zone (15 km/h, rate 0.675)
-  limit = _steady_max_delta([0.0, 5.0, 10.0, 15.0], "bono_tap", fps) * 1.05 + 1e-6
+  # fastest steady waiting tap = at the top of the time-fare zone (just below 14.81 km/h, rate ~0.67)
+  limit = _steady_max_delta([0.0, 5.0, 10.0, 14.8], "bono_tap", fps) * 1.05 + 1e-6
   seq = (_run(anim, 50.0, 5.0, fps) + _run(anim, 0.0, 6.0, fps) + _run(anim, 0.0, 3.0, fps, onroad=False)
          + _run(anim, 0.0, 3.0, fps) + _run(anim, 60.0, 4.0, fps))
   assert _max_frame_delta(seq, "bono_tap") <= limit
 
 
 def test_waiting_tap_only_in_the_time_fare_zone():
-  for speed, onroad, tapping in ((0.0, True, True), (10.0, True, True), (15.0, True, True),
+  # 01:06: time-fare zone = below 기준속도 144 m / 35 s = 14.81 km/h (was <= 15 km/h)
+  for speed, onroad, tapping in ((0.0, True, True), (10.0, True, True), (14.5, True, True), (15.0, True, False),
                                  (20.0, True, False), (30.0, True, False), (100.0, True, False), (0.0, False, False)):
     anim = MeterAnimation()
     _run(anim, speed, 5.0, onroad=onroad)

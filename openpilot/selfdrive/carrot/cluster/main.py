@@ -539,6 +539,22 @@ def sync_taxi_meter_panel(renderer, selected: bool) -> bool:
     return True
 
 
+def feed_taxi_meter_speed(renderer, source) -> int:
+    """K9ExtHud=1 live: hand every carState since the last frame to the meter (real meter integration
+    at the received rate). Meter off: close the extra socket. Returns the number of samples."""
+    drain = getattr(source, "drain_taxi_speed_samples", None)
+    if drain is None:
+        return 0
+    if not renderer.taxi_meter_enabled:
+        stop = getattr(source, "stop_taxi_speed_samples", None)
+        if stop is not None:
+            stop()
+        return 0
+    samples = drain()
+    renderer.feed_taxi_meter_speed_samples(samples)
+    return len(samples)
+
+
 class ClusterHudOutputGateParamReader:
     def __init__(self) -> None:
         self._params = None
@@ -1371,6 +1387,8 @@ def run_demo(
             if live_source is not None:
                 profile_stage = time.perf_counter()
                 state = live_source.update()
+                if renderer.taxi_meter_enabled or getattr(live_source, "_taxi_speed_reader", None) is not None:
+                    feed_taxi_meter_speed(renderer, live_source)
                 scheduler.update(
                     live_source.onroad_state() is True,
                     child_pid=h264_pipeline.encoder_pid if h264_pipeline is not None else None,

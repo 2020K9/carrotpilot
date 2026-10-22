@@ -1059,6 +1059,11 @@ class ClusterUiRenderer:
             self._taxi_meter_panel.restart()
         self._invalidate_trip_report_cache()
 
+    def feed_taxi_meter_speed_samples(self, samples) -> None:
+        """Live carState samples [(t_s, vEgo_mps), ...] for the taxi meter (K9ExtHud=1 only)."""
+        if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
+            self._taxi_meter_panel.feed_speed_samples(samples)
+
     def _taxi_meter_panel_active(self, screen_mode: int) -> bool:
         return self.taxi_meter_enabled and self._taxi_meter_panel is not None and screen_mode not in (
             CLUSTER_SCREEN_MODE_NAVI,

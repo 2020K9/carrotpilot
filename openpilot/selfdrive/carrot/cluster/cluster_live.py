@@ -116,6 +116,37 @@ def live_route_parser() -> RouteLogParser:
     return RouteLogParser(recompute_cutins=False)
 
 
+class TaxiSpeedSampleReader:
+    """Every carState (not the conflated latest) for the K9ExtHud=1 taxi meter: a separate
+    non-conflated socket, opened on first use (K9ExtHud=1 only) and closed when the meter is off."""
+
+    def __init__(self, messaging: Any) -> None:
+        self._messaging = messaging
+        self._sock: Any | None = None
+
+    def drain(self) -> list[tuple[float, float]]:
+        if self._sock is None:
+            try:
+                self._sock = self._messaging.sub_sock("carState", conflate=False)
+            except Exception:
+                self._sock = None
+            return []
+        out: list[tuple[float, float]] = []
+        try:
+            msgs = self._messaging.drain_sock(self._sock)
+        except Exception:
+            return out
+        for msg in msgs:
+            try:
+                out.append((int(msg.logMonoTime) * 1e-9, float(msg.carState.vEgo)))
+            except Exception:
+                continue
+        return out
+
+    def stop(self) -> None:
+        self._sock = None
+
+
 class OpenpilotLiveSource:
     def __init__(self, include_can: bool = False, timeout_ms: int = 0) -> None:
         try:
@@ -135,6 +166,7 @@ class OpenpilotLiveSource:
             self.log = None
         self.services = list(LIVE_SERVICES_BASE + (LIVE_CAN_SERVICES if include_can else ()))
         self.sm = messaging.SubMaster(self.services)
+        self._taxi_speed_reader: TaxiSpeedSampleReader | None = None
         self.parser = live_route_parser()
         self.parser.trip_report_tracker.set_onroad(False)
         self.timeout_ms = max(0, int(timeout_ms))
@@ -282,6 +314,17 @@ class OpenpilotLiveSource:
     def _profile_add(self, name: str, start_time: float) -> None:
         if self.profile_enabled:
             self._profile_samples.append((name, (time.perf_counter() - start_time) * 1000.0))
+
+    def drain_taxi_speed_samples(self) -> list[tuple[float, float]]:
+        """K9ExtHud=1: every carState (logMonoTime s, vEgo m/s) since the last call."""
+        if self._taxi_speed_reader is None:
+            self._taxi_speed_reader = TaxiSpeedSampleReader(self.messaging)
+        return self._taxi_speed_reader.drain()
+
+    def stop_taxi_speed_samples(self) -> None:
+        if self._taxi_speed_reader is not None:
+            self._taxi_speed_reader.stop()
+            self._taxi_speed_reader = None
 
     def update(self) -> ClusterUiState:
         profile_stage = self._profile_start()
