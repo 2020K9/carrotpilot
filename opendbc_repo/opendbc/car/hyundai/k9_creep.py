@@ -25,7 +25,8 @@ Mode 1 (v9), while ON and active:
   ComfortBand upper/lower are set to 0. Control-off, CAN-FD and interlocked frames keep the original jerk/ComfortBand.
 eff_ac = min(ESP12 LONG_ACCEL [m/s^2], aEgo + 0.10); LONG_ACCEL missing or non-finite falls back to aEgo.
 
-Mode 2 (v9 + shudder fix; StopReq hold/timing, latches, interlocks, jerk_u and the v9 feather state are v9's):
+Mode 2 (v9 + shudder fix; StopReq hold/timing, latches, interlocks, jerk_u and the v9 feather state are v9's, except
+the lead latch distance below):
 - ComfortBand: on the frames where v9 sends 0/0, the original band (0.9 + 0.2*accel / 0.8 + 0.2*accel, clipped
   0..1.2) times a weight w is sent. The w target is 1 at or below BAND_FULL_SPEED, 0 (= v9) at or above
   BAND_OFF_SPEED, linear between; w moves at most BAND_RAMP_STEP per make_jerk call (50 Hz, 0 -> 1 in 0.5 s), so the
@@ -52,6 +53,14 @@ Mode 2 (v9 + shudder fix; StopReq hold/timing, latches, interlocks, jerk_u and t
     vEgo 0.08-0.25 m/s; vEgo < 0.05 and TCS13 StandStill come 0.3-0.7 s later).
   - latch: the sent value is min(v9 latch value, previous sent value), so no release at the StopReq latch.
   - the COMP_DECEL extra braking rises at most BC_RATE per frame (falls at once).
+- lead latch (2026-10-22 17:06 K9 drive, rlog): the K9 planner stops 2.2-3.0 m behind a lead, so the 3.0 m lead
+  latch fired in 3 of 4 mode 2 stops while the car still rolled (0.23 / 0.78 / 0.23 m/s). The K9 ESC answers StopReq
+  by braking toward the sent aReq at once (LONG_ACCEL -0.2 -> -0.6..-1.1 within 0.3 s) and the car rebounds at the
+  wheel stop: LONG_ACCEL jerk 8.2 / 10.6 / 8.6 m/s^3 and dDevAx 1.01 / 1.51 / 0.97, against 1.7 and 0.23 in the
+  mode 2 stop that latched at standstill. Mode 2 therefore latches on a lead only at or below LEAD_LATCH_GAP_2
+  (2.5 m). Between that and LEAD_LATCH_GAP (3.0 m) StopReq stays withheld, but the sent value is at most the v9
+  latch value min(original, LATCH_ACCEL) (still never weaker than v9 on any frame) and never releases (held, or
+  pressed further by the normal gate). Mode 1 keeps the 3.0 m latch.
 
 Deviations from the source, all fail toward the original command (documented, not calibrated):
 - disengaged/longActive off, override, gas, brake, invalid CAN, non-finite inputs: original accel/StopReq, reset;
@@ -84,6 +93,7 @@ STANDSTILL_SPEED = 0.05
 URGENT_TARGET = -1.0
 JERK_U_BP, JERK_U_V = [0.5, 1.4], [2.0, 0.8]
 LEAD_LATCH_GAP = 3.0  # m, deviation: lead protection is not in the source
+LEAD_LATCH_GAP_2 = 2.5  # m, mode 2 lead latch (K9 planner stops 2.2-3.0 m behind a lead; see the docstring)
 
 # Mode 2 ComfortBand: the 2026-10-22 logs showed the 5-12 Hz shudder raised with v9 (band 0) from 0.3 up to 2.0 m/s
 # and no difference at 3-12 m/s, so the original band is restored fully at or below 2.0 m/s and v9 is kept at or
@@ -195,7 +205,9 @@ class K9Creep:
         self.sent = float(accel)
       return accel, stopping
 
-    lead_close = (lead_visible or lead_distance != 0.0) and lead_distance <= LEAD_LATCH_GAP
+    lead_seen = lead_visible or lead_distance != 0.0
+    lead_near = lead_seen and lead_distance <= LEAD_LATCH_GAP
+    lead_close = lead_seen and lead_distance <= (LEAD_LATCH_GAP_2 if self.shudder_fix else LEAD_LATCH_GAP)
     real_standstill = esp_standstill or v_ego_raw < STANDSTILL_SPEED or v_ego < STANDSTILL_SPEED
     if (real_standstill or a_target <= URGENT_TARGET or (v_ego > DOWN_UP_SPEED and eff_ac > 0.04) or a_ego > 0.06
         or lead_close):
@@ -227,11 +239,13 @@ class K9Creep:
       cand = float(min(accel, np.interp(v_ego, FLOOR_BP, FLOOR_V))) if math.isfinite(v_ego) else accel
       prev = cand if self.sent is None else self.sent
       down2 = DOWN_STEP if (v_ego > DOWN_UP_SPEED and margin > GATE_DOWN_MARGIN) else 0.0
-      if v_ego <= HOLD_SPEED:
+      if v_ego <= HOLD_SPEED or lead_near:  # wheels stopped, or a lead within 3 m: no release
         up2 = 0.0
       else:  # catch up toward the K9 floor while braking well (margin < 0), at most up + CATCH_UP per frame
         up2 = up + (CATCH_UP if (margin < 0.0 and prev < v9_accel) else 0.0)
       accel = float(min(max(cand, prev - down2), prev + up2, v9_accel))  # never weaker than v9
+      if lead_near:  # 2.5-3.0 m: v9 has latched here; keep its latch braking without StopReq (never weaker than v9)
+        accel = float(min(accel, orig_accel, LATCH_ACCEL))
       self.sent = accel
     return accel, False
 
