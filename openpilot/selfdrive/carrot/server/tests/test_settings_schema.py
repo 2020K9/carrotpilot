@@ -600,24 +600,26 @@ def test_declared_numeric_bounds_stay_intact(params):
   assert by_name["TFollowDecelBoost"]["unit"] == 10
 
 
-def test_k9_creep_mode_is_one_click_select_with_six_choices(settings, params):
+def test_k9_creep_mode_is_one_click_select_with_seven_choices(settings, params):
   creep = next(p for p in params if p["name"] == "K9CreepMode")
-  assert (creep["min"], creep["max"], creep["default"]) == (0, 5, 0)
+  assert (creep["min"], creep["max"], creep["default"]) == (0, 6, 0)
   assert creep["control"] == "select"
   for locale in ("ko", "en", "zh"):
     options = creep["options"][locale]
-    assert len(options) == 6
-    assert [option.split(" ", 1)[0] for option in options] == ["0", "1", "2", "3", "4", "5"]
+    assert len(options) == 7
+    assert [option.split(" ", 1)[0] for option in options] == ["0", "1", "2", "3", "4", "5", "6"]
   assert creep["options"]["ko"] == ["0 기본 제동", "1 v8", "2 v9", "3 v9+떨림 수정1(저속 ComfortBand)",
-                                    "4 v9+떨림 수정2(+정지 직전 유지)", "5 v9+떨림 수정3(0.8m/s 이하 기본 제동 섞기)"]
+                                    "4 v9+떨림 수정2(+정지 직전 유지)", "5 v9+떨림 수정3(0.8m/s 이하 기본 제동 섞기)",
+                                    "6 v9+떨림 수정4(저속 ComfortBand+제동 보정)"]
   for key in ("descr", "edescr", "cdescr"):
     assert "K9StopTaper" not in creep[key]
   assert "실차에서는 아직 확인하지 않았습니다" in creep["descr"] and "not been checked on the vehicle yet" in creep["edescr"]
   # mode 5 is described in plain words in ko/en, including what differs from v9 and that it is not vehicle-checked
-  assert "5: v9 + 떨림 수정 3안" in creep["descr"] and "3·4·5번은" in creep["descr"] and "6 이상" in creep["descr"]
+  assert "5: v9 + 떨림 수정 3안" in creep["descr"] and "3·4·5·6번은" in creep["descr"] and "7 이상" in creep["descr"]
+  assert "6: v9 + 떨림 수정 4안" in creep["descr"] and "6: v9 + shudder fix 4" in creep["edescr"]
   assert "v9보다 약하게 제동하는 일은 없습니다" in creep["descr"]
-  assert "5: v9 + shudder fix 3" in creep["edescr"] and "3, 4 and 5 are candidates" in creep["edescr"]
-  assert "never brakes less than v9" in creep["edescr"] and "6 or more" in creep["edescr"]
+  assert "5: v9 + shudder fix 3" in creep["edescr"] and "3, 4, 5 and 6 are candidates" in creep["edescr"]
+  assert "never brakes less than v9" in creep["edescr"] and "7 or more" in creep["edescr"]
   assert "K9CreepMode" in json.dumps(settings["menu"])
   # the old taper switch is deleted: not in the menu, not in the catalog (search) and not a params key
   assert "K9StopTaper" not in json.dumps(settings["menu"])

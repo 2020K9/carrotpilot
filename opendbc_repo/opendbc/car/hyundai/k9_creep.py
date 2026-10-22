@@ -1,13 +1,14 @@
 """K9 camera-SCC "creep fix" stop feathering, selected by the K9CreepMode param.
 
 K9CreepMode: 0 = base braking (this module is never called), 1 = v8, 2 = v9, 3 = v9 + shudder fix 1 (C2),
-4 = v9 + shudder fix 2 (C2 + C3), 5 = v9 + shudder fix 3 (BL: below 0.8 m/s blend toward base braking).
-Any other value (6 or more, negative, unreadable) acts as 0. Modes never stack.
+4 = v9 + shudder fix 2 (C2 + C3), 5 = v9 + shudder fix 3 (BL: below 0.8 m/s blend toward base braking),
+6 = v9 + shudder fix 4 (C2 band of mode 3 + BL accel of mode 5). Any other value (7 or more, negative, unreadable)
+acts as 0. Modes never stack.
 
 Source of v8/v9: https://leegrt.org/oppo/creep_fix/ (selectMode v8/v9 carcontroller.py diffs, written for Kia Niro
 EV CAN). No license is stated on that page; this is an independent re-implementation of the described algorithm and
 its published constants. It was designed for an EV with motor creep and is NOT verified on the K9.
-Modes 3/4/5 are research candidates from the 2026-10-22 K9 v9 log analysis (simulator/log replay only, NOT
+Modes 3/4/5/6 are research candidates from the 2026-10-22 K9 v9 log analysis (simulator/log replay only, NOT
 verified on the vehicle).
 
 Mode 0 (or any other car) never calls update(), so accel, StopReq, jerk and ComfortBand are the base controller's.
@@ -45,6 +46,15 @@ Mode 5 (v9 + BL; StopReq hold/timing, latches, interlocks, jerk_u and the v9 fea
   - ComfortBand: on applied frames w * the original band is sent instead of 0 (v9's 0 at or above BL_OFF_SPEED).
     The weight follows speed only (no time ramp), as in the simulated candidate BLcb_0.6.
 
+Mode 6 (v9 + C2 band + BL accel; StopReq hold/timing, latches, interlocks, jerk_u and the v9 feather state are v9's):
+- ComfortBand exactly as mode 3 (C2: original band at or below 2.0 m/s, blend to 3.0 m/s, 0.5 s ramp);
+- accel: the mode-5 BL blend times C2BL_GAIN (below 0.8 m/s, more-braking side only), then C2BL_COMP extra braking
+  times the C2 band weight target, the creep fade by aTarget and a speed fade to 0 between C2BL_COMP_FADE_BP;
+  only ever more braking than v9 (never weaker), the v9 feather state (self.last) keeps the v9 value.
+  Reason (2026-10-22 resume): K9 logs show the 5-9 Hz shudder at 0.6-2.0 m/s is 2-3x lower with the original band
+  (mode 0) than with band 0 (v9) at the same pid state and StopReq 0, while aEgo - aReq is about +0.07 m/s^2 larger
+  (weaker real braking) with the band; the compensation keeps the real deceleration near v9 (toy-model sweep).
+
 Deviations from the source, all fail toward the original command (documented, not calibrated):
 - disengaged/longActive off, override, gas, brake, invalid CAN, non-finite inputs: original accel/StopReq, reset;
 - lead at <= LEAD_LATCH_GAP (plan leadVisible or non-zero radar distance, zero/negative counted) latches StopReq.
@@ -55,8 +65,8 @@ import numpy as np
 
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
-V8, V9, V9_C2, V9_C2C3, V9_BL = 1, 2, 3, 4, 5  # K9CreepMode values
-MODES = (V8, V9, V9_C2, V9_C2C3, V9_BL)  # K9CreepMode values that run a K9Creep; anything else acts as 0
+V8, V9, V9_C2, V9_C2C3, V9_BL, V9_C2BL = 1, 2, 3, 4, 5, 6  # K9CreepMode values
+MODES = (V8, V9, V9_C2, V9_C2C3, V9_BL, V9_C2BL)  # K9CreepMode values that run a K9Creep; anything else acts as 0
 
 
 def _up_v8(v_ego, eff_ac, margin):
@@ -77,7 +87,7 @@ PROFILES = {
            creep=([0.25, 0.55, 1.0, 1.6], [-0.26, -0.26, -0.20, 0.0]),
            down_eff_ac=-0.02, up=_up_v9),
 }
-PROFILE_OF_MODE = {V8: V8, V9: V9, V9_C2: V9, V9_C2C3: V9, V9_BL: V9}
+PROFILE_OF_MODE = {V8: V8, V9: V9, V9_C2: V9, V9_C2C3: V9, V9_BL: V9, V9_C2BL: V9}
 BOOST_BP, BOOST_V = [0.0, 0.15], [0.0, -0.18]
 DOWN_STEP = 0.005
 DOWN_UP_SPEED = 0.14  # m/s, both versions: down_step only above it, and the weak-decel latch
@@ -101,6 +111,14 @@ C3_RELEASE_MAX = 0.0  # m/s^2 per frame, 0 = hold the decel request, never relea
 # BL (mode 5): simulator candidate BLcb_0.6 (2026-10-22 alternatives search, ESC model A only; not vehicle-verified)
 BL_FULL_SPEED = 0.6  # m/s, at or below: full original accel (more-braking side) and full original ComfortBand
 BL_OFF_SPEED = 0.8  # m/s, at or above: v9
+# Mode 6: share of the BL accel blend (1 = mode 5 blend). Chosen in the 2026-10-22 resume toy-model sweep so that the
+# deceleration just before the stop stays near v9 with the C2 band restored (see k9_creep docstring, mode 6).
+C2BL_GAIN = 0.5
+# Mode 6: extra braking while the C2 band is restored, times the band weight target and the creep fade by aTarget
+# (no extra braking when aTarget >= -0.05 or the command is not braking). 0.07 m/s^2 = the K9 log tracking deficit
+# with the original band at 1-2 m/s (aEgo - aReq median +0.31 with band vs +0.24 with band 0).
+C2BL_COMP = 0.10
+C2BL_COMP_FADE_BP = (0.3, 0.6)  # m/s: comp is 0 at or below [0], full at or above [1] (last part of the stop = v9 + BL)
 
 
 def k9_creep_applies(CP) -> bool:
@@ -136,9 +154,10 @@ class K9Creep:
     assert mode in MODES, mode
     self.profile = PROFILES[PROFILE_OF_MODE[mode]]
     self.mode = mode
-    self.cb_restore = mode in (V9_C2, V9_C2C3)  # C2
+    self.cb_restore = mode in (V9_C2, V9_C2C3, V9_C2BL)  # C2
     self.low_hold = mode == V9_C2C3  # C3
-    self.low_blend = mode == V9_BL  # BL
+    self.low_blend = mode in (V9_BL, V9_C2BL)  # BL accel
+    self.bl_band = mode == V9_BL  # BL band (mode 5 only; mode 6 uses the C2 band)
     self.reset()
 
   def reset(self):
@@ -168,6 +187,9 @@ class K9Creep:
         comp *= np.interp(accel, FADE_ACCEL_BP, FADE_ACCEL_V)
         accel = float(min(accel, max(accel + comp, CarControllerParams.ACCEL_MIN)))  # comp <= 0
       self.last = float(accel)
+      bc = self._band_comp(accel, a_target, v_ego)
+      if bc > 0.0:  # mode 6 only; the v9 state (self.last) keeps the v9 value
+        accel = float(max(accel - bc, CarControllerParams.ACCEL_MIN))
       return accel, stopping
 
     lead_close = (lead_visible or lead_distance != 0.0) and lead_distance <= LEAD_LATCH_GAP
@@ -191,9 +213,20 @@ class K9Creep:
     accel = float(min(max(target, prev - down), prev + up))
     self.last = accel  # v9 feather state; the BL blend below changes only the sent value
     if self.low_blend:  # BL: toward the original command only when that brakes more (min) => never weaker than v9
-      w = bl_weight(v_ego)
+      w = bl_weight(v_ego) * (C2BL_GAIN if self.mode == V9_C2BL else 1.0)
       accel = float(min(accel, (1.0 - w) * accel + w * orig_accel))
+    bc = self._band_comp(accel, a_target, v_ego)
+    if bc > 0.0:  # mode 6 only
+      accel = float(max(accel - bc, CarControllerParams.ACCEL_MIN))
     return accel, False
+
+  def _band_comp(self, accel: float, a_target: float, v_ego: float) -> float:
+    """Mode 6 extra braking (>= 0) while the C2 band is restored; 0 for every other mode."""
+    if self.mode != V9_C2BL or accel >= 0.0:
+      return 0.0
+    lo, hi = C2BL_COMP_FADE_BP
+    fade_v = 1.0 if (hi <= lo or not math.isfinite(v_ego)) else float(np.interp(v_ego, [lo, hi], [0.0, 1.0]))
+    return float(C2BL_COMP * fade_v * cb_target_weight(v_ego) * np.interp(a_target, FADE_TARGET_BP, FADE_TARGET_V))
 
   @staticmethod
   def jerk_bands(jerk_u: float, v_ego: float):
@@ -206,7 +239,7 @@ class K9Creep:
     """Applied non-CAN-FD, non-off frames: (jerk_u, cb_upper, cb_lower) to send. cb_upper/lower are the original
     band of this frame, cb_prev the upper band sent on the previous make_jerk call."""
     jerk_u, cu, cl = K9Creep.jerk_bands(jerk_u, v_ego)
-    if self.low_blend:  # BL: w * original band below BL_OFF_SPEED, v9's 0 above
+    if self.bl_band:  # BL (mode 5): w * original band below BL_OFF_SPEED, v9's 0 above
       w = bl_weight(v_ego)
       return jerk_u, float(cb_upper * w), float(cb_lower * w)
     if not self.cb_restore:

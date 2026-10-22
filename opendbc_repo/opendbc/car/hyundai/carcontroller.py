@@ -196,8 +196,8 @@ class CarController(CarControllerBase):
 
     self.hyundai_jerk = HyundaiJerk()
     # K9CreepMode single selector, read live every 0.5 s: 0 = base braking, 1 = creep v8, 2 = creep v9,
-    # 3 = v9 + shudder fix 1 (C2), 4 = v9 + shudder fix 2 (C2 + C3), 5 = v9 + shudder fix 3 (BL); other values act
-    # as 0. See k9_creep.py.
+    # 3 = v9 + shudder fix 1 (C2), 4 = v9 + shudder fix 2 (C2 + C3), 5 = v9 + shudder fix 3 (BL),
+    # 6 = v9 + shudder fix 4 (C2 band + braking compensation); other values act as 0. See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
     self.k9_creep = None
@@ -311,7 +311,7 @@ class CarController(CarControllerBase):
           mode = params.get_int("K9CreepMode")
         except (TypeError, ValueError, OverflowError):
           mode = 0
-        mode = mode if mode in K9_CREEP_MODES else 0  # 6+, negative, NaN, non-int: 0
+        mode = mode if mode in K9_CREEP_MODES else 0  # 7+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts every profile fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(mode) if mode in K9_CREEP_MODES else None
@@ -510,7 +510,7 @@ class CarController(CarControllerBase):
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
     if self.k9_creep is not None:
-      # K9CreepMode 1-5: creep v8/v9 (3/4/5 = v9 + shudder fix); changes accel AND StopReq timing. See k9_creep.py.
+      # K9CreepMode 1-6: creep v8/v9 (3-6 = v9 + shudder fix); changes accel AND StopReq timing. See k9_creep.py.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -955,7 +955,7 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-        if creep and creep_obj is not None:  # K9CreepMode 1-5 and applied this frame only
+        if creep and creep_obj is not None:  # K9CreepMode 1-6 and applied this frame only
           self.jerk_u, self.cb_upper, self.cb_lower = creep_obj.bands(self.jerk_u, CS.out.vEgo, self.cb_upper,
                                                                       self.cb_lower, cb_prev)
         elif creep:  # caller without the object (tests): modes 1/2 band

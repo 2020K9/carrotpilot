@@ -1,9 +1,11 @@
 """K9CreepMode single selector: 0 base braking, 1 creep v8, 2 creep v9, 3 v9 + shudder fix 1 (C2: low-speed
 ComfortBand restore), 4 v9 + shudder fix 2 (C2 + C3: low-speed hold), 5 v9 + shudder fix 3 (BL: below 0.8 m/s
-blend toward base braking, more-braking side only, ComfortBand restored there). Other values act as 0.
+blend toward base braking, more-braking side only, ComfortBand restored there), 6 v9 + shudder fix 4 (mode-3 band +
+braking compensation, never weaker than v9). Other values act as 0.
 
 0/1/2 are checked byte-for-byte against the real frozen 685223c8 controller (the previous menu), with and without a
-stale K9StopTaper left in Params; 0-4 against the frozen 55a8e096 controller (the menu before mode 5).
+stale K9StopTaper left in Params; 0-4 against the frozen 55a8e096 controller (the menu before mode 5); 0-5 against the
+frozen 5d345a08 controller (the menu before mode 6).
 Checks source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour.
 """
 import math
@@ -15,7 +17,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V8, V9, V9_BL, V9_C2, V9_C2C3
+from opendbc.car.hyundai.k9_creep import K9Creep, V8, V9, V9_BL, V9_C2, V9_C2BL, V9_C2C3
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.car.tests import k9_rig
 from openpilot.selfdrive.car.tests.k9_rig import (CC_REL, LCS, ROOT, Rig, edge_sequence, gentle_sequence, load_frozen_cc,
@@ -24,7 +26,8 @@ from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import K9_FLA
 
 PREV_MENU = "685223c8"  # 0 base, 1 v8, 2 v9, 3 the deleted taper
 MENU_0_4 = "55a8e096"  # 0 base, 1 v8, 2 v9, 3 v9+C2, 4 v9+C2+C3 (before mode 5)
-ALL = (V8, V9, V9_C2, V9_C2C3, V9_BL)
+MENU_0_5 = "5d345a08"  # 0-4 as above, 5 v9+BL (before mode 6)
+ALL = (V8, V9, V9_C2, V9_C2C3, V9_BL, V9_C2BL)
 SEQS = {"mixed": mixed_sequence, "edge": edge_sequence, "gentle": gentle_sequence}
 
 
@@ -44,6 +47,11 @@ def prev_cc(tmp_path_factory):
 @pytest.fixture(scope="module")
 def menu4_cc(tmp_path_factory):
   return load_frozen_cc(MENU_0_4, tmp_path_factory.mktemp("menu4_cc"), "cc_55a8e096")
+
+
+@pytest.fixture(scope="module")
+def menu5_cc(tmp_path_factory):
+  return load_frozen_cc(MENU_0_5, tmp_path_factory.mktemp("menu5_cc"), "cc_5d345a08")
 
 
 def rig(monkeypatch, mode, stale_taper=False, cp=None, module=None):
@@ -73,13 +81,15 @@ def test_profile_constants_match_source():
   assert (v8["down_eff_ac"], v9["down_eff_ac"]) == (-0.03, -0.02)
   assert v8["up"](0.2, -0.05, 0.0) == 0.0 and v8["up"](0.2, -0.07, 0.0) == 0.0035 and v8["up"](0.1, 0.0, 0.0) == 0.0035
   assert v9["up"](0.05, 0.0, 0.0) == 0.0032 and v9["up"](0.2, 0.0, 0.02) == 0.0
-  assert kc.MODES == (1, 2, 3, 4, 5) and K9Creep(V9_C2).profile is v9 and K9Creep(V9_C2C3).profile is v9
-  assert K9Creep(V9_BL).profile is v9
+  assert kc.MODES == (1, 2, 3, 4, 5, 6) and K9Creep(V9_C2).profile is v9 and K9Creep(V9_C2C3).profile is v9
+  assert K9Creep(V9_BL).profile is v9 and K9Creep(V9_C2BL).profile is v9
+  assert (kc.C2BL_GAIN, kc.C2BL_COMP, kc.C2BL_COMP_FADE_BP) == (0.5, 0.10, (0.3, 0.6))
   assert (kc.CB_FULL_SPEED, kc.CB_OFF_SPEED, kc.CB_RAMP_STEP, kc.C3_HOLD_SPEED, kc.C3_RELEASE_MAX) == (2.0, 3.0, 0.04, 0.14, 0.0)
   assert (kc.BL_FULL_SPEED, kc.BL_OFF_SPEED) == (0.6, 0.8)
   flags = [(K9Creep(m).cb_restore, K9Creep(m).low_hold, K9Creep(m).low_blend) for m in kc.MODES]
   assert flags == [(False, False, False), (False, False, False), (True, False, False), (True, True, False),
-                   (False, False, True)]
+                   (False, False, True), (True, False, True)]
+  assert [K9Creep(m).bl_band for m in kc.MODES] == [False, False, False, False, True, False]
 
 
 @pytest.mark.parametrize("mode", ALL)
@@ -187,14 +197,30 @@ def test_modes_012_identical_can_to_previous_menu(monkeypatch, prev_cc, mode, fi
   assert "K9StopTaper" not in new.params.reads
 
 
-@pytest.mark.parametrize("value", [6, 7, 99, -1, -4, float("nan"), "nan", float("inf")])
-def test_out_of_range_values_act_as_0(monkeypatch, prev_cc, menu4_cc, value):
+@pytest.mark.parametrize("value", [7, 8, 99, -1, -4, float("nan"), "nan", float("inf")])
+def test_out_of_range_values_act_as_0(monkeypatch, prev_cc, menu4_cc, menu5_cc, value):
   ref = mixed_sequence(rig(monkeypatch, 0, module=prev_cc))
   monkeypatch.undo()
   ref4 = mixed_sequence(rig(monkeypatch, 0, module=menu4_cc))
   monkeypatch.undo()
+  ref5 = mixed_sequence(rig(monkeypatch, 0, module=menu5_cc))
+  monkeypatch.undo()
   r = mixed_sequence(rig(monkeypatch, value))
-  assert r.can == ref.can == ref4.can and r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
+  assert r.can == ref.can == ref4.can == ref5.can and r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
+
+
+# --- CarController: 0-5 byte-identical to 5d345a08 (the menu before mode 6) --------------------------------------
+
+@pytest.mark.parametrize("seq", list(SEQS) + ["blstop"])
+@pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
+@pytest.mark.parametrize("mode", [None, 0, 1, 2, 3, 4, 5])
+def test_modes_012345_identical_can_to_menu_before_mode6(monkeypatch, menu5_cc, mode, fingerprint, seq):
+  run = SEQS.get(seq, bl_stop_sequence)
+  ref = run(rig(monkeypatch, mode, cp=make_cp(fingerprint=fingerprint), module=menu5_cc))
+  monkeypatch.undo()
+  new = run(rig(monkeypatch, mode, cp=make_cp(fingerprint=fingerprint)))
+  assert len(new.can) > 400 and ref.can == new.can
+  assert ref.scc14 == new.scc14
 
 
 # --- CarController: 0-4 byte-identical to 55a8e096 (the menu before mode 5) --------------------------------------
@@ -439,7 +465,7 @@ def test_setting_registered_single_selector_and_taper_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9CreepMode")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 5, 0, 1)
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 6, 0, 1)
   assert not any(p["name"] in ("K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9CreepMode", {PERSISTENT, INT, "0"}},' in keys and "K9CreepV9" not in keys and "K9StopTaper" not in keys
@@ -561,7 +587,7 @@ def test_live_mode_switch_to_5_and_out(monkeypatch):
     if seen is None and r.cc.k9_creep.mode == 5:
       seen = i
   assert seen is not None and seen <= 50 and r.cc.k9_creep.low_blend and not r.cc.k9_creep.low_hold
-  for value in (6, float("nan"), -1):
+  for value in (7, float("nan"), -1):
     r.params.values["K9CreepMode"] = 5
     for _ in range(51):
       r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
@@ -577,3 +603,132 @@ def test_stored_5_is_mode_5(monkeypatch):
   mixed_sequence(r)
   assert isinstance(r.cc.k9_creep, K9Creep) and r.cc.k9_creep.mode == 5 and r.cc.k9_creep.low_blend
   assert not r.cc.k9_creep.cb_restore and not r.cc.k9_creep.low_hold and "K9StopTaper" not in r.params.reads
+
+
+# --- 6 (C2 band + braking compensation) ------------------------------------------------------------------------
+
+def test_mode6_band_comp_unit():
+  c = K9Creep(V9_C2BL)
+  comp = kc.C2BL_COMP
+  assert c._band_comp(-0.5, -0.5, 1.0) == pytest.approx(comp) and c._band_comp(-0.5, -0.5, 2.0) == pytest.approx(comp)
+  assert c._band_comp(-0.5, -0.5, 2.5) == pytest.approx(comp * 0.5) and c._band_comp(-0.5, -0.5, 3.0) == 0.0
+  assert c._band_comp(-0.5, -0.5, 0.6) == pytest.approx(comp) and c._band_comp(-0.5, -0.5, 0.45) == pytest.approx(comp / 2)
+  assert c._band_comp(-0.5, -0.5, 0.3) == 0.0 and c._band_comp(-0.5, -0.5, 0.1) == 0.0
+  assert c._band_comp(0.0, -0.5, 1.0) == 0.0 and c._band_comp(0.2, -0.5, 1.0) == 0.0  # not braking: no extra braking
+  assert c._band_comp(-0.5, -0.05, 1.0) == 0.0 and c._band_comp(-0.5, -0.125, 1.0) == pytest.approx(comp / 2)
+  assert c._band_comp(-0.5, -0.5, float("nan")) == pytest.approx(comp)  # non-finite speed: toward the original band
+  for m in (V8, V9, V9_C2, V9_C2C3, V9_BL):
+    assert K9Creep(m)._band_comp(-0.5, -0.5, 1.0) == 0.0
+  # band: exactly the mode-3 (C2) band, not the mode-5 band
+  c3, c6 = K9Creep(V9_C2), K9Creep(V9_C2BL)
+  for v in (3.5, 2.6, 1.5, 0.7, 0.3):
+    assert c6.bands(0.5, v, 0.8, 0.7, 0.0) == c3.bands(0.5, v, 0.8, 0.7, 0.0)
+
+
+def _comp(v, a_target, accel):
+  return K9Creep(V9_C2BL)._band_comp(accel, a_target, v)
+
+
+@pytest.mark.parametrize("orig", [-1.2, -0.9, -0.6, -0.45, -0.3, -0.1, 0.1])
+@pytest.mark.parametrize("margin_kw", [{}, {"long_accel": -0.05, "a_ego": -0.1}, {"long_accel": -0.6, "a_ego": -0.6},
+                                       {"long_accel": None, "a_ego": -0.2}])
+def test_mode6_never_weaker_than_v9_stopreq_and_state_are_v9(orig, margin_kw):
+  # pid approach 3.5 -> 1.0 m/s, then stopping 1.0 -> 0.06 m/s
+  c9, c6 = K9Creep(V9), K9Creep(V9_C2BL)
+  for v in np.linspace(3.5, 1.0, 120):
+    kw = dict(accel=orig, stopping=False, pid=True, v_ego=float(v), v_ego_raw=float(v), a_target=-0.5, **margin_kw)
+    a9, s9 = upd(c9, **kw)
+    a6, s6 = upd(c6, **kw)
+    assert s6 == s9 is False and c6.last == c9.last
+    assert a6 == pytest.approx(max(a9 - _comp(v, -0.5, a9), kc.CarControllerParams.ACCEL_MIN), abs=1e-12) and a6 <= a9
+  differ = 0
+  for v in np.linspace(1.0, 0.06, 120):
+    a9, s9 = upd(c9, accel=orig, v_ego=float(v), v_ego_raw=float(v), **margin_kw)
+    a6, s6 = upd(c6, accel=orig, v_ego=float(v), v_ego_raw=float(v), **margin_kw)
+    assert s6 == s9 is False  # StopReq withheld exactly like v9
+    assert c6.last == c9.last  # the v9 feather state is not changed
+    w = kc.bl_weight(v) * kc.C2BL_GAIN
+    blend = min(a9, (1.0 - w) * a9 + w * orig)
+    assert a6 == pytest.approx(blend - _comp(v, -0.5, blend), abs=1e-12)
+    assert a6 <= a9 + 1e-12  # never less braking than v9
+    differ += a6 != a9
+  assert differ > 0
+
+
+def test_mode6_latches_like_v9():
+  for kw in ({"esp_standstill": True}, {"a_target": -1.0}, {"a_ego": 0.07}, {"lead_distance": 2.5},
+             {"v_ego": 0.04, "v_ego_raw": 0.04}, {"long_accel": 0.2, "a_ego": 0.0}):
+    c9, c6 = K9Creep(V9), K9Creep(V9_C2BL)
+    for _ in range(3):
+      r9, r6 = upd(c9, **kw), upd(c6, **kw)
+      assert r6 == r9 and r6[1] is True
+  for kw in ({"gas": True}, {"brake": True}, {"override": True}, {"long_active": False}, {"can_valid": False}):
+    assert upd(K9Creep(V9_C2BL), **kw) == (-1.0, True)  # interlock: the original command at once
+
+
+@pytest.mark.parametrize("seq", list(SEQS) + ["blstop"])
+def test_mode6_versus_v9_and_3_through_carcontroller(monkeypatch, seq):
+  run = SEQS.get(seq, bl_stop_sequence)
+  rows = {}
+  for mode in (2, 3, 6):
+    r = rig(monkeypatch, mode)
+    out = []
+    orig_step = r.step
+
+    def step(*a, _out=out, _orig=orig_step, **k):
+      res = _orig(*a, **k)
+      _out.append((a[2] if len(a) > 2 else k["v"], res))
+      return res
+    r.step = step
+    run(r)
+    rows[mode] = (out, r)
+    monkeypatch.undo()
+  (o2, r2), (_, r3), (o6, r6) = rows[2], rows[3], rows[6]
+  stronger = 0
+  for (v, (a2, s2)), (_, (a6, s6)) in zip(o2, o6, strict=True):
+    assert a6 <= a2 + 1e-9  # never weaker than v9
+    if s2 is not None:
+      assert s6["StopReq"] == s2["StopReq"]  # StopReq timing unchanged
+      assert s6["aReqValue"] <= s2["aReqValue"] + 1e-9
+    if a6 != a2:
+      assert v < kc.CB_OFF_SPEED
+      stronger += 1
+  for f, ((v, _), c2, c6) in enumerate(zip(o2, r2.can, r6.can, strict=True)):
+    if v >= kc.CB_OFF_SPEED and all(x[0] >= kc.CB_OFF_SPEED for x in o2[max(0, f - 100):f]):
+      assert c2 == c6, f  # 1 s above 3 m/s: every message identical to v9
+  for (f3, _, d3), (f6, _, d6), (f2, _, d2) in zip(r3.scc14, r6.scc14, r2.scc14, strict=True):
+    assert f3 == f6 == f2
+    for key in d2:
+      if key not in ("ComfortBandUpper", "ComfortBandLower"):
+        assert d6[key] == d2[key], key
+    assert (d6["ComfortBandUpper"] == 0.0) == (d3["ComfortBandUpper"] == 0.0)  # the band follows mode 3's weight
+  assert stronger > 0 or seq == "edge"
+
+
+def test_live_mode_switch_to_6_and_out(monkeypatch):
+  r = rig(monkeypatch, 5)
+  for _ in range(60):
+    r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+  r.params.values["K9CreepMode"] = 6
+  seen = None
+  for i in range(60):
+    r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+    if seen is None and r.cc.k9_creep.mode == 6:
+      seen = i
+  assert seen is not None and seen <= 50
+  assert r.cc.k9_creep.cb_restore and r.cc.k9_creep.low_blend and not r.cc.k9_creep.bl_band and not r.cc.k9_creep.low_hold
+  for value in (7, float("nan"), -1):
+    r.params.values["K9CreepMode"] = 6
+    for _ in range(51):
+      r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+    assert r.cc.k9_creep.mode == 6
+    r.params.values["K9CreepMode"] = value
+    for _ in range(51):
+      r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+    assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
+
+
+def test_stored_6_is_mode_6(monkeypatch):
+  r = rig(monkeypatch, 6, stale_taper=True)
+  mixed_sequence(r)
+  assert isinstance(r.cc.k9_creep, K9Creep) and r.cc.k9_creep.mode == 6 and "K9StopTaper" not in r.params.reads
