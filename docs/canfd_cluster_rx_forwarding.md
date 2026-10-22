@@ -40,7 +40,7 @@ missing RX, unchanged host counters/CRC (including +2/wrap), the exact legacy
 non-camera behavior, and unchanged control FIFO drain/reuse/exhaustion.
 Interface tests cover every CAN-FD platform with an existing torque-parameter
 entry in HDA1/HDA2 configurations; the pre-existing incomplete K5 HEV entry
-cannot construct CarParams. No platform has a static direct-TX flag.
+could not construct CarParams (that platform was removed on 2026-10-22). No platform has a static direct-TX flag.
 ARM GCC 13.3.1 builds F4/H7 main firmware and bootstubs with `-Werror`, and
 development signing passes. Windows Params is substituted only in desktop
 tests. Reproduction scripts and results are retained locally under

@@ -60,10 +60,6 @@ EMPTY_FW_PLATFORMS = {car for car, ecus in FW_VERSIONS.items() if not any(ecus.v
 def version_fws(car_model, fws):
   return [fw for fw in fws if fw not in LOGGING_ONLY_FW.get(car_model, set())]
 
-# Known fork bug, deliberately NOT fixed here (adding torque data would change how this car drives):
-# KIA_K5_DL3_24_HEV has FW fingerprints but no torque_data entry, so get_params() raises KeyError.
-MISSING_TORQUE_DATA = {CAR.KIA_K5_DL3_24_HEV}
-
 
 class FakeParams:
   """Deterministic stand-in for the device Params that hyundai CarInterface reads."""
@@ -117,15 +113,8 @@ class TestHyundaiFingerprint:
     # Alternate lateral control limits, for high torque cars, verify Panda safety mode flag is set
     fingerprint = gen_empty_fingerprint()
     for car_model in CAR:
-      if car_model in MISSING_TORQUE_DATA:
-        continue
       CP = CarInterface.get_params(car_model, fingerprint, [], False, False, False)
       assert bool(CP.flags & HyundaiFlags.ALT_LIMITS) == bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.ALT_LIMITS)
-
-  @pytest.mark.xfail(raises=KeyError, strict=True, reason="KIA_K5_DL3_24_HEV has no torque_data entry (known, unfixed)")
-  def test_missing_torque_data_is_known(self, fake_params):
-    for car_model in MISSING_TORQUE_DATA:
-      CarInterface.get_params(car_model, gen_empty_fingerprint(), [], False, False, False)
 
   def test_can_features(self):
     # Test no EV/HEV in any gear lists (should all use ELECT_GEAR)
