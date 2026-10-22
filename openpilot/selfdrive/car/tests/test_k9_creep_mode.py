@@ -1,10 +1,10 @@
 """K9StopMode single selector: 0 base braking, 1 v9, 2 v9 + shudder fix (low-speed ComfortBand restore + braking
-compensation, never weaker than v9). Other values act as 0.
+compensation + creep_fix-method sent-value gate, never weaker than v9). Other values act as 0.
 
-K9StopMode replaced K9CreepMode (0-6) on 2026-10-22. Every number is checked byte-for-byte against the real frozen
-aeef67c6 controller (the 0-6 menu): new 0 / unset / invalid = old 0, new 1 = old 2 (v9), new 2 = old 6, and a stale
-K9CreepMode left in Params is never read. The K9Creep object is also compared with the frozen aeef67c6 one on random
-and grid inputs (outputs and internal state, exact).
+K9StopMode replaced K9CreepMode (0-6) on 2026-10-22. 0 and 1 are checked byte-for-byte against the real frozen
+aeef67c6 controller (the 0-6 menu): new 0 / unset / invalid = old 0, new 1 = old 2 (v9), and a stale K9CreepMode left
+in Params is never read. Mode 2 was improved in place (2026-10-22 stop_ref: no re-press, hold at the K9 wheel stop,
+K9 creep floor, no release at the latch) and is checked against v9 (StopReq identical, aReq never weaker).
 Checks source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour.
 """
 import math
@@ -24,7 +24,7 @@ from openpilot.selfdrive.car.tests.k9_rig import (CC_REL, LCS, ROOT, Rig, edge_s
 from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import K9_FLAGS, make_cp
 
 OLD_MENU = "aeef67c6"  # K9CreepMode 0 base, 1 v8, 2 v9, 3/4/5 candidates, 6 v9 + shudder fix 4
-OLD_OF_NEW = {None: 0, 0: 0, 1: 2, 2: 6}
+OLD_OF_NEW = {None: 0, 0: 0, 1: 2}  # mode 2 was improved in place (2026-10-22 stop_ref): compared with v9 below
 ALL = (V9, V9_SHUDDER_FIX)
 INVALID = (3, 4, 5, 6, 7, 99, -1, -4, float("nan"), "nan", float("inf"))
 
@@ -182,24 +182,22 @@ def _comp(v, a_target, accel):
 def test_mode2_never_weaker_than_v9_stopreq_and_state_are_v9(orig, margin_kw):
   # pid approach 3.5 -> 1.0 m/s, then stopping 1.0 -> 0.06 m/s
   c9, c2 = K9Creep(V9), K9Creep(V9_SHUDDER_FIX)
+  differ = 0
   for v in np.linspace(3.5, 1.0, 120):
     kw = dict(accel=orig, stopping=False, pid=True, v_ego=float(v), v_ego_raw=float(v), a_target=-0.5, **margin_kw)
     a9, s9 = upd(c9, **kw)
     a2, s2 = upd(c2, **kw)
     assert s2 == s9 is False and c2.last == c9.last
-    assert a2 == pytest.approx(max(a9 - _comp(v, -0.5, a9), kc.CarControllerParams.ACCEL_MIN), abs=1e-12) and a2 <= a9
-  differ = 0
+    assert a2 <= a9 + 1e-12 and a2 >= a9 - _comp(v, -0.5, a9) - 1e-12  # extra braking at most the band comp
+    differ += a2 != a9
   for v in np.linspace(1.0, 0.06, 120):
     a9, s9 = upd(c9, accel=orig, v_ego=float(v), v_ego_raw=float(v), **margin_kw)
     a2, s2 = upd(c2, accel=orig, v_ego=float(v), v_ego_raw=float(v), **margin_kw)
     assert s2 == s9 is False  # StopReq withheld exactly like v9
     assert c2.last == c9.last  # the v9 feather state is not changed
-    w = kc.blend_weight(v) * kc.BLEND_GAIN
-    blend = min(a9, (1.0 - w) * a9 + w * orig)
-    assert a2 == pytest.approx(blend - _comp(v, -0.5, blend), abs=1e-12)
     assert a2 <= a9 + 1e-12  # never less braking than v9
     differ += a2 != a9
-  assert differ > 0
+  assert differ > 0 or orig >= 0.0  # not braking: no extra braking at all
 
 
 def test_mode2_latches_like_v9():
@@ -213,7 +211,92 @@ def test_mode2_latches_like_v9():
     assert upd(K9Creep(V9_SHUDDER_FIX), **kw) == (-1.0, True)  # interlock: the original command at once
 
 
-# --- K9Creep object: exactly the frozen aeef67c6 one (new 1 = old 2, new 2 = old 6) ------------------------------
+def _margin(v, la, ae):
+  return min(la, ae + 0.10) - float(np.interp(v, kc.MIN_DECEL_BP, kc.MIN_DECEL_V))
+
+
+def _feather_inputs(rng, n=400, v0=1.0):
+  """stopping state before any latch (a_ego <= 0.05, eff_ac <= 0.03, v >= 0.06): noisy original command/feedback."""
+  for i in range(n):
+    v = max(v0 - (v0 - 0.06) * i / (n - 1), 0.06)
+    ae = rng.uniform(-0.8, 0.05)
+    la = min(rng.uniform(-0.9, 0.2), ae + 0.10, 0.03)
+    yield {"accel": rng.uniform(-1.3, -0.1), "a_target": rng.uniform(-0.9, -0.1), "v_ego": v, "v_ego_raw": v,
+           "a_ego": ae, "long_accel": la}
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_mode2_feather_gate_no_repress_hold_and_floor(seed):
+  rng = random.Random(f"k9-gate-{seed}")
+  c9, c2 = K9Creep(V9), K9Creep(V9_SHUDDER_FIX)
+  for v in np.linspace(3.0, 1.0, 80):  # pid approach
+    kw = {"accel": -0.7, "stopping": False, "pid": True, "v_ego": float(v), "v_ego_raw": float(v), "a_target": -0.5}
+    upd(c9, **kw), upd(c2, **kw)
+  prev = c2.sent
+  for kw in _feather_inputs(rng):
+    a9, s9 = upd(c9, **kw)
+    a2, s2 = upd(c2, **kw)
+    v = kw["v_ego"]
+    assert s9 is False and s2 is False and c2.last == c9.last and not c2.latched  # StopReq/state exactly v9
+    floor = float(np.interp(v, kc.FLOOR_BP, kc.FLOOR_V))
+    assert a2 <= a9 + 1e-12 and (prev > floor or a2 <= floor + 1e-12)  # once at the K9 creep floor, never above it
+    if a2 < prev - 1e-12 and a2 != a9:  # mode 2 itself pressed more: only by DOWN_STEP, only when decel is weak
+      assert prev - a2 <= kc.DOWN_STEP + 1e-12
+      assert v > kc.DOWN_UP_SPEED and _margin(v, kw["long_accel"], kw["a_ego"]) > kc.GATE_DOWN_MARGIN
+    if v <= kc.HOLD_SPEED:
+      assert a2 <= prev + 1e-12  # K9 wheels already stopped: no release
+    else:
+      assert a2 <= prev + kc.UP_LOW + kc.CATCH_UP + 1e-12  # release rate
+    prev = a2
+
+
+def test_mode2_latch_never_releases_and_stopreq_is_v9():
+  for latch_kw in ({"esp_standstill": True}, {"v_ego": 0.04, "v_ego_raw": 0.04}, {"a_target": -1.2}, {"a_ego": 0.07},
+                   {"lead_distance": 2.0}):
+    c9, c2 = K9Creep(V9), K9Creep(V9_SHUDDER_FIX)
+    for v in np.linspace(0.6, 0.12, 120):
+      kw = {"accel": -0.5, "v_ego": float(v), "v_ego_raw": float(v), "a_ego": -0.5, "long_accel": -0.5}
+      upd(c9, **kw), upd(c2, **kw)
+    before = c2.sent
+    assert before is not None and before <= float(np.interp(0.12, kc.FLOOR_BP, kc.FLOOR_V)) + 1e-12
+    for accel in (-0.5, -0.45, -0.8, -1.0):
+      kw = {"accel": accel, "v_ego": 0.1, "v_ego_raw": 0.1, "a_ego": -0.3, "long_accel": -0.3}
+      kw.update(latch_kw)
+      a9, s9 = upd(c9, **kw)
+      a2, s2 = upd(c2, **kw)
+      assert s9 is True and s2 is True and c2.latched and c2.last == c9.last
+      assert a2 == pytest.approx(min(a9, before)) and a2 <= a9
+      before = a2
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_mode2_pid_gate_below_6_4_kmh(seed):
+  rng = random.Random(f"k9-pid-gate-{seed}")
+  c9, c2 = K9Creep(V9), K9Creep(V9_SHUDDER_FIX)
+  prev = None
+  for i in range(600):
+    v = 2.5 - 2.0 * i / 599
+    ae = rng.uniform(-0.9, 0.0)
+    kw = {"accel": rng.uniform(-1.2, -0.05), "a_target": rng.choice([rng.uniform(-0.9, -0.06), -0.3]), "stopping": False,
+          "pid": True, "v_ego": v, "v_ego_raw": v, "a_ego": ae, "long_accel": rng.uniform(-1.0, 0.1)}
+    a9, _ = upd(c9, **kw)
+    a2, s2 = upd(c2, **kw)
+    assert s2 is False and a2 <= a9 + 1e-12 and c2.last == c9.last
+    if prev is not None and v < kc.GATE_SPEED and a2 < prev - 1e-12 and a2 != a9:
+      assert prev - a2 <= kc.DOWN_STEP + 1e-12 and _margin(v, kw["long_accel"], ae) > kc.GATE_DOWN_MARGIN
+    prev = a2
+
+
+def test_mode2_band_comp_rises_rate_limited():
+  c = K9Creep(V9_SHUDDER_FIX)
+  out = [c._band_comp_limited(-0.6, a_t, 1.0) for a_t in [-0.05] * 5 + [-0.5] * 80 + [-0.05] * 3]
+  assert out[:5] == [0.0] * 5
+  assert np.all(np.diff(out[4:85]) <= kc.BC_RATE + 1e-12) and out[84] == pytest.approx(kc.COMP_DECEL)
+  assert out[85] == 0.0  # falls (less braking) at once
+  assert K9Creep(V9)._band_comp_limited(-0.6, -0.5, 1.0) == 0.0
+
+
+# --- K9Creep object: exactly the frozen aeef67c6 one (new 1 = old 2) ------------------------------
 
 def _state(c):
   return (c.latched, c.last, c.active, c.cb_w)
@@ -237,7 +320,7 @@ def _random_inputs(rng, n):
 
 
 @pytest.mark.parametrize("seed", range(6))
-@pytest.mark.parametrize("new_mode", ALL)
+@pytest.mark.parametrize("new_mode", (V9,))
 def test_k9creep_object_identical_to_old_menu(old_cc, new_mode, seed):
   rng = random.Random(f"k9-stopmode-{seed}")
   old, new = old_cc.K9Creep(OLD_OF_NEW[new_mode]), K9Creep(new_mode)
@@ -256,7 +339,7 @@ def test_k9creep_object_identical_to_old_menu(old_cc, new_mode, seed):
       assert old.cb_w == new.cb_w
 
 
-@pytest.mark.parametrize("new_mode", ALL)
+@pytest.mark.parametrize("new_mode", (V9,))
 def test_k9creep_object_identical_to_old_menu_on_grids(old_cc, new_mode):
   for orig in (-1.2, -0.9, -0.6, -0.45, -0.3, -0.1, 0.1):
     for margin_kw in ({}, {"long_accel": -0.05, "a_ego": -0.1}, {"long_accel": -0.6, "a_ego": -0.6},
@@ -275,7 +358,7 @@ def test_k9creep_object_identical_to_old_menu_on_grids(old_cc, new_mode):
 
 @pytest.mark.parametrize("seq", list(SEQS))
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 2])
+@pytest.mark.parametrize("mode", [None, 0, 1])
 def test_new_modes_identical_can_to_old_menu(monkeypatch, old_cc, mode, fingerprint, seq):
   ref = SEQS[seq](old_rig(monkeypatch, old_cc, OLD_OF_NEW[mode], cp=make_cp(fingerprint=fingerprint)))
   monkeypatch.undo()
@@ -300,6 +383,12 @@ def test_invalid_values_act_as_0(monkeypatch, old_cc, value):
 @pytest.mark.parametrize("stale", [1, 2, 3, 4, 5, 6])
 @pytest.mark.parametrize("mode", [None, 1, 2])
 def test_stale_old_key_is_never_read(monkeypatch, old_cc, stale, mode):
+  if mode == 2:  # no frozen reference for the improved mode 2: same bytes as a fresh K9StopMode=2 rig
+    ref = gentle_sequence(rig(monkeypatch, 2))
+    monkeypatch.undo()
+    r = gentle_sequence(rig(monkeypatch, 2, K9CreepMode=stale))
+    assert r.can == ref.can and "K9CreepMode" not in r.params.reads and r.cc.k9_creep_mode == 2
+    return
   # a device that still has K9CreepMode stored: only K9StopMode decides (unset = 0)
   ref = gentle_sequence(old_rig(monkeypatch, old_cc, OLD_OF_NEW[mode]))
   monkeypatch.undo()

@@ -120,6 +120,14 @@ def load_frozen_cc(commit, tmp_dir, tag):
   Everything else under opendbc_repo must be byte-identical to the working tree (asserted)."""
   changed = subprocess.run(["git", "diff", "--name-only", commit, "--", "opendbc_repo"], cwd=ROOT, check=True,
                            capture_output=True, text=True).stdout.split()
+  changed = [f for f in changed if "/tests/" not in f]  # test files are never imported by the controller
+  # car data shared by all brands (e.g. c6736bca removed KIA_K5_DL3_24_HEV) may differ when the K9 is not touched
+  car_data = {f"{HY}/values.py", f"{HY}/fingerprints.py", "opendbc_repo/opendbc/car/fingerprints.py",
+              "opendbc_repo/opendbc/car/torque_data/params.toml"}
+  for f in set(changed) & car_data:
+    diff = subprocess.run(["git", "diff", commit, "--", f], cwd=ROOT, check=True, capture_output=True, text=True).stdout
+    assert "K9" not in diff, f
+  changed = [f for f in changed if f not in car_data]
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
