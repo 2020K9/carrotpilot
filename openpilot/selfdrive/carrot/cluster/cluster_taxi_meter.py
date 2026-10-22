@@ -446,6 +446,13 @@ class TaxiMeterPanel:
     self._static_target = None
     self._static_key = None
 
+  def restart(self) -> None:
+    """K9ExtHud changed (non-1 -> 1, and 1 -> non-1 so nothing stale is kept): fare, distance and
+    time back to 0 / the base fare; the next onroad frame starts a fresh drive from the base fare."""
+    self.meter.reset()
+    self.meter._was_onroad = False
+    self.anim.reset()
+
   # -- per frame state
   def update(self, state) -> None:
     speed = float(getattr(state, "speed_kph", 0.0) or 0.0)

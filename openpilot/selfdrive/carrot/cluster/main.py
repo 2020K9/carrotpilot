@@ -524,6 +524,21 @@ class ClusterHudModeParamReader:
         return taxi_meter_selected(self._params)
 
 
+def sync_taxi_meter_panel(renderer, selected: bool) -> bool:
+    """Periodic K9ExtHud read -> renderer. A change of the read value (previous -> new) switches the
+    panel; non-1 -> 1 restarts the meter (fare/distance/time 0, base fare). Same value = keep counting."""
+    selected = bool(selected)
+    if selected == renderer.taxi_meter_enabled:
+        return False
+    print(
+        f"K9ExtHud taxi meter panel: {renderer.taxi_meter_enabled} -> {selected}"
+        + (" (meter reset)" if selected else ""),
+        flush=True,
+    )
+    renderer.set_taxi_meter_enabled(selected)
+    return True
+
+
 class ClusterHudOutputGateParamReader:
     def __init__(self) -> None:
         self._params = None
@@ -1298,10 +1313,7 @@ def run_demo(
                     )
                     break
                 if hud_mode_param_reader is not None:
-                    next_taxi_meter = hud_mode_param_reader.read_taxi_meter()
-                    if next_taxi_meter != renderer.taxi_meter_enabled:
-                        print(f"K9ExtHud taxi meter panel: {renderer.taxi_meter_enabled} -> {next_taxi_meter}", flush=True)
-                        renderer.set_taxi_meter_enabled(next_taxi_meter)
+                    sync_taxi_meter_panel(renderer, hud_mode_param_reader.read_taxi_meter())
                 next_hud_encoder = hud_encoder_param_reader.read() if hud_encoder_param_reader is not None else None
                 if next_hud_encoder is not None and next_hud_encoder != hud_encoder_watch:
                     print(

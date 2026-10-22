@@ -1050,9 +1050,13 @@ class ClusterUiRenderer:
     _taxi_meter_panel: TaxiMeterPanel | None = None
 
     def set_taxi_meter_enabled(self, enabled: bool) -> None:
+        was_enabled = self.taxi_meter_enabled
         self.taxi_meter_enabled = bool(enabled)
         if self.taxi_meter_enabled and self._taxi_meter_panel is None:
-            self._taxi_meter_panel = TaxiMeterPanel()
+            self._taxi_meter_panel = TaxiMeterPanel()  # fresh meter (process start / first 1)
+        elif self.taxi_meter_enabled != was_enabled and self._taxi_meter_panel is not None:
+            # K9ExtHud non-1 -> 1 always starts the meter over; 1 -> non-1 drops the count at once
+            self._taxi_meter_panel.restart()
         self._invalidate_trip_report_cache()
 
     def _taxi_meter_panel_active(self, screen_mode: int) -> bool:
