@@ -87,10 +87,11 @@ def test_mode2_lead_zone_then_standstill_latches():
   assert s is True and a <= before + 1e-12  # standstill latch, no release at the latch
 
 
-@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V9_SHUDDER_FIX, False), (V10, True), (V10_SHUDDER_FIX, True)])
+@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V9_SHUDDER_FIX, False), (V10, True), (V10_SHUDDER_FIX, False)])
 def test_through_carcontroller_lead_2_9_m(monkeypatch, mode, expect_sr_rolling):
-  # rewritten 2026-10-23 07:25: K9StopMode values moved, so the kind is mapped to menu 1 (test only); v10 and
-  # v10 + shudder fix keep the 3.0 m lead latch (safety addition of 1d0961da 2), v9 + shudder fix latches at 2.5 m
+  # rewritten 2026-10-23 07:25: K9StopMode values moved, so the kind is mapped to menu 1 (test only); v10 keeps the
+  # 3.0 m lead latch (safety addition of 1d0961da 2), v9 + shudder fix latches at 2.5 m; rewritten again in r2:
+  # v10 + lead stop fix (menu 3) latches at 2.5 m too
   monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: mode})
   r = Rig(monkeypatch, K9StopMode=1)
   for i in range(100):
