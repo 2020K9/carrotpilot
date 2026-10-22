@@ -44,7 +44,7 @@ class TaxiFare:
 TAXI_FARE_SIHEUNG = {
   # 모범·대형 (meter default)
   "deluxe": TaxiFare(
-    name="시흥시 모범택시 (경기 표준형)",
+    name="보노 모범택시 요금",
     base_fare_won=7000, base_distance_m=3000.0,
     distance_unit_m=144.0, distance_unit_won=200,
     time_unit_s=35.0, time_unit_won=200,
@@ -53,7 +53,7 @@ TAXI_FARE_SIHEUNG = {
   ),
   # 중형
   "midsize": TaxiFare(
-    name="시흥시 중형택시 (경기 표준형)",
+    name="보노 중형택시 요금",
     base_fare_won=4800, base_distance_m=1600.0,
     distance_unit_m=131.0, distance_unit_won=100,
     time_unit_s=30.0, time_unit_won=100,
@@ -62,7 +62,7 @@ TAXI_FARE_SIHEUNG = {
   ),
 }
 TAXI_METER_DEFAULT_FARE = TAXI_FARE_SIHEUNG["deluxe"]
-TAXI_METER_FOOTER_TITLE = "시흥시 모범택시 요금 (경기 표준형)"
+TAXI_METER_FOOTER_TITLE = "보노 모범택시 요금"
 TAXI_METER_FOOTER_TEXT = "기본 7,000원(3km) · 거리 144m당 200원 · 시간 35초당 200원(15km/h 이하) · 심야 23~04시 20%"
 TAXI_METER_MAX_DT_S = 1.0
 
