@@ -98,7 +98,8 @@ from cluster_scene import (
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
-from cluster_taxi_meter import TaxiMeterPanel
+from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
+from cluster_taxi_c1 import C1MeterPanel
 from cluster_utils import blink_visible, clamp
 
 
@@ -1047,13 +1048,15 @@ class ClusterUiRenderer:
     # K9ExtHud=1: the right information panel shows the taxi meter. Off (the
     # default, K9ExtHud -1/0) leaves every draw call exactly as before.
     taxi_meter_enabled = False
-    _taxi_meter_panel: TaxiMeterPanel | None = None
+    _taxi_meter_panel: C1MeterPanel | None = None
+    _taxi_meter_season = 0   # K9MeterSeason (0 auto / 1 봄 / 2 여름 / 3 가을 / 4 겨울)
 
     def set_taxi_meter_enabled(self, enabled: bool) -> None:
         was_enabled = self.taxi_meter_enabled
         self.taxi_meter_enabled = bool(enabled)
         if self.taxi_meter_enabled and self._taxi_meter_panel is None:
-            self._taxi_meter_panel = TaxiMeterPanel()  # fresh meter (process start / first 1)
+            self._taxi_meter_panel = C1MeterPanel()  # fresh meter (process start / first 1), C1 look
+            self._taxi_meter_panel.set_season_setting(self._taxi_meter_season)
         elif self.taxi_meter_enabled != was_enabled and self._taxi_meter_panel is not None:
             # K9ExtHud non-1 -> 1 always starts the meter over; 1 -> non-1 drops the count at once
             self._taxi_meter_panel.restart()
@@ -1063,6 +1066,27 @@ class ClusterUiRenderer:
         """Live carState samples [(t_s, vEgo_mps), ...] for the taxi meter (K9ExtHud=1 only)."""
         if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
             self._taxi_meter_panel.feed_speed_samples(samples)
+
+    def set_taxi_meter_season(self, value) -> None:
+        """K9MeterSeason (read only by the HUD): 0 auto (month) / 1 spring / 2 summer / 3 autumn / 4 winter."""
+        from cluster_taxi_c1 import normalize_meter_season
+        self._taxi_meter_season = normalize_meter_season(value)
+        if self._taxi_meter_panel is not None:
+            self._taxi_meter_panel.set_season_setting(self._taxi_meter_season)
+
+    def feed_taxi_meter_occupant(self, present, t_s=None) -> None:
+        """Latest passenger-seat occupant flag (CAN 0x500 bus0 bits 2-3) for the C1 meter (K9ExtHud=1 only)."""
+        if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
+            self._taxi_meter_panel.feed_occupant(present, t_s)
+
+    def taxi_meter_toggle(self) -> None:
+        """Screen toggle of the C1 meter (always wins over the occupant sensor)."""
+        if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
+            self._taxi_meter_panel.toggle()
+
+    def _carrot_wheel_hidden(self, state: ClusterUiState) -> bool:
+        """K9ExtHud=1 with the C1 meter on screen: the clam is the only steering display (no carrot wheel)."""
+        return self.taxi_meter_enabled and self._taxi_meter_panel_active(self._effective_screen_mode(state))
 
     def _taxi_meter_panel_active(self, screen_mode: int) -> bool:
         return self.taxi_meter_enabled and self._taxi_meter_panel is not None and screen_mode not in (
@@ -6881,6 +6905,8 @@ class ClusterUiRenderer:
         )
 
     def _draw_lfa_status_icon(self, state: ClusterUiState, bottom_y: float) -> None:
+        if self._carrot_wheel_hidden(state):
+            return  # 보노보노 11:48 "당근스티어링은 빼자": on the C1 meter screen only the clam shows steering
         theme = self._current_theme()
         active = bool(state.lfa_active)
         texture = self._lfa_active_texture if active and self._lfa_active_texture is not None else self._lfa_texture

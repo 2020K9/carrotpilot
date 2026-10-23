@@ -58,10 +58,21 @@ def test_taxi_panel_only_touches_the_information_panel():
         drive_box = (NAVI_LIVE_PANEL_W, 0, r.width, r.height)
         panel_x0 = 0
       base = _rgb(off_a)
-      for other in (on, off_c):
-        diff = ImageChops.difference(base.crop(drive_box), _rgb(other).crop(drive_box))
-        assert diff.getbbox() is None, (layout, diff.getbbox())
-      full = ImageChops.difference(base, _rgb(on)).getbbox()
+      diff = ImageChops.difference(base.crop(drive_box), _rgb(off_c).crop(drive_box))
+      assert diff.getbbox() is None, (layout, diff.getbbox())
+      # 11:48 "당근스티어링은 빼자" (deliberate change, pin updated): with the C1 meter on, the only change
+      # outside the information panel is the carrot wheel (LFA status icon, top of the driving screen) going away
+      from cluster_renderer import LFA_STATUS_ICON_SIZE, TOP_STATUS_CENTER_Y
+      wheel = ImageChops.difference(base.crop(drive_box), _rgb(on).crop(drive_box)).getbbox()
+      assert wheel is not None, layout
+      assert wheel[2] - wheel[0] <= LFA_STATUS_ICON_SIZE * 1.6 and wheel[3] - wheel[1] <= LFA_STATUS_ICON_SIZE * 1.6, (layout, wheel)
+      assert wheel[3] <= TOP_STATUS_CENTER_Y + LFA_STATUS_ICON_SIZE, (layout, wheel)
+      from PIL import ImageDraw
+      masked_on, masked_base = _rgb(on), base.copy()
+      box = (wheel[0] + drive_box[0], wheel[1] + drive_box[1], wheel[2] + drive_box[0], wheel[3] + drive_box[1])
+      for im in (masked_on, masked_base):
+        ImageDraw.Draw(im).rectangle(box, fill=(0, 0, 0))
+      full = ImageChops.difference(masked_base, masked_on).getbbox()
       assert full is not None and full[0] >= panel_x0 and full[2] <= panel_x0 + NAVI_LIVE_PANEL_W, (layout, full)
   finally:
     r.close()

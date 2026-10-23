@@ -147,6 +147,61 @@ class TaxiSpeedSampleReader:
         self._sock = None
 
 
+class TaxiOccupantReader:
+    """K9ExtHud=1 C1 meter: passenger-seat occupant flag from CAN 0x500 (ACU14 CF_TTL_Ind, bits 2-3) on bus 0.
+    Own non-conflated 'can' socket, opened on first use (K9ExtHud=1 only), read-only. Cost cap: raw messages
+    are received every frame but only the newest OCC_PARSE_TAIL (~150 ms of CAN at 100 Hz; 0x500 is ~10 Hz)
+    are parsed, at most every OCC_PARSE_PERIOD_S."""
+
+    OCC_PARSE_TAIL = 15
+    OCC_PARSE_PERIOD_S = 0.25
+    MAX_RAW_PER_CALL = 400
+
+    def __init__(self, messaging: Any) -> None:
+        self._messaging = messaging
+        self._sock: Any | None = None
+        self._tail: list = []
+        self._next_parse = 0.0
+        self.last: tuple[float, bool] | None = None   # (logMonoTime s, present)
+
+    def poll(self, now: float | None = None) -> tuple[float, bool] | None:
+        if self._sock is None:
+            try:
+                self._sock = self._messaging.sub_sock("can", conflate=False)
+            except Exception:
+                self._sock = None
+            return None
+        try:
+            for _ in range(self.MAX_RAW_PER_CALL):
+                dat = self._sock.receive(non_blocking=True)
+                if dat is None:
+                    break
+                self._tail.append(dat)
+                if len(self._tail) > self.OCC_PARSE_TAIL:
+                    del self._tail[0]
+        except Exception:
+            return self.last
+        now = time.monotonic() if now is None else now
+        if now < self._next_parse or not self._tail:
+            return self.last
+        self._next_parse = now + self.OCC_PARSE_PERIOD_S
+        tail, self._tail = self._tail, []
+        for dat in reversed(tail):
+            try:
+                msg = self._messaging.log_from_bytes(dat)
+                for c in msg.can:
+                    if c.address == 0x500 and c.src == 0 and len(c.dat) >= 1:
+                        self.last = (int(msg.logMonoTime) * 1e-9, ((c.dat[0] >> 2) & 0x3) == 1)
+                        return self.last
+            except Exception:
+                continue
+        return self.last
+
+    def stop(self) -> None:
+        self._sock = None
+        self._tail = []
+
+
 class OpenpilotLiveSource:
     def __init__(self, include_can: bool = False, timeout_ms: int = 0) -> None:
         try:
@@ -325,6 +380,15 @@ class OpenpilotLiveSource:
         if self._taxi_speed_reader is not None:
             self._taxi_speed_reader.stop()
             self._taxi_speed_reader = None
+        if getattr(self, "_taxi_occ_reader", None) is not None:
+            self._taxi_occ_reader.stop()
+            self._taxi_occ_reader = None
+
+    def poll_taxi_occupant(self) -> tuple[float, bool] | None:
+        """K9ExtHud=1: latest (logMonoTime s, passenger present) from CAN 0x500 bus0, None = no frame yet."""
+        if getattr(self, "_taxi_occ_reader", None) is None:
+            self._taxi_occ_reader = TaxiOccupantReader(self.messaging)
+        return self._taxi_occ_reader.poll()
 
     def update(self) -> ClusterUiState:
         profile_stage = self._profile_start()

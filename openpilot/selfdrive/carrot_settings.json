@@ -397,7 +397,8 @@
             "K9StopMode",
             "K9LaneFix",
             "K9LRView",
-            "K9ExtHud"
+            "K9ExtHud",
+            "K9MeterSeason"
           ]
         }
       ]
@@ -3506,13 +3507,13 @@
       "group": "외부 HUD",
       "name": "K9ExtHud",
       "title": "외부 HUD 화면 선택 (실험)",
-      "descr": "번호 하나만 고릅니다. -1: 사용 안 함(기본값). 기존과 똑같이 '외부 HUD 활성화'(ClusterHud)와 외부 HUD 설정이 그대로 동작합니다. 0: 기존 외부 HUD 화면. 지금 '외부 HUD 활성화'=1로 나오는 화면을 이 메뉴로 띄웁니다. 미러·밝기·회전·인코더·테마·화면 모드·좌우 배치·레이더 등 외부 HUD 세부 설정은 그대로 따릅니다. 1: 택시 미터기 화면. 왼쪽 주행 화면은 0과 같고, 오른쪽 정보 패널 자리에 보노보노 모범택시 미터기를 그립니다(보노 모범택시 요금: 기본 7,000원(3km), 144m당 200원, 35초당 200원, 시간·거리 동시병산(14.8km/h 미만은 시간), 심야 23~04시 20%). 요금은 이번 주행의 실제 거리·시간으로 계산하며 시동(주행 시작)마다 기본요금부터 다시 셉니다. 0으로 바꿨다 1로 하면 미터기 초기화(요금·거리·시간 0, 기본요금부터). 참고용 표시이며 실제 요금 증빙이 아닙니다. 충돌 방지: 0이나 1을 고르면 '외부 HUD 활성화'는 자동으로 0(끔)이 되고, 반대로 '외부 HUD 활성화'를 1로 켜면 이 값은 -1로 돌아갑니다. HUD 프로그램은 하나만 실행됩니다. 0↔1 전환은 HUD를 다시 켜지 않고 약 1초 안에 바뀝니다. 실차 미검증.",
+      "descr": "번호 하나만 고릅니다. -1: 사용 안 함(기본값). 기존과 똑같이 '외부 HUD 활성화'(ClusterHud)와 외부 HUD 설정이 그대로 동작합니다. 0: 기존 외부 HUD 화면. 지금 '외부 HUD 활성화'=1로 나오는 화면을 이 메뉴로 띄웁니다. 미러·밝기·회전·인코더·테마·화면 모드·좌우 배치·레이더 등 외부 HUD 세부 설정은 그대로 따릅니다. 1: 택시 미터기 화면. 왼쪽 주행 화면은 0과 같고, 오른쪽 정보 패널 자리에 보노보노 모범택시 미터기를 그립니다(보노 모범택시 요금: 기본 7,000원(3km), 144m당 200원, 35초당 200원, 시간·거리 동시병산(14.8km/h 미만은 시간), 심야 23~04시 20%). 화면은 C1(치비 보노보노·포로리)이며 보노보노의 조개가 핸들각(steeringAngleDeg)을 1:1로 따라 돌고, 이 화면에서는 당근 핸들 아이콘을 그리지 않습니다. 요금은 실제 거리·시간으로 계산하며, 조수석 승객감지(CAN 0x500 bus0 bit2~3)가 정차 중 5초 켜지면 손님탐, 출발하면 기본요금부터 세고, 5초 꺼지면 지불 화면(마지막 정차 시작 때 요금)이 됩니다. 승객이 없으면 빈차로 기본요금만 흐리게 보입니다. 0으로 바꿨다 1로 하면 미터기 초기화(요금·거리·시간 0, 기본요금부터). 참고용 표시이며 실제 요금 증빙이 아닙니다. 충돌 방지: 0이나 1을 고르면 '외부 HUD 활성화'는 자동으로 0(끔)이 되고, 반대로 '외부 HUD 활성화'를 1로 켜면 이 값은 -1로 돌아갑니다. HUD 프로그램은 하나만 실행됩니다. 0↔1 전환은 HUD를 다시 켜지 않고 약 1초 안에 바뀝니다. 실차 미검증.",
       "egroup": "CLUSTER HUD",
       "etitle": "External HUD Screen Select (Trial)",
-      "edescr": "Single choice. -1: not used (default), identical to before: 'External HUD Display' (ClusterHud) and the external HUD settings work as they do now. 0: existing external HUD screen. Shows the same screen ClusterHud=1 shows today; all external HUD settings (mirror, brightness, rotation, encoder, theme, screen mode, panel layout, radar, ...) still apply. 1: taxi meter screen. The left driving screen is the same as 0; the right information panel shows the Bonobono deluxe taxi meter (Bono deluxe taxi fare: 7,000 KRW for 3 km, 200 KRW per 144 m, 200 KRW per 35 s, distance and time counted together (time below 14.8 km/h), night 23-04 +20%), computed from this drive's real distance and time and restarted from the base fare at every drive start. Switching to 0 and back to 1 resets the meter (fare, distance and time to 0, base fare). For display only, not a fare receipt. No conflict: choosing 0 or 1 turns ClusterHud off (0); turning ClusterHud on (1) returns this to -1. Only one HUD program runs. Switching 0<->1 needs no HUD restart and applies within about 1 s. Not vehicle-validated.",
+      "edescr": "Single choice. -1: not used (default), identical to before: 'External HUD Display' (ClusterHud) and the external HUD settings work as they do now. 0: existing external HUD screen. Shows the same screen ClusterHud=1 shows today; all external HUD settings (mirror, brightness, rotation, encoder, theme, screen mode, panel layout, radar, ...) still apply. 1: taxi meter screen. The left driving screen is the same as 0; the right information panel shows the Bonobono deluxe taxi meter (Bono deluxe taxi fare: 7,000 KRW for 3 km, 200 KRW per 144 m, 200 KRW per 35 s, distance and time counted together (time below 14.8 km/h), night 23-04 +20%), drawn in the C1 look (chibi Bonobono and Porori); Bonobono's clam turns 1:1 with steeringAngleDeg and the carrot wheel icon is not drawn on this screen. The fare uses real distance and time: the passenger-seat occupant flag (CAN 0x500 bus0 bits 2-3) on for 5 s while stopped = passenger aboard, counting from the base fare once moving; off for 5 s = pay screen (fare at the start of the last stop). With no passenger it shows 빈차 and the base fare dimmed. Switching to 0 and back to 1 resets the meter (fare, distance and time to 0, base fare). For display only, not a fare receipt. No conflict: choosing 0 or 1 turns ClusterHud off (0); turning ClusterHud on (1) returns this to -1. Only one HUD program runs. Switching 0<->1 needs no HUD restart and applies within about 1 s. Not vehicle-validated.",
       "cgroup": "外部 HUD",
       "ctitle": "外部 HUD 画面选择（试验）",
-      "cdescr": "单选。-1：不使用（默认），与以前相同，由“外部 HUD 显示”(ClusterHud) 和外部 HUD 设置决定。0：现有外部 HUD 画面，与 ClusterHud=1 的画面相同，外部 HUD 各项设置照常生效。1：出租车计价器画面。左侧驾驶画面与 0 相同，右侧信息面板显示计价器（保诺模范出租车计费：起步 7,000 韩元/3 公里，每 144 米 200 韩元，每 35 秒 200 韩元，距离·时间并算（14.8 km/h 以下计时），夜间 23~04 点加收 20%），按本次行驶的实际距离和时间计算，仅供显示。改为 0 再改回 1 即重置计价器（费用、距离、时间归零，从起步价开始）。防冲突：选 0 或 1 时 ClusterHud 自动关闭(0)；打开 ClusterHud(1) 时本项恢复为 -1。只运行一个 HUD 程序。0↔1 切换无需重启 HUD，约 1 秒内生效。未经实车验证。",
+      "cdescr": "单选。-1：不使用（默认），与以前相同，由“外部 HUD 显示”(ClusterHud) 和外部 HUD 设置决定。0：现有外部 HUD 画面，与 ClusterHud=1 的画面相同，外部 HUD 各项设置照常生效。1：出租车计价器画面。左侧驾驶画面与 0 相同，右侧信息面板显示计价器（保诺模范出租车计费：起步 7,000 韩元/3 公里，每 144 米 200 韩元，每 35 秒 200 韩元，距离·时间并算（14.8 km/h 以下计时），夜间 23~04 点加收 20%），画面为 C1 样式，保诺的贝壳随方向盘角度(steeringAngleDeg) 1:1 转动，此画面不绘制胡萝卜方向盘图标。按实际距离和时间计费：副驾驶乘客检测(CAN 0x500 bus0 bit2~3) 停车时亮 5 秒 = 乘客上车，起步后从起步价开始计费；熄灭 5 秒 = 付款画面（最后一次停车开始时的金额）。无乘客时显示空车与淡化的起步价。仅供显示。改为 0 再改回 1 即重置计价器（费用、距离、时间归零，从起步价开始）。防冲突：选 0 或 1 时 ClusterHud 自动关闭(0)；打开 ClusterHud(1) 时本项恢复为 -1。只运行一个 HUD 程序。0↔1 切换无需重启 HUD，约 1 秒内生效。未经实车验证。",
       "min": -1,
       "max": 1,
       "default": -1,
@@ -3533,6 +3534,46 @@
           "-1 不使用（现有）",
           "0 现有外部 HUD 画面",
           "1 出租车计价器画面"
+        ]
+      }
+    },
+    {
+      "group": "외부 HUD",
+      "name": "K9MeterSeason",
+      "title": "택시 미터기 계절 배경 (실험)",
+      "descr": "'외부 HUD 화면 선택'이 1(택시 미터기 화면)일 때만 쓰는 부가 메뉴입니다. 미터기 배경의 계절을 고릅니다. 0: 자동(기본값) — 날짜의 달을 따라 바뀝니다(3~5월 봄, 6~8월 여름, 9~11월 가을, 12~2월 겨울). 1: 봄. 2: 여름. 3: 가을. 4: 겨울. 낮(05시)·노을(16시)·밤(19시) 전환은 어느 값이든 시각을 따라 그대로 바뀝니다. 다른 값(범위 밖)은 0으로 동작합니다. HUD는 이 값을 읽기만 하며 약 1초 안에 반영됩니다. 요금 계산과는 상관없습니다. 실차 미검증.",
+      "egroup": "CLUSTER HUD",
+      "etitle": "Taxi Meter Season Background (Trial)",
+      "edescr": "Sub-option used only when 'External HUD Screen Select' is 1 (taxi meter screen). Picks the season of the meter background. 0: auto (default), follows the month (Mar-May spring, Jun-Aug summer, Sep-Nov autumn, Dec-Feb winter). 1: spring. 2: summer. 3: autumn. 4: winter. Day (05:00), dusk (16:00) and night (19:00) still follow the clock for every value. Any other value (out of range) acts as 0. The HUD only reads this value; changes apply within about 1 s. No effect on the fare. Not vehicle-validated.",
+      "cgroup": "外部 HUD",
+      "ctitle": "出租车计价器季节背景（试验）",
+      "cdescr": "仅在“外部 HUD 画面选择”为 1（出租车计价器画面）时使用的附加选项，选择计价器背景的季节。0：自动（默认），随月份变化（3~5月春，6~8月夏，9~11月秋，12~2月冬）。1：春。2：夏。3：秋。4：冬。白天(05点)·黄昏(16点)·夜晚(19点)切换在任何值下都按时间照常进行。其他值（超出范围）按 0 处理。HUD 只读取此值，约 1 秒内生效。与计费无关。未经实车验证。",
+      "min": 0,
+      "max": 4,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 자동(달 따라)",
+          "1 봄",
+          "2 여름",
+          "3 가을",
+          "4 겨울"
+        ],
+        "en": [
+          "0 Auto (by month)",
+          "1 Spring",
+          "2 Summer",
+          "3 Autumn",
+          "4 Winter"
+        ],
+        "zh": [
+          "0 自动（按月份）",
+          "1 春",
+          "2 夏",
+          "3 秋",
+          "4 冬"
         ]
       }
     },

@@ -348,7 +348,7 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneFix", "K9LRView", "K9ExtHud"]
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneFix", "K9LRView", "K9ExtHud", "K9MeterSeason"]
   params = settings["params"]
   p = next(x for x in params if x["name"] == "K9LaneFix")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")

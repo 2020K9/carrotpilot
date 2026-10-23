@@ -523,6 +523,16 @@ class ClusterHudModeParamReader:
             return False
         return taxi_meter_selected(self._params)
 
+    def read_meter_season(self) -> int:
+        """K9MeterSeason (read only): 0 auto / 1 spring / 2 summer / 3 autumn / 4 winter; other = 0."""
+        from cluster_taxi_c1 import normalize_meter_season
+        if self._params is None:
+            return 0
+        try:
+            return normalize_meter_season(self._params.get_int("K9MeterSeason"))
+        except Exception:
+            return 0
+
 
 def sync_taxi_meter_panel(renderer, selected: bool) -> bool:
     """Periodic K9ExtHud read -> renderer. A change of the read value (previous -> new) switches the
@@ -552,6 +562,11 @@ def feed_taxi_meter_speed(renderer, source) -> int:
         return 0
     samples = drain()
     renderer.feed_taxi_meter_speed_samples(samples)
+    poll_occ = getattr(source, "poll_taxi_occupant", None)
+    if poll_occ is not None:
+        occ = poll_occ()
+        if occ is not None:
+            renderer.feed_taxi_meter_occupant(occ[1])
     return len(samples)
 
 
@@ -899,6 +914,8 @@ def run_demo(
         language=active_language,
         is_metric=active_is_metric,
     )
+    if hud_mode_param_reader is not None:
+        renderer.set_taxi_meter_season(hud_mode_param_reader.read_meter_season())
     if hud_mode_param_reader is not None and hud_mode_param_reader.read_taxi_meter():
         renderer.set_taxi_meter_enabled(True)
         print("K9ExtHud initial: 1 (taxi meter panel)", flush=True)
@@ -1330,6 +1347,7 @@ def run_demo(
                     break
                 if hud_mode_param_reader is not None:
                     sync_taxi_meter_panel(renderer, hud_mode_param_reader.read_taxi_meter())
+                    renderer.set_taxi_meter_season(hud_mode_param_reader.read_meter_season())
                 next_hud_encoder = hud_encoder_param_reader.read() if hud_encoder_param_reader is not None else None
                 if next_hud_encoder is not None and next_hud_encoder != hud_encoder_watch:
                     print(
