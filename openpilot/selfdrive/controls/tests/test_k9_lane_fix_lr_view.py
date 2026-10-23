@@ -138,7 +138,9 @@ def params(**kw):
 def test_order_and_no_shared_state_in_code():
   modeld = (ROOT / "openpilot/selfdrive/modeld/modeld.py").read_text(encoding="utf-8")
   loop = modeld[modeld.index("def main("):]
-  assert loop.index("model_output = k9_lr_view.apply(model_output)") < loop.index("fill_model_msg(")
+  # (pin rewritten 2026-10-23 lrview_r9: apply() also gets carControl.latActive;
+  #  2026-10-24 lrview_r14: quoted key - r9..r13 pinned sm[carControl], an undefined name = NameError in modeld)
+  assert loop.index("model_output = k9_lr_view.apply(model_output, engaged=bool(sm['carControl'].latActive))") < loop.index("fill_model_msg(")
   lat = (ROOT / "openpilot/selfdrive/controls/lib/lateral_planner.py").read_text(encoding="utf-8")
   assert lat.index("self.LP.parse_model(md)") < lat.index("self.LP.get_d_path(")
   lf = (ROOT / "openpilot/selfdrive/controls/lib/k9_lane_fix.py").read_text(encoding="utf-8")

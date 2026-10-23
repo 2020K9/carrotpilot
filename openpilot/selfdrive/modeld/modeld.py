@@ -14,7 +14,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.modeld.egpu_events import log_event
 from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
 from openpilot.selfdrive.modeld.gpu_sampler import GpuTimingDiag
-from openpilot.selfdrive.modeld.k9_lr_view import K9LRView, read_mode as read_k9_lr_view
+from openpilot.selfdrive.modeld.k9_lr_view import K9LRView, read_mode as read_k9_lr_view, read_one_lane_hold as read_k9_olh
 from openpilot.common.params import Params
 from openpilot.common.stopping_params import get_stopping_speed
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -421,9 +421,12 @@ def main(demo=False):
   # K9LRView (experimental, see k9_lr_view.py). 0 = off: outputs pass through untouched.
   k9_lr_view = K9LRView()
   k9_lr_view.set_mode(read_k9_lr_view(params))
+  k9_lr_view.set_one_lane_hold(read_k9_olh(params))
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
     frame += 1
+    if frame % 2 == 0:   # K9OneLaneHold read as often as controlsd (0.1 s): k9_lr_view near lines follow it
+      k9_lr_view.set_one_lane_hold(read_k9_olh(params))
     if frame % 100 == 0:
       custom_lat_delay = params.get_float("SteerActuatorDelay") * 0.01
       lat_smooth_seconds = params.get_float("LatSmoothSec") * 0.01
@@ -542,7 +545,7 @@ def main(demo=False):
     inference_backend, inference_usbgpu = type(model).__name__, model.usbgpu
 
     if model_output is not None:
-      model_output = k9_lr_view.apply(model_output)
+      model_output = k9_lr_view.apply(model_output, engaged=bool(sm['carControl'].latActive))
       modelv2_send = messaging.new_message('modelV2')
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
