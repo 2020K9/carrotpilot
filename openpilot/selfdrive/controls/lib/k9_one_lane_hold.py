@@ -13,13 +13,17 @@ Param K9OneLaneHold (int, default 0):
      3) Off (with a ramp back to 0, memory dropped) when the visible line moves by itself: its position at the car is
         predicted every model frame from the previous frame (line fit at the distance travelled minus the model path there)
         and the leaky sum (TAU_C) of the unexplained motion exceeds C_OFF (bias per line learned while both lines are seen);
-        the push already fades from C_FADE0 on, and nothing is pushed for the first T_PROBE s of a one-line episode.
+        the push already fades from C_FADE0 on, and nothing is pushed for the first T_PROBE s of a one-line episode
+        (a measurement gap up to ONE_GAP s does not restart it). r4: when the watch fires the push target is cut to 0 at
+        once (the output still moves at the jerk limit), and the fade keeps using the last visible line after it is lost.
         Also off when the remaining shift exceeds S_OFF or the visible line keeps receding for RECEDE_T s while the hold
         pushes fully (the line moved: widening lane, merge, split).
         Off (with a ramp back to 0) in lane change / blinker / steering pressed / turns / low speed, lane width jump or
         lane width changing ahead (merge, split), the visible line jumping, diverging from the model path or jittering.
      4) The memory is dropped after MEM_T s or MEM_D m without both lines. The correction is capped (lateral accel 0.25 m/s^2, 0.6 inside
-        the minimum gap) and rate limited (lateral jerk 0.2 m/s^3), and ramped in / out over RAMP_T s.
+        the minimum gap) and rate limited (lateral jerk 0.2 m/s^3), and ramped in / out over RAMP_T / RAMP_OUT s.
+        r4 (jerk aware): while the model command itself jerks (filtered, |jerk| J_Q0 -> J_Q1 m/s^3) the hold adds no jerk
+        in that direction (closed-loop sweep: jerk p99 on one-line drives).
 """
 import numpy as np
 
@@ -44,11 +48,14 @@ RECEDE_RATE, RECEDE_T = 0.08, 1.0   # line keeps receding while the hold pushes 
 # path; the line fit is in the car frame, so heading changes made by the hold itself are already in the line slope).
 # Innovation bias per line is learned while both lines are reliable. Leaky sum of the unexplained motion over TAU_C;
 # above C_OFF the line moved by itself (merge / split / branch line) -> memory dropped, hold ramps out.
-C_OFF, TAU_C, TAU_B, INN_JUMP = 0.10, 1.0, 5.0, 0.3   # r3 sweep 15:35 (0.15/0.12 still followed MERGE or cost jerk)
+C_OFF, TAU_C, TAU_B, INN_JUMP = 0.15, 1.5, 5.0, 0.3   # r4 sweep (r3 0.10 / 1.0 fired on still lines: 37-58 % of one-line time lost)
 T_PROBE = 0.6                # one-line episode age before the hold may push (the detector watches the line first) [s]
 C_FADE0 = 0.03               # the push fades linearly from |unexplained motion| C_FADE0 to 0 at C_OFF (moving line = less trust)
 A_MAX, A_MAX_CLOSE, J_MAX = 0.25, 0.6, 0.2
 RAMP_T, BLOCK_T = 1.0, 1.0
+RAMP_OUT = 1.0              # ramp-out time [s]
+J_Q0, J_Q1, TAU_BJ = 0.1, 0.3, 0.1   # r4: the hold adds no jerk in the direction the model command is already jerking (|jerk| J_Q0 -> J_Q1 m/s^3)
+ONE_GAP = 0.3               # one-line episode survives a measurement gap up to this [s] (probe not restarted)
 BOTH_T, STALE_T = 1.0, 0.3      # both lines steady before remembering / model frame older than this = no measurement
 TAU_GAP, TAU_W, TAU_RATE = 0.5, 1.0, 0.3
 X_NEAR, X_FAR = 20.0, 30.0
@@ -111,6 +118,9 @@ class OneLaneHold:
     self.cu = [0.0, 0.0]            # leaky sum of unexplained line motion [m]
     self.moved = False
     self.one_t = 0.0                # age of the current one-line episode [s]
+    self.gap_t = 0.0
+    self.side = None                # side of the last one-line measurement (its watch keeps fading the push after the line is lost)
+    self.mk_prev = None; self.bj = 0.0      # filtered model command lateral jerk [m/s^3]
 
   # ---- model frame (20 Hz) ----
   def _frame(self, md, v, dt):
@@ -149,7 +159,8 @@ class OneLaneHold:
     both = self.rel[0] and self.rel[1]
     for i in (0, 1):
       if inn[i] is None or not self.rel[i]:
-        self.cu[i] = 0.0 if not self.rel[i] else self.cu[i]; continue
+        # r4: an unreliable frame does not clear the unexplained motion (a flickering moving line must not restart the watch)
+        self.cu[i] *= max(1.0 - dt / TAU_C, 0.0); continue
       if both:
         self.ib[i] += (dt / (TAU_B + dt)) * (inn[i] / dt - self.ib[i]); self.cu[i] = 0.0
       else:
@@ -182,7 +193,7 @@ class OneLaneHold:
     i = 0 if self.rel[0] else 1
     line_d = float(np.interp(X_FAR, x, ys[i])) - fits[i][0]
     path_d = float(np.interp(X_FAR, px, py) - py[0]) if len(px) > 1 and px[-1] > X_FAR else line_d
-    self.meas = (i, gaps[i], self.ydot[i], abs(line_d - path_d) <= DIVERGE)
+    self.meas = (i, gaps[i], self.ydot[i], abs(line_d - path_d) <= DIVERGE); self.side = i
 
   # ---- controlsd tick (100 Hz) ----
   def update(self, md, v, laneless, lane_change, pressed, model_curv):
@@ -200,6 +211,7 @@ class OneLaneHold:
       self.frame_dt = 0.0
     self.block_t = max(self.block_t - DT, 0.0)
     if self.moved:
+      self.w = 0.0       # r4: push target cut to 0 at once (the output still moves at the jerk limit)
       # the visible line moved by itself relative to the laneless path: memory no longer valid
       self.moved = False; self.mem = None; self.recede_t = 0.0
     if self.mem is not None and not (self.rel[0] and self.rel[1]):
@@ -207,10 +219,14 @@ class OneLaneHold:
       if self.mem["t"] > MEM_T or self.mem["d"] > MEM_D:
         self.mem = None
     m = self.meas if self.frame_dt <= STALE_T else None
-    self.one_t = self.one_t + DT if m is not None else 0.0
+    self.gap_t = 0.0 if m is not None else self.gap_t + DT
+    self.one_t = self.one_t + DT if m is not None else (self.one_t if self.gap_t <= ONE_GAP else 0.0)
     ok = (laneless and not lane_change and not pressed and v >= V_MIN and abs(model_curv) < K_TURN and self.block_t <= 0.0
           and self.one_t >= T_PROBE and self.mem is not None and m is not None and m[3] and -0.2 <= m[1] <= self.mem["target"] + S_MAX + 0.5)
     v2 = max(v, V_MIN) ** 2
+    if self.mk_prev is not None:
+      self.bj += (DT / (TAU_BJ + DT)) * ((model_curv - self.mk_prev) / DT * v2 - self.bj)
+    self.mk_prev = model_curv
     close = False
     if ok:
       i, gap, sd = m[0], m[1], m[2]
@@ -234,7 +250,7 @@ class OneLaneHold:
       self.w = min(self.w + DT / RAMP_T, 1.0)
     else:
       self.integ *= 0.99
-      self.w = max(self.w - DT / RAMP_T, 0.0)
+      self.w = max(self.w - DT / RAMP_OUT, 0.0)
     self.active = ok
     dk = J_MAX / v2 * DT
     if self.w <= 0.0 and not ok and abs(self.k_out) <= dk:
@@ -243,10 +259,16 @@ class OneLaneHold:
     amax = (A_MAX_CLOSE if close else A_MAX) / v2
     g = self.w * self.w * (3.0 - 2.0 * self.w)
     fade = 1.0
-    if self.meas is not None and C_OFF > C_FADE0:
-      fade = float(np.clip((C_OFF - abs(self.cu[self.meas[0]])) / (C_OFF - C_FADE0), 0.0, 1.0))
+    sd_ = self.meas[0] if self.meas is not None else self.side
+    if sd_ is not None and C_OFF > C_FADE0:
+      fade = float(np.clip((C_OFF - abs(self.cu[sd_])) / (C_OFF - C_FADE0), 0.0, 1.0))
     tgt = g * fade * float(np.clip(self.k_raw, -amax, amax))
-    self.k_out = float(np.clip(tgt, self.k_out - dk, self.k_out + dk))
+    lo, hi = self.k_out - dk, self.k_out + dk
+    if abs(self.bj) > J_Q0:
+      same = dk * float(np.clip((J_Q1 - abs(self.bj)) / (J_Q1 - J_Q0), 0.0, 1.0))
+      if self.bj > 0.0: hi = self.k_out + same
+      else: lo = self.k_out - same
+    self.k_out = float(np.clip(tgt, lo, hi))
     return self.k_out
 
 

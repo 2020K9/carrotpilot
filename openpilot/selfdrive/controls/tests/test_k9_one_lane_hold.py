@@ -182,3 +182,51 @@ def test_static_line_with_car_offset_is_not_released():
   assert max(abs(h.cu[0]), abs(h.cu[1])) < H.C_OFF
   assert abs(ys[-1]) < 0.2
 
+
+
+def test_r4_hold_adds_no_jerk_while_the_model_command_jerks():
+  # r4: the model command (laneless desiredCurvature) jerks +0.5 m/s^3 for 2 s: the hold may not add jerk in that direction
+  h = warm(-0.4)
+  v = 20.0
+  out = []
+  md = None
+  for k in range(800):
+    if k % 5 == 0:
+      md = world(p_right=0.05)(-0.4, 0.0)
+    t = k * DT
+    m_k = (0.5 * min(max(t - 3.0, 0.0), 2.0)) / v ** 2     # model lateral accel ramps 0 -> 1 m/s^2 between 3 s and 5 s
+    out.append(h.update(md, v, True, False, False, m_k))
+  out = np.array(out)
+  d = np.diff(out)
+  tk = np.arange(1, 800) * DT
+  sel = (tk > 3.4) & (tk < 5.0)                            # filtered model command jerk above J_Q1
+  assert np.max(np.abs(out)) > 1e-4                      # the hold is pushing (right +, car 0.4 m left)
+  assert np.all(d[sel] <= 1e-12)                          # no added jerk in the model command direction
+  assert np.max(np.abs(d)) <= H.J_MAX / v ** 2 * DT + 1e-12
+
+
+def test_r4_short_measurement_gap_does_not_restart_the_probe():
+  # r4: the visible line drops out for 0.2 s (prob 0.3): the hold resumes at once instead of waiting T_PROBE again
+  h = warm(-0.4)
+  run(h, world(p_right=0.05), 2.0, y0=-0.4)
+  assert h.active
+  run(h, lambda y, p: frame(-1.8 - y, 1.8 - y, p_left=0.3, p_right=0.05), 0.2, y0=-0.4)
+  assert not h.active
+  run(h, world(p_right=0.05), 0.1, y0=-0.4)
+  assert h.active                                         # within 0.1 s, not T_PROBE (0.6 s)
+
+
+def test_r4_moved_line_cuts_the_push_even_when_the_line_is_lost_next():
+  # r4: the visible line moves 0.2 m by itself in one frame (watch fires) and is lost right after: the push falls at the
+  # full jerk limit from the next tick (no 1 s ramp-out with the old target)
+  h = warm(-0.3)
+  run(h, world(p_right=0.05), 2.0, y0=-0.3)                # one line, still: the hold pushes
+  k0 = abs(h.k_out)
+  assert h.active and k0 * 400 > 0.02
+  run(h, lambda y, p: frame(-2.0 - y, 1.8 - y, p_right=0.05), 0.01, y0=-0.3)
+  assert h.mem is None
+  out2, _ = run(h, lambda y, p: frame(-2.0 - y, 1.8 - y, p_left=0.3, p_right=0.05), 2.0, y0=-0.3)
+  dk = H.J_MAX / 400 * DT
+  steps = np.arange(1, len(out2) + 1)
+  assert np.all(np.abs(out2) <= np.maximum(k0 - steps * dk, 0.0) + dk + 1e-12)
+  assert out2[-1] == 0.0
