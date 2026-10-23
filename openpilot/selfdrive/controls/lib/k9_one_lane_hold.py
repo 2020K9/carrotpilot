@@ -28,6 +28,9 @@ Param K9OneLaneHold (int, default 0):
         r5: the damping term (line rate at the car) may only take back the lateral velocity the hold itself added (hv, the
         integral of the added lateral accel); it never brakes the laneless model's own return to the centre, so the hold
         never pushes away from the centre target because of line-estimate jumps (closed loop L20 / DASH).
+        r6: while ramping out the push only shrinks (never grows, never changes sign: r5 kept moving toward the frozen last
+        target, DASH 160), and the push is scaled by the visible line probability (0 at P_OFF -> 1 at P_FULL; weak lines
+        pushed the car shortly before they were lost, R20 1a3 / MERGE 167).
 """
 import numpy as np
 
@@ -64,6 +67,7 @@ ONE_GAP = 0.3               # one-line episode survives a measurement gap up to 
 BOTH_T, STALE_T = 1.0, 0.3      # both lines steady before remembering / model frame older than this = no measurement
 TAU_GAP, TAU_W, TAU_RATE = 0.5, 1.0, 0.3
 X_NEAR, X_FAR = 20.0, 30.0
+P_FULL, P_POW = 0.9, 2.0   # r6: push scale by the visible line probability ((p - P_OFF) / (P_FULL - P_OFF)) ** P_POW
 
 
 def k9_one_lane_hold_mode(params) -> int:
@@ -128,6 +132,7 @@ class OneLaneHold:
     self.cut = False                # r5: the watch fired and the push is still falling (J_AWARE does not hold it up)
     self.hv = 0.0                   # r5: integral of the hold lateral accel in this episode = its own share of the lateral velocity [m/s]
     self.mk_prev = None; self.bj = 0.0      # filtered model command lateral jerk [m/s^3]
+    self.pf = 1.0                   # r6: push scale from the visible line probability
 
   # ---- model frame (20 Hz) ----
   def _frame(self, md, v, dt):
@@ -201,6 +206,7 @@ class OneLaneHold:
     line_d = float(np.interp(X_FAR, x, ys[i])) - fits[i][0]
     path_d = float(np.interp(X_FAR, px, py) - py[0]) if len(px) > 1 and px[-1] > X_FAR else line_d
     self.meas = (i, gaps[i], self.ydot[i], abs(line_d - path_d) <= DIVERGE); self.side = i
+    self.pf = float(np.clip((probs[i] - P_OFF) / (P_FULL - P_OFF), 0.0, 1.0)) ** P_POW
 
   # ---- controlsd tick (100 Hz) ----
   def update(self, md, v, laneless, lane_change, pressed, model_curv):
@@ -275,7 +281,10 @@ class OneLaneHold:
     sd_ = self.meas[0] if self.meas is not None else self.side
     if sd_ is not None and C_OFF > C_FADE0:
       fade = float(np.clip((C_OFF - abs(self.cu[sd_])) / (C_OFF - C_FADE0), 0.0, 1.0))
-    tgt = g * fade * float(np.clip(self.k_raw, -amax, amax))
+    tgt = g * fade * self.pf * float(np.clip(self.k_raw, -amax, amax))
+    if not ok:
+      # r6: ramping out, the push only shrinks toward 0 (never grows, never changes sign)
+      tgt = 0.0 if tgt * self.k_out <= 0.0 else float(np.sign(tgt)) * min(abs(tgt), abs(self.k_out))
     lo, hi = self.k_out - dk, self.k_out + dk
     # r5: a push cut by the watch whose fall jerks in the model jerk direction is held up only from J_QC0 (not J_Q0)
     q0, q1 = (J_QC0, J_QC1) if (self.cut and self.k_out * self.bj < 0.0) else (J_Q0, J_Q1)

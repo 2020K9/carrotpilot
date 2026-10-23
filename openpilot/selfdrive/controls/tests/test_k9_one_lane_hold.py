@@ -270,3 +270,29 @@ def test_r5_jerk_aware_does_not_block_the_push_from_shrinking():
   dk = H.J_MAX / v ** 2 * DT
   assert out[39] >= min(k0 + 30 * dk, 0.0) - 1e-12       # fell at least 30 jerk-limit steps in the first 0.4 s (or reached 0)
   assert np.max(np.abs(np.diff(out))) <= dk + 1e-12
+
+
+def test_r6_ramp_out_only_shrinks():
+  # r6: one line, the hold pushes; on the last active tick its target had the other sign (line-rate damping of the hold's own
+  # lateral speed, DASH 160 closed loop 707 s), then the second line comes back. Ramping out, the push may only shrink toward 0:
+  # never grow, never change sign (r5 moved toward the frozen last target and pushed the other way, up to -0.056 m/s^2)
+  for t_one in (H.T_PROBE + 0.5, H.T_PROBE + 1.5, H.T_PROBE + 3.0):
+    h = warm(-0.4)
+    run(h, world(p_right=0.05), t_one, y0=-0.4)
+    k0 = h.k_out
+    assert k0 > 0.0
+    h.k_raw = -abs(h.k_raw) - 0.1 / 400
+    out2, _ = run(h, world(), 2.0, y0=-0.4)
+    assert np.all(out2 * k0 >= 0.0)
+    assert np.all(np.diff(np.concatenate([[abs(k0)], np.abs(out2)])) <= 1e-15)
+    assert out2[-1] == 0.0
+
+
+def test_r6_weak_visible_line_pushes_less():
+  # r6: the same one-line situation with a weak visible line (probability 0.6) pushes at most half as much as with 0.9
+  mx = []
+  for p in (0.9, 0.6):
+    h = warm(-0.4)
+    out, _ = run(h, lambda y, ps: frame(-1.8 - y, 1.8 - y, p_left=p, p_right=0.05, slope=-ps), 3.0, y0=-0.4)
+    mx.append(np.max(np.abs(out)))
+  assert mx[0] > 1e-4 and mx[1] <= 0.5 * mx[0]
