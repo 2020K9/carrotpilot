@@ -1,14 +1,14 @@
-"""K9 camera-SCC stop feathering ("creep fix" v9, v10, v9 + shudder fix, v10 + lead stop fix), selected by K9StopMode.
+"""K9 camera-SCC stop feathering ("creep fix" v9, v10, v9 + shudder fix, v10 + band 0.2), selected by K9StopMode.
 
-K9StopMode (menu, 2026-10-23 07:25; 3 renamed in r2): 0 = base braking (default; this module is never called), 1 = v10,
-2 = v9 + shudder fix, 3 = v10 + lead stop fix (MENU below). Any other value (4 or more, negative, unreadable) acts as 0. The modes never
+K9StopMode (menu, 2026-10-23 07:25; 3 changed in r2 and r6): 0 = base braking (default; this module is never called),
+1 = v10, 2 = v9 + shudder fix, 3 = v10 + band 0.2 (MENU below). Any other value (4 or more, negative, unreadable) acts as 0. The modes never
 stack. The bare v9 menu entry was removed on 2026-10-23 07:25 (its code path stays: 2 is built on it); the menu numbers
 moved down by one (1d0961da: 1 v9 / 2 v10 / 3 v9 + shudder fix), so the new 1 and 2 are bit-identical to the 1d0961da
 2 and 3. Stored values are not migrated: a stored 1 (v9 before) now selects v10, a stored 2 selects v9 + shudder fix
-and a stored 3 selects v10 + lead stop fix.
+and a stored 3 selects v10 + band 0.2 (r6; it selected v10 + lead stop fix on the earlier worker builds).
 Throughout this module "mode N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (no longer on the menu; the
-base of kind 3 and the test reference), 2 = v10 (menu 1), 3 = v9 + shudder fix (menu 2), 4 = v10 + lead stop fix (menu 3;
-the constant keeps its first name V10_SHUDDER_FIX).
+base of kind 3 and the test reference), 2 = v10 (menu 1), 3 = v9 + shudder fix (menu 2), 4 = v10 + band 0.2 (menu 3;
+the constant V10_BAND02, also importable by its first name V10_SHUDDER_FIX).
 2026-10-22 23:16 menu change (driver): 2 is now a faithful port of creep_fix v10; the former 2 (v9 + shudder fix) moved
 to 3 unchanged. A stored 2 therefore now selects v10.
 K9StopMode replaces the deleted K9CreepMode (2026-10-22): its old 1 (v8) and 3/4/5 (shudder candidates) are gone,
@@ -30,23 +30,16 @@ mode 1 apply to mode 2 too: lead latch at LEAD_LATCH_GAP (3.0 m) and the origina
 pedal, invalid CAN or non-finite input. Mode 2 is the page's design and may brake less than v9 (by design: weaker
 feather below 0.25 m/s and the hold ramp); it is NOT verified on the K9.
 
-Mode 4 (v10 + lead stop fix, 2026-10-23 brake_v10band r2; log replay and simulator only, NOT verified on the vehicle):
-mode 2 (the page v10) with mode 3's 2.5 m lead latch, ported so that the accel stays mode 2's on every frame:
-- the lead latch is at LEAD_LATCH_GAP_2 (2.5 m) instead of LEAD_LATCH_GAP (3.0 m). From the first frame of the stopping
-  state with a lead within 3.0 m (sticky until the stopping state ends, like the mode 2 latch) the sent accel is exactly
-  the mode 2 latch hold ramp max(min(accel, -0.50), prev - V10_HOLD_STEP), but StopReq is withheld until one of the
-  mode 2 latch conditions other than the 3.0 m lead holds (standstill, aTarget <= -1.0, weak decel, aEgo > 0.06, lead
-  <= 2.5 m, or the predicted stop point below). Reason: the 2026-10-22 17:06 K9 rlog (see mode 3 below) - StopReq while
-  rolling made the ESC press at once (LONG_ACCEL jerk 8.2-10.6 m/s^3). Because only StopReq timing changes, mode 4 never
-  brakes less than mode 2 in accel.
-- predicted stop point (r3, 2026-10-23): in that 2.5-3.0 m zone StopReq is sent at once (as mode 2 does) when the stop
-  point predicted from the measured deceleration, lead_distance - v^2 / (2 max(-eff_ac, LEAD_PRED_DECEL_MIN)), is closer
-  to the lead than LEAD_PRED_GAP (2.6 m). So StopReq is withheld only while the car is braking well enough to stop with
-  room; when it is not, mode 4 behaves like mode 2. Chosen in the 16-stop replay with an ESC StopReq-hold model refitted
-  on the K9 base-braking stops (0.3 m/s^2, 2 m/s^3, 0.5 s delay); simulator only, NOT verified on the vehicle.
-- ComfortBand, jerk and everything else are mode 2's (band 0). A narrow low-speed band (0.04, first r1 version a0dceafa)
-  was dropped in r2: every band version tried (0.02-0.06, shudder-gated, with request pre-compensation) lost to mode 2
-  in the 16-stop replay under at least one of the band-effect assumptions, and no K9 log with such a band exists.
+Mode 4 (v10 + band 0.2, 2026-10-23 brake_v10band r6, the driver's spec 17:40 "v10 with 0.2 where it sends 0"; log
+replay and simulator only, NOT verified on the vehicle):
+- update() is mode 2's code path bit for bit (accel, StopReq, feather, latch ramp, 3.0 m lead latch, interlocks). The r2-r5
+  lead stop fix (2.5 m latch, predicted stop point) is removed from this menu.
+- bands(): on exactly the frames where mode 2 sends ComfortBand 0/0 (applied, non-CAN-FD, non-off), upper and lower are
+  V10_BAND (0.20 m/s^2, 10 steps of the 0.02 CAN unit) instead. jerk_u is mode 2's. The sent value moves at most
+  V10_BAND_STEP (0.04, = BAND_RAMP_STEP) per make_jerk call from the band sent on the previous call (upper and lower
+  each; after construction or any reset), and lands exactly on V10_BAND, so the band never jumps.
+- Reason (K9 rlog 2026-10-23, estimate): the two v10 stops (band 0) shook at 5-9 Hz with 0.145 / 0.094 m/s^2 (2x envelope,
+  last 2 s), the two v9 + shudder fix stops (band 0.76 / 0.80) 0.027 / 0.013. No K9 log with band 0.2 exists.
 
 Mode 0 (or any other car) never calls update(), so accel, StopReq, jerk and ComfortBand are the base controller's.
 
@@ -97,7 +90,7 @@ the lead latch distance below):
   mode 3 stop that latched at standstill. Mode 3 therefore latches on a lead only at or below LEAD_LATCH_GAP_2
   (2.5 m). Between that and LEAD_LATCH_GAP (3.0 m) StopReq stays withheld, but the sent value is at most the v9
   latch value min(original, LATCH_ACCEL) (still never weaker than v9 on any frame) and never releases (held, or
-  pressed further by the normal gate). Mode 1 and mode 2 keep the 3.0 m latch; mode 4 latches at 2.5 m (see above).
+  pressed further by the normal gate). Mode 1, mode 2 and mode 4 keep the 3.0 m latch.
 
 Deviations from the source, all fail toward the original command (documented, not calibrated):
 - disengaged/longActive off, override, gas, brake, invalid CAN, non-finite inputs: original accel/StopReq, reset;
@@ -109,9 +102,10 @@ import numpy as np
 
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
-V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX = 1, 2, 3, 4  # K9Creep kinds ("mode" in this module), not menu values
-KINDS = (V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX)
-MENU = {1: V10, 2: V9_SHUDDER_FIX, 3: V10_SHUDDER_FIX}  # K9StopMode value -> kind (2026-10-23 07:25 menu)
+V9, V10, V9_SHUDDER_FIX, V10_BAND02 = 1, 2, 3, 4  # K9Creep kinds ("mode" in this module), not menu values
+V10_SHUDDER_FIX = V10_BAND02  # first name of kind 4 (menu 3), kept for imports
+KINDS = (V9, V10, V9_SHUDDER_FIX, V10_BAND02)
+MENU = {1: V10, 2: V9_SHUDDER_FIX, 3: V10_BAND02}  # K9StopMode value -> kind (2026-10-23 07:25 menu)
 MODES = tuple(MENU)  # K9StopMode values that run a K9Creep; anything else acts as 0
 
 # v9 profile (creep_fix source constants)
@@ -137,9 +131,10 @@ STANDSTILL_SPEED = 0.05
 URGENT_TARGET = -1.0
 JERK_U_BP, JERK_U_V = [0.5, 1.4], [2.0, 0.8]
 LEAD_LATCH_GAP = 3.0  # m, deviation: lead protection is not in the source
-LEAD_LATCH_GAP_2 = 2.5  # m, mode 3 and mode 4 lead latch (K9 planner stops 2.2-3.0 m behind a lead; see the docstring)
-LEAD_PRED_GAP = 2.6  # m, mode 4: StopReq at once in the 2.5-3.0 m zone when the predicted stop point is closer
-LEAD_PRED_DECEL_MIN = 0.05  # m/s^2, mode 4: deceleration floor of that prediction
+LEAD_LATCH_GAP_2 = 2.5  # m, mode 3 lead latch (K9 planner stops 2.2-3.0 m behind a lead; see the docstring)
+# Mode 4 ComfortBand (r6): upper = lower = V10_BAND where mode 2 sends 0, ramped by V10_BAND_STEP per make_jerk call
+V10_BAND = 0.20  # m/s^2, the driver's value; 10 x the 0.02 SCC14 ComfortBand unit
+V10_BAND_STEP = 0.04  # per make_jerk call (= BAND_RAMP_STEP)
 
 # Mode 3 ComfortBand: the 2026-10-22 logs showed the 5-12 Hz shudder raised with v9 (band 0) from 0.3 up to 2.0 m/s
 # and no difference at 3-12 m/s, so the original band is restored fully at or below 2.0 m/s and v9 is kept at or
@@ -200,6 +195,20 @@ def blend_weight(v_ego: float) -> float:
   return float(np.interp(v_ego, [BLEND_FULL_SPEED, BLEND_OFF_SPEED], [1.0, 0.0]))
 
 
+def _band_toward(cur, prev_sent) -> float:
+  """Mode 4: one make_jerk step of the sent band toward V10_BAND (at most V10_BAND_STEP, lands exactly on V10_BAND).
+  cur None = start from prev_sent (the band sent on the previous call); non-finite starts at V10_BAND."""
+  if cur is None:
+    try:
+      cur = float(prev_sent)
+    except (TypeError, ValueError):
+      cur = V10_BAND
+    cur = float(np.clip(cur, 0.0, 1.26)) if math.isfinite(cur) else V10_BAND
+  if abs(V10_BAND - cur) <= V10_BAND_STEP + 1e-9:  # float residue of the 0.04 steps
+    return V10_BAND
+  return float(cur + math.copysign(V10_BAND_STEP, V10_BAND - cur))
+
+
 def _up_step(v_ego: float, margin: float, low_speed: float = UP_LOW_SPEED) -> float:
   return float(np.interp(margin, UP_MARGIN_BP, UP_MARGIN_V)) if v_ego > low_speed else UP_LOW
 
@@ -209,8 +218,8 @@ class K9Creep:
     assert mode in KINDS, mode
     self.mode = mode
     self.shudder_fix = mode == V9_SHUDDER_FIX
-    self.v10 = mode in (V10, V10_SHUDDER_FIX)  # page v10 accel (modes 2 and 4 share it bit for bit)
-    self.v10_fix = mode == V10_SHUDDER_FIX  # mode 4: + 2.5 m lead latch (StopReq timing only)
+    self.v10 = mode in (V10, V10_BAND02)  # page v10 update() (modes 2 and 4 share it bit for bit)
+    self.v10_band = mode == V10_BAND02  # mode 4: ComfortBand V10_BAND instead of 0 (bands() only)
     self.reset()
 
   def reset(self):
@@ -218,9 +227,9 @@ class K9Creep:
     self.last = None  # previous v9 accel; None means "start from the current command"
     self.active = False  # True only on a frame where update() applied (jerk/band change follows it)
     self.cb_w = None  # mode 3 band weight; None = start from the band sent on the previous make_jerk call
+    self.cb_u = self.cb_l = None  # mode 4 sent upper/lower band; None = start from the band sent on the previous call
     self.sent = None  # mode 3 last sent accel (stopping gate); None = start from the current value
     self.bc = None  # mode 3 rate-limited extra braking; None = start from the current value
-    self.lead_hold = False  # mode 4: lead within LEAD_LATCH_GAP seen in this stopping state (mode 2 latch ramp, no StopReq)
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
@@ -237,7 +246,6 @@ class K9Creep:
 
     if not stopping:
       self.latched = False
-      self.lead_hold = False
       if pid and v_ego < CREEP_BP[-1] and a_target < FADE_TARGET_BP[-1]:
         comp = np.interp(v_ego, CREEP_BP, CREEP_V) * np.interp(a_target, FADE_TARGET_BP, FADE_TARGET_V)
         comp *= np.interp(accel, FADE_ACCEL_BP, FADE_ACCEL_V)
@@ -257,12 +265,10 @@ class K9Creep:
 
     lead_seen = lead_visible or lead_distance != 0.0
     lead_near = lead_seen and lead_distance <= LEAD_LATCH_GAP
-    lead_close = lead_seen and lead_distance <= (LEAD_LATCH_GAP_2 if (self.shudder_fix or self.v10_fix) else LEAD_LATCH_GAP)
+    lead_close = lead_seen and lead_distance <= (LEAD_LATCH_GAP_2 if self.shudder_fix else LEAD_LATCH_GAP)
     real_standstill = esp_standstill or v_ego_raw < STANDSTILL_SPEED or v_ego < STANDSTILL_SPEED
-    lead_short = (self.v10_fix and lead_seen and (lead_near or self.lead_hold)
-                  and lead_distance - v_ego * v_ego / (2.0 * max(-eff_ac, LEAD_PRED_DECEL_MIN)) < LEAD_PRED_GAP)
     if (real_standstill or a_target <= URGENT_TARGET or (v_ego > DOWN_UP_SPEED and eff_ac > 0.04) or a_ego > 0.06
-        or lead_close or lead_short):
+        or lead_close):
       self.latched = True
 
     if self.latched:
@@ -281,14 +287,6 @@ class K9Creep:
         self.sent = accel
       return accel, True
 
-    if self.v10_fix and (lead_near or self.lead_hold) and a_target > URGENT_TARGET:
-      # mode 4, lead 2.5-3.0 m: mode 2 has latched here; send exactly its latch ramp (same accel on every frame) but
-      # withhold StopReq, which the K9 ESC answers by pressing at once while the car still rolls
-      self.lead_hold = True
-      prev = accel if self.last is None else self.last
-      accel = float(max(min(accel, LATCH_ACCEL), prev - V10_HOLD_STEP))
-      self.last = accel
-      return accel, False
     if self.v10:
       margin = eff_ac - float(np.interp(v_ego, V10_MIN_DECEL_BP, V10_MIN_DECEL_V))
       target = float(np.interp(v_ego, V10_FEATHER_BP, V10_FEATHER_V)) + float(np.interp(margin, BOOST_BP, BOOST_V))
@@ -346,12 +344,18 @@ class K9Creep:
       jerk_u = max(jerk_u, float(np.interp(v_ego, JERK_U_BP, JERK_U_V)))
     return jerk_u, 0.0, 0.0
 
-  def bands(self, jerk_u: float, v_ego: float, cb_upper: float, cb_lower: float, cb_prev: float):
+  def bands(self, jerk_u: float, v_ego: float, cb_upper: float, cb_lower: float, cb_prev: float,
+            cb_prev_lower=None):
     """Applied non-CAN-FD, non-off frames: (jerk_u, cb_upper, cb_lower) to send. cb_upper/lower are the original
-    band of this frame, cb_prev the upper band sent on the previous make_jerk call."""
+    band of this frame, cb_prev / cb_prev_lower the upper / lower band sent on the previous make_jerk call
+    (cb_prev_lower is used by mode 4 only; None = cb_prev)."""
     jerk_u, cu, cl = K9Creep.jerk_bands(jerk_u, v_ego)
+    if self.v10_band:  # mode 4: V10_BAND where mode 2 sends 0, ramped from the band sent before
+      self.cb_u = _band_toward(self.cb_u, cb_prev)
+      self.cb_l = _band_toward(self.cb_l, cb_prev if cb_prev_lower is None else cb_prev_lower)
+      return jerk_u, self.cb_u, self.cb_l
     if not self.shudder_fix:
-      return jerk_u, cu, cl  # modes 1, 2 and 4: exactly the v9 band (0)
+      return jerk_u, cu, cl  # modes 1 and 2: exactly the v9 band (0)
     target = band_weight(v_ego)
     if self.cb_w is None:
       ok = math.isfinite(cb_prev) and math.isfinite(cb_upper) and cb_upper > 0.0

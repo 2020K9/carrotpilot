@@ -110,20 +110,59 @@ def test_through_carcontroller_lead_2_9_m(monkeypatch, mode, expect_sr_rolling):
   assert sent is None or sent["StopReq"] == 1
 
 
-def test_through_carcontroller_lead_2_9_m_slow_menu_3(monkeypatch):
-  """r3 (new): 0.3 -> 0.06 m/s at -0.3 m/s^2 behind a lead at 2.9 m stops with room (>= 2.6 m): menu 3 withholds StopReq
-  while rolling (menu 1 sends it), then latches at standstill."""
-  monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: V10_SHUDDER_FIX})
-  r = Rig(monkeypatch, K9StopMode=1)
-  for i in range(100):
-    r.step(-0.6, LCS.pid, 4.0 - 0.03 * i, a_target=-0.5, a_ego=-0.5, lead=(8.0 - 0.04 * i, -1.0))
-  rolling_sr = []
-  for i in range(120):
-    v = max(0.3 - 0.002 * i, 0.06)
-    _, sent = r.step(-0.7, LCS.stopping, v, a_target=-0.3, a_ego=-0.3, lead=(2.9, -v))
-    if sent is not None:
-      rolling_sr.append(sent["StopReq"])
-  assert rolling_sr and max(rolling_sr) == 0
-  for i in range(60):
-    _, sent = r.step(-0.7, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0, lead=(2.9, 0.0))
-  assert sent is None or sent["StopReq"] == 1
+def test_through_carcontroller_lead_2_9_m_slow_menu_3_is_menu_1(monkeypatch):
+  """rewritten r6 (was test_through_carcontroller_lead_2_9_m_slow_menu_3, a pin of the r3 lead stop fix that menu 3 no
+  longer has): 0.3 -> 0.06 m/s at -0.3 m/s^2 behind a lead at 2.9 m: menu 3 (v10 + band 0.2) sends the same accel and
+  SCC12 (StopReq while rolling, 3.0 m lead latch) as menu 1 on every frame, then holds at standstill."""
+  runs = {}
+  for kind in (V10, V10_SHUDDER_FIX):
+    monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: kind})
+    r = Rig(monkeypatch, K9StopMode=1)
+    out = []
+    for i in range(100):
+      out.append(r.step(-0.6, LCS.pid, 4.0 - 0.03 * i, a_target=-0.5, a_ego=-0.5, lead=(8.0 - 0.04 * i, -1.0)))
+    for i in range(120):
+      v = max(0.3 - 0.002 * i, 0.06)
+      out.append(r.step(-0.7, LCS.stopping, v, a_target=-0.3, a_ego=-0.3, lead=(2.9, -v)))
+    for i in range(60):
+      out.append(r.step(-0.7, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0, lead=(2.9, 0.0)))
+    runs[kind] = out
+    monkeypatch.undo()
+  assert runs[V10] == runs[V10_SHUDDER_FIX]
+  rolling_sr = [sent["StopReq"] for _, sent in runs[V10_SHUDDER_FIX][100:220] if sent is not None]
+  assert rolling_sr and max(rolling_sr) == 1
+
+
+def test_through_carcontroller_menu_3_band_0_2_only_scc14(monkeypatch):
+  """r6 (new): through the CarController, menu 3 (kind V10_BAND02) and menu 1 (V10) send the same accel and SCC12 on
+  every frame; SCC14 differs only in ComfortBand: where menu 1 sends 0, menu 3 sends 0.20 (raw 10) once the 0.04/call
+  ramp has settled, at every speed; the change per sent frame is at most 0.04 (two 0.02 steps)."""
+  runs = {}
+  for kind in (V10, V10_SHUDDER_FIX):
+    monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: kind})
+    r = Rig(monkeypatch, K9StopMode=1)
+    out = []
+    for i in range(150):
+      out.append(r.step(-0.6, LCS.pid, 5.0 - 0.025 * i, a_target=-0.5, a_ego=-0.5))
+    for i in range(150):
+      out.append(r.step(-0.7, LCS.stopping, max(1.25 - 0.008 * i, 0.06), a_target=-0.3, a_ego=-0.3))
+    for i in range(40):
+      out.append(r.step(-0.7, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0))
+    runs[kind] = (out, r.scc14)
+    monkeypatch.undo()
+  (o1, b1), (o3, b3) = runs[V10], runs[V10_SHUDDER_FIX]
+  assert o1 == o3  # accel and SCC12 identical every frame
+  settled = 0
+  prev = None
+  for n, ((f1, v1, d1), (f3, v3, d3)) in enumerate(zip(b1, b3, strict=True)):
+    assert f1 == f3 and v1 == v3
+    for key in d1:
+      if key not in ("ComfortBandUpper", "ComfortBandLower"):
+        assert d3[key] == d1[key], key
+    if prev is not None:
+      assert abs(d3["ComfortBandUpper"] - prev[0]) <= 0.04 + 1e-9 and abs(d3["ComfortBandLower"] - prev[1]) <= 0.04 + 1e-9
+    prev = (d3["ComfortBandUpper"], d3["ComfortBandLower"])
+    if d1["ComfortBandUpper"] == 0.0 and d1["ComfortBandLower"] == 0.0 and n >= 30:
+      assert abs(d3["ComfortBandUpper"] - 0.2) < 1e-9 and abs(d3["ComfortBandLower"] - 0.2) < 1e-9
+      settled += 1
+  assert settled > 20

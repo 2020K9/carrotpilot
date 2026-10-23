@@ -1,5 +1,5 @@
 """K9StopMode single selector (2026-10-23 07:25 menu): 0 base braking, 1 v10 (test_k9_stop_v10.py), 2 v9 + shudder fix (low-speed
-ComfortBand restore + braking compensation + creep_fix-method sent-value gate, never weaker than v9), 3 v10 + lead stop fix
+ComfortBand restore + braking compensation + creep_fix-method sent-value gate, never weaker than v9), 3 v10 + band 0.2 (r6)
 (test_k9_stop_v10_fix.py). Other values act as 0. The bare v9 menu entry was removed; v9 stays as the K9Creep kind V9 (the
 base of 2) and is driven through the CarController here by mapping menu 1 to it in the test only (rig_kind).
 New 1 and 2 are checked byte-for-byte against the frozen 1d0961da controller's 2 and 3 (the previous menu).
@@ -431,7 +431,7 @@ def test_k9creep_object_identical_to_1d0961da(prev_cc, new_menu, seed):
 
 def test_stored_values_are_not_migrated(monkeypatch):
   # 2026-10-23 07:25: no value migration. A stored 1 (v9 on every earlier menu) now runs v10, 2 runs v9 + shudder fix
-  # (its meaning on the 99eb53f7 menu; v10 on 1d0961da), 3 runs v10 + lead stop fix (v9 + shudder fix on 1d0961da).
+  # (its meaning on the 99eb53f7 menu; v10 on 1d0961da), 3 runs v10 + band 0.2 (v9 + shudder fix on 1d0961da).
   for stored, kind in ((1, V10), (2, V9_SHUDDER_FIX), (3, V10_SHUDDER_FIX)):
     r = rig(monkeypatch, stored)
     r.step(-0.5, LCS.pid, 3.0)

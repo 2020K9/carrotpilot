@@ -1,21 +1,22 @@
-"""K9StopMode 3 = v10 + lead stop fix (the K9Creep kind V10_SHUDDER_FIX; 2026-10-23 brake_v10band r2).
-accel is exactly K9StopMode 1 (the page v10, test_k9_stop_v10.py) on every frame; only StopReq timing differs: the lead
-latch is at 2.5 m (as K9StopMode 2) instead of 3.0 m, and between 2.5 and 3.0 m the mode 1 latch ramp is sent without
-StopReq. ComfortBand/jerk are mode 1's (band 0; the r1 narrow band 0.04 was dropped in r2).
-Rewritten 2026-10-23 r2 (behavior pins of the r1 band version: test_menu_and_constants, test_lead_latch_and_interlocks_are_menu_1,
-test_band_is_narrow_low_speed_on_the_can_grid -> test_bands_are_menu_1, test_band_ramps_from_the_previous_band -> removed);
-the lead tests below are new. Rewritten 2026-10-23 r3 (pins of the r2 StopReq timing, now with the predicted stop point
-LEAD_PRED_GAP: test_lead_latch_and_interlocks, test_lead_hold_resets_with_the_stopping_state,
-test_lead_stop_accel_is_menu_1_every_frame_stopreq_later - its 'withheld > 0' pin dropped, prediction check added); new r3 tests:
-test_lead_zone_predicted_short_stop_sends_stopreq, test_lead_zone_withholds_only_with_room. Sim/replay only; NOT verified
-on the vehicle."""
+"""K9StopMode 3 = v10 + band 0.2 (the K9Creep kind V10_BAND02, first name V10_SHUDDER_FIX; 2026-10-23 brake_v10band r6).
+update() (accel, StopReq, feather, latch ramp, 3.0 m lead latch, interlocks) is exactly K9StopMode 1 (the page v10,
+test_k9_stop_v10.py) on every frame. Only SCC14 ComfortBand differs: where menu 1 sends 0/0, menu 3 sends 0.20/0.20
+(the driver's spec 2026-10-23 17:40), moved at most 0.04 per make_jerk call from the band sent before.
+Rewritten 2026-10-23 r6 (behavior pins of the r2-r5 lead stop fix / r5 band, removed from menu 3 on purpose):
+test_menu_and_constants, test_lead_latch_and_interlocks -> test_lead_latch_and_interlocks_are_menu_1,
+test_lead_stop_accel_is_menu_1_every_frame_stopreq_later -> test_lead_stop_is_menu_1_every_frame,
+test_lead_hold_resets_with_the_stopping_state, test_lead_zone_predicted_short_stop_sends_stopreq and
+test_lead_zone_withholds_only_with_room -> test_lead_zone_is_menu_1, test_bands_are_menu_1 -> test_bands_are_0_2_where_menu_1_sends_0.
+Kept unchanged: test_accel_and_stopreq_are_menu_1_bit_for_bit, test_lead_zone_urgent_target_latches_at_once,
+test_band_only_changes_scc14_band_not_v9. New r6: test_band_ramp_from_the_previous_band, test_band_never_changes_accel_or_stopreq,
+test_band_on_the_can_grid. Sim/replay only; NOT verified on the vehicle."""
+import math
 import random
 
-import numpy as np
 import pytest
 
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V10_SHUDDER_FIX
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SHUDDER_FIX
 from openpilot.selfdrive.car.tests.test_k9_stop_v10 import V10Ref, _stops
 
 
@@ -28,13 +29,13 @@ def _upd(c, f, **kw):
 
 
 def test_menu_and_constants():
-  assert kc.MENU[3] == V10_SHUDDER_FIX and kc.MENU[1] == V10
-  c = K9Creep(V10_SHUDDER_FIX)
-  assert c.v10 and c.v10_fix and not c.shudder_fix
-  assert not K9Creep(V10).v10_fix
+  assert kc.MENU[3] == V10_BAND02 == V10_SHUDDER_FIX == 4 and kc.MENU[1] == V10
+  c = K9Creep(V10_BAND02)
+  assert c.v10 and c.v10_band and not c.shudder_fix
+  assert not K9Creep(V10).v10_band and not K9Creep(V9_SHUDDER_FIX).v10_band
   assert kc.LEAD_LATCH_GAP == 3.0 and kc.LEAD_LATCH_GAP_2 == 2.5
-  assert kc.LEAD_PRED_GAP == 2.6 and kc.LEAD_PRED_DECEL_MIN == 0.05
-  assert not hasattr(kc, "V10_FIX_CB")  # r2: no mode 4 band
+  assert kc.V10_BAND == 0.20 and kc.V10_BAND_STEP == 0.04 == kc.BAND_RAMP_STEP
+  assert not hasattr(kc, "LEAD_PRED_GAP") and not hasattr(kc, "V10_FIX_CB")  # r6: no lead stop fix in menu 3
 
 
 @pytest.mark.parametrize("seed", range(8))
@@ -46,18 +47,17 @@ def test_accel_and_stopreq_are_menu_1_bit_for_bit(seed):
       assert _upd(c1, f) == want and _upd(c3, f) == want
 
 
-@pytest.mark.parametrize("lead", [2.9, 2.6, 2.51, 3.0, 2.5, 1.0])
-def test_lead_latch_and_interlocks(lead):
+@pytest.mark.parametrize("lead", [2.9, 2.6, 2.51, 3.0, 2.5, 1.0, 3.01, 0.0])
+def test_lead_latch_and_interlocks_are_menu_1(lead):
   base = dict(accel=-0.3, a_target=-0.3, stopping=True, pid=False, v_ego=0.6, v_ego_raw=0.6, a_ego=-0.3, long_accel=-0.3,
               esp_standstill=False, long_active=True, override=False, gas=False, brake=False, can_valid=True, lead_visible=True)
-  a3, s3 = K9Creep(V10_SHUDDER_FIX).update(lead_distance=lead, **base)
+  a3, s3 = K9Creep(V10_BAND02).update(lead_distance=lead, **base)
   a1, s1 = K9Creep(V10).update(lead_distance=lead, **base)
-  assert a3 == a1 and s1 is True
-  pred = lead - 0.6 ** 2 / (2.0 * 0.3)  # predicted stop point: v 0.6 m/s, eff_ac -0.3 m/s^2
-  assert s3 is (lead <= kc.LEAD_LATCH_GAP_2 or pred < kc.LEAD_PRED_GAP)
+  assert (a3, s3) == (a1, s1)
+  assert s3 is (lead <= kc.LEAD_LATCH_GAP)  # the 3.0 m lead latch of menu 1
   for k in ("override", "gas", "brake"):
-    assert K9Creep(V10_SHUDDER_FIX).update(lead_distance=10.0, **dict(base, **{k: True})) == (-0.3, True)
-  assert K9Creep(V10_SHUDDER_FIX).update(lead_distance=10.0, **dict(base, can_valid=False)) == (-0.3, True)
+    assert K9Creep(V10_BAND02).update(lead_distance=10.0, **dict(base, **{k: True})) == (-0.3, True)
+  assert K9Creep(V10_BAND02).update(lead_distance=10.0, **dict(base, can_valid=False)) == (-0.3, True)
 
 
 def _lead_approach(rng, n=320):
@@ -73,29 +73,11 @@ def _lead_approach(rng, n=320):
 
 
 @pytest.mark.parametrize("seed", range(10))
-def test_lead_stop_accel_is_menu_1_every_frame_stopreq_later(seed):
+def test_lead_stop_is_menu_1_every_frame(seed):
   rng = random.Random(f"k9-v10-lead-{seed}")
-  c1, c3 = K9Creep(V10), K9Creep(V10_SHUDDER_FIX)
-  zone_rolling_withheld = 0
+  c1, c3 = K9Creep(V10), K9Creep(V10_BAND02)
   for kw in _lead_approach(rng):
-    a1, s1 = c1.update(**kw)
-    a3, s3 = c3.update(**kw)
-    assert a3 == a1  # same accel on every frame (never weaker than menu 1)
-    assert s3 <= s1  # StopReq never earlier than menu 1
-    if s1 and not s3:
-      # only withheld while a lead is in 2.5-3.0 m and no other mode 1 latch condition holds
-      assert kc.LEAD_LATCH_GAP_2 < kw["lead_distance"] <= kc.LEAD_LATCH_GAP or c3.lead_hold
-      assert kw["v_ego"] >= kc.STANDSTILL_SPEED and kw["a_ego"] <= 0.06 and kw["a_target"] > kc.URGENT_TARGET
-      # r3: and only while the predicted stop point keeps LEAD_PRED_GAP to the lead
-      eff_ac = min(kw["long_accel"], kw["a_ego"] + 0.10)
-      v = kw["v_ego"]
-      assert kw["lead_distance"] - v * v / (2.0 * max(-eff_ac, kc.LEAD_PRED_DECEL_MIN)) >= kc.LEAD_PRED_GAP
-      zone_rolling_withheld += 1
-    if kw["v_ego"] == 0.0:
-      assert s3 is True  # standstill latches
-  # r3: the r2 pin 'zone_rolling_withheld > 0' is dropped - with the predicted stop point a noisy approach may send
-  # StopReq exactly like menu 1 (withheld 0 frames); the withholding itself is pinned by test_lead_zone_withholds_only_with_room
-  assert zone_rolling_withheld >= 0
+    assert c3.update(**kw) == c1.update(**kw)
 
 
 def test_lead_zone_urgent_target_latches_at_once():
@@ -109,29 +91,6 @@ def test_lead_zone_urgent_target_latches_at_once():
   assert c3.update(**urgent) == c1.update(**urgent) == (-1.3, True)
 
 
-def test_lead_hold_resets_with_the_stopping_state():
-  c3 = K9Creep(V10_SHUDDER_FIX)
-  # r3: 0.3 m/s at -0.3 m/s^2 stops 0.15 m on, 2.65 m behind the lead (room), so StopReq is withheld
-  base = dict(accel=-0.6, a_target=-0.3, stopping=True, pid=False, v_ego=0.3, v_ego_raw=0.3, a_ego=-0.3, long_accel=-0.3,
-              esp_standstill=False, long_active=True, override=False, gas=False, brake=False, can_valid=True,
-              lead_visible=True, lead_distance=2.8)
-  c3.update(**base)
-  assert c3.lead_hold
-  c3.update(**dict(base, stopping=False, pid=True, lead_distance=10.0))
-  assert not c3.lead_hold
-
-
-def test_bands_are_menu_1():
-  for v in (0.0, 0.3, 1.0, 1.39, 1.4, 2.0, 2.5, 3.0, 5.0):
-    c, c1 = K9Creep(V10_SHUDDER_FIX), K9Creep(V10)
-    for cb_prev in (0.0, 0.8):
-      assert c.bands(0.5, v, 0.9, 0.8, cb_prev) == c1.bands(0.5, v, 0.9, 0.8, cb_prev) == K9Creep.jerk_bands(0.5, v)
-
-
-def test_band_only_changes_scc14_band_not_v9():
-  assert K9Creep(V9).bands(0.5, 1.0, 0.9, 0.8, 0.0) == K9Creep.jerk_bands(0.5, 1.0)
-
-
 def _zone(v, ac, gap, **kw):
   d = dict(accel=-0.6, a_target=-0.3, stopping=True, pid=False, v_ego=v, v_ego_raw=v, a_ego=ac, long_accel=ac,
            esp_standstill=False, long_active=True, override=False, gas=False, brake=False, can_valid=True,
@@ -140,28 +99,78 @@ def _zone(v, ac, gap, **kw):
   return d
 
 
-@pytest.mark.parametrize("v,ac,gap", [(0.8, -0.3, 2.9), (0.6, -0.5, 2.9), (0.4, -0.1, 2.8), (0.3, 0.0, 2.95), (0.5, -0.3, 2.7)])
-def test_lead_zone_predicted_short_stop_sends_stopreq(v, ac, gap):
-  """r3: in the 2.5-3.0 m zone, a predicted stop point closer than LEAD_PRED_GAP latches at once, exactly like menu 1."""
-  pred = gap - v * v / (2.0 * max(-min(ac, ac + 0.1), kc.LEAD_PRED_DECEL_MIN))
-  assert pred < kc.LEAD_PRED_GAP
-  c1, c3 = K9Creep(V10), K9Creep(V10_SHUDDER_FIX)
+@pytest.mark.parametrize("v,ac,gap", [(0.8, -0.3, 2.9), (0.6, -0.5, 2.9), (0.4, -0.1, 2.8), (0.3, 0.0, 2.95), (0.5, -0.3, 2.7),
+                                      (0.3, -0.3, 2.8), (0.2, -0.3, 2.7), (0.4, -0.6, 2.9), (0.1, -0.2, 2.65)])
+def test_lead_zone_is_menu_1(v, ac, gap):
+  c1, c3 = K9Creep(V10), K9Creep(V10_BAND02)
   for _ in range(5):
     assert c3.update(**_zone(v, ac, gap)) == c1.update(**_zone(v, ac, gap))
-  assert c3.latched and not c3.lead_hold
+  assert c3.update(**_zone(v, 0.0, gap)) == c1.update(**_zone(v, 0.0, gap))
+  assert c3.latched == c1.latched is True
 
 
-@pytest.mark.parametrize("v,ac,gap", [(0.3, -0.3, 2.8), (0.2, -0.3, 2.7), (0.4, -0.6, 2.9), (0.1, -0.2, 2.65)])
-def test_lead_zone_withholds_only_with_room(v, ac, gap):
-  """r3: StopReq is withheld only while the predicted stop point keeps LEAD_PRED_GAP; accel stays menu 1's."""
-  pred = gap - v * v / (2.0 * max(-min(ac, ac + 0.1), kc.LEAD_PRED_DECEL_MIN))
-  assert pred >= kc.LEAD_PRED_GAP
-  c1, c3 = K9Creep(V10), K9Creep(V10_SHUDDER_FIX)
-  for _ in range(5):
-    a1, s1 = c1.update(**_zone(v, ac, gap))
-    a3, s3 = c3.update(**_zone(v, ac, gap))
-    assert a3 == a1 and s1 is True and s3 is False and c3.lead_hold
-  # the car stops braking (eff_ac rises): the prediction runs short and StopReq follows at once
-  a1, s1 = c1.update(**_zone(v, 0.0, gap))
-  a3, s3 = c3.update(**_zone(v, 0.0, gap))
-  assert a3 == a1 and s3 is True
+def test_bands_are_0_2_where_menu_1_sends_0():
+  for v in (0.0, 0.3, 1.0, 1.39, 1.4, 2.0, 2.5, 3.0, 5.0, 20.0):
+    for cb_prev in (0.2, 0.0, 0.8, 1.2):
+      c, c1 = K9Creep(V10_BAND02), K9Creep(V10)
+      ju1, cu1, cl1 = c1.bands(0.5, v, 0.9, 0.8, cb_prev)
+      assert (ju1, cu1, cl1) == K9Creep.jerk_bands(0.5, v) and cu1 == cl1 == 0.0  # menu 1: 0 on every applied frame
+      for _ in range(40):
+        ju, cu, cl = c.bands(0.5, v, 0.9, 0.8, cb_prev, cb_prev)
+        assert ju == ju1  # jerk_u is menu 1's
+      assert cu == cl == kc.V10_BAND  # settled: exactly 0.20, upper and lower
+
+
+def test_band_ramp_from_the_previous_band():
+  # r6 (new): each make_jerk call moves upper/lower at most 0.04 from the value sent on the previous call; lands on 0.20
+  for start_u, start_l in ((0.0, 0.0), (0.83, 0.73), (1.2, 1.1), (0.21, 0.19), (0.2, 0.2), (0.5, 0.0)):
+    c = K9Creep(V10_BAND02)
+    pu, pl, n = start_u, start_l, 0
+    while True:
+      _, cu, cl = c.bands(0.5, 1.0, 0.75, 0.65, pu, pl)
+      assert abs(cu - pu) <= kc.V10_BAND_STEP + 1e-12 and abs(cl - pl) <= kc.V10_BAND_STEP + 1e-12
+      assert min(pu, kc.V10_BAND) - 1e-12 <= cu <= max(pu, kc.V10_BAND) + 1e-12  # monotonic toward 0.20, no overshoot
+      pu, pl, n = cu, cl, n + 1
+      if cu == cl == kc.V10_BAND:
+        break
+      assert n < 40
+    assert n == max(1, math.ceil(round(max(abs(start_u - 0.2), abs(start_l - 0.2)) / 0.04, 9)))
+  # lower without its own previous value follows the upper start (old callers)
+  c = K9Creep(V10_BAND02)
+  assert c.bands(0.5, 1.0, 0.75, 0.65, 0.0) == (K9Creep.jerk_bands(0.5, 1.0)[0], 0.04, 0.04)
+  # non-finite previous band: 0.20 at once (fails toward the menu value, never NaN on the CAN)
+  assert K9Creep(V10_BAND02).bands(0.5, 1.0, 0.75, 0.65, float("nan"), float("nan"))[1:] == (0.2, 0.2)
+  # reset (interlock / mode change) starts again from the band sent before
+  c = K9Creep(V10_BAND02)
+  for _ in range(10):
+    c.bands(0.5, 1.0, 0.75, 0.65, 0.2, 0.2)
+  c.reset()
+  assert c.bands(0.5, 1.0, 0.75, 0.65, 0.75, 0.65)[1:] == (0.71, 0.61)
+
+
+def test_band_on_the_can_grid():
+  # r6 (new): SCC14 ComfortBand is 6 bit x 0.02; the settled value encodes as exactly 10 (0.20) and decodes back to 0.20
+  raw = int(math.floor(kc.V10_BAND / 0.02 + 0.5))
+  assert raw == 10 and abs(raw * 0.02 - 0.20) < 1e-12
+  c = K9Creep(V10_BAND02)
+  pu = pl = 0.83
+  for _ in range(30):
+    _, pu, pl = c.bands(0.5, 0.5, 0.8, 0.7, pu, pl)
+    assert 0 <= int(math.floor(pu / 0.02 + 0.5)) <= 63
+  assert int(math.floor(pu / 0.02 + 0.5)) == int(math.floor(pl / 0.02 + 0.5)) == 10
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_band_never_changes_accel_or_stopreq(seed):
+  # r6 (new): calling bands() between update() calls (as make_jerk does) leaves accel/StopReq menu 1's bit for bit
+  for frames in _stops(seed):
+    ref, c3 = V10Ref(), K9Creep(V10_BAND02)
+    pu = pl = 0.0
+    for f in frames:
+      assert _upd(c3, f) == ref.step(**f)
+      if c3.active:
+        _, pu, pl = c3.bands(1.0, f["v_ego"], 0.8, 0.7, pu, pl)
+
+
+def test_band_only_changes_scc14_band_not_v9():
+  assert K9Creep(V9).bands(0.5, 1.0, 0.9, 0.8, 0.0) == K9Creep.jerk_bands(0.5, 1.0)
