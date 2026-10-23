@@ -201,6 +201,10 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    # K9OneLaneHold (experimental, see controls/lib/k9_one_lane_hold.py): 0 / unknown = off -> k9_olh_add is 0.0 and the
+    # laneless command below is computed exactly as before.
+    from openpilot.selfdrive.controls.lib.k9_one_lane_hold import k9_one_lane_hold_step
+    k9_olh_add = k9_one_lane_hold_step(self, CS, CC, model_v2, LaneChangeState.off)
     lane_cmd_active = False
     if not CC.latActive:
       new_desired_curvature = self.curvature
@@ -222,7 +226,10 @@ class Controls:
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+      dc_model = model_v2.action.desiredCurvature
+      if k9_olh_add != 0.0:
+        dc_model = dc_model + k9_olh_add   # K9OneLaneHold 1: one-lane-line gap hold (laneless only)
+      new_desired_curvature = smooth_value(dc_model, self.desired_curvature, 0.1)
 
     # K9LaneFix (experimental, see controls/lib/k9_lane_fix.py): read every control tick like the other lateral params
     # here; a changed number restarts the hand-over state. 0 / unknown = off (fix is None and nothing below runs).
