@@ -10,8 +10,12 @@ Param K9OneLaneHold (int, default 0):
         to that line returns to the remembered centre target (PD: gap error + filtered time rate of the line position at
         the car, not the line slope - the near slope is biased in curves); closer than the remembered minimum gap the push is
         stronger. Two lines or no line: nothing is added (laneless as before).
-     3) Off (with a ramp back to 0, memory dropped) when the remaining shift exceeds S_OFF or the visible line keeps
-        receding for RECEDE_T s while the hold already pushes fully (the line moved: widening lane, merge, split).
+     3) Off (with a ramp back to 0, memory dropped) when the visible line moves by itself: its position at the car is
+        predicted every model frame from the previous frame (line fit at the distance travelled minus the model path there)
+        and the leaky sum (TAU_C) of the unexplained motion exceeds C_OFF (bias per line learned while both lines are seen);
+        the push already fades from C_FADE0 on, and nothing is pushed for the first T_PROBE s of a one-line episode.
+        Also off when the remaining shift exceeds S_OFF or the visible line keeps receding for RECEDE_T s while the hold
+        pushes fully (the line moved: widening lane, merge, split).
         Off (with a ramp back to 0) in lane change / blinker / steering pressed / turns / low speed, lane width jump or
         lane width changing ahead (merge, split), the visible line jumping, diverging from the model path or jittering.
      4) The memory is dropped after MEM_T s or MEM_D m without both lines. The correction is capped (lateral accel 0.25 m/s^2, 0.6 inside
@@ -35,6 +39,14 @@ OMEGA, ZETA, KI = 0.35, 0.9, 0.15   # closed-loop sweep 13:55 (0.6/0.45 cost mor
 S_MAX, I_MAX = 0.6, 0.4
 S_OFF = 0.5                  # remaining shift above this = memory implausible -> dropped
 RECEDE_RATE, RECEDE_T = 0.08, 1.0   # line keeps receding while the hold pushes fully for RECEDE_T s -> line moved, not the car
+# r3 line-moved detector: per model frame the visible line position at the car is predicted from the previous frame
+# (previous line fit at the distance travelled minus the model path there: the car moves along its heading / the laneless
+# path; the line fit is in the car frame, so heading changes made by the hold itself are already in the line slope).
+# Innovation bias per line is learned while both lines are reliable. Leaky sum of the unexplained motion over TAU_C;
+# above C_OFF the line moved by itself (merge / split / branch line) -> memory dropped, hold ramps out.
+C_OFF, TAU_C, TAU_B, INN_JUMP = 0.10, 1.0, 5.0, 0.3   # r3 sweep 15:35 (0.15/0.12 still followed MERGE or cost jerk)
+T_PROBE = 0.6                # one-line episode age before the hold may push (the detector watches the line first) [s]
+C_FADE0 = 0.03               # the push fades linearly from |unexplained motion| C_FADE0 to 0 at C_OFF (moving line = less trust)
 A_MAX, A_MAX_CLOSE, J_MAX = 0.25, 0.6, 0.2
 RAMP_T, BLOCK_T = 1.0, 1.0
 BOTH_T, STALE_T = 1.0, 0.3      # both lines steady before remembering / model frame older than this = no measurement
@@ -50,12 +62,17 @@ def k9_one_lane_hold_mode(params) -> int:
   return 1 if mode == 1 else 0
 
 
-def _near_fit(x, y):
-  """intercept and slope at x=0 of a quadratic least-squares fit over 0 <= x <= X_NEAR"""
+def _near_coef(x, y):
+  """quadratic least-squares fit over 0 <= x <= X_NEAR (highest power first); constant when too few points"""
   m = x <= X_NEAR
   if m.sum() < 4:
-    return float(y[0]), 0.0
-  c = np.polyfit(x[m], y[m], 2)
+    return np.array([0.0, 0.0, float(y[0])])
+  return np.polyfit(x[m], y[m], 2)
+
+
+def _near_fit(x, y):
+  """intercept and slope at x=0 of a quadratic least-squares fit over 0 <= x <= X_NEAR"""
+  c = _near_coef(x, y)
   return float(c[2]), float(c[1])
 
 
@@ -89,6 +106,11 @@ class OneLaneHold:
     self.k_out = 0.0
     self.active = False
     self.recede_t = 0.0
+    self.prev = None                # previous frame (line fits, path x, path y) for the line-moved detector
+    self.ib = [0.0, 0.0]            # learned innovation bias [m/s] per line
+    self.cu = [0.0, 0.0]            # leaky sum of unexplained line motion [m]
+    self.moved = False
+    self.one_t = 0.0                # age of the current one-line episode [s]
 
   # ---- model frame (20 Hz) ----
   def _frame(self, md, v, dt):
@@ -99,7 +121,17 @@ class OneLaneHold:
     ys = [np.asarray(ll[1].y, dtype=float), np.asarray(ll[2].y, dtype=float)]
     probs = [float(md.laneLineProbs[1]), float(md.laneLineProbs[2])]
     stds = [float(md.laneLineStds[1]), float(md.laneLineStds[2])]
-    fits = [_near_fit(x, y) for y in ys]
+    coefs = [_near_coef(x, y) for y in ys]
+    fits = [(float(c_[2]), float(c_[1])) for c_ in coefs]
+    px = np.asarray(md.position.x, dtype=float); py = np.asarray(md.position.y, dtype=float)
+    inn = [None, None]
+    if self.prev is not None and dt > 0.0:
+      s_ = max(v, 0.0) * dt
+      pth = float(np.interp(s_, self.prev[1], self.prev[2])) if len(self.prev[1]) > 1 else 0.0
+      for i in (0, 1):
+        e_ = fits[i][0] - (float(np.polyval(self.prev[0][i], s_)) - pth)
+        inn[i] = e_ if abs(e_) <= INN_JUMP else None
+    self.prev = (coefs, px, py)
     jump = False
     for i in (0, 1):
       y0, a = fits[i]
@@ -114,6 +146,16 @@ class OneLaneHold:
       self.y0[i] = y0
       ok = probs[i] >= (P_OFF if self.rel[i] else P_ON) and stds[i] <= STD_MAX and self.jit[i] <= JIT_MAX
       self.rel[i] = bool(ok)
+    both = self.rel[0] and self.rel[1]
+    for i in (0, 1):
+      if inn[i] is None or not self.rel[i]:
+        self.cu[i] = 0.0 if not self.rel[i] else self.cu[i]; continue
+      if both:
+        self.ib[i] += (dt / (TAU_B + dt)) * (inn[i] / dt - self.ib[i]); self.cu[i] = 0.0
+      else:
+        self.cu[i] = self.cu[i] * max(1.0 - dt / TAU_C, 0.0) + (inn[i] - self.ib[i] * dt)
+        if abs(self.cu[i]) > C_OFF:
+          self.moved = True
     gaps = [-fits[0][0] - HALF_W, fits[1][0] - HALF_W]
     for i in (0, 1):
       self.g_f[i] = _lpf(self.g_f[i], gaps[i], dt, TAU_GAP) if self.rel[i] else None
@@ -138,7 +180,6 @@ class OneLaneHold:
     if self.rel[0] == self.rel[1]:
       self.meas = None; return
     i = 0 if self.rel[0] else 1
-    px = np.asarray(md.position.x, dtype=float); py = np.asarray(md.position.y, dtype=float)
     line_d = float(np.interp(X_FAR, x, ys[i])) - fits[i][0]
     path_d = float(np.interp(X_FAR, px, py) - py[0]) if len(px) > 1 and px[-1] > X_FAR else line_d
     self.meas = (i, gaps[i], self.ydot[i], abs(line_d - path_d) <= DIVERGE)
@@ -158,13 +199,17 @@ class OneLaneHold:
         self.rel = [False, False]; self.meas = None
       self.frame_dt = 0.0
     self.block_t = max(self.block_t - DT, 0.0)
+    if self.moved:
+      # the visible line moved by itself relative to the laneless path: memory no longer valid
+      self.moved = False; self.mem = None; self.recede_t = 0.0
     if self.mem is not None and not (self.rel[0] and self.rel[1]):
       self.mem["t"] += DT; self.mem["d"] += v * DT
       if self.mem["t"] > MEM_T or self.mem["d"] > MEM_D:
         self.mem = None
     m = self.meas if self.frame_dt <= STALE_T else None
+    self.one_t = self.one_t + DT if m is not None else 0.0
     ok = (laneless and not lane_change and not pressed and v >= V_MIN and abs(model_curv) < K_TURN and self.block_t <= 0.0
-          and self.mem is not None and m is not None and m[3] and -0.2 <= m[1] <= self.mem["target"] + S_MAX + 0.5)
+          and self.one_t >= T_PROBE and self.mem is not None and m is not None and m[3] and -0.2 <= m[1] <= self.mem["target"] + S_MAX + 0.5)
     v2 = max(v, V_MIN) ** 2
     close = False
     if ok:
@@ -197,7 +242,10 @@ class OneLaneHold:
       return 0.0
     amax = (A_MAX_CLOSE if close else A_MAX) / v2
     g = self.w * self.w * (3.0 - 2.0 * self.w)
-    tgt = g * float(np.clip(self.k_raw, -amax, amax))
+    fade = 1.0
+    if self.meas is not None and C_OFF > C_FADE0:
+      fade = float(np.clip((C_OFF - abs(self.cu[self.meas[0]])) / (C_OFF - C_FADE0), 0.0, 1.0))
+    tgt = g * fade * float(np.clip(self.k_raw, -amax, amax))
     self.k_out = float(np.clip(tgt, self.k_out - dk, self.k_out + dk))
     return self.k_out
 

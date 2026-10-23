@@ -153,3 +153,32 @@ def test_receding_line_is_released():
   assert h.mem is None and out[-1] == 0.0
   assert ys.min() > -0.3          # followed the receding line (0.75 m) by less than 0.3 m
   assert abs(ys[-1]) < 0.1        # and back on the model path
+
+
+def test_line_moving_by_itself_is_dropped_fast():
+  # r3: right line gone and at the same moment the left line moves away 0.233 m/s for 3 s (branch line, parallel shift)
+  h = warm(0.0)
+  n = {"k": 0}
+  def fr(y, p):
+    n["k"] += 1
+    return frame(-1.8 - y - 0.7 * min(n["k"] * 0.05 / 3.0, 1.0), 1.8 - y, p_right=0.05, slope=-p)
+  out, ys = run(h, fr, 8.0, y0=0.0, plant=True, pull=True)
+  assert h.mem is None and out[-1] == 0.0
+  t_drop = None
+  h2 = warm(0.0); n["k"] = 0
+  for k in range(400):
+    run(h2, fr, 0.05, y0=0.0)
+    if h2.mem is None:
+      t_drop = (k + 1) * 0.05; break
+  assert t_drop is not None and t_drop <= 1.5      # unexplained line motion > C_OFF within 1.5 s (0.35 m moved)
+  assert ys.min() > -0.08                          # followed the moving line by less than 8 cm
+
+
+def test_static_line_with_car_offset_is_not_released():
+  # r3: the hold's own motion (car moves toward the centre) must not look like a moving line
+  h = warm(-0.35)
+  out, ys = run(h, world(p_right=0.05), 8.0, y0=-0.35, plant=True, pull=True)
+  assert h.mem is not None and h.active
+  assert max(abs(h.cu[0]), abs(h.cu[1])) < H.C_OFF
+  assert abs(ys[-1]) < 0.2
+
