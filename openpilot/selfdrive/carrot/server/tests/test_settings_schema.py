@@ -602,16 +602,16 @@ def test_declared_numeric_bounds_stay_intact(params):
 
 def test_k9_stop_mode_is_one_click_select_with_four_choices(settings, params):
   stop = next(p for p in params if p["name"] == "K9StopMode")
-  assert (stop["min"], stop["max"], stop["default"], stop["unit"]) == (0, 3, 0, 1)
+  assert (stop["min"], stop["max"], stop["default"], stop["unit"]) == (0, 4, 0, 1)
   assert stop["control"] == "select" and stop["title"] == "K9 정차 방식 선택 (실험)"
   # rewritten 2026-10-23 07:25 (menu renumbered: bare v9 removed, 3 = v10 + shudder fix); r2: 3 = v10 + lead stop fix;
-  # r6: 3 = v10 + band 0.2 (menu 3 label pin rewritten)
-  assert stop["options"] == {"ko": ["0 기본 제동", "1 v10", "2 v9+떨림 수정", "3 v10+밴드 0.2"],
-                             "en": ["0 Base braking", "1 v10", "2 v9 + shudder fix", "3 v10 + band 0.2"],
-                             "zh": ["0 基本制动", "1 v10", "2 v9+抖动修正", "3 v10+带宽0.2"]}
+  # r6: 3 = v10 + band 0.2 (menu 3 label pin rewritten); 2026-10-24: 4 = v10 + shudder fix added (menu-set pins rewritten)
+  assert stop["options"] == {"ko": ["0 기본 제동", "1 v10", "2 v9+떨림 수정", "3 v10+밴드 0.2", "4 v10+떨림 수정"],
+                             "en": ["0 Base braking", "1 v10", "2 v9 + shudder fix", "3 v10 + band 0.2", "4 v10 + shudder fix"],
+                             "zh": ["0 基本制动", "1 v10", "2 v9+抖动修正", "3 v10+带宽0.2", "4 v10+抖动修正"]}
   for key in ("descr", "edescr", "cdescr"):
     assert "K9StopTaper" not in stop[key] and "K9CreepMode" not in stop[key]
-    assert "v8" not in stop[key] and "4:" not in stop[key] and "4：" not in stop[key]
+    assert "v8" not in stop[key] and "5:" not in stop[key] and "5：" not in stop[key]
   # the four values and the safety notes, in plain words
   assert "0: 기본 제동" in stop["descr"] and "1: v10" in stop["descr"] and "2: v9 + 떨림 수정" in stop["descr"] and "3: v10 + 밴드 0.2" in stop["descr"]
   assert "0: base braking" in stop["edescr"] and "1: v10" in stop["edescr"] and "2: v9 + shudder fix" in stop["edescr"] and "3: v10 + band 0.2" in stop["edescr"]
@@ -620,7 +620,8 @@ def test_k9_stop_mode_is_one_click_select_with_four_choices(settings, params):
   assert "일반 CAN(CAN-FD 아님) 카메라 SCC" in stop["descr"] and "non-CAN-FD camera-SCC" in stop["edescr"]
   assert "즉시 원래 명령" in stop["descr"] and "return the original at once" in stop["edescr"]
   assert "실차에서는 아직 확인하지 않았습니다" in stop["descr"] and "not been checked on the vehicle yet" in stop["edescr"]
-  assert "尚未经实车确认" in stop["cdescr"] and "4 이상" in stop["descr"] and "4 or more" in stop["edescr"]
+  assert "尚未经实车确认" in stop["cdescr"] and "5 이상" in stop["descr"] and "5 or more" in stop["edescr"]
+  assert "4: v10 + 떨림 수정" in stop["descr"] and "4: v10 + shudder fix" in stop["edescr"] and "4：v10+抖动修正" in stop["cdescr"]
   assert "v9보다 약해지지 않게" in stop["descr"] and "never brakes less than v9" in stop["edescr"]
   assert "0에서 시작" in stop["descr"] and "starts at 0" in stop["edescr"]
   menu = json.dumps(settings["menu"])
