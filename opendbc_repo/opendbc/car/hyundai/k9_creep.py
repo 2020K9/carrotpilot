@@ -36,8 +36,14 @@ mode 2 (the page v10) with mode 3's 2.5 m lead latch, ported so that the accel s
   state with a lead within 3.0 m (sticky until the stopping state ends, like the mode 2 latch) the sent accel is exactly
   the mode 2 latch hold ramp max(min(accel, -0.50), prev - V10_HOLD_STEP), but StopReq is withheld until one of the
   mode 2 latch conditions other than the 3.0 m lead holds (standstill, aTarget <= -1.0, weak decel, aEgo > 0.06, lead
-  <= 2.5 m). Reason: the 2026-10-22 17:06 K9 rlog (see mode 3 below) - StopReq while rolling made the ESC press at once
-  (LONG_ACCEL jerk 8.2-10.6 m/s^3). Because only StopReq timing changes, mode 4 never brakes less than mode 2 in accel.
+  <= 2.5 m, or the predicted stop point below). Reason: the 2026-10-22 17:06 K9 rlog (see mode 3 below) - StopReq while
+  rolling made the ESC press at once (LONG_ACCEL jerk 8.2-10.6 m/s^3). Because only StopReq timing changes, mode 4 never
+  brakes less than mode 2 in accel.
+- predicted stop point (r3, 2026-10-23): in that 2.5-3.0 m zone StopReq is sent at once (as mode 2 does) when the stop
+  point predicted from the measured deceleration, lead_distance - v^2 / (2 max(-eff_ac, LEAD_PRED_DECEL_MIN)), is closer
+  to the lead than LEAD_PRED_GAP (2.6 m). So StopReq is withheld only while the car is braking well enough to stop with
+  room; when it is not, mode 4 behaves like mode 2. Chosen in the 16-stop replay with an ESC StopReq-hold model refitted
+  on the K9 base-braking stops (0.3 m/s^2, 2 m/s^3, 0.5 s delay); simulator only, NOT verified on the vehicle.
 - ComfortBand, jerk and everything else are mode 2's (band 0). A narrow low-speed band (0.04, first r1 version a0dceafa)
   was dropped in r2: every band version tried (0.02-0.06, shudder-gated, with request pre-compensation) lost to mode 2
   in the 16-stop replay under at least one of the band-effect assumptions, and no K9 log with such a band exists.
@@ -132,6 +138,8 @@ URGENT_TARGET = -1.0
 JERK_U_BP, JERK_U_V = [0.5, 1.4], [2.0, 0.8]
 LEAD_LATCH_GAP = 3.0  # m, deviation: lead protection is not in the source
 LEAD_LATCH_GAP_2 = 2.5  # m, mode 3 and mode 4 lead latch (K9 planner stops 2.2-3.0 m behind a lead; see the docstring)
+LEAD_PRED_GAP = 2.6  # m, mode 4: StopReq at once in the 2.5-3.0 m zone when the predicted stop point is closer
+LEAD_PRED_DECEL_MIN = 0.05  # m/s^2, mode 4: deceleration floor of that prediction
 
 # Mode 3 ComfortBand: the 2026-10-22 logs showed the 5-12 Hz shudder raised with v9 (band 0) from 0.3 up to 2.0 m/s
 # and no difference at 3-12 m/s, so the original band is restored fully at or below 2.0 m/s and v9 is kept at or
@@ -251,8 +259,10 @@ class K9Creep:
     lead_near = lead_seen and lead_distance <= LEAD_LATCH_GAP
     lead_close = lead_seen and lead_distance <= (LEAD_LATCH_GAP_2 if (self.shudder_fix or self.v10_fix) else LEAD_LATCH_GAP)
     real_standstill = esp_standstill or v_ego_raw < STANDSTILL_SPEED or v_ego < STANDSTILL_SPEED
+    lead_short = (self.v10_fix and lead_seen and (lead_near or self.lead_hold)
+                  and lead_distance - v_ego * v_ego / (2.0 * max(-eff_ac, LEAD_PRED_DECEL_MIN)) < LEAD_PRED_GAP)
     if (real_standstill or a_target <= URGENT_TARGET or (v_ego > DOWN_UP_SPEED and eff_ac > 0.04) or a_ego > 0.06
-        or lead_close):
+        or lead_close or lead_short):
       self.latched = True
 
     if self.latched:

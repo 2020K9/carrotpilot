@@ -87,11 +87,13 @@ def test_mode2_lead_zone_then_standstill_latches():
   assert s is True and a <= before + 1e-12  # standstill latch, no release at the latch
 
 
-@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V9_SHUDDER_FIX, False), (V10, True), (V10_SHUDDER_FIX, False)])
+@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V9_SHUDDER_FIX, False), (V10, True), (V10_SHUDDER_FIX, True)])
 def test_through_carcontroller_lead_2_9_m(monkeypatch, mode, expect_sr_rolling):
   # rewritten 2026-10-23 07:25: K9StopMode values moved, so the kind is mapped to menu 1 (test only); v10 keeps the
   # 3.0 m lead latch (safety addition of 1d0961da 2), v9 + shudder fix latches at 2.5 m; rewritten again in r2:
-  # v10 + lead stop fix (menu 3) latches at 2.5 m too
+  # v10 + lead stop fix (menu 3) latches at 2.5 m too; rewritten again in r3: menu 3 also sends StopReq at once in the
+  # 2.5-3.0 m zone when the predicted stop point is closer than 2.6 m - here 0.8 m/s at -0.3 m/s^2 would stop 1.1 m on,
+  # so it sends StopReq while rolling like menu 1 (the slow case is test_through_carcontroller_lead_2_9_m_slow_menu_3)
   monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: mode})
   r = Rig(monkeypatch, K9StopMode=1)
   for i in range(100):
@@ -103,6 +105,25 @@ def test_through_carcontroller_lead_2_9_m(monkeypatch, mode, expect_sr_rolling):
     if sent is not None:
       rolling_sr.append(sent["StopReq"])
   assert (max(rolling_sr) == 1) is expect_sr_rolling
+  for i in range(60):
+    _, sent = r.step(-0.7, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0, lead=(2.9, 0.0))
+  assert sent is None or sent["StopReq"] == 1
+
+
+def test_through_carcontroller_lead_2_9_m_slow_menu_3(monkeypatch):
+  """r3 (new): 0.3 -> 0.06 m/s at -0.3 m/s^2 behind a lead at 2.9 m stops with room (>= 2.6 m): menu 3 withholds StopReq
+  while rolling (menu 1 sends it), then latches at standstill."""
+  monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {1: V10_SHUDDER_FIX})
+  r = Rig(monkeypatch, K9StopMode=1)
+  for i in range(100):
+    r.step(-0.6, LCS.pid, 4.0 - 0.03 * i, a_target=-0.5, a_ego=-0.5, lead=(8.0 - 0.04 * i, -1.0))
+  rolling_sr = []
+  for i in range(120):
+    v = max(0.3 - 0.002 * i, 0.06)
+    _, sent = r.step(-0.7, LCS.stopping, v, a_target=-0.3, a_ego=-0.3, lead=(2.9, -v))
+    if sent is not None:
+      rolling_sr.append(sent["StopReq"])
+  assert rolling_sr and max(rolling_sr) == 0
   for i in range(60):
     _, sent = r.step(-0.7, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0, lead=(2.9, 0.0))
   assert sent is None or sent["StopReq"] == 1
