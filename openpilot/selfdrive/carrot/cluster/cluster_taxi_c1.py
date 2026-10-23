@@ -20,7 +20,11 @@ Live inputs (every frame):
     (solid: lane lines in use / faint: laneless, carrot rule) + "LFA" (green on / grey off).
 Season: K9MeterSeason 0 auto (month) / 1 봄 / 2 여름 / 3 가을 / 4 겨울; other values = 0.
 Backgrounds (r2): bg2 scenes (out/taximeter/variants/bg2), baked by bake_c1.js; moving layer = ptcl_params.json +
-ptcl_white.png (petal / leaf / ginkgo / snow / firefly). Twinkles / drifting bits of the HTML scene are frozen.
+ptcl_white.png (petal / leaf / ginkgo / snow / firefly).
+Moving scene bits (r3): what c1bg.js draw() animates in the HTML (first 14 data-tw elements per time of day =
+twinkle opacity, every data-dr element = slow drift in x: lanterns, windows, stars, light paths on the sea, clouds,
+summer front waves) is left out of back_/over_ and drawn live from small baked sprites (anim_{season}.png +
+anim.json, same formulas). Particles fade out near the card edge and are clipped to the card (scissor).
 CPU (r2): sprites are drawn from their alpha bounding box, the 'over' layer as runs of non-empty 16 px tiles.
 Time of day (낮 05:00 / 노을 16:00 / 밤 19:00, 3 s cross-fade) follows the Asia/Seoul clock.
 
@@ -303,6 +307,25 @@ BONO_PAL = {"f": (92, 188, 255), "o": (18, 48, 79)}
 PTCL_KINDS = ("petal", "leaf", "ginkgo", "snow", "fly")
 PTCL_CELL, PTCL_DRAW = 64.0, 16.0
 PTCL_TOD = {"day": "day", "dusk": "sunset", "night": "night"}
+PTCL_EDGE_FADE = 24.0   # r3: alpha 1 -> 0 over the last 24 px before the card edge (sprite centre), scissor at the card
+PTCL_BOX_FADE = 12.0    # ... and over the last 12 px before a no-particle box (inside the box: 0, as in C1.html)
+
+
+def _smooth01(v: float) -> float:
+  v = 0.0 if v <= 0.0 else (1.0 if v >= 1.0 else v)
+  return v * v * (3.0 - 2.0 * v)
+
+
+def particle_alpha(px: float, py: float) -> float:
+  """Opacity multiplier of a particle centred at card (px, py): 0 at / beyond the card edge and inside a
+  no-particle box, smooth ramp to 1 over PTCL_EDGE_FADE px from the edge / PTCL_BOX_FADE px from a box."""
+  a = _smooth01(min(px, py, CARD_W - px, CARD_H - py) / PTCL_EDGE_FADE)
+  for b in NO_PARTICLE_BOXES:
+    if a <= 0.0:
+      break
+    d = max(b[0] - px, px - b[2], b[1] - py, py - b[3])   # > 0 outside the box (Chebyshev distance)
+    a *= _smooth01(d / PTCL_BOX_FADE)
+  return a
 
 
 def _load_ptcl_params() -> dict:
@@ -324,6 +347,35 @@ def _load_ptcl_params() -> dict:
 
 
 PTCL_PARAMS = _load_ptcl_params()
+
+# r3: animated scene elements of the bg2 HTML. anim.json[season][tod] = [{kind tw|dr, i, v, part back|front,
+# x, y, w, h (card px of the sprite), sx, sy (atlas px)}], atlas anim_{season}.png (2 px transparent gutter).
+ANIM_TW_MAX = 14   # c1bg.js: only the first 14 data-tw of a time of day twinkle (the rest stay as drawn)
+
+
+def _load_anim() -> dict:
+  try:
+    return json.loads((C1_ASSET_DIR / "anim.json").read_text())["seasons"]
+  except Exception:
+    return {}
+
+
+ANIM = _load_anim()
+
+
+def anim_elements(season: str, tod: str, t: float, part: str | None = None):
+  """[(entry, dx, alpha)] for the time of day = c1bg.js draw(): twinkle opacity v*(.6+.4 sin(t(1.1+.37i)+2.1i)),
+  drift x sin(.12t+1.7i)*v (i = index in its list, back then front)."""
+  out = []
+  for e in ANIM.get(season, {}).get(PTCL_TOD.get(tod, tod), ()):
+    if part is not None and e["part"] != part:
+      continue
+    i = e["i"]
+    if e["kind"] == "tw":
+      out.append((e, 0.0, e["v"] * (.6 + .4 * math.sin(t * (1.1 + i * .37) + i * 2.1))))
+    else:
+      out.append((e, math.sin(t * .12 + i * 1.7) * e["v"], 1.0))
+  return out
 
 
 def particle_positions(season: str, tod: str, t: float):
@@ -523,6 +575,7 @@ class C1MeterPanel:
     self.lane_line = False
     self._crop: dict[str, tuple] = {}
     self._runs: dict[str, list] = {}
+    self._anim_runs: dict = {}
     self.occupant: bool | None = None
     self.occupant_t: float | None = None
     self._tap = False
@@ -677,7 +730,7 @@ class C1MeterPanel:
           tex = t
       except Exception as exc:
         print(f"C1 asset load failed for {path.name}: {exc}", flush=True)
-    if tex is not None and not name.startswith("back_"):
+    if tex is not None and not name.startswith("back_") and not name.startswith("anim_"):
       alpha = _png_alpha(path)
       if alpha is not None and alpha.shape == (tex.height, tex.width):
         if name.startswith("over_"):
@@ -689,7 +742,8 @@ class C1MeterPanel:
 
   def _drop_season(self, rl, keep: str) -> None:
     for name in list(self._textures):
-      if (name.startswith("back_") or name.startswith("over_")) and f"_{keep}_" not in name:
+      if ((name.startswith("back_") or name.startswith("over_")) and f"_{keep}_" not in name) or \
+         (name.startswith("anim_") and name != f"anim_{keep}"):
         tex = self._textures.pop(name)
         self._runs.pop(name, None)
         if tex is not None:
@@ -709,6 +763,24 @@ class C1MeterPanel:
     for name in ("porori_body", "porori_tail", "porori_fL", "porori_fR", "porori_aL", "porori_aR", "bono_body", "shell",
                  "ptcl_white"):
       self._tex(rl, name)
+    if ANIM.get(self.season):
+      self._anim_atlas(rl)
+
+  def _anim_atlas(self, rl):
+    name = f"anim_{self.season}"
+    if name in self._textures:
+      return self._textures[name]
+    tex = self._tex(rl, name)
+    runs = {}
+    if tex is not None:
+      alpha = _png_alpha(C1_ASSET_DIR / f"{name}.png")
+      if alpha is not None and alpha.shape == (tex.height, tex.width):
+        for tod, lst in ANIM[self.season].items():
+          for e in lst:
+            sx, sy, w, h = int(e["sx"]), int(e["sy"]), int(e["w"]), int(e["h"])
+            runs[(tod, e["kind"], e["i"])] = alpha_runs(alpha[sy:sy + h, sx:sx + w])
+    self._anim_runs = runs
+    return tex
 
   def close(self, rl) -> None:
     for tex in self._textures.values():
@@ -736,6 +808,73 @@ class C1MeterPanel:
       return
     w, h = float(tex.width), float(tex.height)
     rl.draw_texture_pro(tex, rl.Rectangle(0, 0, w, h), rl.Rectangle(x, y, w, h), rl.Vector2(0, 0), 0.0, color)
+
+  def _draw_anim(self, rl, tod: str, part: str, x: float, y: float, t: float, mul: float) -> None:
+    """Animated scene elements of one time of day (r3), atlas sprites, alpha / x-offset per frame."""
+    tex = self._textures.get(f"anim_{self.season}")
+    if tex is None or mul <= 0.002:
+      return
+    key = PTCL_TOD.get(tod, tod)
+    for e, dx, a in anim_elements(self.season, tod, t, part):
+      a *= mul
+      if a <= 0.004:
+        continue
+      col = rl.Color(255, 255, 255, int(round(255 * min(1.0, a))))
+      sx, sy, ex, ey = e["sx"], e["sy"], x + e["x"] + dx, y + e["y"]
+      for rx, ry, rw, rh in self._anim_runs.get((key, e["kind"], e["i"])) or ((0, 0, e["w"], e["h"]),):
+        rl.draw_texture_pro(tex, rl.Rectangle(sx + rx, sy + ry, rw, rh), rl.Rectangle(ex + rx, ey + ry, rw, rh),
+                            rl.Vector2(0, 0), 0.0, col)
+      # a drifting sprite cut at the card edge: repeat its edge strip into the gap it leaves (HTML draws past the card)
+      if dx < 0 and e["w"] >= 12 and e["x"] + e["w"] >= CARD_W - 0.5:
+        g = min(-dx + 1.0, 12.0)
+        rl.draw_texture_pro(tex, rl.Rectangle(sx + e["w"] - 12, sy, 12, e["h"]),
+                            rl.Rectangle(ex + e["w"] - 1, ey, g, e["h"]), rl.Vector2(0, 0), 0.0, col)
+      elif dx > 0 and e["w"] >= 12 and e["x"] <= 0.5:
+        g = min(dx + 1.0, 12.0)
+        rl.draw_texture_pro(tex, rl.Rectangle(sx, sy, 12, e["h"]), rl.Rectangle(ex - g + 1, ey, g, e["h"]),
+                            rl.Vector2(0, 0), 0.0, col)
+
+  def _scissor(self, rl, x: float, y: float, on: bool) -> None:
+    f = getattr(rl, "begin_scissor_mode" if on else "end_scissor_mode", None)
+    if f is None:
+      return
+    if on:
+      f(int(round(x)), int(round(y)), int(CARD_W), int(CARD_H))
+    else:
+      f()
+
+  def _back_and_moving(self, rl, x: float, y: float, t: float) -> None:
+    """back layer(s), the animated back elements of each visible time of day, then the particles; the moving
+    bits are clipped to the card."""
+    bw = self.bg_weights
+    cur, prev, w = bw["cur"], bw["prev"], bw["w"]
+    has_anim = bool(ANIM.get(self.season)) and f"anim_{self.season}" in self._textures
+    if w < 1.0:
+      self._layer(rl, f"back_{self.season}_{prev}", x, y, 1.0)
+      if has_anim:
+        self._scissor(rl, x, y, True)
+        self._draw_anim(rl, prev, "back", x, y, t, 1.0)
+        self._scissor(rl, x, y, False)
+      self._layer(rl, f"back_{self.season}_{cur}", x, y, w)
+    else:
+      self._layers(rl, "back", x, y)
+    self._scissor(rl, x, y, True)
+    if has_anim:
+      self._draw_anim(rl, cur, "back", x, y, t, w)
+    self._draw_particles(rl, x, y, t)
+    self._scissor(rl, x, y, False)
+
+  def _front_moving(self, rl, x: float, y: float, t: float) -> None:
+    """animated front elements (summer waves: the first front elements, so under the rest of the over layer)."""
+    lst = ANIM.get(self.season, {})
+    if f"anim_{self.season}" not in self._textures or not any(e["part"] == "front" for v in lst.values() for e in v):
+      return
+    bw = self.bg_weights
+    self._scissor(rl, x, y, True)
+    if bw["w"] < 1.0:
+      self._draw_anim(rl, bw["prev"], "front", x, y, t, 1.0 - bw["w"])
+    self._draw_anim(rl, bw["cur"], "front", x, y, t, bw["w"])
+    self._scissor(rl, x, y, False)
 
   def _layers(self, rl, kind: str, x: float, y: float) -> None:
     """Cross-fade: previous layer opaque underneath, current on top with the fade weight."""
@@ -848,9 +987,8 @@ class C1MeterPanel:
       return
     h = PTCL_DRAW * 0.5
     for kind, px, py, rot, col, op in particle_positions(self.season, cur, t):
-      if any(b[0] < px < b[2] and b[1] < py < b[3] for b in NO_PARTICLE_BOXES):
-        continue
-      if not (h <= px <= CARD_W - h and h <= py <= CARD_H - h):   # whole sprite inside the card (HTML clips at the card)
+      op *= particle_alpha(px, py)          # r3: fade near the card edge / no-particle boxes (scissor clips the rest)
+      if op <= 0.004:
         continue
       cell = PTCL_KINDS.index(kind) * PTCL_CELL
       rl.draw_texture_pro(tex, rl.Rectangle(cell, 0, PTCL_CELL, PTCL_CELL), rl.Rectangle(x + px, y + py, PTCL_DRAW, PTCL_DRAW),
@@ -897,8 +1035,7 @@ class C1MeterPanel:
     tw = theme_weights(self.bg_weights)
     text = renderer._draw_text
 
-    self._layers(rl, "back", x, y)
-    self._draw_particles(rl, x, y, t)
+    self._back_and_moving(rl, x, y, t)
     # progress track
     p = meter.step_progress if st == "DRIVE" else 0.0
     rl.draw_line_ex(rl.Vector2(x + X0, y + TRACK_Y), rl.Vector2(x + X1, y + TRACK_Y), 3.0, rl.Color(*theme_color("trk0", tw)))
@@ -919,6 +1056,7 @@ class C1MeterPanel:
     # 보노보노 + steering clam (the only steering display on this screen)
     tap = pose.bono_tap if st != "PAY" else 0.0
     self._draw_bono(rl, x, y, pose, tap)
+    self._front_moving(rl, x, y, t)
     self._layers(rl, "over", x, y)            # sea in front of the characters + frame/brand/stats/footer (one layer)
     self._draw_lfa_badge(renderer, rl, x, y, tw)
 
