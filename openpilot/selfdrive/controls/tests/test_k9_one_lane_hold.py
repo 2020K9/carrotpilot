@@ -230,3 +230,43 @@ def test_r4_moved_line_cuts_the_push_even_when_the_line_is_lost_next():
   steps = np.arange(1, len(out2) + 1)
   assert np.all(np.abs(out2) <= np.maximum(k0 - steps * dk, 0.0) + dk + 1e-12)
   assert out2[-1] == 0.0
+
+
+def test_r5_never_pushes_away_from_the_centre_target():
+  # r5: car 0.4 m left of centre, right line gone, the car already moves back toward the centre at 0.3 m/s on its own (the
+  # laneless model recentres it) after the hold pushed for 2 s. The line-rate damping may only take back the lateral velocity the hold itself added:
+  # summed over time the hold never pushes away from the centre target (r4 braked the model's own recentring)
+  h = warm(-0.4)
+  out, _ = run(h, world(p_right=0.05), 2.0, y0=-0.4)       # one line, car still 0.4 m left: the hold pushes right
+  out = list(out)
+  md = None
+  for k in range(130):
+    y = -0.4 + 0.3 * k * DT
+    if k % 5 == 0:
+      md = world(p_right=0.05)(y, 0.3 / 20.0)              # heading matches the lateral motion (line slope)
+    out.append(h.update(md, 20.0, True, False, False, 0.0))
+  out = np.array(out)
+  assert np.min(np.cumsum(out)) * 400 * DT >= -0.002     # the hold's own lateral velocity share never points away from the centre
+
+
+def test_r5_jerk_aware_does_not_block_the_push_from_shrinking():
+  # r5: the hold pushes left (car right of centre), then the visible line moves 0.2 m by itself (watch fires, push cut)
+  # while the model command jerks right (+0.25 m/s^3). The cut push must still fall toward 0 at the jerk limit (r4 froze it:
+  # rising toward 0 counted as 'same direction' as the model jerk)
+  h = warm(0.4)
+  run(h, world(p_right=0.05), 2.0, y0=0.4)
+  v = 20.0
+  k0 = h.k_out
+  assert h.active and k0 * v ** 2 < -0.02
+  out = []
+  md = None
+  for k in range(100):
+    if k % 5 == 0:
+      md = frame(-2.0 - 0.4, 1.8 - 0.4, p_right=0.05)
+    m_k = 0.25 * k * DT / v ** 2                         # model lateral accel ramps +0.25 m/s^3 (r4 held the fall to 1/4)
+    out.append(h.update(md, v, True, False, False, m_k))
+  out = np.array(out)
+  assert h.mem is None
+  dk = H.J_MAX / v ** 2 * DT
+  assert out[39] >= min(k0 + 30 * dk, 0.0) - 1e-12       # fell at least 30 jerk-limit steps in the first 0.4 s (or reached 0)
+  assert np.max(np.abs(np.diff(out))) <= dk + 1e-12

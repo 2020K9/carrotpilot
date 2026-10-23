@@ -21,9 +21,13 @@ Param K9OneLaneHold (int, default 0):
         Off (with a ramp back to 0) in lane change / blinker / steering pressed / turns / low speed, lane width jump or
         lane width changing ahead (merge, split), the visible line jumping, diverging from the model path or jittering.
      4) The memory is dropped after MEM_T s or MEM_D m without both lines. The correction is capped (lateral accel 0.25 m/s^2, 0.6 inside
-        the minimum gap) and rate limited (lateral jerk 0.2 m/s^3), and ramped in / out over RAMP_T / RAMP_OUT s.
+        the minimum gap) and rate limited (lateral jerk 0.15 m/s^3), and ramped in / out over RAMP_T / RAMP_OUT s.
         r4 (jerk aware): while the model command itself jerks (filtered, |jerk| J_Q0 -> J_Q1 m/s^3) the hold adds no jerk
-        in that direction (closed-loop sweep: jerk p99 on one-line drives).
+        in that direction (closed-loop sweep: jerk p99 on one-line drives); r5: a push cut by the watch whose fall jerks in
+        the model jerk direction is held up only from J_QC0 -> J_QC1.
+        r5: the damping term (line rate at the car) may only take back the lateral velocity the hold itself added (hv, the
+        integral of the added lateral accel); it never brakes the laneless model's own return to the centre, so the hold
+        never pushes away from the centre target because of line-estimate jumps (closed loop L20 / DASH).
 """
 import numpy as np
 
@@ -48,12 +52,13 @@ RECEDE_RATE, RECEDE_T = 0.08, 1.0   # line keeps receding while the hold pushes 
 # path; the line fit is in the car frame, so heading changes made by the hold itself are already in the line slope).
 # Innovation bias per line is learned while both lines are reliable. Leaky sum of the unexplained motion over TAU_C;
 # above C_OFF the line moved by itself (merge / split / branch line) -> memory dropped, hold ramps out.
-C_OFF, TAU_C, TAU_B, INN_JUMP = 0.15, 1.5, 5.0, 0.3   # r4 sweep (r3 0.10 / 1.0 fired on still lines: 37-58 % of one-line time lost)
+C_OFF, TAU_C, TAU_B, INN_JUMP = 0.12, 1.5, 5.0, 0.3   # r5: 0.12 m / 1.5 s (r4 0.15: 3 of 28 real merge/branch scenes > 0.05 m; r3 0.10 / 1.0 fired on still lines)
 T_PROBE = 0.6                # one-line episode age before the hold may push (the detector watches the line first) [s]
 C_FADE0 = 0.03               # the push fades linearly from |unexplained motion| C_FADE0 to 0 at C_OFF (moving line = less trust)
-A_MAX, A_MAX_CLOSE, J_MAX = 0.25, 0.6, 0.2
+A_MAX, A_MAX_CLOSE, J_MAX = 0.25, 0.6, 0.15   # r5: J_MAX 0.2 -> 0.15 (closed loop jerk p99 L20 / DASH 160)
 RAMP_T, BLOCK_T = 1.0, 1.0
 RAMP_OUT = 1.0              # ramp-out time [s]
+J_QC0, J_QC1 = 0.3, 0.6           # r5: same for a push cut by the watch (its fall jerks with the model: MERGE 167 vs R20_D8 167 jerk)
 J_Q0, J_Q1, TAU_BJ = 0.1, 0.3, 0.1   # r4: the hold adds no jerk in the direction the model command is already jerking (|jerk| J_Q0 -> J_Q1 m/s^3)
 ONE_GAP = 0.3               # one-line episode survives a measurement gap up to this [s] (probe not restarted)
 BOTH_T, STALE_T = 1.0, 0.3      # both lines steady before remembering / model frame older than this = no measurement
@@ -120,6 +125,8 @@ class OneLaneHold:
     self.one_t = 0.0                # age of the current one-line episode [s]
     self.gap_t = 0.0
     self.side = None                # side of the last one-line measurement (its watch keeps fading the push after the line is lost)
+    self.cut = False                # r5: the watch fired and the push is still falling (J_AWARE does not hold it up)
+    self.hv = 0.0                   # r5: integral of the hold lateral accel in this episode = its own share of the lateral velocity [m/s]
     self.mk_prev = None; self.bj = 0.0      # filtered model command lateral jerk [m/s^3]
 
   # ---- model frame (20 Hz) ----
@@ -212,6 +219,7 @@ class OneLaneHold:
     self.block_t = max(self.block_t - DT, 0.0)
     if self.moved:
       self.w = 0.0       # r4: push target cut to 0 at once (the output still moves at the jerk limit)
+      self.cut = True
       # the visible line moved by itself relative to the laneless path: memory no longer valid
       self.moved = False; self.mem = None; self.recede_t = 0.0
     if self.mem is not None and not (self.rel[0] and self.rel[1]):
@@ -246,15 +254,20 @@ class OneLaneHold:
       if abs(s) < 0.4:
         self.integ = float(np.clip(self.integ + KI * s * DT, -I_MAX, I_MAX))
       # openpilot curvature and model y are both right-positive (controlsd: curvature = -VM.calc_curvature): s'' = -v^2 k
-      self.k_raw = (OMEGA ** 2 * (s + self.integ) + 2.0 * ZETA * OMEGA * sd) / v2
+      u = -sd                      # car lateral velocity toward + relative to the visible line
+      if u * s > 0.0:              # moving toward the target: damp only the hold's own share of that velocity
+        u = float(np.sign(u)) * min(abs(u), max(self.hv * float(np.sign(u)), 0.0))
+      self.k_raw = (OMEGA ** 2 * (s + self.integ) - 2.0 * ZETA * OMEGA * u) / v2
       self.w = min(self.w + DT / RAMP_T, 1.0)
     else:
       self.integ *= 0.99
       self.w = max(self.w - DT / RAMP_OUT, 0.0)
     self.active = ok
     dk = J_MAX / v2 * DT
+    if ok:
+      self.cut = False
     if self.w <= 0.0 and not ok and abs(self.k_out) <= dk:
-      self.k_out = 0.0; self.integ = 0.0
+      self.k_out = 0.0; self.integ = 0.0; self.cut = False; self.hv = 0.0
       return 0.0
     amax = (A_MAX_CLOSE if close else A_MAX) / v2
     g = self.w * self.w * (3.0 - 2.0 * self.w)
@@ -264,11 +277,14 @@ class OneLaneHold:
       fade = float(np.clip((C_OFF - abs(self.cu[sd_])) / (C_OFF - C_FADE0), 0.0, 1.0))
     tgt = g * fade * float(np.clip(self.k_raw, -amax, amax))
     lo, hi = self.k_out - dk, self.k_out + dk
-    if abs(self.bj) > J_Q0:
-      same = dk * float(np.clip((J_Q1 - abs(self.bj)) / (J_Q1 - J_Q0), 0.0, 1.0))
+    # r5: a push cut by the watch whose fall jerks in the model jerk direction is held up only from J_QC0 (not J_Q0)
+    q0, q1 = (J_QC0, J_QC1) if (self.cut and self.k_out * self.bj < 0.0) else (J_Q0, J_Q1)
+    if abs(self.bj) > q0:
+      same = dk * float(np.clip((q1 - abs(self.bj)) / (q1 - q0), 0.0, 1.0))
       if self.bj > 0.0: hi = self.k_out + same
       else: lo = self.k_out - same
     self.k_out = float(np.clip(tgt, lo, hi))
+    self.hv += DT * self.k_out * v2
     return self.k_out
 
 
