@@ -22,6 +22,7 @@ const S=240,A=120; // sprite canvas / anchor
  await send('Page.enable');await send('Runtime.enable');
  const shot=async(file,clip)=>{const r=await send('Page.captureScreenshot',{format:'png',clip:Object.assign({scale:1},clip)});fs.writeFileSync(path.join(outDir,file),Buffer.from(r.result.data,'base64'));};
  const load=async(month,clock)=>{await send('Page.navigate',{url:`${base}/C1.html?month=${month}&clock=${clock}#cap`});await sleep(1400);
+  for(let k=0;k<100;k++){const ok=await ev(`document.readyState==='complete'&&typeof render==='function'&&document.fonts.status==='loaded'&&location.search.includes('month=${month}&')`);if(ok)break;await sleep(200)}await sleep(600);
   await ev(`render(0);document.querySelector('#bgF').style.removeProperty('display');1`);};
  const style=css=>ev(`(()=>{let s=document.getElementById('bakeCss');if(!s){s=document.createElement('style');s.id='bakeCss';document.head.appendChild(s)}s.textContent=${JSON.stringify(css)};return 1})()`);
  const CARD={x:10,y:12,width:776,height:456};
@@ -58,6 +59,6 @@ const S=240,A=120; // sprite canvas / anchor
  await style(base0+'#poro,#bakeShell{visibility:hidden!important}');await shot('bono_body.png',SB);
  await style(base0+'#poro,#bono{visibility:hidden!important}');await shot('shell.png',SP);
  const pal=await ev(`JSON.stringify({bono:pal(ST,'bono'),poro:pal(ST,'poro')})`);fs.writeFileSync(path.join(outDir,'palette.json'),pal);
- const th=await ev(`JSON.stringify({theme:C1_THEME,bgpal:C1_BGPAL})`);fs.writeFileSync(path.join(outDir,'theme.json'),th);
+ const th=await ev(`JSON.stringify({theme:C1_THEME})`);fs.writeFileSync(path.join(outDir,'theme.json'),th||'{}');
  ws.close();ch.kill();process.exit(0);
 })().catch(e=>{console.error(e);ch.kill();process.exit(1)});

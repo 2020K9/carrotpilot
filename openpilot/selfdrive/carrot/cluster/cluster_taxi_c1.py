@@ -14,7 +14,14 @@ Live inputs (every frame):
     0->1 held 5 s while stopped = 손님탐; 1->0 held 5 s at any speed = 지불, amount = fare at the start
     of the last stop before the 1->0 (none: fare when it counts). OCCUPANT_ENABLED = True. The screen
     toggle (tap) always wins.
+  * 0x500 signal loss (r2): only NEW frames are handed on; 2 s without one = 모름 (OCC_STALE_S). A 5 s hold in
+    progress is dropped, never completed, and restarts from 0 when frames return.
+  * LFA (r2, the carrot wheel stays hidden): ui lfa_active off = clam dimmed; badge under the clam = lane icon
+    (solid: lane lines in use / faint: laneless, carrot rule) + "LFA" (green on / grey off).
 Season: K9MeterSeason 0 auto (month) / 1 봄 / 2 여름 / 3 가을 / 4 겨울; other values = 0.
+Backgrounds (r2): bg2 scenes (out/taximeter/variants/bg2), baked by bake_c1.js; moving layer = ptcl_params.json +
+ptcl_white.png (petal / leaf / ginkgo / snow / firefly). Twinkles / drifting bits of the HTML scene are frozen.
+CPU (r2): sprites are drawn from their alpha bounding box, the 'over' layer as runs of non-empty 16 px tiles.
 Time of day (낮 05:00 / 노을 16:00 / 밤 19:00, 3 s cross-fade) follows the Asia/Seoul clock.
 
 Artwork: assets/taxi_meter/c1/*.png (baked from out/taximeter/variants/C1.html by bake_c1.js).
@@ -41,7 +48,8 @@ C1_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "taxi_meter" / "c1"
 OCC_SIGNAL = {"addr": 0x500, "bus": 0, "start_bit": 2, "len": 2, "present_value": 1}
 OCCUPANT_ENABLED = True
 OCC_STABLE_S = 5.0
-OCC_STALE_S = 2.0          # no 0x500 frame for this long = no signal (the FSM keeps its last raw value)
+OCC_STALE_S = 2.0          # no new 0x500 frame for this long = no signal (모름): the confirmed value stays; a 5 s
+                           # hold in progress is dropped, never completed, and restarts from 0 when frames return
 C1_LOGIC = {"stop_kph": 1.0, "move_kph": 3.0, "occ_stable_s": OCC_STABLE_S, "empty_after_s": 10.0}
 STATES = ("EMPTY", "BOARD", "DRIVE", "PAY")
 
@@ -100,6 +108,8 @@ class C1Fsm:
     self.was_stopped = True if stopped else (False if moving else self.was_stopped)
     occ_edge = None
     occ = sig.get("occ")
+    if self.occ_on and occ is None and self.occ_raw != self.occ:
+      self.occ_raw, self.rise_ok = self.occ, False   # signal lost (모름) during a 5 s hold: drop it, never complete it
     if self.occ_on and occ is not None:
       occ = bool(occ)
       if occ != self.occ_raw:
@@ -288,9 +298,136 @@ NO_PARTICLE_BOXES = (FARE_BOX, (NIGHT_LAMP_X - 10, NIGHT_LAMP_Y - 10, NIGHT_LAMP
 BUBBLE_FILL = (255, 253, 246)
 BUBBLE_TEXT = (43, 52, 72)
 BONO_PAL = {"f": (92, 188, 255), "o": (18, 48, 79)}
-PARTICLES = {"spring": ("petal", ((255, 192, 214), (255, 214, 228), (255, 158, 192))),
-             "autumn": ("leaf", ((232, 100, 44), (240, 160, 48), (200, 64, 42))),
-             "winter": ("snow", ((255, 255, 255),)), "summer": (None, ())}
+# moving layer of the bg2 backgrounds (13:34): out/taximeter/variants/bg2/ptcl_params.json, copied to the assets.
+# Shapes = ptcl_white.png (white version of bg2/ptcl_sprites.png: petal leaf ginkgo snow fly, 64 px cells, 4x).
+PTCL_KINDS = ("petal", "leaf", "ginkgo", "snow", "fly")
+PTCL_CELL, PTCL_DRAW = 64.0, 16.0
+PTCL_TOD = {"day": "day", "dusk": "sunset", "night": "night"}
+
+
+def _load_ptcl_params() -> dict:
+  try:
+    d = json.loads((C1_ASSET_DIR / "ptcl_params.json").read_text())["seasons"]
+  except Exception:
+    return {}
+  out = {}
+  for season, tods in d.items():
+    for tod, q in tods.items():
+      n = int(q.get("n") or 0)
+      if n <= 0:
+        continue
+      kinds = q["k"] if isinstance(q["k"], list) else [q["k"]]
+      cols = [_hex(c if len(c) != 4 else "#" + "".join(ch * 2 for ch in c[1:]))[:3] for c in q["c"]]
+      out[(season, tod)] = {"n": n, "k": kinds, "c": cols, "x0": q.get("x0", 420), "xw": q.get("xw", 330),
+                            "y0": q.get("y0", 250), "yh": q.get("yh", 120)}
+  return out
+
+
+PTCL_PARAMS = _load_ptcl_params()
+
+
+def particle_positions(season: str, tod: str, t: float):
+  """[(kind, x, y, rot_deg, color, opacity)] in card px for the current tod, = c1bg.js draw() (bg2)."""
+  q = PTCL_PARAMS.get((season, PTCL_TOD.get(tod, tod)))
+  if not q:
+    return []
+  out = []
+  for i in range(q["n"]):
+    k = q["k"][i % len(q["k"])]
+    col = q["c"][i % len(q["c"])]
+    if k == "fly":
+      x = q["x0"] + ((i * 97) % q["xw"]) + math.sin(t * .5 + i * 2.3) * 26
+      y = q["y0"] + ((i * 37) % q["yh"]) + math.sin(t * .7 + i * 1.3) * 14
+      out.append((k, x, y, 0.0, col, .25 + .75 * max(0.0, math.sin(t * 1.6 + i * 1.9))))
+      continue
+    sp = 22 + (i % 4) * 5 if k == "snow" else (18 + (i % 3) * 5 if k == "petal" else 24 + (i % 3) * 6)
+    y = ((i * 53 + t * sp) % 500) - 22
+    x = (i * 83.7 + math.sin(t * .9 + i * 1.7) * (10 if k == "snow" else 22) + t * (3 if k == "snow" else 9)) % 800 - 12
+    rot = 0.0 if k == "snow" else (t * (60 + i * 13) + i * 40) % 360
+    out.append((k, x, y, rot, col, 0.9))
+  return out
+
+
+# LFA state on the clam (13:20 지시 2; the carrot wheel is not drawn on this screen): LFA off = clam dimmed,
+# small badge in the sea under 보노보노 = lane icon (solid green: lane lines in use, faint: laneless) + "LFA".
+CLAM_OFF_TINT = (190, 190, 190, 120)
+LFA_BADGE = (664.0, 412.0, 92.0, 24.0)      # card px (x, y, w, h): right of the footer (ends x 645), under the clam
+LFA_ON_COLOR = (64, 200, 112)
+LFA_OFF_COLOR = (150, 150, 150)
+
+# CPU (13:20 지시 4): only the pixels that can change are sent to the rasterizer. Sprites are drawn from their
+# alpha bounding box (+2 px for the bilinear edge) instead of the whole 240x240 quad; the 'over' layer (45 %
+# opaque) is drawn as runs of non-empty 16 px tiles. Same texels -> same picture (pixel-compared).
+C1_CROP_PAD = 2
+C1_RUN_TILE = 16
+
+
+def _png_alpha(path):
+  try:
+    import numpy as np
+    from PIL import Image
+    with Image.open(path) as im:
+      return np.asarray(im.convert("RGBA"))[:, :, 3]
+  except Exception:
+    return None
+
+
+def alpha_bbox(alpha, pad: int = C1_CROP_PAD):
+  """(x, y, w, h) of the pixels with alpha > 0, padded; None = keep the whole texture."""
+  if alpha is None:
+    return None
+  import numpy as np
+  ys, xs = np.nonzero(alpha)
+  h, w = alpha.shape
+  if not len(xs):
+    return (0, 0, 1, 1)
+  x0, y0 = max(0, int(xs.min()) - pad), max(0, int(ys.min()) - pad)
+  x1, y1 = min(w, int(xs.max()) + 1 + pad), min(h, int(ys.max()) + 1 + pad)
+  return (x0, y0, x1 - x0, y1 - y0)
+
+
+def alpha_runs(alpha, tile: int = C1_RUN_TILE, pad: int = C1_CROP_PAD):
+  """Rectangles (x, y, w, h) covering every pixel with alpha > 0 (dilated by pad): non-empty tiles, merged
+  along a tile row, equal consecutive rows merged. None = draw the whole texture."""
+  if alpha is None:
+    return None
+  import numpy as np
+  h, w = alpha.shape
+  m = alpha > 0
+  if pad:
+    d = m.copy()
+    for k in range(1, pad + 1):
+      d[k:, :] |= m[:-k, :]
+      d[:-k, :] |= m[k:, :]
+    m = d.copy()
+    for k in range(1, pad + 1):
+      d[:, k:] |= m[:, :-k]
+      d[:, :-k] |= m[:, k:]
+    m = d
+  nty, ntx = (h + tile - 1) // tile, (w + tile - 1) // tile
+  rows = []
+  for ty in range(nty):
+    band = m[ty * tile:(ty + 1) * tile]
+    occ = [bool(band[:, tx * tile:(tx + 1) * tile].any()) for tx in range(ntx)]
+    spans, tx = [], 0
+    while tx < ntx:
+      if occ[tx]:
+        s = tx
+        while tx < ntx and occ[tx]:
+          tx += 1
+        spans.append((s * tile, min(w, tx * tile)))
+      else:
+        tx += 1
+    rows.append(tuple(spans))
+  out, ty = [], 0
+  while ty < nty:
+    s = ty
+    while ty + 1 < nty and rows[ty + 1] == rows[s]:
+      ty += 1
+    y0, y1 = s * tile, min(h, (ty + 1) * tile)
+    out.extend((x0, y0, x1 - x0, y1 - y0) for x0, x1 in rows[s])
+    ty += 1
+  return out
 
 
 def _rot(px: float, py: float, deg: float) -> tuple[float, float]:
@@ -382,6 +519,10 @@ class C1MeterPanel:
     self.night_rate = 0.0
     self.steering_angle_deg = 0.0
     self.speed_kph = 0.0
+    self.lfa_active = False
+    self.lane_line = False
+    self._crop: dict[str, tuple] = {}
+    self._runs: dict[str, list] = {}
     self.occupant: bool | None = None
     self.occupant_t: float | None = None
     self._tap = False
@@ -456,6 +597,8 @@ class C1MeterPanel:
     steer = getattr(state, "steering_angle_deg", None)
     self.steering_angle_deg = float(steer) if steer is not None and math.isfinite(float(steer)) else 0.0
     self.speed_kph = speed
+    self.lfa_active = bool(getattr(state, "lfa_active", False))       # same rule as the carrot wheel icon
+    self.lane_line = bool(getattr(state, "active_lane_line", False))
     now = self._clock()
     hour = self._local_hour()
     self.night_rate = night_surcharge_rate(self.meter.fare, hour)
@@ -534,6 +677,13 @@ class C1MeterPanel:
           tex = t
       except Exception as exc:
         print(f"C1 asset load failed for {path.name}: {exc}", flush=True)
+    if tex is not None and not name.startswith("back_"):
+      alpha = _png_alpha(path)
+      if alpha is not None and alpha.shape == (tex.height, tex.width):
+        if name.startswith("over_"):
+          self._runs[name] = alpha_runs(alpha)
+        else:
+          self._crop[name] = alpha_bbox(alpha)
     self._textures[name] = tex
     return tex
 
@@ -541,6 +691,7 @@ class C1MeterPanel:
     for name in list(self._textures):
       if (name.startswith("back_") or name.startswith("over_")) and f"_{keep}_" not in name:
         tex = self._textures.pop(name)
+        self._runs.pop(name, None)
         if tex is not None:
           try:
             rl.unload_texture(tex)
@@ -555,7 +706,8 @@ class C1MeterPanel:
       if self.bg_weights.get(tod, 0.0) > 0.0:
         self._tex(rl, f"back_{self.season}_{tod}")
         self._tex(rl, f"over_{self.season}_{tod}")
-    for name in ("porori_body", "porori_tail", "porori_fL", "porori_fR", "porori_aL", "porori_aR", "bono_body", "shell"):
+    for name in ("porori_body", "porori_tail", "porori_fL", "porori_fR", "porori_aL", "porori_aR", "bono_body", "shell",
+                 "ptcl_white"):
       self._tex(rl, name)
 
   def close(self, rl) -> None:
@@ -566,6 +718,8 @@ class C1MeterPanel:
         except Exception:
           pass
     self._textures.clear()
+    self._crop.clear()
+    self._runs.clear()
     self._loaded_season = None
 
   # -- drawing helpers
@@ -573,9 +727,15 @@ class C1MeterPanel:
     tex = self._textures.get(name)
     if tex is None or alpha <= 0.002:
       return
+    color = rl.Color(255, 255, 255, int(round(255 * min(1.0, alpha))))
+    runs = self._runs.get(name)
+    if runs is not None:
+      for rx, ry, rw, rh in runs:
+        rl.draw_texture_pro(tex, rl.Rectangle(rx, ry, rw, rh), rl.Rectangle(x + rx, y + ry, rw, rh), rl.Vector2(0, 0),
+                            0.0, color)
+      return
     w, h = float(tex.width), float(tex.height)
-    rl.draw_texture_pro(tex, rl.Rectangle(0, 0, w, h), rl.Rectangle(x, y, w, h), rl.Vector2(0, 0), 0.0,
-                        rl.Color(255, 255, 255, int(round(255 * min(1.0, alpha)))))
+    rl.draw_texture_pro(tex, rl.Rectangle(0, 0, w, h), rl.Rectangle(x, y, w, h), rl.Vector2(0, 0), 0.0, color)
 
   def _layers(self, rl, kind: str, x: float, y: float) -> None:
     """Cross-fade: previous layer opaque underneath, current on top with the fade weight."""
@@ -604,10 +764,10 @@ class C1MeterPanel:
     tex = self._textures.get(name)
     if tex is None:
       return
-    w, h = float(tex.width), float(tex.height)
-    ox = (SPRITE_ANCHOR + pivot_local[0]) * scale
-    oy = (SPRITE_ANCHOR + pivot_local[1]) * scale
-    rl.draw_texture_pro(tex, rl.Rectangle(0, 0, w, h), rl.Rectangle(pos[0], pos[1], w * scale, h * scale),
+    cx0, cy0, w, h = self._crop.get(name) or (0, 0, tex.width, tex.height)
+    ox = (SPRITE_ANCHOR + pivot_local[0] - cx0) * scale
+    oy = (SPRITE_ANCHOR + pivot_local[1] - cy0) * scale
+    rl.draw_texture_pro(tex, rl.Rectangle(cx0, cy0, w, h), rl.Rectangle(pos[0], pos[1], w * scale, h * scale),
                         rl.Vector2(ox, oy), angle, rl.Color(*tint))
 
   def _part(self, rl, name, anchor, body_rot, scale, pivot, part_rot=0.0, offset=(0.0, 0.0)) -> None:
@@ -649,7 +809,7 @@ class C1MeterPanel:
       self._limb(rl, self._quad((sx, sy), (ex, ey), (hx, hy)), 9.0 * BONO_S, fill, outline)
     cx, cy = g["center"]
     self._last_center = (cx, cy)
-    self._sprite(rl, "shell", (cx, cy), g["rotation"])
+    self._sprite(rl, "shell", (cx, cy), g["rotation"], tint=(255, 255, 255, 255) if self.lfa_active else CLAM_OFF_TINT)
     self.last_clam_rotation = g["rotation"]
     for hx, hy in g["hands"]:
       rl.draw_circle_v(rl.Vector2(hx, hy), (6.4 + 0.8) * BONO_S, rl.Color(*outline, 255))
@@ -681,24 +841,33 @@ class C1MeterPanel:
     renderer._draw_text(text, x + bx + 14, mid, 17, (*BUBBLE_TEXT, a))
 
   def _draw_particles(self, rl, x: float, y: float, t: float) -> None:
-    kind, cols = PARTICLES.get(self.season, (None, ()))
-    if not kind:
+    bw = self.bg_weights
+    cur = max(("day", "dusk", "night"), key=lambda k: bw.get(k, 0.0))   # c1bg.js: the strongest tod's particles
+    tex = self._textures.get("ptcl_white")
+    if tex is None:
       return
-    for i in range(10):
-      sp = 22 + (i % 4) * 5 if kind == "snow" else (26 + (i % 3) * 6 if kind == "leaf" else 20 + (i % 3) * 5)
-      py = ((i * 53 + t * sp) % 500) - 22
-      px = (i * 83.7 + math.sin(t * 0.9 + i * 1.7) * (10 if kind == "snow" else 22) + t * (3 if kind == "snow" else 9)) % 800 - 12
+    h = PTCL_DRAW * 0.5
+    for kind, px, py, rot, col, op in particle_positions(self.season, cur, t):
       if any(b[0] < px < b[2] and b[1] < py < b[3] for b in NO_PARTICLE_BOXES):
         continue
-      if not (0 <= px <= CARD_W and 0 <= py <= CARD_H):
+      if not (h <= px <= CARD_W - h and h <= py <= CARD_H - h):   # whole sprite inside the card (HTML clips at the card)
         continue
-      c = rl.Color(*cols[i % len(cols)], 217)
-      if kind == "snow":
-        rl.draw_circle_v(rl.Vector2(x + px, y + py), 2.0, c)
-      elif kind == "petal":
-        rl.draw_ellipse(int(x + px), int(y + py), 3.4, 2.0, c)
-      else:
-        rl.draw_poly(rl.Vector2(x + px, y + py), 5, 4.6, (t * (60 + i * 13) + i * 40) % 360, c)
+      cell = PTCL_KINDS.index(kind) * PTCL_CELL
+      rl.draw_texture_pro(tex, rl.Rectangle(cell, 0, PTCL_CELL, PTCL_CELL), rl.Rectangle(x + px, y + py, PTCL_DRAW, PTCL_DRAW),
+                          rl.Vector2(h, h), rot, rl.Color(*col, int(round(255 * op))))
+
+  def _draw_lfa_badge(self, renderer, rl, x: float, y: float, tw: dict) -> None:
+    """LFA on/off + lane lines in use (the carrot wheel's lane icon rule), small, in the sea under the clam."""
+    bx, by, bw, bh = LFA_BADGE
+    box = rl.Rectangle(x + bx, y + by, bw, bh)
+    rl.draw_rectangle_rounded(box, 1.0, 12, rl.Color(*theme_color("pillBg", tw)))
+    rl.draw_rectangle_rounded_lines_ex(box, 1.0, 12, 1.0, rl.Color(*theme_color("pillB", tw)))
+    col = LFA_ON_COLOR if self.lfa_active else LFA_OFF_COLOR
+    la = 255 if self.lane_line else 70
+    ix, iy, iw, ih = x + bx + 11, y + by + 5, 26.0, bh - 10.0
+    for a, b in (((ix + 6, iy), (ix, iy + ih)), ((ix + iw - 6, iy), (ix + iw, iy + ih))):
+      rl.draw_line_ex(rl.Vector2(*a), rl.Vector2(*b), 3.0, rl.Color(*col, la))
+    renderer._draw_text("LFA", ix + iw + 9, y + by + bh / 2, 14, (*col, 255))
 
   def _draw_night_lamp(self, renderer, rl, lx: float, ly: float, t: float) -> None:
     """'심야 할증 20%' lamp, same lamp and place as the bd09c076 meter (top row, between brand and moon)."""
@@ -751,6 +920,7 @@ class C1MeterPanel:
     tap = pose.bono_tap if st != "PAY" else 0.0
     self._draw_bono(rl, x, y, pose, tap)
     self._layers(rl, "over", x, y)            # sea in front of the characters + frame/brand/stats/footer (one layer)
+    self._draw_lfa_badge(renderer, rl, x, y, tw)
 
     # status pill (text drawn live; frame colours from the theme)
     label, dot = ("대기", (110, 98, 70)) if legacy else PILL[st]

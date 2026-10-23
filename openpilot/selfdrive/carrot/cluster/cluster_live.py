@@ -163,6 +163,7 @@ class TaxiOccupantReader:
         self._tail: list = []
         self._next_parse = 0.0
         self.last: tuple[float, bool] | None = None   # (logMonoTime s, present)
+        self._new_t: float | None = None               # logMonoTime of the frame poll_new() returned last
 
     def poll(self, now: float | None = None) -> tuple[float, bool] | None:
         if self._sock is None:
@@ -197,9 +198,18 @@ class TaxiOccupantReader:
                 continue
         return self.last
 
+    def poll_new(self, now: float | None = None) -> tuple[float, bool] | None:
+        """poll(), but only a frame newer than the one poll_new() returned last time; None = no new 0x500 frame."""
+        last = self.poll(now)
+        if last is None or (self._new_t is not None and last[0] <= self._new_t):
+            return None
+        self._new_t = last[0]
+        return last
+
     def stop(self) -> None:
         self._sock = None
         self._tail = []
+        self._new_t = None
 
 
 class OpenpilotLiveSource:
@@ -385,10 +395,12 @@ class OpenpilotLiveSource:
             self._taxi_occ_reader = None
 
     def poll_taxi_occupant(self) -> tuple[float, bool] | None:
-        """K9ExtHud=1: latest (logMonoTime s, passenger present) from CAN 0x500 bus0, None = no frame yet."""
+        """K9ExtHud=1: (logMonoTime s, passenger present) of a NEW CAN 0x500 bus0 frame since the last call,
+        None = no new frame. (The reader keeps its last value; handing that on again every frame would hide a
+        lost signal from the 2 s stale check of the C1 meter.)"""
         if getattr(self, "_taxi_occ_reader", None) is None:
             self._taxi_occ_reader = TaxiOccupantReader(self.messaging)
-        return self._taxi_occ_reader.poll()
+        return self._taxi_occ_reader.poll_new()
 
     def update(self) -> ClusterUiState:
         profile_stage = self._profile_start()
