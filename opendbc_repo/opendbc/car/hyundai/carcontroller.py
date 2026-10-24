@@ -8,6 +8,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.k9_creep import K9Creep, MENU as K9_CREEP_MENU, k9_creep_applies, read_long_accel
+from opendbc.car.hyundai.k9_hard_brake import K9HardBrake
 from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
@@ -201,6 +202,8 @@ class CarController(CarControllerBase):
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
     self.k9_creep = None
+    # K9 hard-brake ease-off for a closing lead (k9_hard_brake.py), every K9StopMode value: JerkUpperLimit 0.5 only
+    self.k9_hard_brake = K9HardBrake() if self.k9_creep_applies else None
     self.speedCameraHapticEndFrame = 0
     self.hapticFeedbackWhenSpeedCamera = 0
     self.max_angle_frames = MAX_ANGLE_FRAMES
@@ -509,6 +512,13 @@ class CarController(CarControllerBase):
     # accel + longitudinal
     accel = clip_float(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
     stopping = actuators.longControlState == LongCtrlState.stopping
+    if self.k9_hard_brake is not None:
+      # shared K9 hard-braking path (all K9StopMode values); never changes accel/StopReq, only the SCC14 JerkUpperLimit
+      self.k9_hard_brake.update(
+        accel=accel, jerk=float(actuators.jerk), pid=actuators.longControlState == LongCtrlState.pid, v_ego=float(CS.out.vEgo),
+        long_active=bool(CC.longActive), override=bool(CC.cruiseControl.override), gas=bool(CS.out.gasPressed),
+        brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
+        lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
       # K9StopMode 1-3: v10 / v10 + light shudder fix / v11; changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
@@ -659,7 +669,8 @@ class CarController(CarControllerBase):
       casper_ev = self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV
       if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:
         self.hyundai_jerk.make_jerk(self.CP, CS, accel, actuators, hud_control,
-                                    creep=self.k9_creep is not None and self.k9_creep.active, creep_obj=self.k9_creep)
+                                    creep=self.k9_creep is not None and self.k9_creep.active, creep_obj=self.k9_creep,
+                                    jerk_u_cap=None if self.k9_hard_brake is None else self.k9_hard_brake.jerk_u_cap())
         self.hyundai_jerk.check_carrot_cruise(CC, CS, hud_control, stopping, accel, actuators.aTarget)
         #jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
         use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
@@ -903,7 +914,7 @@ class HyundaiJerk:
     if self.carrot_cruise == 0:
       self.carrot_cruise_accel = CS.out.aEgo
 
-  def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None):
+  def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None, jerk_u_cap=None):
     canfd = bool(CP.flags & HyundaiFlags.CANFD)
     cb_prev = self.cb_upper  # K9StopMode 2 band ramp start only; unused otherwise (1 and 3: band 0)
     cb_prev_lower = self.cb_lower  # K9StopMode 2 lower band ramp start only
@@ -953,6 +964,8 @@ class HyundaiJerk:
         self.cb_upper = self.cb_lower = 0.0
       else:
         self.jerk_u = min(max(self.jerk_u_min, self.jerk * 2.0), jerk_max_u)
+        if jerk_u_cap is not None:  # K9 hard-brake ease-off (k9_hard_brake.py): slow ESC release
+          self.jerk_u = min(self.jerk_u, jerk_u_cap)
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)

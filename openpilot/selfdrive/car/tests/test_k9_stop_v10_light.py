@@ -66,7 +66,9 @@ def test_menu_and_constants():
 
 
 @pytest.mark.parametrize("seed", range(8))
-def test_accel_stopreq_and_jerk_are_menu_1_bit_for_bit(seed):
+def test_accel_stopreq_and_jerk_are_menu_1_bit_for_bit(seed, monkeypatch):
+  # 2026-10-24 20:26: kind 6 got the LIGHT_MIN_DECEL stop floor on purpose; this pin checks everything else (floor off)
+  monkeypatch.setattr(kc, "LIGHT_MIN_DECEL", math.inf)
   # bands() called between update() calls (as make_jerk does) never changes accel/StopReq; jerk_u is menu 1's
   for frames in _stops(seed):
     ref, c1, c5 = V10Ref(), K9Creep(V10), K9Creep(V10_LIGHT)
@@ -83,7 +85,9 @@ def test_accel_stopreq_and_jerk_are_menu_1_bit_for_bit(seed):
 
 
 @pytest.mark.parametrize("seed", range(6))
-def test_update_is_menu_1_on_random_inputs(seed):
+def test_update_is_menu_1_on_random_inputs(seed, monkeypatch):
+  # 2026-10-24 20:26: kind 6 got the LIGHT_MIN_DECEL stop floor on purpose; this pin checks everything else (floor off)
+  monkeypatch.setattr(kc, "LIGHT_MIN_DECEL", math.inf)
   rng = random.Random(f"k9-v10-light-{seed}")
   c1, c5 = K9Creep(V10), K9Creep(V10_LIGHT)
   pu = pl = 0.0

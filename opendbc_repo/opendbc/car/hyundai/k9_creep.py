@@ -29,8 +29,11 @@ feather below 0.25 m/s and the hold ramp); it is NOT verified on the K9.
 
 Mode 6 (v10 + light shudder fix, K9StopMode 2 (5 before the 2026-10-24 evening trim), 2026-10-24 brake_methods candidate L0.6_V9_f0; the driver's order 08:03
 "하나 더 넣어봐"; log replay and simulator only, NOT verified on the vehicle):
-- update() is mode 2's (v10) code path bit for bit (accel, StopReq, feather, latch ramp, 3.0 m lead latch, interlocks) and
-  jerk_u is mode 2's, so aReq, StopReq timing and the jerk limits are exactly menu 1's on every frame.
+- update() is mode 2's (v10) code path (accel, StopReq, feather, latch ramp, 3.0 m lead latch, interlocks) with one addition:
+  the sent accel is at most LIGHT_MIN_DECEL (-0.26 m/s^2, = the v10 feather at 0.05 m/s) before the latch in the stopping
+  state and in pid below 3.0 m/s while the plan decelerates and the command brakes, so the brake request is never released
+  towards 0 near the stop (2026-10-24 20:26). Where menu 1 is already at or below -0.26 there aReq is menu 1's bit for bit;
+  StopReq timing and jerk_u are always mode 2's.
 - bands(): on the frames where mode 2 sends ComfortBand 0/0, upper/lower move toward LIGHT_UPPER / LIGHT_LOWER (0.60 / 0.50
   m/s^2) at or below LIGHT_FULL_SPEED (2.5 m/s, 9 km/h), linear down to 0 at LIGHT_OFF_SPEED (3.0 m/s, ~11 km/h) and 0
   above (= menu 1). Everything is on the exact 0.02 SCC14 CAN grid (integer CB_UNIT steps): the start (the band sent on the
@@ -132,6 +135,15 @@ LIGHT_UPPER, LIGHT_LOWER = LIGHT_UPPER_UNITS / 50.0, LIGHT_LOWER_UNITS / 50.0
 LIGHT_FULL_SPEED = 2.5  # m/s (9 km/h): full light band at or below
 LIGHT_OFF_SPEED = 3.0  # m/s (~11 km/h): 0 (menu 1) at or above, linear between
 LIGHT_STEP_UNITS = 2  # 0.04 m/s^2 per make_jerk call
+# Mode 6 (menu 2) weakest stop request (2026-10-24 evening, the driver's order 20:26 "떨림구간 브레이크 아예 안떼게 말고 ...
+# 브레이크 제일 약할 수 있는 수치로"): the sent accel is never above this (a) before the latch in the stopping state and (b) in
+# pid below LIGHT_OFF_SPEED (3.0 m/s, the light-band zone) while the plan decelerates (aTarget < -0.05) and the command brakes
+# (accel < 0). = V10_FEATHER_V[0] (the v10 feather at 0.05 m/s), so the feather itself is unchanged; it binds only on weaker
+# commands. In the same logs, while the plan decelerates below 3 m/s: aReq -0.30..-0.26 BrakeLight on 96 %, 0 toggles/s;
+# -0.26..-0.20 on 88 %, 0.48 toggles/s; -0.20..-0.10 on 7 % (19.8 s, mostly released) (estimate). K9 rlog (op long, 0.05-2.5 m/s, no pedals, TCS13 BrakeLight as the hydraulic-brake proxy;
+# ESP12 CYL_PRES is the driver pedal pressure on the K9 and reads 0 under SCC braking): BrakeLight on 87-100 % of frames at
+# aReq -0.3..-0.2 and 100 % at -0.4..-0.3 in every route, 50-72 % at -0.2..-0.1, 0-69 % at -0.1..0 (estimate, 추정).
+LIGHT_MIN_DECEL = -0.26
 # v11 (mode 7, menu 3) profile (creep_fix v11 page code)
 V11_STANDSTILL_FRAMES = 12  # consecutive stopping frames with standstill before the standstill latch (0.12 s at 100 Hz)
 V11_FEATHER_BP, V11_FEATHER_V = [0.05, 0.11, 0.16, 0.25, 0.42], [-0.28, -0.29, -0.34, -0.42, -0.52]
@@ -226,6 +238,8 @@ class K9Creep:
         comp = np.interp(v_ego, CREEP_BP, CREEP_V) * np.interp(a_target, FADE_TARGET_BP, FADE_TARGET_V)
         comp *= np.interp(accel, FADE_ACCEL_BP, FADE_ACCEL_V)
         accel = float(min(accel, max(accel + comp, CarControllerParams.ACCEL_MIN)))  # comp <= 0
+      if self.v10_light and pid and v_ego < LIGHT_OFF_SPEED and a_target < FADE_TARGET_BP[-1] and accel < 0.0:
+        accel = float(min(accel, LIGHT_MIN_DECEL))  # mode 6: no near-0 brake request in the light-band zone
       self.last = float(accel)
       return accel, stopping
 
@@ -259,6 +273,8 @@ class K9Creep:
     down = DOWN_STEP if (v_ego > DOWN_UP_SPEED and eff_ac > DOWN_EFF_AC) else 0.0
     up = _up_step(v_ego, margin, V10_UP_LOW_SPEED if self.v10 else UP_LOW_SPEED)
     accel = float(min(max(target, prev - down), prev + up))
+    if self.v10_light:  # mode 6: never weaker than the weakest stop request the K9 keeps braking at (never released)
+      accel = min(accel, LIGHT_MIN_DECEL)
     self.last = accel  # v9 / v10 feather state
     return accel, False
 

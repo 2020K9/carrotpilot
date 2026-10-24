@@ -128,7 +128,7 @@ def load_frozen_cc(commit, tmp_dir, tag):
     diff = subprocess.run(["git", "diff", commit, "--", f], cwd=ROOT, check=True, capture_output=True, text=True).stdout
     assert "K9" not in diff, f
   changed = [f for f in changed if f not in car_data]
-  assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py"}, changed
+  assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
 

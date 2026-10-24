@@ -375,7 +375,9 @@ def test_menu_6_on_k7_and_canfd_is_menu_0_of_6ec4a36d(monkeypatch, frozen_cc, se
 
 @pytest.mark.parametrize("seed", range(6))
 @pytest.mark.parametrize("kind", (V9, V10, V10_LIGHT))
-def test_kinds_1_to_6_object_identical_to_6ec4a36d(frozen_cc, kind, seed):
+def test_kinds_1_to_6_object_identical_to_6ec4a36d(frozen_cc, kind, seed, monkeypatch):
+  # 2026-10-24 20:26: kind 6 got the LIGHT_MIN_DECEL stop floor on purpose; this pin checks everything else (floor off)
+  monkeypatch.setattr(kc, "LIGHT_MIN_DECEL", math.inf)
   rng = random.Random(f"k9-v11-frozen-{seed}")
   old, new = frozen_cc.K9Creep(kind), K9Creep(kind)
   assert old.__class__ is not K9Creep
