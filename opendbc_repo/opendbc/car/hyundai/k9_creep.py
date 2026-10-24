@@ -45,6 +45,12 @@ limit and jerk profile. Against v9:
   sent value: the command may fall (brake more) by at most V12_DOWN_LIM (0.004 per frame), and not at all while
   eff_ac < min(aTarget - 0.04, -0.42); above V12_UP_LIM_SPEED (0.52 m/s) it may rise (release) by at most
   interp(eff_ac - aTarget, [-0.05, 0.10], [0.0035, 0.0008]) per frame (the page's fix of the 3.25 -> 1.6 km/h release).
+  K9 fix (2026-10-25 brake_v12k9_fix): the fall limit only inside the old v11 re-press guard region (below
+  V12K9_FALL_GUARD_SPEED 0.95 m/s, eff_ac < V12K9_FALL_GUARD_EFF_AC -0.18, no lead within 3.0 m), elsewhere the command
+  falls at once as in v11, so for the same inputs kind 8 never sends a weaker command than v11; the release limit only while
+  eff_ac >= aTarget - V12K9_UP_LIM_MARGIN (0.02): when the car already brakes harder than planned it releases as in v11.
+  (f9cd0960 limited the fall everywhere below 1.0 m/s and held the release always; in the closed-loop sim the held brake
+  slowed the car early and the stop phase then braked lighter: weaker-than-v9 frames 46367 vs v11 43370.)
 - jerk (applied non-CAN-FD frames): below V12_JERK_U_SPEED (1.15 m/s) jerk_u = max(jerk_u, page v12 7-point table) and
   jerk_l = max(jerk_l, interp(v, [0.55, 0.75, 0.95, 1.15], [1.0, 1.3, 1.3, 1.0])) (jerk_l_floor()). ComfortBand 0/0.
 Page v12 parts NOT taken on the K9 (2026-10-25 closed-loop replay, 20 K9 stops x 72 conditions, sim only):
@@ -59,8 +65,9 @@ Page v12 parts NOT taken on the K9 (2026-10-25 closed-loop replay, 20 K9 stops x
 K9 deviations (fail toward the original command or more braking, not in the page): the 3.0 m lead latch (LEAD_LATCH_GAP) in
 the stopping state; with a lead at or within 3.0 m the pid fall limit is skipped (it only brakes less); the original command
 on disengage / longActive off, override, gas, brake, invalid CAN or non-finite input (reset).
-Sim result (kind 8 against the old v11, same 1440 stops): stop distance median -0.005 m (max +0.028), min lead gap median
-+0.004 m (min -0.028; noise band of v11 itself 0.064 m max), release-then-regrab events 1641 -> 1508.
+Sim result (kind 8 after brake_v12k9_fix against the old v11, same 1440 stops): stop distance max +0.003 m, min lead gap
+min -0.004 m (noise band of v11 itself 0.064 m max), release-then-regrab events 1641 -> 1548 (f9cd0960: 1508),
+weaker-than-v9 frames 43370 -> 39946 (834 instead of 1030 stops).
 The page's claims (Niro EV logs) are not K9 results.
 """
 import math
@@ -108,6 +115,12 @@ V12_RATE_SPEED = 1.00  # m/s: pid two-way rate limit below it
 V12_RATE_MIN_TARGET = -0.80  # ... while aTarget is above it
 V12_DOWN_LIM = 0.004  # per frame: largest fall (more braking) of the sent pid command
 V12_DOWN_HOLD_MARGIN, V12_DOWN_HOLD_EFF_AC = 0.04, -0.42  # no fall while eff_ac < min(aTarget - margin, this)
+# K9 (brake_v12k9_fix): the fall limit applies only inside the old v11 re-press guard region (same speed / eff_ac values)
+V12K9_FALL_GUARD_SPEED = 0.95  # m/s
+V12K9_FALL_GUARD_EFF_AC = -0.18  # m/s^2: only while already decelerating at least this much
+# K9 (brake_v12k9_fix): the release limit only while eff_ac >= aTarget - this (not while the car already brakes harder than
+# planned: holding the brake there only made the sim car slow early and then brake lighter than v9 / v11 near the stop)
+V12K9_UP_LIM_MARGIN = 0.02  # m/s^2
 V12_UP_LIM_BP, V12_UP_LIM_V = [-0.05, 0.10], [0.0035, 0.0008]  # largest rise (release) per frame over eff_ac - aTarget
 V12_UP_LIM_SPEED = 0.52  # m/s: the scheduled release limit above it only (the page's 0.0040 below is not used on the K9)
 V12_JERK_U_SPEED = 1.15  # m/s
@@ -205,12 +218,13 @@ class K9Creep:
         accel = float(min(accel, max(accel + comp, CarControllerParams.ACCEL_MIN)))  # comp <= 0
         prev = accel if self.last is None else self.last
         if v_ego < V12_RATE_SPEED and a_target > V12_RATE_MIN_TARGET:  # page v12 two-way rate limit
-          if lead_near:  # K9: no fall limit with a lead within 3.0 m (it only brakes less)
-            down = math.inf
-          else:
+          # K9 (2026-10-25 brake_v12k9_fix): the fall limit only where the old v11 re-press guard held (below 0.95 m/s,
+          # eff_ac < -0.18, no lead within 3.0 m), so v12k9 never brakes later than v11 (min of both commands)
+          if (v_ego < V12K9_FALL_GUARD_SPEED and eff_ac < V12K9_FALL_GUARD_EFF_AC and not lead_near):
             down = 0.0 if eff_ac < min(a_target - V12_DOWN_HOLD_MARGIN, V12_DOWN_HOLD_EFF_AC) else V12_DOWN_LIM
-          accel = float(max(accel, prev - down))
-          if v_ego > V12_UP_LIM_SPEED:
+            accel = float(max(accel, prev - down))
+          # K9 (brake_v12k9_fix): the release limit only while the car is not braking harder than planned
+          if v_ego > V12_UP_LIM_SPEED and eff_ac >= a_target - V12K9_UP_LIM_MARGIN:
             accel = float(min(accel, prev + float(np.interp(eff_ac - a_target, V12_UP_LIM_BP, V12_UP_LIM_V))))
       self.last = float(accel)
       return accel, stopping

@@ -199,7 +199,8 @@ def test_v12k9_pid_rate_limit():
   # lead within 3 m: no fall limit
   assert _pid(c, -0.30, -0.60, 0.9, -0.5, -0.30, lead=(True, 2.0)) <= -0.59
   # release above 0.52 m/s: limited by the page table, below it (page 0.0040) not used on the K9
-  assert _pid(c, -0.50, 0.0, 0.9, -0.30, -0.35) <= -0.50 + 0.0035 + 1e-9
+  # (brake_v12k9_fix: only while eff_ac >= aTarget - 0.02, so the car here brakes less than planned: aEgo -0.25)
+  assert _pid(c, -0.50, 0.0, 0.9, -0.30, -0.25) <= -0.50 + 0.0035 + 1e-9
   assert _pid(c, -0.50, 0.0, 0.4, -0.30, -0.35) > -0.49
   # at or above 1.0 m/s, or a plan below -0.80: not limited
   assert _pid(c, -0.30, -0.60, 1.0, -0.5, -0.30) <= -0.59
