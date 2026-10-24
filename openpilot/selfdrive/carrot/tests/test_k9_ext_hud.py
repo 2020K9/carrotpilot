@@ -279,7 +279,8 @@ def test_night_surcharge_and_rounding():
   d = TAXI_FARE_SIHEUNG["deluxe"]
   assert [night_surcharge_rate(d, h) for h in (22, 23, 0, 3, 4, 12)] == [0.0, 0.2, 0.2, 0.2, 0.0, 0.0]
   mid = TAXI_FARE_SIHEUNG["midsize"]
-  assert [night_surcharge_rate(mid, h) for h in (23, 0, 1, 2, 3, 4)] == [0.2, 0.3, 0.3, 0.2, 0.2, 0.0]
+  # res 10/24: 경기도 공고 제2023-5572호 원문 = 23:00~04:00 30% (one band; the old pin was the blog table 0.2/0.3/0.2)
+  assert [night_surcharge_rate(mid, h) for h in (23, 0, 1, 2, 3, 4)] == [0.3, 0.3, 0.3, 0.3, 0.3, 0.0]
   m = TaxiMeter()
   m.reset(hour=23)
   assert m.fare_won == 8400

@@ -1,0 +1,8 @@
+{
+ "round": "res 2026-10-24",
+ "source": "out/taximeter/variants/C1.html (acorn goal, 일반택시 footer, small-text shadow)",
+ "footer": "기본 4,800원 (1.6km) · 거리 131m당 100원 · 시간 30초당 100원 (15km/h 이하) · 심야 23~04시 30%",
+ "goal": "acorn",
+ "layers": "ui_ rebaked, over_ = front_ (r3 bake) + ui_",
+ "scale": 1
+}

@@ -1,7 +1,7 @@
 // Bake C1 (variants/C1.html, read-only) into PNG layers for the raylib K9ExtHud=1 renderer.
 // node bake_c1.js <variantsDirUrl> <outDir>   (WORKER only)
 // Layers: back_{season}_{tod}.png, front_{season}_{tod}.png (776x456, transparent outside the card),
-//         ui_{tod}.png (static text/frame overlay), sprites (porori_*, bono_body, shell) 240x240 anchor at (120,120).
+//         ui_{tod}.png (static text/frame overlay), sprites (porori_*, bono_body, shell, acorn) 240x240 anchor at (120,120).
 const {spawn}=require('child_process');const fs=require('fs');const path=require('path');
 const [,,base,outDir]=process.argv;const PORT=process.env.PORT||9371,PROF='/tmp/cdp_prof_c1bake';
 const C=process.env.HOME+'/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome';
@@ -75,6 +75,9 @@ const S=240,A=120; // sprite canvas / anchor
  for(const p of parts){await style(base0+'#bono,#bakeShell{visibility:hidden!important}'+only('#'+p));await shot(`porori_${p.slice(1)}.png`,SP);}
  await style(base0+'#poro,#bakeShell{visibility:hidden!important}');await shot('bono_body.png',SB);
  await style(base0+'#poro,#bono{visibility:hidden!important}');await shot('shell.png',SP);
+ // res 10/24: goal 도토리 = acorn() of C1.html, scale 1 (drawn at scale 1 at GOAL)
+ await ev(`(()=>{const g=document.createElementNS('http://www.w3.org/2000/svg','g');g.id='bakeAcorn';g.innerHTML=acorn(ST,${A},${A},0,1);document.getElementById('scene').appendChild(g);return 1})()`);
+ await style(T0+'.card{background:transparent!important;border-color:transparent!important}#card *{visibility:hidden!important}#bakeAcorn,#bakeAcorn *{visibility:visible!important}');await shot('acorn.png',SP);
  const pal=await ev(`JSON.stringify({bono:pal(ST,'bono'),poro:pal(ST,'poro')})`);fs.writeFileSync(path.join(outDir,'palette.json'),pal);
  const th=await ev(`JSON.stringify({theme:C1_THEME})`);fs.writeFileSync(path.join(outDir,'theme.json'),th||'{}');
  ws.close();ch.kill();process.exit(0);

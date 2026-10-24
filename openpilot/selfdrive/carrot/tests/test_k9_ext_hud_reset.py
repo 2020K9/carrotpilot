@@ -22,7 +22,7 @@ if str(CLUSTER_DIR) not in sys.path:
 from cluster_renderer import ClusterUiRenderer  # noqa: E402
 from main import ClusterHudModeParamReader, sync_taxi_meter_panel  # noqa: E402
 
-BASE_FARE = 7000
+BASE_FARE = 4800   # res 10/24 17:52: K9ExtHud=1 (C1) meter = 경기 일반(중형) 기본 4,800원 (공고 제2023-5572호); was 7000 (모범)
 
 
 class FakeParams:

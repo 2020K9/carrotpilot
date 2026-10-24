@@ -42,7 +42,8 @@ from pathlib import Path
 import time
 
 from cluster_taxi_meter import (
-  NIGHT_LAMP_H, NIGHT_LAMP_RED, NIGHT_LAMP_W, NIGHT_LAMP_X, NIGHT_LAMP_Y, SEOUL_TZ, TAXI_METER_CLOCK_MIN_YEAR, TAXI_METER_FOOTER_TEXT, TaxiMeter, MeterAnimation, format_hms,
+  NIGHT_LAMP_H, NIGHT_LAMP_RED, NIGHT_LAMP_W, NIGHT_LAMP_X, NIGHT_LAMP_Y, SEOUL_TZ, TAXI_METER_C1_FARE, TAXI_METER_CLOCK_MIN_YEAR,
+  TAXI_METER_FOOTER_TEXT, TaxiMeter, MeterAnimation, format_hms,
   format_won, night_surcharge_rate, seoul_hour, taxi_meter_pose,
 )
 
@@ -238,6 +239,11 @@ def _hex(c: str) -> tuple[int, int, int, int]:
   return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4, 6))
 
 
+def _c4(c) -> tuple[int, int, int, int]:
+  c = tuple(int(v) for v in c)
+  return c if len(c) == 4 else (*c[:3], 255)
+
+
 C1_THEME = {
   "night": {"g2": "#d8b25e", "dsh": "#07060f", "lb": "#a8915f", "tx": "#f2ead8", "sub": "#b9a77f", "unit": "#d9bd7c",
             "acc": "#f0d690", "nx": "#a8915f", "pillB": "#c9a457", "pillT": "#f0d690", "pillBg": "#00000033",
@@ -275,10 +281,16 @@ def theme_color(key: str, tw: dict, alpha_mul: float = 1.0) -> tuple[int, int, i
 PILL = {"EMPTY": ("빈차", (255, 90, 74)), "BOARD": ("손님탐", (126, 224, 160)), "DRIVE": ("주행", (243, 207, 107)),
         "PAY": ("지불", (111, 216, 255))}
 LABEL = {"EMPTY": "기 본  요 금", "BOARD": "기 본  요 금", "DRIVE": "운 행  요 금", "PAY": "결 제  금 액"}
-NEXT_MSG = {"EMPTY": "손님을 기다리는 중 · 기본 {base}원 (3km)", "BOARD": "어서 오세요 · 출발하면 요금이 올라갑니다",
+NEXT_MSG = {"EMPTY": "손님을 기다리는 중 · 기본 {base}원 ({km}km)", "BOARD": "어서 오세요 · 출발하면 요금이 올라갑니다",
             "PAY": "감사합니다 · 카드·현금 모두 됩니다 · 안녕히 가세요"}
 SAY = {"BOARD": ("어서 오세요!", 0.1, 2.6), "DRIVE": ("출발~!", 0.1, 2.2), "PAY": ("감사합니다!", 0.1, 3.6),
        "EMPTY": ("또 만나요!", 0.1, 2.6)}
+# res (10/24 17:47 '말풍선 다시 넣어라'): the C1.html main-loop lines of 포로리 (core.js bubbles(): psay), live.
+# '괴롭힐 거야?' = 0.15..2.4 s after every fare step (HTML: win(t, T1+.15, T1+2.4), T1 = the +200원 moment), and
+# '또 멈췄네?' when the car comes to a stop while 주행 (HTML: the end of the loop, when the car stops). 보노보노's
+# thought bubble (bth '언제 가는 걸까…') stays out: 보노보노 10:08 (C1.html: $('bth').style.opacity=0).
+TICK_SAY = ("괴롭힐 거야?", 0.15, 2.4)
+STOP_SAY = ("또 멈췄네?", 0.15, 2.6)
 
 # ---- layout (card px, = C1.html) ----------------------------------------------------------------------
 CARD_W, CARD_H = 776.0, 456.0
@@ -295,6 +307,7 @@ SHELL_SC = 1.32
 GRIP = (19.5, -1.0)            # hand points on the clam (clam local, x +-)
 SHOULDER = (33.0, 88.0)
 GOAL = (516.0, 318.0)
+GOAL_SPRITE = "acorn"         # res (10/24 17:47 '도토리로 바꿔'): the goal is a 도토리 (acorn.png, baked at scale 1)
 FARE_BOX = (14.0, 84.0, 410.0, 222.0)   # particles are not drawn over the fare digits
 NO_PARTICLE_BOXES = (FARE_BOX, (NIGHT_LAMP_X - 10, NIGHT_LAMP_Y - 10, NIGHT_LAMP_X + NIGHT_LAMP_W + 10,
                                 NIGHT_LAMP_Y + NIGHT_LAMP_H + 10),   # ... nor over the night lamp,
@@ -412,6 +425,50 @@ LFA_OFF_COLOR = (150, 150, 150)
 # opaque) is drawn as runs of non-empty 16 px tiles. Same texels -> same picture (pixel-compared).
 C1_CROP_PAD = 2
 C1_RUN_TILE = 16
+
+# ---- resolution (res, 10/24 17:45 '글씨 같은 게 잘 안 보인다') -----------------------------------------------
+# The HUD is laid out on a 1920x480 design canvas and drawn with rl_scalef(width/1920, height/480). The car's
+# TURZX 9.2 panel is 1920x462 (lcd_comm_turing_usb PRODUCT_ID 0x0092 = (462, 1920), landscape), so the card used
+# to be squashed to 776x438.9 px (sy = 0.9625): every baked 776x456 layer and every glyph was resampled
+# between pixel rows. The card is now drawn in device pixels: 1:1 (k = 1) whenever the 456 px card fits the
+# frame height, at an integer device origin, centred on its design slot; otherwise uniform k = min(sx, sy).
+C1_NATIVE_MIN_SCALE = 0.90      # sx/sy down to this: snap the card to 1:1 device pixels (fits 1920x462)
+# Text: the shared fonts are atlases of 32 px (Korean, 11k glyphs) and 160 px (Latin) drawn with bilinear
+# filtering and no mipmaps, so 13-17 px text was minified 0.4-0.5x and the 27 px digits 0.17x (only a few
+# texels of each glyph sampled = thin, broken strokes). C1 now loads its own small atlases, one per pixel size
+# it uses, with only the characters it draws (stb_truetype rasterises them at that size), and puts every
+# glyph run on an integer device pixel.
+C1_TEXT_SHADOW_MAX = 17.0       # live text up to this size on the scene gets a 1 px theme shadow (contrast)
+
+
+def c1_card_device_rect(width: float, height: float, x: float, y: float, design_w: float = 1920.0,
+                        design_h: float = 480.0):
+  """(dev_x, dev_y, k) for a card whose design top-left is (x, y): integer origin, 1:1 when it fits."""
+  sx, sy = float(width) / design_w, float(height) / design_h
+  k = min(sx, sy)
+  if k < 1.0 and k >= C1_NATIVE_MIN_SCALE and CARD_H <= float(height) and CARD_W <= float(width):
+    k = 1.0
+  cx, cy = (x + CARD_W * 0.5) * sx, (y + CARD_H * 0.5) * sy
+  dx, dy = round(cx - CARD_W * k * 0.5), round(cy - CARD_H * k * 0.5)
+  if k == 1.0:
+    dy = max(0, min(int(height) - int(CARD_H), dy))
+    dx = max(0, min(int(width) - int(CARD_W), dx))
+  return float(dx), float(dy), k
+
+
+def c1_text_strings():
+  """Every string the C1 panel draws live (the font atlases hold only these characters + ASCII)."""
+  out = list(LABEL.values()) + [m for m in NEXT_MSG.values()] + [v[0] for v in SAY.values()] + \
+    [v[0] for v in PILL.values()] + [TICK_SAY[0], STOP_SAY[0], "대기", "주행을 시작하면 요금이 올라갑니다", "원", "딱!",
+                                    "다음 까지 초 현재 속도 km/h", "심야 할증 %", "·", "LFA"]
+  return out
+
+
+def c1_codepoints() -> list[int]:
+  cps = set(range(0x20, 0x7F))
+  for s in c1_text_strings():
+    cps.update(ord(ch) for ch in s)
+  return sorted(cps)
 
 
 def _png_alpha(path):
@@ -558,7 +615,7 @@ class C1MeterPanel:
   draw / close), C1 look, live state machine."""
 
   def __init__(self, meter: TaxiMeter | None = None, clock=time.monotonic, local_hour=None, wall_clock=None) -> None:
-    self.meter = meter or TaxiMeter()
+    self.meter = meter or TaxiMeter(TAXI_METER_C1_FARE)   # res: 경기 일반(중형) 요금 (공고 제2023-5572호)
     self.anim = MeterAnimation(self.meter.fare.time_fare_below_kph)
     self.fsm = C1Fsm()
     self.fsm_mode = False   # False until a 0x500 frame (or the toggle) is seen: then the C1 state machine
@@ -591,6 +648,12 @@ class C1MeterPanel:
     self.last_clam_rotation = 0.0
     self._last_center = (0.0, 0.0)
     self.draw_count = 0
+    self._fonts: dict[int, object] = {}
+    self._font_path = None
+    self._font_failed = False
+    self._dev = None              # (dev_x, dev_y, k, card_x, card_y) of the frame being drawn
+    self._stop_since: float | None = None   # wall time the car came to a stop while 주행 (STOP_SAY)
+    self.last_bubble = ""
 
   def _clock_from_hour(self):
     h = self._local_hour()
@@ -761,8 +824,9 @@ class C1MeterPanel:
         self._tex(rl, f"back_{self.season}_{tod}")
         self._tex(rl, f"over_{self.season}_{tod}")
     for name in ("porori_body", "porori_tail", "porori_fL", "porori_fR", "porori_aL", "porori_aR", "bono_body", "shell",
-                 "ptcl_white"):
+                 "ptcl_white", GOAL_SPRITE):
       self._tex(rl, name)
+    self._load_fonts(renderer, rl)
     if ANIM.get(self.season):
       self._anim_atlas(rl)
 
@@ -782,7 +846,100 @@ class C1MeterPanel:
     self._anim_runs = runs
     return tex
 
+  # -- crisp text (res)
+  C1_FONT_SIZES = (13, 14, 15, 16, 17, 22, 27, 30, 98)
+
+  def _load_fonts(self, renderer, rl) -> None:
+    if self._fonts or self._font_failed:
+      return
+    load = getattr(rl, "load_font_ex", None)
+    cands = getattr(renderer, "_font_candidates", None)
+    if load is None or cands is None or not hasattr(rl, "ffi"):
+      self._font_failed = True
+      return
+    path = next((p for p in cands() if Path(p).exists()), None)
+    if path is None:
+      self._font_failed = True
+      return
+    cps = c1_codepoints()
+    buf = rl.ffi.new("int[]", cps)
+    quiet = getattr(rl, "set_trace_log_level", None)
+    try:
+      if quiet is not None:   # glyph-bounds FONT warnings, as in ClusterUiRenderer._load_font
+        quiet(rl.TraceLogLevel.LOG_ERROR)
+      for size in self.C1_FONT_SIZES:
+        f = load(str(path), size, rl.ffi.cast("int *", buf), len(cps))
+        if f.texture.id <= 0:
+          raise RuntimeError("font atlas")
+        rl.set_texture_filter(f.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+        self._fonts[size] = f
+      self._font_path = str(path)
+      if quiet is not None:
+        quiet(rl.TraceLogLevel.LOG_WARNING)
+    except Exception as exc:
+      if quiet is not None:
+        quiet(rl.TraceLogLevel.LOG_WARNING)
+      print(f"C1 font load failed ({exc}); shared fonts used", flush=True)
+      for f in self._fonts.values():
+        try:
+          rl.unload_font(f)
+        except Exception:
+          pass
+      self._fonts.clear()
+      self._font_failed = True
+
+  def _font_for(self, size: float):
+    if not self._fonts:
+      return None
+    s = int(round(size))
+    if s in self._fonts and abs(size - s) < 1e-6:
+      return self._fonts[s]
+    # non-integer sizes (fare pop): nearest atlas at or above the size, scaled down
+    bigger = [k for k in self._fonts if k >= size]
+    return self._fonts[min(bigger)] if bigger else self._fonts[max(self._fonts)]
+
+  def _measure(self, renderer, rl, text: str, size: float) -> tuple[float, float]:
+    f = self._font_for(size)
+    if f is None:
+      return renderer._measure_text(text, size)
+    v = rl.measure_text_ex(f, text, size, max(1.0, size * 0.02))
+    return float(v.x), float(v.y)
+
+  def _snap(self, v: float, axis: int) -> float:
+    """Design coordinate -> the nearest one that lands on a whole device pixel (card drawn at k = 1)."""
+    d = self._dev
+    if d is None or d[2] != 1.0:
+      return v
+    o = d[3 + axis]
+    return o + round(v - o)
+
+  def _text(self, renderer, rl, text: str, x: float, y: float, size: float, color, shadow=None) -> None:
+    """renderer._draw_text(anchor='left') look: y = vertical centre; own atlas at this pixel size, pixel-snapped."""
+    if not text:
+      return
+    f = self._font_for(size)
+    if f is None:
+      if shadow is not None:
+        renderer._draw_text(text, x, y + 1.0, size, shadow)
+      renderer._draw_text(text, x, y, size, color)
+      return
+    sp = max(1.0, size * 0.02)
+    v = rl.measure_text_ex(f, text, size, sp)
+    integral = abs(size - round(size)) < 1e-6
+    dx, dy = x, y - float(v.y) * 0.5
+    if integral:
+      dx, dy = self._snap(dx, 0), self._snap(dy, 1)
+    if shadow is not None:
+      rl.draw_text_ex(f, text, rl.Vector2(dx, dy + 1.0), size, sp, rl.Color(*_c4(shadow)))
+    rl.draw_text_ex(f, text, rl.Vector2(dx, dy), size, sp, rl.Color(*_c4(color)))
+
   def close(self, rl) -> None:
+    for f in self._fonts.values():
+      try:
+        rl.unload_font(f)
+      except Exception:
+        pass
+    self._fonts.clear()
     for tex in self._textures.values():
       if tex is not None:
         try:
@@ -839,7 +996,11 @@ class C1MeterPanel:
     if f is None:
       return
     if on:
-      f(int(round(x)), int(round(y)), int(CARD_W), int(CARD_H))
+      d = self._dev
+      if d is not None:   # scissor works in framebuffer pixels: the card's device rectangle
+        f(int(d[0]), int(d[1]), int(round(CARD_W * d[2])), int(round(CARD_H * d[2])))
+      else:
+        f(int(round(x)), int(round(y)), int(CARD_W), int(CARD_H))
     else:
       f()
 
@@ -969,15 +1130,21 @@ class C1MeterPanel:
     if alpha <= 0.01 or not text:
       return
     a = int(255 * alpha)
-    tw, _ = renderer._measure_text(text, 17)
+    tw, _ = self._measure(renderer, rl, text, 17)
     bx, by, w, h, right = bubble_rect(tw, x_char)
+    bx, by = self._snap(x + bx, 0) - x, self._snap(y + by, 1) - y
+    # soft drop shadow (C1.html .bub box-shadow 0 2px 10px #0006), 2 widening layers
+    for grow, sa in ((3.0, 0.16), (1.5, 0.22)):
+      rl.draw_rectangle_rounded(rl.Rectangle(x + bx - grow, y + by + 2.0 - grow * 0.5, w + 2 * grow, h + 2 * grow), 0.9, 12,
+                                rl.Color(0, 0, 0, int(a * sa)))
     rl.draw_rectangle_rounded(rl.Rectangle(x + bx, y + by, w, h), 0.9, 12, rl.Color(*BUBBLE_FILL, a))
     mid = y + by + h / 2
     if right:   # tail on the right edge, pointing at 포로리
       rl.draw_triangle(rl.Vector2(x + bx + w - 1, mid - 7), rl.Vector2(x + bx + w - 1, mid + 7), rl.Vector2(x + bx + w + 11, mid), rl.Color(*BUBBLE_FILL, a))
     else:
       rl.draw_triangle(rl.Vector2(x + bx - 11, mid), rl.Vector2(x + bx + 1, mid + 7), rl.Vector2(x + bx + 1, mid - 7), rl.Color(*BUBBLE_FILL, a))
-    renderer._draw_text(text, x + bx + 14, mid, 17, (*BUBBLE_TEXT, a))
+    self._text(renderer, rl, text, x + bx + 14, mid, 17, (*BUBBLE_TEXT, a))
+    self.last_bubble = text
 
   def _draw_particles(self, rl, x: float, y: float, t: float) -> None:
     bw = self.bg_weights
@@ -1005,7 +1172,7 @@ class C1MeterPanel:
     ix, iy, iw, ih = x + bx + 11, y + by + 5, 26.0, bh - 10.0
     for a, b in (((ix + 6, iy), (ix, iy + ih)), ((ix + iw - 6, iy), (ix + iw, iy + ih))):
       rl.draw_line_ex(rl.Vector2(*a), rl.Vector2(*b), 3.0, rl.Color(*col, la))
-    renderer._draw_text("LFA", ix + iw + 9, y + by + bh / 2, 14, (*col, 255))
+    self._text(renderer, rl, "LFA", ix + iw + 9, y + by + bh / 2, 14, (*col, 255))
 
   def _draw_night_lamp(self, renderer, rl, lx: float, ly: float, t: float) -> None:
     """'심야 할증 20%' lamp, same lamp and place as the bd09c076 meter (top row, between brand and moon)."""
@@ -1016,10 +1183,39 @@ class C1MeterPanel:
     cx, cy = lx + 20, ly + NIGHT_LAMP_H / 2
     rl.draw_circle_v(rl.Vector2(cx, cy), 9.0, rl.Color(*NIGHT_LAMP_RED, glow))
     rl.draw_circle_v(rl.Vector2(cx, cy), 4.8, rl.Color(255, 138, 96, 255))
-    renderer._draw_text(f"심야 할증 {int(round(self.night_rate * 100))}%", lx + 34, cy, 15, (255, 196, 160))
+    self._text(renderer, rl, f"심야 할증 {int(round(self.night_rate * 100))}%", lx + 34, cy, 15, (255, 196, 160))
 
   # -- frame
   def draw(self, renderer, rl, panel_x: float, panel_y: float) -> None:
+    """res: the card is drawn in device pixels (see c1_card_device_rect): the HUD's rl_scalef(sx, sy) is undone
+    and replaced by translate(dev) * scale(k) * translate(-card), so all card coordinates stay as they were."""
+    x, y = panel_x + CARD_OFFSET_X, panel_y + CARD_OFFSET_Y
+    W, H = getattr(renderer, "width", 1920), getattr(renderer, "height", 480)
+    push, pop = getattr(rl, "rl_push_matrix", None), getattr(rl, "rl_pop_matrix", None)
+    scl, trn = getattr(rl, "rl_scalef", None), getattr(rl, "rl_translatef", None)
+    sx, sy = float(W) / 1920.0, float(H) / 480.0
+    if None in (push, pop, scl, trn) or not (sx > 0 and sy > 0):
+      self._dev = None
+      self._draw_card(renderer, rl, panel_x, panel_y)
+      return
+    dx, dy, k = c1_card_device_rect(W, H, x, y)
+    self._dev = (dx, dy, k, x, y)
+    flush = getattr(rl, "rl_draw_render_batch_active", None)
+    if flush is not None:
+      flush()
+    push()
+    scl(1.0 / sx, 1.0 / sy, 1.0)
+    trn(dx, dy, 0.0)
+    scl(k, k, 1.0)
+    trn(-x, -y, 0.0)
+    try:
+      self._draw_card(renderer, rl, panel_x, panel_y)
+    finally:
+      if flush is not None:
+        flush()
+      pop()
+
+  def _draw_card(self, renderer, rl, panel_x: float, panel_y: float) -> None:
     self.prepare_static_layer(renderer, rl)
     self.draw_count += 1
     x, y = panel_x + CARD_OFFSET_X, panel_y + CARD_OFFSET_Y
@@ -1033,7 +1229,9 @@ class C1MeterPanel:
     tk = 9.0 if (st != "DRIVE" or meter.last_tick_s is None or self.freeze_animation_t is not None) else max(0.0, t - meter.last_tick_s)
     pose = taxi_meter_pose(self.anim, t, tk)
     tw = theme_weights(self.bg_weights)
-    text = renderer._draw_text
+    text = lambda s_, x_, y_, z_, c_, sh_=None: self._text(renderer, rl, s_, x_, y_, z_, c_, sh_)   # noqa: E731
+    measure = lambda s_, z_: self._measure(renderer, rl, s_, z_)   # noqa: E731
+    shadow = theme_color("dsh", tw, 0.75)
 
     self._back_and_moving(rl, x, y, t)
     # progress track
@@ -1043,9 +1241,11 @@ class C1MeterPanel:
     if px_fill > X0 + 1:
       rl.draw_rectangle_gradient_h(int(x + X0), int(y + TRACK_Y - 2), int(px_fill - X0), 4,
                                    rl.Color(*theme_color("tk0", tw)), rl.Color(*theme_color("tk1", tw)))
-    # goal clam (static, scale 1 of the steering clam's 1.32*0.82)
-    goal_scale = 1.0 / (SHELL_SC * BONO_S)
-    self._sprite(rl, "shell", (x + GOAL[0], y + GOAL[1]), 0.0, scale=goal_scale)
+    # goal: 도토리 (res 17:47; acorn.png baked at scale 1), the old clam if the file is missing
+    if self._textures.get(GOAL_SPRITE) is not None:
+      self._sprite(rl, GOAL_SPRITE, (self._snap(x + GOAL[0], 0), self._snap(y + GOAL[1], 1)), 0.0)
+    else:
+      self._sprite(rl, "shell", (x + GOAL[0], y + GOAL[1]), 0.0, scale=1.0 / (SHELL_SC * BONO_S))
     # 포로리: start point while 빈차/손님탐, moves with the fare step while 주행
     pxp = max(X0 + PORO_MIN, px_fill if st == "DRIVE" else X0)
     greet = _win(since, 0.0, 2.6, 0.3) if st == "BOARD" else 0.0
@@ -1062,7 +1262,7 @@ class C1MeterPanel:
 
     # status pill (text drawn live; frame colours from the theme)
     label, dot = ("대기", (110, 98, 70)) if legacy else PILL[st]
-    tw_px, _ = renderer._measure_text(label, 16)
+    tw_px, _ = measure(label, 16)
     pw = 17 + 9 + 9 + tw_px + 17
     pill = rl.Rectangle(x + 750 - pw, y + 24, pw, 34)
     rl.draw_rectangle_rounded(pill, 1.0, 16, rl.Color(*theme_color("pillBg", tw)))
@@ -1077,12 +1277,12 @@ class C1MeterPanel:
       self._draw_night_lamp(renderer, rl, x + NIGHT_LAMP_X, y + NIGHT_LAMP_Y, t)
 
     # label + fare
-    text(LABEL[st], x + 28, y + 83, 13, theme_color("lb", tw))
+    text(LABEL[st], x + 28, y + 83, 13, theme_color("lb", tw), shadow)
     fare_alpha = 0.62 if (st == "EMPTY" and not legacy) else 1.0
     fare_text = format_won(self.shown_fare())
     pop = 1.0 + 0.09 * math.sin(tk / 0.5 * math.pi) if tk < 0.5 else 1.0
     size = 98.0 * pop
-    fw, _ = renderer._measure_text(fare_text, size)
+    fw, _ = measure(fare_text, size)
     text(fare_text, x + 24, y + 143 + 1.5, size, theme_color("dsh", tw, fare_alpha))
     text(fare_text, x + 24, y + 143, size, theme_color("g2", tw, fare_alpha))
     text("원", x + 24 + fw + 10, y + 166, 30, theme_color("unit", tw, fare_alpha))
@@ -1091,7 +1291,7 @@ class C1MeterPanel:
            theme_color("plus", tw, 1.0 - tk / 1.2))
     # stats
     km = f"{meter.distance_m / 1000.0:.2f}"
-    kw, _ = renderer._measure_text(km, 27)
+    kw, _ = measure(km, 27)
     text(km, x + 566, y + 127, 27, theme_color("tx", tw))
     text("km", x + 566 + kw + 5, y + 131, 15, theme_color("sub", tw))
     text(format_hms(meter.elapsed_s), x + 566, y + 199, 27, theme_color("tx", tw))
@@ -1106,15 +1306,39 @@ class C1MeterPanel:
       parts = (("다음 ", "nx"), (f"+{format_won(self.step_won)}원", "acc"), ("까지 ", "nx"), (f"{remaining}", "acc"),
                (unit, "nx"), (f"  ·  현재 속도 ", "nx"), (f"{int(round(self.speed_kph))}", "acc"), (" km/h", "nx"))
     else:
-      msg = "주행을 시작하면 요금이 올라갑니다" if legacy else NEXT_MSG[st].format(base=format_won(self.base_fare_won))
+      msg = "주행을 시작하면 요금이 올라갑니다" if legacy else NEXT_MSG[st].format(base=format_won(self.base_fare_won), km=f"{meter.fare.base_distance_m / 1000.0:g}")
       parts = ((msg, "nx"),)
     for part, key in parts:
-      text(part, nx, ny, 14, theme_color(key, tw))
-      nx += renderer._measure_text(part, 14)[0]
+      text(part, nx, ny, 14, theme_color(key, tw), shadow)
+      nx += measure(part, 14)[0]
     # 딱! on a fare tick
     if st == "DRIVE" and tk < 0.7:
       text("딱!", x + 732, y + 312 - tk * 30, 22, theme_color("plus", tw, 1.0 - tk / 0.7))
     # speech bubble (one at a time)
+    say, op = self.bubble_now(st, since, tk, t)
+    self.last_bubble = ""
+    self._draw_bubble(renderer, rl, say, pxp, x, y, op)
+
+  def bubble_now(self, st: str, since: float, tk: float, t: float) -> tuple[str, float]:
+    """One bubble at a time: the state-change line (SAY) first, then the C1.html main-loop lines of 포로리:
+    TICK_SAY after every fare step while 주행, STOP_SAY when the car comes to a stop while 주행."""
+    fsm = self.fsm
+    stopped = st == "DRIVE" and self.speed_kph <= C1_LOGIC["stop_kph"]
+    if not stopped:
+      self._stop_since = None
+    elif self._stop_since is None:
+      self._stop_since = t
     say, a0, a1 = SAY.get(st, ("", 0, 0))
     op = _win(since, a0, a1) if (st != "DRIVE" or since < 2.4) and (st != "EMPTY" or fsm.ev) else 0.0
-    self._draw_bubble(renderer, rl, say, pxp, x, y, op)
+    if op > 0.0:
+      return say, op
+    if st != "DRIVE":
+      return "", 0.0
+    op = _win(tk, TICK_SAY[1], TICK_SAY[2])
+    if op > 0.0:
+      return TICK_SAY[0], op
+    if self._stop_since is not None:
+      op = _win(t - self._stop_since, STOP_SAY[1], STOP_SAY[2])
+      if op > 0.0:
+        return STOP_SAY[0], op
+    return "", 0.0

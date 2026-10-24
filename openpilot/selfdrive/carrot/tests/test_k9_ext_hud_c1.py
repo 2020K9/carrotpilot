@@ -256,12 +256,13 @@ def _drive(p, clock, secs, v, occ, steer=0.0):
 def test_panel_empty_board_drive_pay_with_meter():
   p, clock = _panel()
   _drive(p, clock, 3, 0.0, False)
-  assert p.fsm.state == "EMPTY" and p.shown_fare() == 7000 and p.meter.distance_m == 0.0
+  # res 10/24 17:52: C1 meter = 경기 일반(중형) 4,800원/1.6km, 131m당 100원 (was 모범 7,000/3km, 144m당 200)
+  assert p.fsm.state == "EMPTY" and p.shown_fare() == 4800 and p.meter.distance_m == 0.0
   _drive(p, clock, 5.3, 0.0, True)
-  assert p.fsm.state == "BOARD" and p.shown_fare() == 7000
+  assert p.fsm.state == "BOARD" and p.shown_fare() == 4800
   _drive(p, clock, 300, 60.0, True)                 # 5 km at 60 km/h
   assert p.fsm.state == "DRIVE" and p.meter.distance_m == pytest.approx(5000, rel=0.01)
-  assert p.shown_fare() == 7000 + 200 * int((p.meter.metered_m - 3000) // 144)
+  assert p.shown_fare() == 4800 + 100 * int((p.meter.metered_m - 1600) // 131)
   _drive(p, clock, 3, 0.0, True)                    # stop starts at this fare
   stop_fare = p.fsm.last_stop_fare
   _drive(p, clock, 2, 20.0, True)
@@ -371,7 +372,7 @@ def test_no_occupant_signal_ever_keeps_the_bd09c076_meter():
   p.feed_occupant(False, clock[0])                 # first frame -> C1 state machine (seat empty = 빈차)
   clock[0] += 0.05
   p.update(_State(60.0))
-  assert p.fsm_mode and p.display_state == "EMPTY" and p.shown_fare() == 7000
+  assert p.fsm_mode and p.display_state == "EMPTY" and p.shown_fare() == 4800   # res: 일반 기본요금
 
 
 def test_bubble_never_overlaps_digits_stats_or_bonobono():
