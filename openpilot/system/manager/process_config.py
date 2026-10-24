@@ -113,7 +113,7 @@ def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
   return cluster_hud_active(params)
 
 def enable_k9_active_sound(started, params, CP: car.CarParams) -> bool:
-  # K9ActiveSound 1 (SYSTEM > 사운드): onroad only. 0 / anything else: never started -> no UDP port at all.
+  # K9ActiveSound 1 (주행 제어 > 실험중, last): onroad only. 0 / anything else: never started -> no UDP port at all.
   return started and active_sound_mode(params) == 1
 
 procs = [

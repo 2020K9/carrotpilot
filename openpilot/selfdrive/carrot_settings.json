@@ -399,7 +399,8 @@
             "K9LRView",
             "K9ExtHud",
             "K9MeterSeason",
-            "K9OneLaneHold"
+            "K9OneLaneHold",
+            "K9ActiveSound"
           ]
         }
       ]
@@ -635,8 +636,7 @@
           "params": [
             "SoundLanguageSetting",
             "SoundVolumeAdjust",
-            "SoundVolumeAdjustEngage",
-            "K9ActiveSound"
+            "SoundVolumeAdjustEngage"
           ]
         },
         {
