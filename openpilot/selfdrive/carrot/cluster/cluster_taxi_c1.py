@@ -288,9 +288,19 @@ SAY = {"BOARD": ("어서 오세요!", 0.1, 2.6), "DRIVE": ("출발~!", 0.1, 2.2)
 # res (10/24 17:47 '말풍선 다시 넣어라'): the C1.html main-loop lines of 포로리 (core.js bubbles(): psay), live.
 # '괴롭힐 거야?' = 0.15..2.4 s after every fare step (HTML: win(t, T1+.15, T1+2.4), T1 = the +200원 moment), and
 # '또 멈췄네?' when the car comes to a stop while 주행 (HTML: the end of the loop, when the car stops). 보노보노's
-# thought bubble (bth '언제 가는 걸까…') stays out: 보노보노 10:08 (C1.html: $('bth').style.opacity=0).
+# thought bubble (bth) is back since the bono round (18:37), see WAIT_THINK / TICK_THINK below.
 TICK_SAY = ("괴롭힐 거야?", 0.15, 2.4)
 STOP_SAY = ("또 멈췄네?", 0.15, 2.6)
+# bono (10/24 18:37 '보노보노 말풍선도 넣어라', supersedes 10:08 for these lines): C1.html's only 보노보노 lines are
+# the thought bubble bth of core.js bubbles(): show = max(win(t,.2,3.0), win(t,T1+2.3,T1+4.1)), text t<T1 '언제 가는
+# 걸까…' else '또 올라가는 걸까…' (10 s loop: the car waits stopped at 0-2 s right after 포로리's '또 멈췄네?', T1 = the
+# +200원 moment). Live, one bubble at a time with 포로리 (bubble_now() keeps priority and is unchanged):
+#  WAIT_THINK while 주행 and stopped, right after STOP_SAY: 2.75..5.55 s after the stop starts (HTML length 2.8 s), once
+#   per stop, only if the car is still stopped at 2.75 s; it runs to its end if the car pulls away (HTML: 1 s into it);
+#  TICK_THINK 2.4..4.2 s after each fare step, right after TICK_SAY (HTML 2.3..4.1, moved 0.1 s so they never overlap).
+# No bubble on steering is added (the 10:08 핸들 말풍선 '끼익' stays out).
+WAIT_THINK = ("언제 가는 걸까…", 2.75, 5.55)
+TICK_THINK = ("또 올라가는 걸까…", 2.4, 4.2)
 
 # ---- layout (card px, = C1.html) ----------------------------------------------------------------------
 CARD_W, CARD_H = 776.0, 456.0
@@ -459,7 +469,7 @@ def c1_card_device_rect(width: float, height: float, x: float, y: float, design_
 def c1_text_strings():
   """Every string the C1 panel draws live (the font atlases hold only these characters + ASCII)."""
   out = list(LABEL.values()) + [m for m in NEXT_MSG.values()] + [v[0] for v in SAY.values()] + \
-    [v[0] for v in PILL.values()] + [TICK_SAY[0], STOP_SAY[0], "대기", "주행을 시작하면 요금이 올라갑니다", "원", "딱!",
+    [v[0] for v in PILL.values()] + [TICK_SAY[0], STOP_SAY[0], WAIT_THINK[0], TICK_THINK[0], "대기", "주행을 시작하면 요금이 올라갑니다", "원", "딱!",
                                     "다음 까지 초 현재 속도 km/h", "심야 할증 %", "·", "LFA"]
   return out
 
@@ -569,6 +579,45 @@ def bubble_rect(text_w: float, x_char: float):
   return bx, BUBBLE_Y, w, BUBBLE_H, right
 
 
+# 보노보노's thought bubble (C1.html .bub.th): left of 보노보노's head, its two dots going down-right to the head.
+THINK_RIGHT = 600.0   # right edge (C1.html right:162 = x 614; kept at the 포로리 limit: the head starts at x ~612)
+THINK_Y = 238.0       # top (C1.html 228 - bob*0.3; the stats glass ends at y 229, its no-draw box at 236)
+THINK_BOB = 0.3       # follows 보노보노's bob (+-4.5 px) x 0.3, as C1.html
+# dots (dx from the right edge, dy from the bottom, r): C1.html <i> 12 px right:14 bottom:-14, 7 px right:2 bottom:-24
+THINK_DOTS = ((-20.0, 8.0, 6.0), (-5.5, 20.5, 3.5))
+PORO_REACH = (-66.0, 30.0)   # 포로리's x extent around its anchor (tail .. waving arm), card px
+THINK_PORO_FADE = 24.0       # the thought bubble fades out over the last 24 px before 포로리 would walk under it
+
+
+def think_rect(text_w: float, bob: float = 0.0):
+  """보노보노 thought bubble (card px): (x, y, w, h)."""
+  w = text_w + 28
+  return THINK_RIGHT - w, THINK_Y - bob * THINK_BOB, w, BUBBLE_H
+
+
+def think_parts(text_w: float, bob: float = 0.0):
+  """(x0, y0, x1, y1) boxes of what the thought bubble draws: the box with its drop shadow (3 px out, 0.5 px below
+  the top), then each dot with its shadow (r + 1, 1 px down)."""
+  bx, by, w, h = think_rect(text_w, bob)
+  out = [(bx - 3.0, by, bx + w + 3.0, by + h + 6.5)]
+  for ddx, ddy, r in THINK_DOTS:
+    cx, cy = bx + w + ddx, by + h + ddy
+    out.append((cx - r - 1.0, cy - r, cx + r + 1.0, cy + r + 2.0))
+  return out
+
+
+def think_extent(text_w: float, bob: float = 0.0):
+  """(x0, y0, x1, y1) around everything the thought bubble draws."""
+  ps = think_parts(text_w, bob)
+  return min(p[0] for p in ps), min(p[1] for p in ps), max(p[2] for p in ps), max(p[3] for p in ps)
+
+
+def think_poro_fade(text_w: float, x_char: float) -> float:
+  """1 = 포로리 is well left of the thought bubble, 0 = it would be under it."""
+  gap = think_rect(text_w)[0] - 6.0 - (x_char + PORO_REACH[1])
+  return min(1.0, max(0.0, gap / THINK_PORO_FADE))
+
+
 class BonoTransform:
   """bono local -> card px: translate(bx, by+bob) rotate(rot) scale(s), then lean about local (0,150)."""
 
@@ -654,6 +703,8 @@ class C1MeterPanel:
     self._dev = None              # (dev_x, dev_y, k, card_x, card_y) of the frame being drawn
     self._stop_since: float | None = None   # wall time the car came to a stop while 주행 (STOP_SAY)
     self.last_bubble = ""
+    self._think_stop: float | None = None    # the stop (its _stop_since) that got WAIT_THINK
+    self.last_think = ""
 
   def _clock_from_hour(self):
     h = self._local_hour()
@@ -1146,6 +1197,25 @@ class C1MeterPanel:
     self._text(renderer, rl, text, x + bx + 14, mid, 17, (*BUBBLE_TEXT, a))
     self.last_bubble = text
 
+  def _draw_think(self, renderer, rl, text: str, x: float, y: float, bob: float, alpha: float) -> None:
+    """보노보노's thought bubble (C1.html .bub.th): the 포로리 bubble look, no tail, two dots to the head."""
+    if alpha <= 0.01 or not text:
+      return
+    a = int(255 * alpha)
+    tw, _ = self._measure(renderer, rl, text, 17)
+    bx, by, w, h = think_rect(tw, bob)
+    bx, by = self._snap(x + bx, 0) - x, self._snap(y + by, 1) - y
+    for grow, sa in ((3.0, 0.16), (1.5, 0.22)):
+      rl.draw_rectangle_rounded(rl.Rectangle(x + bx - grow, y + by + 2.0 - grow * 0.5, w + 2 * grow, h + 2 * grow), 0.9, 12,
+                                rl.Color(0, 0, 0, int(a * sa)))
+    rl.draw_rectangle_rounded(rl.Rectangle(x + bx, y + by, w, h), 0.9, 12, rl.Color(*BUBBLE_FILL, a))
+    for ddx, ddy, r in THINK_DOTS:
+      c = rl.Vector2(x + bx + w + ddx, y + by + h + ddy)
+      rl.draw_circle_v(rl.Vector2(c.x, c.y + 1.0), r + 1.0, rl.Color(0, 0, 0, int(a * 0.18)))
+      rl.draw_circle_v(c, r, rl.Color(*BUBBLE_FILL, a))
+    self._text(renderer, rl, text, x + bx + 14, y + by + h / 2, 17, (*BUBBLE_TEXT, a))
+    self.last_think = text
+
   def _draw_particles(self, rl, x: float, y: float, t: float) -> None:
     bw = self.bg_weights
     cur = max(("day", "dusk", "night"), key=lambda k: bw.get(k, 0.0))   # c1bg.js: the strongest tod's particles
@@ -1318,6 +1388,12 @@ class C1MeterPanel:
     say, op = self.bubble_now(st, since, tk, t)
     self.last_bubble = ""
     self._draw_bubble(renderer, rl, say, pxp, x, y, op)
+    # 보노보노's thought bubble (only while 포로리 says nothing)
+    think, top = self.think_now(st, tk, t, op > 0.0)
+    self.last_think = ""
+    if top > 0.0:
+      top *= think_poro_fade(measure(think, 17)[0], pxp)
+    self._draw_think(renderer, rl, think, x, y, pose.bono_bob, top)
 
   def bubble_now(self, st: str, since: float, tk: float, t: float) -> tuple[str, float]:
     """One bubble at a time: the state-change line (SAY) first, then the C1.html main-loop lines of 포로리:
@@ -1342,3 +1418,32 @@ class C1MeterPanel:
       if op > 0.0:
         return STOP_SAY[0], op
     return "", 0.0
+
+  def think_now(self, st: str, tk: float, t: float, poro_says: bool = False) -> tuple[str, float]:
+    """보노보노's thought bubble (C1.html bth), after bubble_now() of the same frame: WAIT_THINK after STOP_SAY while
+    stopped, TICK_THINK after TICK_SAY. Never while 포로리 says something; it fades out in the 0.15 s before a
+    포로리 line starts (TICK_SAY / STOP_SAY begin 0.15 s after their event), so the two never show together."""
+    if st != "DRIVE":
+      self._think_stop = None
+      return "", 0.0
+    if poro_says:
+      return "", 0.0
+    stop = self._stop_since
+    if stop is not None and self._think_stop != stop and t - stop >= WAIT_THINK[1]:
+      self._think_stop = stop      # this stop lasted long enough: think once (also after the car pulls away)
+    best, bop = "", 0.0
+    if self._think_stop is not None:
+      op = _win(t - self._think_stop, WAIT_THINK[1], WAIT_THINK[2])
+      if op > bop:
+        best, bop = WAIT_THINK[0], op
+    op = _win(tk, TICK_THINK[1], TICK_THINK[2])
+    if op > bop:
+      best, bop = TICK_THINK[0], op
+    if bop <= 0.0:
+      return "", 0.0
+    lead = TICK_SAY[1]   # = STOP_SAY[1]
+    if tk < TICK_SAY[2]:                                   # a fare step just happened: 포로리 is about to speak
+      bop *= max(0.0, (lead - tk) / lead)
+    if stop is not None and t - stop < STOP_SAY[2]:        # the car just stopped: '또 멈췄네?' is about to come
+      bop *= max(0.0, (lead - (t - stop)) / lead)
+    return (best, bop) if bop > 0.0 else ("", 0.0)
