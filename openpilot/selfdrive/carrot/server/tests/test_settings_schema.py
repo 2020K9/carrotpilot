@@ -606,24 +606,44 @@ def test_k9_stop_mode_is_one_click_select_with_four_choices(settings, params):
   assert stop["control"] == "select" and stop["title"] == "K9 정차 방식 선택 (실험)"
   # rewritten 2026-10-23 07:25 (menu renumbered: bare v9 removed, 3 = v10 + shudder fix); r2: 3 = v10 + lead stop fix;
   # r6: 3 = v10 + band 0.2 (menu 3 label pin rewritten); 2026-10-24: 4 = v10 + shudder fix added (menu-set pins rewritten)
-  assert stop["options"] == {"ko": ["0 기본 제동", "1 v10", "2 v9+떨림 수정", "3 v10+밴드 0.2", "4 v10+떨림 수정"],
-                             "en": ["0 Base braking", "1 v10", "2 v9 + shudder fix", "3 v10 + band 0.2", "4 v10 + shudder fix"],
-                             "zh": ["0 基本制动", "1 v10", "2 v9+抖动修正", "3 v10+带宽0.2", "4 v10+抖动修正"]}
+  # 2026-10-24 (보노보노 "웹설명 너무길게말고 짧고 간단하게"): web text and labels rewritten short and plain (pins rewritten);
+  # the detailed per-number text and the stored-value notes now live only in docs/user/{ko,en}/settings.md and docs/k9_menus_zh.md
+  assert stop["options"] == {"ko": ["0 기본 제동", "1 v10(나눠 밟기)", "2 v9+떨림 수정", "3 v10+떨림 조금 완화", "4 v10+떨림 수정"],
+                             "en": ["0 Base braking", "1 v10 (step braking)", "2 v9 + shudder fix", "3 v10 + slight shudder relief", "4 v10 + shudder fix"],
+                             "zh": ["0 基本制动", "1 v10（分段制动）", "2 v9+抖动修正", "3 v10+稍减抖动", "4 v10+抖动修正"]}
   for key in ("descr", "edescr", "cdescr"):
     assert "K9StopTaper" not in stop[key] and "K9CreepMode" not in stop[key]
-    assert "v8" not in stop[key] and "5:" not in stop[key] and "5：" not in stop[key]
-  # the four values and the safety notes, in plain words
-  assert "0: 기본 제동" in stop["descr"] and "1: v10" in stop["descr"] and "2: v9 + 떨림 수정" in stop["descr"] and "3: v10 + 밴드 0.2" in stop["descr"]
-  assert "0: base braking" in stop["edescr"] and "1: v10" in stop["edescr"] and "2: v9 + shudder fix" in stop["edescr"] and "3: v10 + band 0.2" in stop["edescr"]
-  assert "1: v9" not in stop["descr"] and "1: v9" not in stop["edescr"] and "1：v9" not in stop["cdescr"]
-  assert "저장값 1은 이제 v10" in stop["descr"] and "a stored 1 now selects v10" in stop["edescr"]
-  assert "일반 CAN(CAN-FD 아님) 카메라 SCC" in stop["descr"] and "non-CAN-FD camera-SCC" in stop["edescr"]
-  assert "즉시 원래 명령" in stop["descr"] and "return the original at once" in stop["edescr"]
-  assert "실차에서는 아직 확인하지 않았습니다" in stop["descr"] and "not been checked on the vehicle yet" in stop["edescr"]
-  assert "尚未经实车确认" in stop["cdescr"] and "5 이상" in stop["descr"] and "5 or more" in stop["edescr"]
-  assert "4: v10 + 떨림 수정" in stop["descr"] and "4: v10 + shudder fix" in stop["edescr"] and "4：v10+抖动修正" in stop["cdescr"]
-  assert "v9보다 약해지지 않게" in stop["descr"] and "never brakes less than v9" in stop["edescr"]
-  assert "0에서 시작" in stop["descr"] and "starts at 0" in stop["edescr"]
+    assert "v8" not in stop[key] and "5:" not in stop[key] and "5：" not in stop[key] and "5 " not in stop[key]
+    for jargon in ("ComfortBand", "StopReq", "aReq", "m/s", "jerk", "Kalman", "래치", "latch"):
+      assert jargon not in stop[key], (key, jargon)
+  assert len(stop["descr"]) <= 300 and len(stop["cdescr"]) <= 300 and len(stop["edescr"]) <= 600
+  for n, label in enumerate(("0 기본", "1 v10", "2 v9+떨림 수정", "3 v10+떨림 조금 완화", "4 v10+떨림 수정")):
+    assert label in stop["descr"], label
+  for label in ("0 Base", "1 v10", "2 v9 + shudder fix", "3 v10 + slight shudder relief", "4 v10 + shudder fix"):
+    assert label in stop["edescr"], label
+  for label in ("0 基本", "1 v10", "2 v9+抖动修正", "3 v10+稍减抖动", "4 v10+抖动修正"):
+    assert label in stop["cdescr"], label
+  assert "1: v9" not in stop["descr"] and "1 v9" not in stop["descr"] and "1 v9" not in stop["edescr"]
+  assert "K9 롱컨 전용" in stop["descr"] and "K9 openpilot long only" in stop["edescr"]
+  assert "페달을 밟으면 바로 원래대로" in stop["descr"] and "Pressing a pedal returns to normal at once" in stop["edescr"]
+  assert stop["descr"].endswith("실차 미확인.") and stop["edescr"].endswith("Not tested in the car.") and stop["cdescr"].endswith("未经实车确认。")
+  # the facts that left the web text are still in the manual
+  doc_ko = (SETTINGS_PATH.parents[2] / "docs" / "user" / "ko" / "settings.md").read_text(encoding="utf-8")
+  doc_en = (SETTINGS_PATH.parents[2] / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf-8")
+  row_ko = next(line for line in doc_ko.splitlines() if "| `K9StopMode` |" in line)
+  row_en = next(line for line in doc_en.splitlines() if "| `K9StopMode` |" in line)
+  assert "0: 기본 제동" in row_ko and "1: v10" in row_ko and "2: v9 + 떨림 수정" in row_ko and "3: v10 + 밴드 0.2" in row_ko
+  assert "4: v10 + 떨림 수정" in row_ko and "3 v10+떨림 조금 완화" in row_ko
+  assert "0: base braking" in row_en and "1: v10" in row_en and "2: v9 + shudder fix" in row_en and "3: v10 + band 0.2" in row_en
+  assert "4: v10 + shudder fix" in row_en and "3 v10 + slight shudder relief" in row_en
+  assert "저장값 1은 이제 v10" in row_ko and "a stored 1 now selects v10" in row_en
+  assert "일반 CAN(CAN-FD 아님) 카메라 SCC" in row_ko and "non-CAN-FD camera-SCC" in row_en
+  assert "즉시 원래 명령" in row_ko and "return the original at once" in row_en
+  assert "5 이상" in row_ko and "5 or more" in row_en
+  assert "v9보다 약해지지 않게" in row_ko and "never brakes less than v9" in row_en
+  assert "0에서 시작" in row_ko and "starts at 0" in row_en
+  zh = (SETTINGS_PATH.parents[2] / "docs" / "k9_menus_zh.md").read_text(encoding="utf-8")
+  assert "4：v10+抖动修正" in zh and "尚未经实车确认" in zh
   menu = json.dumps(settings["menu"])
   assert "K9StopMode" in menu and "K9CreepMode" not in menu
   assert not any(p["name"] == "K9CreepMode" for p in params)

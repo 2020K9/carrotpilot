@@ -354,10 +354,13 @@ def test_menu_schema():
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")
   for locale in ("ko", "en", "zh"):
     assert [o.split(" ", 1)[0] for o in p["options"][locale]] == ["0", "1"]
-  assert "실차 미검증" in p["descr"] and "not vehicle-validated" in p["edescr"] and "未经实车验证" in p["cdescr"]
-  for d in (p["descr"], p["edescr"]):
-    assert "2.5" in d and re.search(r"2\s?(초|s)", d) and re.search(r"4\s?(초|s)", d) and "0.5" in d
+  # 2026-10-24: web text rewritten short and plain (pin rewritten); the numbers (2.5 m/s³, 2 s, 4 s, 0.5 s) live in the docs rows
+  assert "실차 미확인" in p["descr"] and "Not tested in the car" in p["edescr"] and "未经实车确认" in p["cdescr"]
+  assert len(p["descr"]) <= 150 and "m/s" not in p["descr"] and "m/s" not in p["edescr"]
   docs_ko = (ROOT / "docs" / "user" / "ko" / "settings.md").read_text(encoding="utf8")
   docs_en = (ROOT / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf8")
+  for doc in (docs_ko, docs_en):
+    row = doc.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
+    assert "2.5" in row and re.search(r"2\s?(초|s)", row) and re.search(r"4\s?(초|s)", row) and "0.5" in row
   assert "`K9LaneFix`" in docs_ko and "실차 미검증" in docs_ko.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
   assert "`K9LaneFix`" in docs_en and "not vehicle-validated" in docs_en.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
