@@ -110,7 +110,7 @@ def test_breakdown_adds_up_day_and_night():
 
 
 def test_passenger_no_longer_ends_or_restarts_a_drive():
-  F = C1Fsm()
+  F = C1Fsm(c1.C1_LOGIC, True)   # meter_empty2: sensor off on the car; this pins the kept logic with it on
   sig = lambda v, occ: {"v_kph": v, "occ": occ, "fare": 5000, "tap": False}   # noqa: E731
   for _ in range(110):
     F.step(sig(0, True), 0.05)
@@ -128,10 +128,14 @@ def test_passenger_no_longer_ends_or_restarts_a_drive():
 
 
 def test_boarding_side_still_works_and_button_mode_ignores_it():
-  F = C1Fsm()
+  F = C1Fsm(c1.C1_LOGIC, True)   # sensor on (kept logic): the boarding side
   for _ in range(110):
     F.step({"v_kph": 0, "occ": True, "fare": 4800, "tap": False}, 0.05)
   assert F.state == "BOARD"
+  F = C1Fsm()                    # meter_empty2 default (보노보노 21:59 "손님탐도없애"): no 손님탐 from the sensor at all
+  for _ in range(110):
+    F.step({"v_kph": 0, "occ": True, "fare": 4800, "tap": False}, 0.05)
+  assert F.state == "EMPTY"
 
 
 # ---- memory params link (HUD side) -------------------------------------------------------------------

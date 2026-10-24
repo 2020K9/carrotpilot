@@ -1,14 +1,16 @@
 """K9ExtHud=1 taxi meter remote (보노보노 2026-10-24 21:20 "택시미터기에 연동되는 시작.일시정지.정산 누르면되는 어플하나만들어").
 
-A small Android app (k9 meter app, built outside the repo) has three big buttons: 시작 (reset and start), 일시정지/재개,
-정산. It talks to the comma over UDP on K9_METER_PORT (7720), next to the carrot_man ports (7705 broadcast, 7706
+A small Android app (k9 meter app, built outside the repo) has big buttons: 시작 (reset and start), 일시정지/재개,
+정산, and (meter_empty2, 보노보노 22:01 "어플에 빈차도 넣어바") 빈차 = back to 빈차 (reset, the 빈차 screen).
+It talks to the comma over UDP on K9_METER_PORT (7720), next to the carrot_man ports (7705 broadcast, 7706
 CarrotNavi, 7709-7714) but separate from them, so CarrotNavi's remote address (7706) is never taken over.
 
 Discovery: the app sends {"k9meter": 1, "cmd": "status"} to the LAN broadcast address (and/or a typed address, e.g. a
 Tailscale IP); the comma answers by unicast, so the app learns its address from the reply.
-Request:  {"k9meter": 1, "cmd": "start" | "pause" | "settle" | "status", "id": <int>, "cid": "<client token>"}
+Request:  {"k9meter": 1, "cmd": "start" | "pause" | "settle" | "empty" | "status", "id": <int>, "cid": "<client token>"}
 Reply:    {"k9meter": 1, "ok": true, "id": <same>, "cmd": ..., "applied": true|false (false = a repeat of the same
-           (cid, id), not applied twice), "state": "EMPTY|BOARD|DRIVE|PAUSE|PAY|SETTLE", "fare": won, "km": .., "sec": ..,
+           (cid, id), not applied twice), "state": "EMPTY|DRIVE|PAUSE|SETTLE" (BOARD / PAY only with the
+           passenger sensor on), "fare": won, "km": .., "sec": ..,
            "night": rate, "age": s since the HUD last wrote its state (large = HUD not running), "ext_hud": 1}
 A command goes to the HUD through the memory param K9MeterCmd (a queue of the last few "token:cmd", tokens unique per
 press); the HUD (cluster_taxi_c1.MeterButtonLink) applies new tokens in order and writes K9MeterState (JSON) back,
@@ -27,7 +29,7 @@ K9_METER_PORT = 7720
 EXT_HUD_PARAM = "K9ExtHud"
 METER_CMD_PARAM = "K9MeterCmd"
 METER_STATE_PARAM = "K9MeterState"
-COMMANDS = ("start", "pause", "settle")
+COMMANDS = ("start", "pause", "settle", "empty")
 QUEUE_MAX = 8
 SEEN_MAX = 64
 GATE_POLL_S = 2.0

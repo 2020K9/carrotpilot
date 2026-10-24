@@ -14,8 +14,9 @@ Live inputs (every frame):
     0->1 held 5 s while stopped = 손님탐 (1->0 again before moving = 빈차). meter_improve (보노보노 20:43 "운행끝나고
     승객연동되잇는거 지워"): the end of a drive is no longer tied to the passenger - a 1->0 while 주행 does not make
     지불 any more (it did: 1->0 held 5 s = 지불, amount = the fare at the start of the last stop), nor does a 0->1
-    while 지불 make 손님탐. 주행 runs on until the screen toggle (주행->지불) or the HUD restarts. OCCUPANT_ENABLED =
-    True. The screen toggle (tap) always wins.
+    while 지불 make 손님탐. meter_empty2 (보노보노 21:59 "손님탐도없애"): OCCUPANT_ENABLED = False - the sensor changes no state
+    at all and its reader is not started (main.py); the meter starts in 빈차 (own screen) and only the app's 시작 /
+    일시정지 / 정산 / 빈차 (or the screen toggle = the next of those) change it. The sensor code stays for True.
   * 0x500 signal loss (r2): only NEW frames are handed on; 2 s without one = 모름 (OCC_STALE_S). A 5 s hold in
     progress is dropped, never completed, and restarts from 0 when frames return.
   * LFA (r2, the carrot wheel stays hidden): badge under the clam = lane icon (solid: lane lines in use / faint:
@@ -54,7 +55,7 @@ C1_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "taxi_meter" / "c1"
 
 # ---- occupant / state machine (port of variants/c1state.js, 09:26 + 09:30 + 10:35 FINAL) ----------------
 OCC_SIGNAL = {"addr": 0x500, "bus": 0, "start_bit": 2, "len": 2, "present_value": 1}
-OCCUPANT_ENABLED = True
+OCCUPANT_ENABLED = False   # 보노보노 2026-10-24 21:59 "손님탐도없애": no passenger-sensor transitions at all (app/screen only)
 OCC_STABLE_S = 5.0
 OCC_STALE_S = 2.0          # no new 0x500 frame for this long = no signal (모름): the confirmed value stays; a 5 s
                            # hold in progress is dropped, never completed, and restarts from 0 when frames return
@@ -67,7 +68,11 @@ STATES = ("EMPTY", "BOARD", "DRIVE", "PAY")
 # go on (주행 only); 정산 = stop counting and show the separate 정산 screen (SETTLE) until the next 시작.
 METER_CMD_PARAM = "K9MeterCmd"
 METER_STATE_PARAM = "K9MeterState"
-METER_COMMANDS = ("start", "pause", "settle")
+# meter_empty2 (보노보노 21:59 "손님탐도없애", 22:01 "빈차창도 따로만들고 어플에 빈차도 넣어바"): with the passenger sensor off
+# (OCCUPANT_ENABLED False) the meter is the app's alone - it starts in 빈차 (its own screen, _draw_empty) and nothing but
+# the buttons changes the state: 시작 = 주행 at once (no 손님탐), 정산 = the 정산 screen, 빈차 = back to 빈차 (reset: base fare,
+# 0 km, 0 s) from any state. The onroad-driven legacy meter (no 0x500 frame ever) is only used with the sensor on.
+METER_COMMANDS = ("start", "pause", "settle", "empty")
 SETTLE = "SETTLE"
 
 
@@ -140,7 +145,9 @@ class C1Fsm:
             occ_edge = False                         # only a confirmed passenger can get out
           self.occ = False
     if sig.get("tap"):                               # screen toggle, always first
-      nxt = {"EMPTY": "BOARD", "BOARD": "EMPTY", "DRIVE": "PAY", "PAY": "EMPTY", SETTLE: "EMPTY"}[self.state]
+      # meter_empty2: no 손님탐 any more when the sensor is off - 빈차 -> 주행 at once (as the app's 시작)
+      nxt = {"EMPTY": "BOARD" if self.occ_on else "DRIVE", "BOARD": "EMPTY", "DRIVE": "PAY", "PAY": "EMPTY",
+             SETTLE: "EMPTY"}[self.state]
       self._set(nxt, "tap", sig)
       return self
     if self.state == "PAY" and stopped:
@@ -478,13 +485,20 @@ PAUSE_PILL = ("일시정지", (255, 168, 64))
 PAUSE_MSG = "일시정지 · 요금·거리·시간이 멈춰 있어요"
 SETTLE_STRINGS = ("정 산", "총 요 금", "보노보노 택시 · 오늘도 고마워요", "기본요금", "거리요금", "시간요금", "심야 할증", "없음",
                   "회", "×", "초", "운 행  거 리", "운 행  시 간", "시작을 누르면 새 운행을 시작합니다", "감사합니다!", "원", "km")
+EMPTY_BRAND = "보노보노 택시 · 어서 오세요"
+EMPTY_WAIT = "손님을 기다리는 중"
+EMPTY_HINT = "시작을 누르면 바로 주행을 시작합니다"
+EMPTY_CALL = ("어디로 모실까요?", 6.0, 8.6, 14.0)   # 포로리 on the 빈차 screen: (text, from s, to s, period s)
+EMPTY_STRINGS = ("빈 차", EMPTY_BRAND, EMPTY_WAIT, EMPTY_HINT, EMPTY_CALL[0], "당", "시", "~", "km/h 이하", " · 심야)",
+                 " · 지금 적용", "없음")
 
 
 def c1_text_strings():
   """Every string the C1 panel draws live (the font atlases hold only these characters + ASCII)."""
   out = list(LABEL.values()) + [m for m in NEXT_MSG.values()] + [v[0] for v in SAY.values()] + \
     [v[0] for v in PILL.values()] + [TICK_SAY[0], STOP_SAY[0], WAIT_THINK[0], TICK_THINK[0], "대기", "주행을 시작하면 요금이 올라갑니다", "원", "딱!",
-                                    "다음 까지 초 현재 속도 km/h", "심야 할증 %", "·", "LFA"] + list(SETTLE_STRINGS) + [PAUSE_PILL[0], PAUSE_MSG]
+                                    "다음 까지 초 현재 속도 km/h", "심야 할증 %", "·", "LFA"] + list(SETTLE_STRINGS) + [PAUSE_PILL[0], PAUSE_MSG] + \
+    list(EMPTY_STRINGS)
   return out
 
 
@@ -585,6 +599,15 @@ SETTLE_ROW_H = 34.0
 SETTLE_HINT = (210.0, 424.0)                           # "시작을 누르면 ..." right of 포로리, under its bubble
 SETTLE_PORO = (120.0, 380.0)                           # 포로리 anchor (bows), its bubble to the right
 SETTLE_BUBBLE_DY = 380.0 - 236.0 - 46.0                # the bubble at 포로리's head height
+# 빈차 screen layout (card px, meter_empty2): the 정산 screen's panel / 포로리 / hint places, a red sign left, fare rows right
+EMPTY_PANEL = SETTLE_PANEL
+EMPTY_SIGN = (36.0, 82.0, 352.0, 196.0)               # the '빈 차' roof-lamp sign (x, y, w, h)
+EMPTY_SIGN_TEXT_Y = 82.0                               # '빈 차' 98 px centre, from the sign top
+EMPTY_SIGN_SUB_Y = 160.0                               # '손님을 기다리는 중' centre, from the sign top
+EMPTY_ROWS = SETTLE_ROWS
+EMPTY_RED = (255, 90, 74)                              # PILL['EMPTY'] red
+EMPTY_SIGN_BG = (22, 8, 10, 240)
+EMPTY_GLOW = 5.0                                       # glow ring around the sign (card px)
 
 BUBBLE_H = 34.0
 BUBBLE_Y = 236.0
@@ -721,11 +744,13 @@ class C1MeterPanel:
   """Same interface as TaxiMeterPanel (renderer: update / feed_speed_samples / restart / prepare_static_layer /
   draw / close), C1 look, live state machine."""
 
-  def __init__(self, meter: TaxiMeter | None = None, clock=time.monotonic, local_hour=None, wall_clock=None) -> None:
+  def __init__(self, meter: TaxiMeter | None = None, clock=time.monotonic, local_hour=None, wall_clock=None,
+               occupant: bool | None = None) -> None:
     self.meter = meter or TaxiMeter(TAXI_METER_C1_FARE)   # res: 경기 일반(중형) 요금 (공고 제2023-5572호)
     self.anim = MeterAnimation(self.meter.fare.time_fare_below_kph)
-    self.fsm = C1Fsm()
-    self.fsm_mode = False   # False until a 0x500 frame (or the toggle) is seen: then the C1 state machine
+    self._occ_on = OCCUPANT_ENABLED if occupant is None else bool(occupant)   # None = OCCUPANT_ENABLED (car: off)
+    self.fsm = C1Fsm(C1_LOGIC, self._occ_on)
+    self.fsm_mode = not self._occ_on   # sensor on: False until a 0x500 frame (or the toggle) is seen; off: button meter
     self._speed_samples: list[tuple[float, float]] = []
     self._speed_samples_live = False
     self._clock = clock
@@ -799,18 +824,19 @@ class C1MeterPanel:
       self._speed_samples = self._speed_samples[-2000:]
 
   def feed_occupant(self, present: bool | None, t_s: float | None = None) -> None:
-    """Latest 0x500 bus0 CF_TTL_Ind (True/False), None = no frame. Stale after OCC_STALE_S."""
-    if present is None:
+    """Latest 0x500 bus0 CF_TTL_Ind (True/False), None = no frame. Stale after OCC_STALE_S. Sensor off: ignored."""
+    if present is None or not self._occ_on:
       return
     self.occupant = bool(present)
     self.occupant_t = self._clock() if t_s is None else float(t_s)
 
   def toggle(self) -> None:
-    """Screen toggle (always wins): 빈차->손님탐, 손님탐->빈차, 주행->지불, 지불->빈차."""
+    """Screen toggle (always wins). Sensor on: 빈차->손님탐, 손님탐->빈차, 주행->지불, 지불->빈차. Sensor off (meter_empty2):
+    the app's next button - 빈차 -> 시작, 주행 / 일시정지 -> 정산, 정산 -> 빈차."""
     self._tap = True
 
   def command(self, cmd: str) -> None:
-    """A meter button (K9MeterCmd): 'start' / 'pause' / 'settle', applied on the next update()."""
+    """A meter button (K9MeterCmd): 'start' / 'pause' / 'settle' / 'empty', applied on the next update()."""
     if cmd in METER_COMMANDS:
       self._cmds.append(cmd)
 
@@ -822,7 +848,7 @@ class C1MeterPanel:
 
   @property
   def meter_state(self) -> str:
-    """K9MeterState: EMPTY / BOARD / DRIVE / PAUSE / PAY / SETTLE (legacy: DRIVE or EMPTY)."""
+    """K9MeterState: EMPTY / DRIVE / PAUSE / SETTLE (sensor on also BOARD / PAY; legacy: DRIVE or EMPTY)."""
     st = self.display_state
     if st == "EMPTY_LEGACY":
       return "EMPTY"
@@ -853,6 +879,16 @@ class C1MeterPanel:
         f._set(SETTLE, "settle", {"v_kph": self.speed_kph, "fare": self.meter.fare_won})
         self.meter._last_sample_t = None
         self.meter._last_now = None
+    elif cmd == "empty":                        # meter_empty2 빈차: back to 빈차 from any state (reset: base fare, 0 km, 0 s)
+      self.fsm_mode = True
+      self.meter.reset(hour)
+      self.meter._was_onroad = False
+      self._bd = self._new_breakdown(night_surcharge_rate(self.meter.fare, hour))
+      self.paused = False
+      self.settle_breakdown = None
+      self.meter._last_sample_t = None
+      self.meter._last_now = None
+      f._set("EMPTY", "empty", {"v_kph": self.speed_kph, "fare": self.meter.fare_won})
 
   def breakdown(self) -> dict:
     """정산 numbers of the current drive: base, distance / time steps, night surcharge, total (shown fare), km, s."""
@@ -883,8 +919,8 @@ class C1MeterPanel:
     self.meter.reset()
     self.meter._was_onroad = False
     self.anim.reset()
-    self.fsm = C1Fsm()
-    self.fsm_mode = False
+    self.fsm = C1Fsm(C1_LOGIC, self._occ_on)
+    self.fsm_mode = not self._occ_on
     self._last_t = None
     self._tap = False
     self.paused = False
@@ -930,6 +966,10 @@ class C1MeterPanel:
     self._last_t = now
     tap, self._tap = self._tap, False
     cmds, self._cmds = self._cmds, []
+    if tap and not self.fsm.occ_on:   # meter_empty2: the toggle = the app's next button (no 손님탐 / 지불)
+      tap = False
+      st0 = self.fsm.state if self.fsm_mode else "EMPTY"
+      cmds.append({"EMPTY": "start", "DRIVE": "settle"}.get(st0, "empty"))
     for cmd in cmds:
       self._apply_command(cmd, hour)
     occ = self._occ_signal(now)
@@ -1477,6 +1517,9 @@ class C1MeterPanel:
     if st == SETTLE:
       self._draw_settle(renderer, rl, x, y, t, tw, since)
       return
+    if st == "EMPTY" and not legacy:
+      self._draw_empty(renderer, rl, x, y, t, tw, since)
+      return
     self._back_and_moving(rl, x, y, t)
     # progress track
     p = meter.step_progress if st == "DRIVE" else 0.0
@@ -1638,6 +1681,87 @@ class C1MeterPanel:
     op = _win(since, 0.1, 9e9)
     if op > 0.0:
       self._draw_bubble(renderer, rl, "감사합니다!", SETTLE_PORO[0], x, y + SETTLE_BUBBLE_DY, op)
+
+  def _draw_empty(self, renderer, rl, x: float, y: float, t: float, tw: dict, since: float) -> None:
+    """빈차 screen (meter_empty2, 보노보노 22:01 "빈차창도 따로"): the scene behind the 정산 screen's panel, a red '빈 차' sign
+    (a taxi's roof lamp, breathing like the old 빈차 dot), the fare guide (기본요금 now incl. a night surcharge, 거리 /
+    시간 / 심야 할증), 포로리 waving with '어디로 모실까요?' now and then, 보노보노 with the steering clam (still the only
+    steering display) and the LFA badge. Same C1 sprites / theme colours as the 정산 screen."""
+    text = lambda s_, x_, y_, z_, c_, sh_=None: self._text(renderer, rl, s_, x_, y_, z_, c_, sh_)   # noqa: E731
+    measure = lambda s_, z_: self._measure(renderer, rl, s_, z_)[0]   # noqa: E731
+    fare = self.meter.fare
+    self._back_and_moving(rl, x, y, t)
+    panel = rl.Rectangle(x + EMPTY_PANEL[0], y + EMPTY_PANEL[1], EMPTY_PANEL[2], EMPTY_PANEL[3])
+    rl.draw_rectangle_rounded(panel, 0.08, 16, rl.Color(*theme_color("stBg", tw)))
+    rl.draw_rectangle_rounded_lines_ex(panel, 0.08, 16, 1.5, rl.Color(*theme_color("pillB", tw)))
+    breath = 0.5 - 0.5 * math.cos(t * math.pi)       # 0.5 Hz, as the 빈차 dot of the meter card
+    red = tuple(int(round(a + (b - a) * breath)) for a, b in zip(EMPTY_RED, (122, 42, 36), strict=True))
+    # title: 빈 차 pill + brand line
+    pw = 17 + 9 + 9 + measure("빈 차", 16) + 17
+    pill = rl.Rectangle(x + 36, y + 32, pw, 32)
+    rl.draw_rectangle_rounded(pill, 1.0, 16, rl.Color(*theme_color("pillBg", tw)))
+    rl.draw_rectangle_rounded_lines_ex(pill, 1.0, 16, 1.0, rl.Color(*theme_color("pillB", tw)))
+    rl.draw_circle_v(rl.Vector2(pill.x + 17 + 4.5, pill.y + 16), 9.0, rl.Color(*red, 60))
+    rl.draw_circle_v(rl.Vector2(pill.x + 17 + 4.5, pill.y + 16), 4.5, rl.Color(*red, 255))
+    text("빈 차", pill.x + 17 + 9 + 9, pill.y + 16, 16, theme_color("pillT", tw))
+    text(EMPTY_BRAND, pill.x + pw + 14, y + 48, 16, theme_color("sub", tw))
+    # the sign: dark LED box, red outline + soft glow, '빈 차' 98 px, '손님을 기다리는 중' under it
+    sx, sy, sw, sh = EMPTY_SIGN
+    glow = 0.55 + 0.45 * (1.0 - breath)
+    grow = EMPTY_GLOW                                 # one soft glow ring (fill kept small: one layer, no text shadow)
+    rl.draw_rectangle_rounded(rl.Rectangle(x + sx - grow, y + sy - grow, sw + 2 * grow, sh + 2 * grow), 0.2, 16,
+                              rl.Color(*EMPTY_RED, int(255 * 0.2 * glow)))
+    sign = rl.Rectangle(x + sx, y + sy, sw, sh)
+    rl.draw_rectangle_rounded(sign, 0.16, 16, rl.Color(*EMPTY_SIGN_BG))
+    rl.draw_rectangle_rounded_lines_ex(sign, 0.16, 16, 2.0, rl.Color(*EMPTY_RED, int(150 + 105 * glow)))
+    lit = tuple(int(round(a + (b - a) * (1.0 - breath) * 0.6)) for a, b in zip(EMPTY_RED, (255, 150, 120), strict=True))
+    big = "빈 차"
+    bw = measure(big, 98)
+    text(big, x + sx + (sw - bw) / 2, y + sy + EMPTY_SIGN_TEXT_Y, 98, (*lit, 255))
+    wait = EMPTY_WAIT
+    text(wait, x + sx + (sw - measure(wait, 17)) / 2, y + sy + EMPTY_SIGN_SUB_Y, 17, (255, 176, 150, 230))
+    # fare guide (right column, the 정산 rows' look)
+    night_now = self.night_rate > 0.0
+    n0, n1, nr = (fare.night_surcharges[0] if fare.night_surcharges else (0, 0, 0.0))
+    rows = [("기본요금", f"({fare.base_distance_m / 1000.0:g}km" + (" · 심야)" if night_now else ")"),
+             f"{format_won(self.base_fare_won)}원"),
+            ("거리요금", f"{fare.distance_unit_m:g}m당", f"{format_won(fare.distance_unit_won)}원"),
+            ("시간요금", f"{fare.time_unit_s:g}초당 · {fare.time_fare_below_kph:g}km/h 이하", f"{format_won(fare.time_unit_won)}원"),
+            ("심야 할증", f"{n0:02d}~{n1:02d}시" + (" · 지금 적용" if night_now else ""),
+             f"{int(round(nr * 100))}%" if nr > 0 else "없음")]
+    rx0, rx1, ry = x + EMPTY_ROWS[0], x + EMPTY_ROWS[1], y + EMPTY_ROWS[2]
+    for i, (name, detail, amount) in enumerate(rows):
+      cy = ry + i * SETTLE_ROW_H
+      if i % 2 == 0:
+        rl.draw_rectangle_rounded(rl.Rectangle(rx0 - 10, cy - SETTLE_ROW_H / 2 + 2, rx1 - rx0 + 20, SETTLE_ROW_H - 4), 0.5, 8,
+                                  rl.Color(*theme_color("stRow", tw)))
+      hot = night_now and i in (0, 3)
+      text(name, rx0, cy, 16, theme_color("tx", tw))
+      text(detail, rx0 + 82, cy, 14, theme_color("acc" if hot else "sub", tw))
+      text(amount, rx1 - measure(amount, 17), cy, 17, theme_color("acc" if hot else "tx", tw))
+    shadow = theme_color("dsh", tw, 0.75)
+    text(EMPTY_HINT, x + SETTLE_HINT[0], y + SETTLE_HINT[1], 14, theme_color("nx", tw), shadow)
+    # characters: 포로리 waits at the start point (waves while it calls), 보노보노 holds the clam (steering)
+    pose = taxi_meter_pose(self.anim, t, 9.0)
+    say, op = self.empty_bubble(since)
+    self._draw_porori(rl, (x + SETTLE_PORO[0], y + SETTLE_PORO[1]), pose, min(1.0, op * 1.4), 0.0)
+    self._draw_bono(rl, x, y, pose, 0.0)
+    self._draw_lfa_badge(renderer, rl, x, y, tw)
+    self.last_bubble = ""
+    self._draw_bubble(renderer, rl, say, SETTLE_PORO[0], x, y + SETTLE_BUBBLE_DY, op)
+
+  def empty_bubble(self, since: float) -> tuple[str, float]:
+    """포로리 on the 빈차 screen: '또 만나요!' right after the 빈차 button (0.1-2.6 s), then '어디로 모실까요?' every
+    EMPTY_CALL[3] s (from EMPTY_CALL[1] s into 빈차, EMPTY_CALL[2] - EMPTY_CALL[1] s long). One bubble at a time."""
+    if self.fsm.ev == "empty":
+      op = _win(since, SAY["EMPTY"][1], SAY["EMPTY"][2])
+      if op > 0.0:
+        return SAY["EMPTY"][0], op
+    text, a0, a1, period = EMPTY_CALL
+    if since < a0:
+      return "", 0.0
+    op = _win(a0 + (since - a0) % period, a0, a1)
+    return (text, op) if op > 0.0 else ("", 0.0)
 
   def bubble_now(self, st: str, since: float, tk: float, t: float) -> tuple[str, float]:
     """One bubble at a time: the state-change line (SAY) first, then the C1.html main-loop lines of 포로리:

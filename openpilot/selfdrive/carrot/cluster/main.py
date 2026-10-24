@@ -562,13 +562,19 @@ def feed_taxi_meter_speed(renderer, source) -> int:
         return 0
     samples = drain()
     renderer.feed_taxi_meter_speed_samples(samples)
-    poll_occ = getattr(source, "poll_taxi_occupant", None)
+    poll_occ = getattr(source, "poll_taxi_occupant", None) if taxi_occupant_enabled() else None
     if poll_occ is not None:
         occ = poll_occ()
         if occ is not None:
             renderer.feed_taxi_meter_occupant(occ[1])
     feed_taxi_meter_buttons(renderer, source)
     return len(samples)
+
+
+def taxi_occupant_enabled() -> bool:
+    """21:59: the passenger sensor (CAN 0x500) no longer drives the C1 meter, so its reader is not started."""
+    import cluster_taxi_c1   # same module the renderer uses (cluster dir on sys.path, as feed_taxi_meter_buttons)
+    return bool(cluster_taxi_c1.OCCUPANT_ENABLED)
 
 
 def feed_taxi_meter_buttons(renderer, source, now: float | None = None) -> None:

@@ -1107,7 +1107,7 @@ class ClusterUiRenderer:
             self._taxi_meter_panel.feed_occupant(present, t_s)
 
     def taxi_meter_command(self, cmd: str) -> None:
-        """Meter remote command (K9MeterCmd: start / pause / settle) for the C1 meter (K9ExtHud=1 only)."""
+        """Meter remote command (K9MeterCmd: start / pause / settle / empty) for the C1 meter (K9ExtHud=1 only)."""
         if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
             self._taxi_meter_panel.command(cmd)
 

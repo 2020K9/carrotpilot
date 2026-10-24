@@ -65,7 +65,8 @@ def test_season_by_month():
 
 
 def test_occupant_constants():
-  assert OCCUPANT_ENABLED is True and OCC_STABLE_S == 5.0
+  # meter_empty2 (보노보노 21:59 "손님탐도없애"): the passenger sensor is off - it changes no meter state at all
+  assert OCCUPANT_ENABLED is False and OCC_STABLE_S == 5.0
   assert OCC_SIGNAL == {"addr": 0x500, "bus": 0, "start_bit": 2, "len": 2, "present_value": 1}
 
 
@@ -74,7 +75,7 @@ def test_occupant_ignored_when_disabled_toggle_works():
   F = C1Fsm(C1_LOGIC, False)
   assert run(F, [[10, S(0, True)]]) == "EMPTY"
   F.step(S(0, tap=True), 0.05)
-  assert F.state == "BOARD"
+  assert F.state == "DRIVE"                        # meter_empty2: no 손님탐 with the sensor off, 빈차 -> 주행 at once
   assert run(F, [[1, S(20)]]) == "DRIVE"
   F.step(S(0, tap=True), 0.05)
   assert F.state == "PAY"
@@ -82,10 +83,15 @@ def test_occupant_ignored_when_disabled_toggle_works():
 
 
 def test_tap_cancel():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)                        # sensor on (kept logic): 빈차 -> 손님탐 -> 빈차
   F.step(S(0, tap=True), 0.05)
   F.step(S(0, tap=True), 0.05)
   assert F.state == "EMPTY"
+  F = C1Fsm()                                      # meter_empty2 default (sensor off): 빈차 -> 주행 -> 지불
+  F.step(S(0, tap=True), 0.05)
+  assert F.state == "DRIVE"
+  F.step(S(0, tap=True), 0.05)
+  assert F.state == "PAY"
 
 
 def test_occupant_board_drive_pay_empty():
@@ -131,7 +137,7 @@ def test_no_door_or_seatbelt_code():
 
 # ---- c1test.js (a)-(e): 10:35 occupant rules ----------------------------------------------------------
 def test_a_154_replay_pay_at_stop_start_fare():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)   # meter_empty2: the sensor logic is kept (OCCUPANT_ENABLED False on the car)
   run(F, [[5.2, S(0, True, 7000)], [3, S(30, True, 7000)], [3, S(30, True, 7400)]])
   run(F, [[2, S(0, True, 7600)]])
   run(F, [[0.5, S(2, True, 7600)], [2.8, S(15, True, 7600)]])
@@ -142,7 +148,7 @@ def test_a_154_replay_pay_at_stop_start_fare():
 
 
 def test_a3_no_stop_fare_at_count_moment():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[5.2, S(0, True, 7000)], [3, S(30, True, 7200)]])
   run(F, [[5.2, S(30, False, 7400)]])
   # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
@@ -150,38 +156,40 @@ def test_a3_no_stop_fare_at_count_moment():
 
 
 def test_b_rise_while_driving_ignored():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[2, S(0, False)], [1, S(30, False)]])
   assert run(F, [[6, S(30, True)]]) == "EMPTY"
   assert run(F, [[1, S(0, True)]]) == "EMPTY"
 
 
 def test_c_fall_shorter_than_5s_ignored():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[5.2, S(0, True)], [2, S(30, True)]])
   assert run(F, [[4.9, S(30, False)], [1, S(30, True)]]) == "DRIVE"
 
 
 def test_d_toggle_wins():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[4.95, S(0, True)]])
   F.step(S(0, True, tap=True), 0.1)
   assert F.state == "BOARD" and F.ev == "tap"
   F.step(S(0, True, tap=True), 0.05)
   assert F.state == "EMPTY" and F.ev == "tap"
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[5.2, S(0, True, 7000)], [2, S(30, True, 7200)]])
   F.step(S(30, True, 7200, tap=True), 0.05)
   assert F.state == "PAY" and F.pay_fare == 7200
 
 
 def test_e_enabled_by_default():
+  # meter_empty2 (보노보노 21:59 "손님탐도없애"): off by default now - a passenger held 5 s changes nothing
   F = C1Fsm()
-  assert OCCUPANT_ENABLED is True and run(F, [[5.2, S(0, True)]]) == "BOARD"
+  assert OCCUPANT_ENABLED is False and run(F, [[5.2, S(0, True)], [60, S(30, True)], [10, S(0, False)]]) == "EMPTY"
+  assert run(C1Fsm(C1_LOGIC, True), [[5.2, S(0, True)]]) == "BOARD"   # the kept logic, sensor on
 
 
 def test_no_signal_keeps_state():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[5.2, S(0, True)], [2, S(30, True)]])
   assert run(F, [[30, S(30, None)]]) == "DRIVE"     # 0x500 missing != passenger got out
 
@@ -263,7 +271,11 @@ def test_panel_empty_board_drive_pay_with_meter():
   # res 10/24 17:52: C1 meter = 경기 일반(중형) 4,800원/1.6km, 131m당 100원 (was 모범 7,000/3km, 144m당 200)
   assert p.fsm.state == "EMPTY" and p.shown_fare() == 4800 and p.meter.distance_m == 0.0
   _drive(p, clock, 5.3, 0.0, True)
-  assert p.fsm.state == "BOARD" and p.shown_fare() == 4800
+  # meter_empty2 (보노보노 21:59 "손님탐도없애"): a passenger no longer makes 손님탐, nor does driving off make 주행
+  assert p.fsm.state == "EMPTY" and p.shown_fare() == 4800
+  _drive(p, clock, 30, 60.0, True)
+  assert p.fsm.state == "EMPTY" and p.meter.distance_m == 0.0 and p.shown_fare() == 4800
+  p.command("start")                                # the app's 시작: 주행 at once, from 0
   _drive(p, clock, 300, 60.0, True)                 # 5 km at 60 km/h
   assert p.fsm.state == "DRIVE" and p.meter.distance_m == pytest.approx(5000, rel=0.01)
   assert p.shown_fare() == 4800 + 100 * int((p.meter.metered_m - 1600) // 131)
@@ -290,7 +302,7 @@ def test_panel_restart_resets_state():
   p, clock = _panel()
   p.toggle()
   _drive(p, clock, 1, 0.0, None)
-  assert p.fsm.state == "BOARD"
+  assert p.fsm.state == "DRIVE"                     # meter_empty2: the toggle = 시작 (no 손님탐)
   p.restart()
   assert p.fsm.state == "EMPTY" and p.meter.distance_m == 0.0
 
@@ -367,8 +379,21 @@ def test_meter_season_registered():
 
 
 def test_no_occupant_signal_ever_keeps_the_bd09c076_meter():
-  # no 0x500 frame (other car / CAN not up yet): counts from the onroad rising edge exactly as before
+  # meter_empty2: with the sensor off (default) the meter is the buttons' alone - onroad / driving start nothing
   p, clock = _panel()
+  for _ in range(600):
+    clock[0] += 0.05
+    p.update(_State(60.0))
+  assert p.fsm_mode and p.display_state == "EMPTY" and p.meter.distance_m == 0.0 and p.shown_fare() == 4800
+  p.feed_occupant(True, clock[0])
+  for _ in range(200):
+    clock[0] += 0.05
+    p.feed_occupant(True, clock[0])
+    p.update(_State(0.0))
+  assert p.display_state == "EMPTY"
+  # sensor on (kept code): no 0x500 frame (other car / CAN not up yet) counts from the onroad rising edge as before
+  clock = [100.0]
+  p = C1MeterPanel(clock=lambda: clock[0], local_hour=lambda: 12, occupant=True)
   for _ in range(600):
     clock[0] += 0.05
     p.update(_State(60.0))

@@ -10,7 +10,7 @@ from pathlib import Path
 CLUSTER = Path(__file__).resolve().parents[1] / "cluster"
 sys.path.insert(0, str(CLUSTER))
 
-from cluster_taxi_c1 import OCC_STALE_S, C1Fsm, C1MeterPanel  # noqa: E402
+from cluster_taxi_c1 import C1_LOGIC, OCC_STALE_S, C1Fsm, C1MeterPanel  # noqa: E402
 
 
 class _Can:
@@ -59,8 +59,10 @@ class _State:
 
 
 def _panel():
+  # meter_empty2 (보노보노 21:59 "손님탐도없애"): the sensor is off on the car (OCCUPANT_ENABLED False); these pin the
+  # kept 0x500 logic, so the panel is built with the sensor on
   clock = [100.0]
-  return C1MeterPanel(clock=lambda: clock[0], local_hour=lambda: 12), clock
+  return C1MeterPanel(clock=lambda: clock[0], local_hour=lambda: 12, occupant=True), clock
 
 
 def _frames(p, clock, secs, v, occ, every=0.1):
@@ -102,7 +104,8 @@ def test_live_source_hands_on_only_new_frames():
     assert src.poll_taxi_occupant() is None
 
 
-def test_main_feeds_the_panel_only_on_new_frames():
+def test_main_feeds_the_panel_only_on_new_frames(monkeypatch):
+  import cluster_taxi_c1
   import main as cluster_main
 
   class R:
@@ -127,6 +130,13 @@ def test_main_feeds_the_panel_only_on_new_frames():
     def poll_taxi_occupant(self):
       return self.seq.pop(0) if self.seq else None
 
+  # meter_empty2: sensor off (default) - the 0x500 reader is never even polled, nothing is fed
+  r = R()
+  src = Src([(1.0, True), None, None, (1.2, False), None])
+  for _ in range(6):
+    cluster_main.feed_taxi_meter_speed(r, src)
+  assert r.fed == [] and len(src.seq) == 5
+  monkeypatch.setattr(cluster_taxi_c1, "OCCUPANT_ENABLED", True)   # sensor on (kept code): only new frames
   r = R()
   src = Src([(1.0, True), None, None, (1.2, False), None])
   for _ in range(6):
@@ -191,7 +201,7 @@ def test_last_value_repeated_every_frame_would_never_go_stale():
 
 
 def test_fsm_unknown_drops_hold_keeps_confirmed_value():
-  F = C1Fsm()
+  F = C1Fsm(C1_LOGIC, True)
   run(F, [[5.2, S(0, True)], [5, S(30, True)]])
   assert F.state == "DRIVE" and F.occ is True
   run(F, [[3, S(30, False)], [0.05, S(30, None)]])
