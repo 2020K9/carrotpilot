@@ -397,19 +397,20 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 <a id="system"></a>
 ## 시스템
 
-시스템에는 녹화, 전원, 네트워크, 지도, 소리와 소프트웨어 메뉴를 다루는 12개 항목이 있습니다.
+시스템에는 녹화, 전원, 네트워크, 지도, 소리와 소프트웨어 메뉴를 다루는 13개 항목이 있습니다.
 
 | 중분류 | 파라미터 | 용도 |
 |---|---|---|
 | 녹화·전원 | `RecordRoadCam`, `MaxTimeOffroadMin` | 도로 카메라 저장과 시동 OFF 후 자동 전원 종료 시간 |
 | 네트워크·지도 | `HotspotOnBoot`, `MapboxStyle` | 부팅 시 핫스팟과 지도 배경 스타일 |
-| 사운드 | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage` | 안내음 언어와 일반·인게이지 볼륨 |
+| 사운드 | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage`, `K9ActiveSound` | 안내음 언어와 일반·인게이지 볼륨, 카링킷 액티브 사운드 송신 |
 | 소프트웨어 | `SoftwareMenu` | Carrot Web의 소프트웨어 메뉴 활성화 |
 
 - `RecordRoadCam`: `0` 녹화 안 함, `1` 일반 카메라, `2` 일반+광각 카메라입니다. 저장 공간 사용량을 확인하세요.
 - `MaxTimeOffroadMin`: 시동이 꺼진 뒤 장치가 자동으로 꺼질 때까지의 시간입니다.
 - `HotspotOnBoot`: USIM을 장착한 장치에서 자동 핫스팟을 사용할 때의 설정입니다.
 - `SoftwareMenu`: 메모리 문제가 있을 때 끌 수 있는 Carrot Web 메뉴 설정입니다.
+- `K9ActiveSound`(실험, K9 전용): `0`(기본값) 끔이면 송신 프로세스를 아예 띄우지 않고 포트도 열지 않습니다. `1` 켬이면 시동 중에만 CAN에서 엔진 RPM(`EMS_366`), 토크(`TQI_1`), 가속페달(`EMS12`), 기어단수(`LVR11`)와 속도를 읽어 UDP 7730으로 100Hz 보냅니다. 받는 쪽은 카링킷 박스의 액티브 사운드 앱(`com.k9.activesound`)입니다. 앱이 0.5초마다 보내는 인사 패킷을 받은 주소(같은 Wi-Fi 또는 Tailscale, 사설·Tailscale 주소만)로만 보냅니다. 차에는 아무것도 보내지 않습니다. 실차 미확인.
 
 `SoundVolumeAdjust`는 일반 안내음의 음량을 조절합니다. DM 첫 경고음은 출력 음량 최소 70%, 마지막 경고음은 항상 100%이며 볼륨 설정이나 주변 소음에 의해 낮아지지 않습니다. 그보다 앞선 화면 예고는 무음입니다. 자세한 내용은 [운전자 모니터링](driver-monitoring.md)을 참고하세요.
 

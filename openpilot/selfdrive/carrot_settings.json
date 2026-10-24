@@ -635,7 +635,8 @@
           "params": [
             "SoundLanguageSetting",
             "SoundVolumeAdjust",
-            "SoundVolumeAdjustEngage"
+            "SoundVolumeAdjustEngage",
+            "K9ActiveSound"
           ]
         },
         {
@@ -3590,6 +3591,37 @@
         ]
       },
       "risk": "high"
+    },
+    {
+      "group": "시작",
+      "name": "K9ActiveSound",
+      "title": "액티브 사운드 송신 (실험)",
+      "descr": "카링킷 박스의 액티브 사운드 앱(가상 엔진음)에 엔진 RPM·기어단수·부하를 보냄. 0 끔(기존 그대로, 포트도 안 엶). 1 켬: 시동 중에만 UDP 7730으로 100Hz 송신(읽기 전용, 차에는 아무것도 안 보냄). 실차 미확인.",
+      "egroup": "START",
+      "etitle": "Active Sound Sender (Trial)",
+      "edescr": "Sends engine rpm, gear step and load to the active-sound app (virtual engine sound) on the Carlinkit box. 0 Off (existing, no port opened). 1 On: 100 Hz over UDP 7730 while the ignition is on (read only, nothing is sent to the car). Not tested in the car.",
+      "cgroup": "启动设置",
+      "ctitle": "主动声浪发送（试验）",
+      "cdescr": "向Carlinkit盒子上的主动声浪App（虚拟发动机声）发送发动机转速、挡位和负荷。0 关闭（现有，不开端口）。1 开启：仅点火时经UDP 7730以100Hz发送（只读，不向车辆发送任何内容）。未经实车确认。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(기존 그대로)",
+          "1 켬(박스로 RPM·기어 송신)"
+        ],
+        "en": [
+          "0 Off (existing)",
+          "1 On (rpm/gear to the box)"
+        ],
+        "zh": [
+          "0 关闭（现有）",
+          "1 开启（向盒子发送转速·挡位）"
+        ]
+      }
     },
     {
       "group": "가속설정",

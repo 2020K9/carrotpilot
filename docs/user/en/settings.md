@@ -400,10 +400,12 @@ The 12 system settings cover recording, power, network, maps, sound, and softwar
 |---|---|---|
 | Recording and power | `RecordRoadCam`, `MaxTimeOffroadMin` | Road-camera storage and delayed shutdown |
 | Network and map | `HotspotOnBoot`, `MapboxStyle` | Boot hotspot and map background style |
-| Sound | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage` | Prompt language and volume |
+| Sound | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage`, `K9ActiveSound` | Prompt language and volume, Carlinkit active-sound sender |
 | Software | `SoftwareMenu` | Carrot Web software-menu availability |
 
 Check storage use for recording and network use, heat, and privacy before enabling live streaming.
+
+`K9ActiveSound` (trial, K9 only): `0` (default) off - the sender process is never started and no port is opened. `1` on - while the ignition is on it reads engine rpm (`EMS_366`), torque (`TQI_1`), accelerator pedal (`EMS12`), gear step (`LVR11`) and speed from the CAN and sends them at 100 Hz over UDP 7730 to the active-sound app on the Carlinkit box (`com.k9.activesound`), only to addresses whose hello packet (every 0.5 s, private or Tailscale addresses only) was heard. Nothing is sent to the car. Not tested in the car.
 
 `SoundVolumeAdjust` changes general sound volume. DM's first audible warning has a 70% minimum output gain; its final warning always uses 100%, regardless of volume settings or ambient-noise attenuation. The preceding visual-only notice remains silent. See [driver monitoring](driver-monitoring.md) for details.
 
