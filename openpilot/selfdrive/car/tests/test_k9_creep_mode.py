@@ -1,7 +1,12 @@
 """K9StopMode single selector (2026-10-23 07:25 menu): 0 base braking, 1 v10 (test_k9_stop_v10.py), 2 v9 + shudder fix (low-speed
 ComfortBand restore + braking compensation + creep_fix-method sent-value gate, never weaker than v9), 3 v10 + band 0.2 (r6)
 (test_k9_stop_v10_fix.py), 4 v10 + shudder fix (2026-10-24, test_k9_stop_v10_smooth.py), 5 v10 + light shudder fix
-(2026-10-24, test_k9_stop_v10_light.py). Other values act as 0.
+(2026-10-24, test_k9_stop_v10_light.py), 6 v11 (2026-10-24, test_k9_stop_v11.py). Other values act as 0.
+Rewritten 2026-10-24 for menu 6 (menu-set pins only): INVALID without 6, test_constants_match_source_and_mode2 (MODES/MENU/
+KINDS, the bad-kind list 0/8/9/-1), test_live_mode_switch_within_half_second_and_band_does_not_jump (invalid 7 instead of
+6), test_setting_registered_single_selector_old_keys_deleted (max 6, 7 options). Added: menu 6 in the stored-value and
+CAN-FD jerk checks. Kind 7 (v11) is NOT in ALL_KINDS: its StopReq waits 12 standstill frames by design, so the TCS13 and
+soft-hold checks for it are in test_k9_stop_v11.py (the ALL_KINDS tests are unchanged for kinds 1-6).
 Rewritten 2026-10-24 for menu 5 (menu-set pins only): INVALID without 5, test_constants_match_source_and_mode2 (MODES/MENU/
 KINDS, the bad-kind list 0/7/8/-1), test_live_mode_switch_within_half_second_and_band_does_not_jump (invalid 6 instead of
 5), test_setting_registered_single_selector_old_keys_deleted (max 5, 6 options). Added: menu 5 in the stored-value and
@@ -28,7 +33,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX, V10_SMOOTH, V10_LIGHT
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX, V10_SMOOTH, V10_LIGHT, V11
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.car.tests import k9_rig
 from openpilot.selfdrive.car.tests.k9_rig import (CC_REL, LCS, ROOT, Rig, edge_sequence, gentle_sequence, load_frozen_cc,
@@ -43,7 +48,7 @@ PREV_OF_NEW = {None: None, 0: 0, 1: 2, 2: 3}  # 1d0961da K9StopMode of the new m
 KIND_OF_PREV = {2: V10, 3: V9_SHUDDER_FIX}
 ALL = (V9, V9_SHUDDER_FIX)
 ALL_KINDS = (V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX, V10_SMOOTH, V10_LIGHT)
-INVALID = (6, 7, 99, -1, -4, float("nan"), "nan", float("inf"))
+INVALID = (7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))
 
 
 def upd(c, **kw):
@@ -118,13 +123,13 @@ def test_constants_match_source_and_mode2():
   assert (kc.CREEP_BP, kc.CREEP_V) == ([0.25, 0.55, 1.0, 1.6], [-0.26, -0.26, -0.20, 0.0])
   assert kc.DOWN_EFF_AC == -0.02
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
-  assert kc.MODES == (1, 2, 3, 4, 5) and (V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX, V10_SMOOTH, V10_LIGHT) == (1, 2, 3, 4, 5, 6)
-  assert kc.MENU == {1: V10, 2: V9_SHUDDER_FIX, 3: V10_SHUDDER_FIX, 4: V10_SMOOTH, 5: V10_LIGHT} and kc.KINDS == ALL_KINDS
+  assert kc.MODES == (1, 2, 3, 4, 5, 6) and (V9, V10, V9_SHUDDER_FIX, V10_SHUDDER_FIX, V10_SMOOTH, V10_LIGHT, V11) == (1, 2, 3, 4, 5, 6, 7)
+  assert kc.MENU == {1: V10, 2: V9_SHUDDER_FIX, 3: V10_SHUDDER_FIX, 4: V10_SMOOTH, 5: V10_LIGHT, 6: V11} and kc.KINDS == ALL_KINDS + (V11,)
   assert (kc.BAND_FULL_SPEED, kc.BAND_OFF_SPEED, kc.BAND_RAMP_STEP) == (2.0, 3.0, 0.04)
   assert (kc.BLEND_FULL_SPEED, kc.BLEND_OFF_SPEED, kc.BLEND_GAIN) == (0.6, 0.8, 0.5)
   assert (kc.COMP_DECEL, kc.COMP_FADE_BP) == (0.10, (0.3, 0.6))
-  assert [K9Creep(m).shudder_fix for m in kc.KINDS] == [False, False, True, False, False, False]
-  for bad in (0, 7, 8, -1):
+  assert [K9Creep(m).shudder_fix for m in kc.KINDS] == [False, False, True, False, False, False, False]
+  for bad in (0, 8, 9, -1):
     with pytest.raises(AssertionError):
       K9Creep(bad)
 
@@ -441,7 +446,7 @@ def test_k9creep_object_identical_to_1d0961da(prev_cc, new_menu, seed):
 def test_stored_values_are_not_migrated(monkeypatch):
   # 2026-10-23 07:25: no value migration. A stored 1 (v9 on every earlier menu) now runs v10, 2 runs v9 + shudder fix
   # (its meaning on the 99eb53f7 menu; v10 on 1d0961da), 3 runs v10 + band 0.2 (v9 + shudder fix on 1d0961da).
-  for stored, kind in ((1, V10), (2, V9_SHUDDER_FIX), (3, V10_SHUDDER_FIX), (4, V10_SMOOTH), (5, V10_LIGHT)):
+  for stored, kind in ((1, V10), (2, V9_SHUDDER_FIX), (3, V10_SHUDDER_FIX), (4, V10_SMOOTH), (5, V10_LIGHT), (6, V11)):
     r = rig(monkeypatch, stored)
     r.step(-0.5, LCS.pid, 3.0)
     assert r.cc.k9_creep_mode == stored and r.cc.k9_creep.mode == kind
@@ -501,7 +506,7 @@ def test_canfd_jerk_branch_ignores_creep_flag():
     return j.jerk_u, j.jerk_l, j.cb_upper, j.cb_lower
   assert run(True) == run(False) == run(True, K9Creep(V9)) == run(True, K9Creep(V9_SHUDDER_FIX))
   assert run(True) == run(True, K9Creep(V10)) == run(True, K9Creep(V10_SHUDDER_FIX)) == run(True, K9Creep(V10_SMOOTH))
-  assert run(True) == run(True, K9Creep(V10_LIGHT))
+  assert run(True) == run(True, K9Creep(V10_LIGHT)) == run(True, K9Creep(V11))
 
 
 class FakeCp:
@@ -629,7 +634,7 @@ def test_live_mode_switch_within_half_second_and_band_does_not_jump(monkeypatch)
   assert seen is not None and seen <= 50  # read every 0.5 s
   assert np.all(np.abs(np.diff(bands)) <= kc.BAND_RAMP_STEP * 0.8 + 0.01)  # ramp, no jump to the original band
   assert bands[-1] > 0.0
-  for value in (6, 7, float("nan"), -1):
+  for value in (7, 8, float("nan"), -1):
     r.params.values["K9StopMode"] = 2
     for _ in range(51):
       r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
@@ -662,8 +667,8 @@ def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 5, 0, 1)
-  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [6, 6, 6]
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 6, 0, 1)
+  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [7, 7, 7]
   assert not any(p["name"] in ("K9CreepMode", "K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopMode", {PERSISTENT, INT, "0"}},' in keys

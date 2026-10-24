@@ -261,8 +261,9 @@ def test_kinds_1_to_5_object_identical_to_c89f726e(frozen_cc, kind, seed):
       (_, pu_o, pl_o), (_, pu_n, pl_n) = bo, bn
 
 
-def test_menu_6_and_up_act_as_0(monkeypatch):
-  for value in (6, 7, 99, -1):
+def test_menu_7_and_up_act_as_0(monkeypatch):
+  # 2026-10-24: 6 is now v11 (test_k9_stop_v11.py) (menu-set pin rewritten)
+  for value in (7, 8, 99, -1):
     r = Rig(monkeypatch, K9StopMode=value)
     r.step(-0.5, LCS.pid, 3.0)
     assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
