@@ -2126,6 +2126,9 @@ def main():
   threading.Thread(target=carrot_man.kisa_app_thread, daemon=True).start()
   threading.Thread(target=carrot_man.carrot_navi_thread, daemon=True).start()
   threading.Thread(target=carrot_man.carrot_navi_http_thread, daemon=True).start()
+  # K9ExtHud=1 taxi meter remote app (UDP 7720, opened only while K9ExtHud=1; k9_meter_link.py)
+  from openpilot.selfdrive.carrot.k9_meter_link import K9MeterUdp
+  threading.Thread(target=K9MeterUdp(carrot_man.params, carrot_man.params_memory).run, daemon=True).start()
 
   while True:
     try:

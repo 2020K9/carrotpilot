@@ -271,6 +271,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9LRView", {PERSISTENT, INT, "0"}},
     {"K9ExtHud", {PERSISTENT, INT, "-1"}},
     {"K9MeterSeason", {PERSISTENT, INT, "0"}},
+    {"K9MeterCmd", {CLEAR_ON_MANAGER_START, STRING}},    // K9ExtHud=1 meter button press "<token>:<start|pause|settle>" (memory)
+    {"K9MeterState", {CLEAR_ON_MANAGER_START, STRING}},  // K9ExtHud=1 meter state for the buttons (memory)
     {"K9OneLaneHold", {PERSISTENT, INT, "0"}},
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},
     {"CancelButtonMode", {PERSISTENT, INT, "0"}},

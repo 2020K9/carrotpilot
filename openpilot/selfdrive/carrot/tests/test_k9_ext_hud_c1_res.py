@@ -80,7 +80,8 @@ def test_stop_bubble_when_the_car_stops_while_driving():
 
 
 def test_no_handle_thought_bubble():
-  # 보노보노 10:08: the 핸들 말풍선 (bth '언제 가는 걸까…') stays out
+  # 보노보노 10:08: no 핸들 말풍선 (a bubble on steering) - 포로리's bubble_now() never says a 보노보노 line. 보노보노's
+  # thought bubble (bth '언제 가는 걸까…' / '또 올라가는 걸까…') is back since 18:37, separately in think_now()
   p = _panel()
   texts = set()
   for st in c1.STATES:

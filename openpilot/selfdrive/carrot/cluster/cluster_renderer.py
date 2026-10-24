@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import base64
+import ctypes
+import ctypes.util
 import math
 import os
 import time
@@ -680,6 +682,24 @@ def rgba_key(color: tuple[int, int, int] | tuple[int, int, int, int]) -> tuple[i
     return int(r), int(g), int(b), int(a)
 
 
+def _buffer_address(buffer: bytearray) -> int:
+    """Address of a bytearray's storage (it is never resized while in use)."""
+    return ctypes.addressof((ctypes.c_char * len(buffer)).from_buffer(buffer))
+
+
+_LIBC = None
+
+
+def _memequal(a: int, b: int, n: int) -> bool:
+    """memcmp(a, b, n) == 0 (stops at the first differing byte)."""
+    global _LIBC
+    if _LIBC is None:
+        _LIBC = ctypes.CDLL(ctypes.util.find_library("c") or None)
+        _LIBC.memcmp.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+        _LIBC.memcmp.restype = ctypes.c_int
+    return a != b and _LIBC.memcmp(a, b, n) == 0
+
+
 def rl_color(color: tuple[int, int, int] | tuple[int, int, int, int], alpha: int | None = None) -> rl.Color:
     r, g, b, a = rgba_key(color)
     if alpha is not None:
@@ -952,6 +972,13 @@ class ClusterUiRenderer:
         self._direct_nv12_readback = None
         self._direct_nv12_readback_checked = False
         self._direct_nv12_readback_disabled = False
+        # meter_improve: JPEG USB path (render_to_rgba_frame) - two reused readback buffers (TICI) or the previous
+        # raylib image (PC), so a frame can be compared with the previous one without a copy
+        self._rgba_frame_ring: list[bytearray] | None = None
+        self._rgba_frame_ring_index = 0
+        self._rgba_frame_prev: tuple[int, tuple[int, int]] | None = None
+        self._rgba_frame_prev_image = None
+        self._rgba_diff_hint: int | None = None
         self._nv12_dmabuf_pool = None
         self._nv12_dmabuf_pool_checked = False
         self._nv12_dmabuf_pool_disabled = False
@@ -1078,6 +1105,17 @@ class ClusterUiRenderer:
         """Latest passenger-seat occupant flag (CAN 0x500 bus0 bits 2-3) for the C1 meter (K9ExtHud=1 only)."""
         if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
             self._taxi_meter_panel.feed_occupant(present, t_s)
+
+    def taxi_meter_command(self, cmd: str) -> None:
+        """Meter remote command (K9MeterCmd: start / pause / settle) for the C1 meter (K9ExtHud=1 only)."""
+        if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
+            self._taxi_meter_panel.command(cmd)
+
+    def taxi_meter_state(self) -> dict | None:
+        """K9MeterState for the remote app (None while the meter is off)."""
+        if self.taxi_meter_enabled and self._taxi_meter_panel is not None:
+            return self._taxi_meter_panel.meter_status()
+        return None
 
     def taxi_meter_toggle(self) -> None:
         """Screen toggle of the C1 meter (always wins over the occupant sensor)."""
@@ -1299,6 +1337,7 @@ class ClusterUiRenderer:
 
     def _close_resources(self) -> None:
         self._system_stats.close()
+        self._release_rgba_frames()
         if not self._window_open:
             return
         if self._direct_nv12_readback is not None:
@@ -2348,6 +2387,111 @@ class ClusterUiRenderer:
             self._profile_add("render_to_rgba.unload_image", profile_stage)
 
     @contextmanager
+    def render_to_rgba_frame(
+        self,
+        state: ClusterUiState,
+        portrait_upload: bool = False,
+    ) -> Iterator[tuple[object, int, int, bool]]:
+        """render_to_rgba_buffer for the JPEG USB path, plus `unchanged` = the pixels equal the previous frame's
+        (then the encoder can reuse the previous JPEG: same input, same bytes).
+
+        Same pixels as render_to_rgba_buffer. The readback lands in one of two reused buffers (TICI: glReadPixels of
+        the upload target's framebuffer, no per-frame FBO / 3.5 MB malloc), so the previous frame stays readable
+        and the comparison is one memcmp that stops at the first differing byte. Elsewhere (PC) the raylib image
+        of the previous frame is kept until the next frame instead of a copy."""
+        if portrait_upload and self.direct_nv12_readback_available():
+            target = None
+            try:
+                target = self._render_to_target(state, portrait_upload=True)
+                width, height = int(target.texture.width), int(target.texture.height)
+                byte_count = width * height * 4
+                ring = self._rgba_frame_ring
+                if ring is None or len(ring[0]) != byte_count:
+                    ring = self._rgba_frame_ring = [bytearray(byte_count), bytearray(byte_count)]
+                    self._rgba_frame_ring_index = 0
+                    self._rgba_frame_prev = None
+                index = self._rgba_frame_ring_index
+                buffer = ring[index]
+                address = _buffer_address(buffer)
+                profile_stage = self._profile_start()
+                self._direct_nv12_readback.read_rgba(int(target.id), width, height, address, byte_count)
+                self._profile_add("render_to_rgba_frame.readback_direct", profile_stage)
+            except DirectNv12ReadbackError as exc:
+                print(f"Direct RGBA readback failed ({exc}); raylib readback from now on", flush=True)
+                self.disable_direct_nv12_readback()
+                self._rgba_frame_ring = None
+                self._rgba_frame_prev = None
+                if target is None:
+                    raise
+                image = rl.load_image_from_texture(target.texture)
+                try:
+                    yield rl.ffi.buffer(image.data, image.width * image.height * 4), image.width, image.height, False
+                finally:
+                    rl.unload_image(image)
+                return
+            profile_stage = self._profile_start()
+            prev = self._rgba_frame_prev
+            unchanged = prev is not None and prev[1] == (width, height) and self._rgba_frames_equal(address, prev[0], byte_count)
+            self._profile_add("render_to_rgba_frame.compare", profile_stage)
+            self._rgba_frame_prev = (address, (width, height))
+            self._rgba_frame_ring_index = 1 - index
+            yield buffer, width, height, unchanged
+            return
+
+        profile_stage = self._profile_start()
+        image = self._render_to_image(state, portrait_upload=portrait_upload)
+        self._profile_add("render_to_rgba.render_to_image", profile_stage)
+        keep = False
+        try:
+            if image.format != rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8:
+                rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+            byte_count = image.width * image.height * 4
+            address = int(rl.ffi.cast("uintptr_t", image.data))
+            profile_stage = self._profile_start()
+            prev = self._rgba_frame_prev_image
+            unchanged = (prev is not None and (prev.width, prev.height, prev.format) == (image.width, image.height, image.format)
+                         and self._rgba_frames_equal(address, int(rl.ffi.cast("uintptr_t", prev.data)), byte_count))
+            self._profile_add("render_to_rgba_frame.compare", profile_stage)
+            yield rl.ffi.buffer(image.data, byte_count), image.width, image.height, unchanged
+            keep = True
+        finally:
+            if keep:
+                if self._rgba_frame_prev_image is not None:
+                    rl.unload_image(self._rgba_frame_prev_image)
+                self._rgba_frame_prev_image = image
+            else:
+                rl.unload_image(image)
+
+    RGBA_DIFF_WINDOW = 65536
+
+    def _rgba_frames_equal(self, a: int, b: int, n: int) -> bool:
+        """Two frames equal? A moving frame usually differs where it differed last time, so that 64 KB window is
+        compared first (one short memcmp); the whole frame only when the window is equal (then the window moves to
+        the first differing 64 KB, found by halving)."""
+        hint = self._rgba_diff_hint
+        win = self.RGBA_DIFF_WINDOW
+        if hint is not None and hint + win <= n and not _memequal(a + hint, b + hint, win):
+            return False
+        if _memequal(a, b, n):
+            return True
+        lo, hi = 0, n
+        while hi - lo > win:
+            mid = (lo + hi) // 2
+            if _memequal(a + lo, b + lo, mid - lo):
+                lo = mid
+            else:
+                hi = mid
+        self._rgba_diff_hint = min(lo, max(0, n - win))
+        return False
+
+    def _release_rgba_frames(self) -> None:
+        if self._rgba_frame_prev_image is not None:
+            rl.unload_image(self._rgba_frame_prev_image)
+            self._rgba_frame_prev_image = None
+        self._rgba_frame_ring = None
+        self._rgba_frame_prev = None
+
+    @contextmanager
     def render_to_nv12_buffer(
         self,
         state: ClusterUiState,
@@ -2626,6 +2770,30 @@ class ClusterUiRenderer:
         output_width: int | None = None,
         output_height: int | None = None,
     ):
+        upload_target = self._render_to_target(state, portrait_upload, output_width, output_height)
+        if portrait_upload:
+            profile_stage = self._profile_start()
+            image = rl.load_image_from_texture(upload_target.texture)
+            self._profile_add("render_to_image.readback_upload_texture", profile_stage)
+        else:
+            profile_stage = self._profile_start()
+            image = rl.load_image_from_texture(upload_target.texture)
+            self._profile_add("render_to_image.readback_texture", profile_stage)
+
+            profile_stage = self._profile_start()
+            rl.image_flip_vertical(image)
+            self._profile_add("render_to_image.flip_vertical", profile_stage)
+
+        return image
+
+    def _render_to_target(
+        self,
+        state: ClusterUiState,
+        portrait_upload: bool = False,
+        output_width: int | None = None,
+        output_height: int | None = None,
+    ):
+        """Draw the frame; returns the render texture to read back (portrait upload target or the capture target)."""
         self.open(hidden=self.hidden)
         self._prepare_taxi_meter_cache(state)
         self._prepare_trip_report_cache(state)
@@ -2671,20 +2839,8 @@ class ClusterUiRenderer:
             )
             rl.end_texture_mode()
             self._profile_add("render_to_image.gpu_upload_transform", profile_stage)
-
-            profile_stage = self._profile_start()
-            image = rl.load_image_from_texture(upload_target.texture)
-            self._profile_add("render_to_image.readback_upload_texture", profile_stage)
-        else:
-            profile_stage = self._profile_start()
-            image = rl.load_image_from_texture(target.texture)
-            self._profile_add("render_to_image.readback_texture", profile_stage)
-
-            profile_stage = self._profile_start()
-            rl.image_flip_vertical(image)
-            self._profile_add("render_to_image.flip_vertical", profile_stage)
-
-        return image
+            return upload_target
+        return target
 
     def _get_capture_target(self):
         if self._capture_target is None:

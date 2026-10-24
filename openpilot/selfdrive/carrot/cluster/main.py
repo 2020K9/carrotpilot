@@ -567,7 +567,28 @@ def feed_taxi_meter_speed(renderer, source) -> int:
         occ = poll_occ()
         if occ is not None:
             renderer.feed_taxi_meter_occupant(occ[1])
+    feed_taxi_meter_buttons(renderer, source)
     return len(samples)
+
+
+def feed_taxi_meter_buttons(renderer, source, now: float | None = None) -> None:
+    """K9ExtHud=1: meter remote app presses (carrot k9_meter_link -> memory param K9MeterCmd) -> the C1 meter, and the
+    meter state back (K9MeterState). Sources without memory params (simulator, replays) skip this."""
+    params_memory = getattr(source, "params_memory", None)
+    command = getattr(renderer, "taxi_meter_command", None)
+    if params_memory is None or command is None:
+        return
+    link = getattr(source, "_k9_meter_button_link", None)
+    if link is None:
+        from cluster_taxi_c1 import MeterButtonLink
+        link = MeterButtonLink(params_memory)
+        source._k9_meter_button_link = link
+    for cmd in link.poll(time.monotonic() if now is None else now):
+        print(f"K9 meter remote: {cmd}", flush=True)
+        command(cmd)
+    state = getattr(renderer, "taxi_meter_state", lambda: None)()
+    if state:
+        link.publish(state, now)
 
 
 class ClusterHudOutputGateParamReader:
@@ -1717,15 +1738,16 @@ def run_demo(
                         profile.add_elapsed("main.usb_async.submit_rgba", profile_stage)
                     else:
                         profile_stage = time.perf_counter()
-                        with renderer.render_to_rgba_buffer(state, portrait_upload=True) as (
+                        with renderer.render_to_rgba_frame(state, portrait_upload=True) as (
                             rgba,
                             image_width,
                             image_height,
+                            unchanged,
                         ):
                             profile.add_elapsed("main.usb.render_rgba_total", profile_stage)
 
                             profile_stage = time.perf_counter()
-                            jpeg = usb_display.encode_jpeg(rgba, image_width, image_height)
+                            jpeg = usb_display.encode_jpeg(rgba, image_width, image_height, unchanged=unchanged)
                             profile.add_elapsed("main.usb.encode_jpeg", profile_stage)
 
                         profile_stage = time.perf_counter()

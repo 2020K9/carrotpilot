@@ -98,9 +98,9 @@ def test_live_state_puts_up_the_thoughts():
     v = _drive(p, 1.0)                                    # '괴롭힐 거야?' -> no thought
     r.render_to_png_bytes(_state(v))
     assert p.last_bubble == c1.TICK_SAY[0] and p.last_think == ""
-    v = _drive(p, 3.0, progress=0.95)                     # 포로리 under the thought's place -> no thought
+    v = _drive(p, 3.0, progress=0.95)                     # 포로리 under the thought's place -> not drawn there
     r.render_to_png_bytes(_state(v))
-    assert p.last_think == ""
+    assert p.last_think == "" or p.last_think_slot == "low"   # meter_improve: the lower place (item 3)
   finally:
     r.close()
 

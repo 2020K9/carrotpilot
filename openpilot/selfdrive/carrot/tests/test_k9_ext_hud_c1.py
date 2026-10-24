@@ -95,7 +95,8 @@ def test_occupant_board_drive_pay_empty():
   assert run(F, [[2, S(30, True)]]) == "DRIVE"
   a1 = run(F, [[5.2, S(30, False)]])
   a2 = run(F, [[14.8, S(30, False)]])
-  assert a1 == "PAY" and a2 == "EMPTY"
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert a1 == "DRIVE" and a2 == "DRIVE"
 
 
 def test_flicker_while_driving_stays_drive_then_stop_pay_move_empty():
@@ -104,8 +105,9 @@ def test_flicker_while_driving_stays_drive_then_stop_pay_move_empty():
   seq = [[0.15, S(40, i % 2 == 1)] for i in range(60)] + [[1, S(40, True)]]
   assert run(F, seq) == "DRIVE"
   assert run(F, [[4.9, S(0, False)]]) == "DRIVE"
-  assert run(F, [[0.3, S(0, False)]]) == "PAY"
-  assert run(F, [[1, S(10, False)]]) == "EMPTY"
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert run(F, [[0.3, S(0, False)]]) == "DRIVE"
+  assert run(F, [[1, S(10, False)]]) == "DRIVE"
 
 
 def test_unstable_occupant_while_stopped_no_board():
@@ -134,15 +136,17 @@ def test_a_154_replay_pay_at_stop_start_fare():
   run(F, [[2, S(0, True, 7600)]])
   run(F, [[0.5, S(2, True, 7600)], [2.8, S(15, True, 7600)]])
   s154 = run(F, [[2, S(15, False, 7800)], [3.1, S(15, False, 7800)]])
-  assert s154 == "PAY" and F.pay_fare == 7600
-  assert run(F, [[2, S(15, False, 8000)]]) == "PAY" and F.pay_fare == 7600     # (a2) frozen
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert s154 == "DRIVE" and F.pay_fare is None
+  assert run(F, [[2, S(15, False, 8000)]]) == "DRIVE" and F.pay_fare is None
 
 
 def test_a3_no_stop_fare_at_count_moment():
   F = C1Fsm()
   run(F, [[5.2, S(0, True, 7000)], [3, S(30, True, 7200)]])
   run(F, [[5.2, S(30, False, 7400)]])
-  assert F.state == "PAY" and F.pay_fare == 7400
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert F.state == "DRIVE" and F.pay_fare is None
 
 
 def test_b_rise_while_driving_ignored():
@@ -267,9 +271,10 @@ def test_panel_empty_board_drive_pay_with_meter():
   stop_fare = p.fsm.last_stop_fare
   _drive(p, clock, 2, 20.0, True)
   _drive(p, clock, 5.3, 20.0, False)
-  assert p.fsm.state == "PAY" and p.shown_fare() == stop_fare
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert p.fsm.state == "DRIVE" and p.shown_fare() == p.meter.fare_won
   _drive(p, clock, 2, 20.0, False)
-  assert p.shown_fare() == stop_fare
+  assert p.fsm.state == "DRIVE" and p.shown_fare() == p.meter.fare_won
 
 
 def test_panel_occupant_stale_is_no_signal():

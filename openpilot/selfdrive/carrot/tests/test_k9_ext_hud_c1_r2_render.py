@@ -49,7 +49,8 @@ def test_clam_dimmed_when_lfa_off_and_wheel_still_hidden(monkeypatch):
     p = r._taxi_meter_panel
     shell = int(p._textures["shell"].id)
     wheel = {int(t.id) for t in (r._lfa_texture, getattr(r, "_lfa_active_texture", None)) if t is not None}
-    for lfa, alpha in ((True, 255), (False, c1.CLAM_OFF_TINT[3]), (None, c1.CLAM_OFF_TINT[3])):
+    # meter_improve 20:43 (보노보노 '조개색은 원래색 유지 조향상관없이'): the clam keeps its own colours, LFA on or off
+    for lfa, alpha in ((True, 255), (False, 255), (None, 255)):
       spy.tex.clear()
       r.render_to_png_bytes(_state(lfa))
       steering = [a for i, x, a in spy.tex if i == shell and abs(x - p._last_center[0]) < 1e-3]

@@ -168,7 +168,8 @@ def test_pay_hold_interrupted_by_signal_loss_is_not_completed():
   _frames(p, clock, 4.0, 40.0, False)
   assert p.fsm.state == "DRIVE"
   _frames(p, clock, 1.3, 40.0, False)
-  assert p.fsm.state == "PAY"
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert p.fsm.state == "DRIVE"
 
 
 def test_short_gap_below_2s_keeps_the_hold():
@@ -197,4 +198,5 @@ def test_fsm_unknown_drops_hold_keeps_confirmed_value():
   assert F.occ_raw is True and F.occ is True and F.state == "DRIVE"
   assert run(F, [[30, S(30, None)]]) == "DRIVE"
   assert run(F, [[4.9, S(30, False)]]) == "DRIVE"
-  assert run(F, [[0.3, S(30, False)]]) == "PAY"
+  # meter_improve 20:43 (보노보노 '운행끝나고 승객연동되잇는거 지워'): the passenger no longer ends a drive
+  assert run(F, [[0.3, S(30, False)]]) == "DRIVE"

@@ -11,13 +11,16 @@ Live inputs (every frame):
     display (보노보노 11:48 "당근스티어링은 빼자").
   * carState.vEgo -> fare (TaxiMeter, only while 주행/DRIVE), stop/start state changes, animation.
   * 승객감지 CAN 0x500 bus0 bits 2-3 (ACU14 CF_TTL_Ind, 1 = passenger) -> C1Fsm (10:15/10:35 rules):
-    0->1 held 5 s while stopped = 손님탐; 1->0 held 5 s at any speed = 지불, amount = fare at the start
-    of the last stop before the 1->0 (none: fare when it counts). OCCUPANT_ENABLED = True. The screen
-    toggle (tap) always wins.
+    0->1 held 5 s while stopped = 손님탐 (1->0 again before moving = 빈차). meter_improve (보노보노 20:43 "운행끝나고
+    승객연동되잇는거 지워"): the end of a drive is no longer tied to the passenger - a 1->0 while 주행 does not make
+    지불 any more (it did: 1->0 held 5 s = 지불, amount = the fare at the start of the last stop), nor does a 0->1
+    while 지불 make 손님탐. 주행 runs on until the screen toggle (주행->지불) or the HUD restarts. OCCUPANT_ENABLED =
+    True. The screen toggle (tap) always wins.
   * 0x500 signal loss (r2): only NEW frames are handed on; 2 s without one = 모름 (OCC_STALE_S). A 5 s hold in
     progress is dropped, never completed, and restarts from 0 when frames return.
-  * LFA (r2, the carrot wheel stays hidden): ui lfa_active off = clam dimmed; badge under the clam = lane icon
-    (solid: lane lines in use / faint: laneless, carrot rule) + "LFA" (green on / grey off).
+  * LFA (r2, the carrot wheel stays hidden): badge under the clam = lane icon (solid: lane lines in use / faint:
+    laneless, carrot rule; green on / grey off). meter_improve (보노보노 20:43): no "LFA" text on it any more, and the
+    clam keeps its own colours whatever LFA / steering do (it was dimmed with LFA off).
 Season: K9MeterSeason 0 auto (month) / 1 봄 / 2 여름 / 3 가을 / 4 겨울; other values = 0.
 Backgrounds (r2): bg2 scenes (out/taximeter/variants/bg2), baked by bake_c1.js; moving layer = ptcl_params.json +
 ptcl_white.png (petal / leaf / ginkgo / snow / firefly).
@@ -57,6 +60,15 @@ OCC_STALE_S = 2.0          # no new 0x500 frame for this long = no signal (모�
                            # hold in progress is dropped, never completed, and restarts from 0 when frames return
 C1_LOGIC = {"stop_kph": 1.0, "move_kph": 3.0, "occ_stable_s": OCC_STABLE_S, "empty_after_s": 10.0}
 STATES = ("EMPTY", "BOARD", "DRIVE", "PAY")
+# meter_improve (보노보노 20:46 "(초기화)시작.일시정지.정산(정산화면따로만들기) 버튼만들어", 21:20 "...누르면되는 어플하나만들어"):
+# a phone / Carlinkit-box app with three buttons talks UDP 7720 to carrot_man (selfdrive/carrot/k9_meter_link.py, only
+# while K9ExtHud=1), which queues the press in the memory param K9MeterCmd ("token:cmd;..."); the HUD applies new tokens
+# (MeterButtonLink) and reports K9MeterState (JSON) back, which the app shows. 시작 = reset to 0 (base fare, 0 km, 0 s) and count (주행), from any state; 일시정지 = stop counting /
+# go on (주행 only); 정산 = stop counting and show the separate 정산 screen (SETTLE) until the next 시작.
+METER_CMD_PARAM = "K9MeterCmd"
+METER_STATE_PARAM = "K9MeterState"
+METER_COMMANDS = ("start", "pause", "settle")
+SETTLE = "SETTLE"
 
 
 def occupant_from_acu14(dat) -> bool | None:
@@ -108,8 +120,6 @@ class C1Fsm:
     self.t += max(0.0, float(dt))
     v = float(sig.get("v_kph") or 0.0)
     stopped, moving = v <= cfg["stop_kph"], v > cfg["move_kph"]
-    if self.state == "DRIVE" and stopped and not self.was_stopped:
-      self.last_stop_fare = sig.get("fare")        # fare at the moment a stop starts while driving
     self.was_stopped = True if stopped else (False if moving else self.was_stopped)
     occ_edge = None
     occ = sig.get("occ")
@@ -119,8 +129,6 @@ class C1Fsm:
       occ = bool(occ)
       if occ != self.occ_raw:
         self.occ_raw, self.occ_t, self.rise_ok = occ, self.t, stopped
-        if not occ:
-          self.fall_stop_fare = self.last_stop_fare if self.state == "DRIVE" else None
       if self.occ_raw is True and not stopped:
         self.rise_ok = False                         # moved while the 0->1 was being held: void
       if self.occ != self.occ_raw and self.t - self.occ_t > cfg["occ_stable_s"]:
@@ -132,7 +140,7 @@ class C1Fsm:
             occ_edge = False                         # only a confirmed passenger can get out
           self.occ = False
     if sig.get("tap"):                               # screen toggle, always first
-      nxt = {"EMPTY": "BOARD", "BOARD": "EMPTY", "DRIVE": "PAY", "PAY": "EMPTY"}[self.state]
+      nxt = {"EMPTY": "BOARD", "BOARD": "EMPTY", "DRIVE": "PAY", "PAY": "EMPTY", SETTLE: "EMPTY"}[self.state]
       self._set(nxt, "tap", sig)
       return self
     if self.state == "PAY" and stopped:
@@ -146,16 +154,12 @@ class C1Fsm:
       elif occ_edge is False:
         self._set("EMPTY", "occ", sig)
     elif self.state == "DRIVE":
-      if occ_edge is False:
-        self.pay_fare = self.fall_stop_fare if self.fall_stop_fare is not None else sig.get("fare")
-        self._set("PAY", "occ", sig)
-    elif self.state == "PAY":
+      pass                                           # meter_improve 20:43: the passenger no longer ends a drive
+    elif self.state == "PAY":                        # (지불 only from the toggle) ... and no 0->1 -> 손님탐 from 지불
       if self.t - self.since >= cfg["empty_after_s"]:
         self._set("EMPTY", "timer", sig)
       elif moving and self.pay_stopped:
         self._set("EMPTY", "move", sig)
-      elif occ_edge is True:
-        self._set("BOARD", "occ", sig)
     return self
 
 
@@ -247,13 +251,13 @@ def _c4(c) -> tuple[int, int, int, int]:
 C1_THEME = {
   "night": {"g2": "#d8b25e", "dsh": "#07060f", "lb": "#a8915f", "tx": "#f2ead8", "sub": "#b9a77f", "unit": "#d9bd7c",
             "acc": "#f0d690", "nx": "#a8915f", "pillB": "#c9a457", "pillT": "#f0d690", "pillBg": "#00000033",
-            "plus": "#ffe08a", "trk0": "#2b2618", "tk0": "#7a5f27", "tk1": "#f1d68f"},
+            "plus": "#ffe08a", "trk0": "#2b2618", "tk0": "#7a5f27", "tk1": "#f1d68f", "stBg": "#0d0b1ce0", "stRow": "#ffffff14"},
   "dusk": {"g2": "#dcb35c", "dsh": "#0c0610", "lb": "#b4955e", "tx": "#f6ead6", "sub": "#c4a77a", "unit": "#e0bf7a",
            "acc": "#f4d48a", "nx": "#c19b66", "pillB": "#c9a457", "pillT": "#f4d690", "pillBg": "#00000033",
-           "plus": "#ffe08a", "trk0": "#2b2618", "tk0": "#7a5f27", "tk1": "#f1d68f"},
+           "plus": "#ffe08a", "trk0": "#2b2618", "tk0": "#7a5f27", "tk1": "#f1d68f", "stBg": "#160b16e0", "stRow": "#ffffff14"},
   "day": {"g2": "#1d3a5f", "dsh": "#ffffffcc", "lb": "#3d6a92", "tx": "#1d3a5f", "sub": "#4f7ea8", "unit": "#2b5c8a",
           "acc": "#d2552a", "nx": "#6b4f2a", "pillB": "#2b5c8a", "pillT": "#2b5c8a", "pillBg": "#fffdf4cc",
-          "plus": "#ff7a45", "trk0": "#e0b97f", "tk0": "#ffb07a", "tk1": "#ff6a3d"},
+          "plus": "#ff7a45", "trk0": "#e0b97f", "tk0": "#ffb07a", "tk1": "#ff6a3d", "stBg": "#fffdf4e6", "stRow": "#2b5c8a14"},
 }
 _THEME_RGBA = {k: {kk: _hex(vv) for kk, vv in v.items()} for k, v in C1_THEME.items()}
 
@@ -319,6 +323,9 @@ SHOULDER = (33.0, 88.0)
 GOAL = (516.0, 318.0)
 GOAL_SPRITE = "acorn"         # res (10/24 17:47 '도토리로 바꿔'): the goal is a 도토리 (acorn.png, baked at scale 1)
 FARE_BOX = (14.0, 84.0, 410.0, 222.0)   # particles are not drawn over the fare digits
+PLUS_RIGHT = 538.0                      # '+100원' ends left of the stats glass (x 546) with an 8 px gap (meter_improve)
+SWITCH_FADE_S = 0.1                     # meter_improve: a bubble cut by a state change fades out in this time (the
+                                        # next state's line starts 0.1 s after the change) instead of vanishing
 NO_PARTICLE_BOXES = (FARE_BOX, (NIGHT_LAMP_X - 10, NIGHT_LAMP_Y - 10, NIGHT_LAMP_X + NIGHT_LAMP_W + 10,
                                 NIGHT_LAMP_Y + NIGHT_LAMP_H + 10),   # ... nor over the night lamp,
                      (546.0, 72.0, 758.0, 236.0))   # ... nor over the distance / time numbers (C1.html had only the fare)
@@ -425,8 +432,9 @@ def particle_positions(season: str, tod: str, t: float):
 
 # LFA state on the clam (13:20 지시 2; the carrot wheel is not drawn on this screen): LFA off = clam dimmed,
 # small badge in the sea under 보노보노 = lane icon (solid green: lane lines in use, faint: laneless) + "LFA".
-CLAM_OFF_TINT = (190, 190, 190, 120)
-LFA_BADGE = (664.0, 412.0, 92.0, 24.0)      # card px (x, y, w, h): right of the footer (ends x 645), under the clam
+CLAM_OFF_TINT = (190, 190, 190, 120)       # no longer used (meter_improve: the clam always keeps its own colours)
+LFA_BADGE = (664.0, 412.0, 48.0, 24.0)      # card px (x, y, w, h): right of the footer (ends x 645), under the clam;
+                                            # meter_improve: 'LFA' text removed, the pill now fits the lane icon (was 92 wide)
 LFA_ON_COLOR = (64, 200, 112)
 LFA_OFF_COLOR = (150, 150, 150)
 
@@ -466,11 +474,17 @@ def c1_card_device_rect(width: float, height: float, x: float, y: float, design_
   return float(dx), float(dy), k
 
 
+PAUSE_PILL = ("일시정지", (255, 168, 64))
+PAUSE_MSG = "일시정지 · 요금·거리·시간이 멈춰 있어요"
+SETTLE_STRINGS = ("정 산", "총 요 금", "보노보노 택시 · 오늘도 고마워요", "기본요금", "거리요금", "시간요금", "심야 할증", "없음",
+                  "회", "×", "초", "운 행  거 리", "운 행  시 간", "시작을 누르면 새 운행을 시작합니다", "감사합니다!", "원", "km")
+
+
 def c1_text_strings():
   """Every string the C1 panel draws live (the font atlases hold only these characters + ASCII)."""
   out = list(LABEL.values()) + [m for m in NEXT_MSG.values()] + [v[0] for v in SAY.values()] + \
     [v[0] for v in PILL.values()] + [TICK_SAY[0], STOP_SAY[0], WAIT_THINK[0], TICK_THINK[0], "대기", "주행을 시작하면 요금이 올라갑니다", "원", "딱!",
-                                    "다음 까지 초 현재 속도 km/h", "심야 할증 %", "·", "LFA"]
+                                    "다음 까지 초 현재 속도 km/h", "심야 할증 %", "·", "LFA"] + list(SETTLE_STRINGS) + [PAUSE_PILL[0], PAUSE_MSG]
   return out
 
 
@@ -564,6 +578,14 @@ def _win(t: float, a: float, b: float, f: float = 0.25) -> float:
   return min(1.0, max(0.0, min((t - a) / f, (b - t) / f)))
 
 
+# 정산 screen layout (card px)
+SETTLE_PANEL = (16.0, 16.0, CARD_W - 32.0, 312.0)     # panel: title, total, lines, distance / time (above the characters)
+SETTLE_ROWS = (440.0, 744.0, 104.0)                    # lines: x from, x to (amount right edge), first row centre y
+SETTLE_ROW_H = 34.0
+SETTLE_HINT = (210.0, 424.0)                           # "시작을 누르면 ..." right of 포로리, under its bubble
+SETTLE_PORO = (120.0, 380.0)                           # 포로리 anchor (bows), its bubble to the right
+SETTLE_BUBBLE_DY = 380.0 - 236.0 - 46.0                # the bubble at 포로리's head height
+
 BUBBLE_H = 34.0
 BUBBLE_Y = 236.0
 BUBBLE_MAX_RIGHT = 600.0   # 보노보노's head starts at x ~612 (bono_body.png bbox, bob and sway included)
@@ -616,6 +638,42 @@ def think_poro_fade(text_w: float, x_char: float) -> float:
   """1 = 포로리 is well left of the thought bubble, 0 = it would be under it."""
   gap = think_rect(text_w)[0] - 6.0 - (x_char + PORO_REACH[1])
   return min(1.0, max(0.0, gap / THINK_PORO_FADE))
+
+
+# meter_improve (10/24 19:04 '미터기 더 고쳐'): when 포로리 would walk under the thought bubble (high progress) the bubble
+# used to fade away. It now takes a second place instead: below the track, left of 보노보노's chest (between the
+# 도토리 / next line and the footer), its two dots going UP-right to the head (the C1.html dots mirrored). The place is
+# chosen once when a thought starts (from where 포로리 will be when it ends) and kept for that thought.
+THINK_LOW_Y = 346.0          # top of the lower place (도토리 ends y ~340, the 다음 line is x <= ~380, footer from y ~405)
+THINK_LOW_DOTS = ((-20.0, -8.0, 6.0), (-5.5, -20.5, 3.5))   # (dx from the right edge, dy from the TOP, r)
+THINK_LOW_TEXT_GAP = 14.0    # the lower place needs this much room right of the 다음 line
+# fare steps close together (meter_improve item 2; ~110 km/h and up the 131 m steps come < 4.2 s apart): the
+# '또 올라가는 걸까…' window is ended THINK_STEP_MARGIN s before the next step the meter predicts (its fade-out done
+# by then), and left out for that step when less than THINK_MIN_S would remain; a thought cut by a step anyway (the
+# car sped up) fades out in the 0.15 s before 포로리's line instead of vanishing.
+THINK_STEP_MARGIN = 0.05
+THINK_MIN_S = 1.0
+
+
+def think_rect_low(text_w: float, bob: float = 0.0):
+  """보노보노 thought bubble, lower place (card px): (x, y, w, h)."""
+  w = text_w + 28
+  return THINK_RIGHT - w, THINK_LOW_Y - bob * THINK_BOB, w, BUBBLE_H
+
+
+def think_parts_low(text_w: float, bob: float = 0.0):
+  """(x0, y0, x1, y1) boxes of the lower place: the box with its drop shadow, then each dot with its shadow."""
+  bx, by, w, h = think_rect_low(text_w, bob)
+  out = [(bx - 3.0, by, bx + w + 3.0, by + h + 6.5)]
+  for ddx, ddy, r in THINK_LOW_DOTS:
+    cx, cy = bx + w + ddx, by + ddy
+    out.append((cx - r - 1.0, cy - r, cx + r + 1.0, cy + r + 2.0))
+  return out
+
+
+def think_low_fits(text_w: float, next_line_right: float) -> bool:
+  """The lower place is free: right of the 다음 line (card px of its right end) by THINK_LOW_TEXT_GAP."""
+  return think_rect_low(text_w)[0] - 3.0 >= next_line_right + THINK_LOW_TEXT_GAP
 
 
 class BonoTransform:
@@ -698,6 +756,7 @@ class C1MeterPanel:
     self._last_center = (0.0, 0.0)
     self.draw_count = 0
     self._fonts: dict[int, object] = {}
+    self._measure_cache: dict = {}
     self._font_path = None
     self._font_failed = False
     self._dev = None              # (dev_x, dev_y, k, card_x, card_y) of the frame being drawn
@@ -705,6 +764,25 @@ class C1MeterPanel:
     self.last_bubble = ""
     self._think_stop: float | None = None    # the stop (its _stop_since) that got WAIT_THINK
     self.last_think = ""
+    self.last_think_slot = ""
+    self.paused = False                      # 일시정지 (button): the meter does not count while 주행 is paused
+    self._cmds: list[str] = []
+    self.settle_breakdown: dict | None = None   # 정산 screen numbers, frozen at the 정산 press
+    self._bd = self._new_breakdown(0.0)
+    self._think_key = None                   # the thought on screen: ("tick", step time) / ("wait", stop time)
+    self._think_slot_key = None
+    self._think_slot = "up"
+    self._tick_skip = None                   # step time of a fare step whose thought is left out (too short)
+    self._tick_decided = None                # step time whose thought window was looked at
+    self._think_last = None                  # (text, opacity, t, key) of the last frame that showed a thought
+    self._think_carry = None                 # (text, opacity, step time): a thought cut by a fare step, fading out
+    self._think_t = None                     # time of this / the previous think_now() call
+    self._say_last = None                    # (text, opacity, t) of 포로리's bubble in the last frame (None: none)
+    self._say_st = None
+    self._say_t = None
+    self._say_switch = None                  # (text, opacity, t of the state change): 포로리's line fading out
+    self._think_switch = None                # the same for a thought cut by leaving 주행
+    self._think_prev_t = None
 
   def _clock_from_hour(self):
     h = self._local_hour()
@@ -731,6 +809,72 @@ class C1MeterPanel:
     """Screen toggle (always wins): 빈차->손님탐, 손님탐->빈차, 주행->지불, 지불->빈차."""
     self._tap = True
 
+  def command(self, cmd: str) -> None:
+    """A meter button (K9MeterCmd): 'start' / 'pause' / 'settle', applied on the next update()."""
+    if cmd in METER_COMMANDS:
+      self._cmds.append(cmd)
+
+  def meter_status(self) -> dict:
+    """K9MeterState for the remote app: state + shown fare, km, s, night rate."""
+    m = self.meter
+    return {"state": self.meter_state, "fare": int(self.shown_fare()), "km": round(m.distance_m / 1000.0, 2),
+            "sec": int(m.elapsed_s), "night": round(self.night_rate, 2)}
+
+  @property
+  def meter_state(self) -> str:
+    """K9MeterState: EMPTY / BOARD / DRIVE / PAUSE / PAY / SETTLE (legacy: DRIVE or EMPTY)."""
+    st = self.display_state
+    if st == "EMPTY_LEGACY":
+      return "EMPTY"
+    return "PAUSE" if st == "DRIVE" and self.paused else st
+
+  def _new_breakdown(self, rate: float) -> dict:
+    return {"dist_units": 0, "time_units": 0, "base_rate": rate}
+
+  def _apply_command(self, cmd: str, hour) -> None:
+    f = self.fsm
+    if cmd == "start":                          # 초기화 후 시작: 0 km, 0 s, base fare, counting
+      self.fsm_mode = True
+      self.meter.reset(hour)
+      self.meter._was_onroad = True
+      self._bd = self._new_breakdown(night_surcharge_rate(self.meter.fare, hour))
+      self.paused = False
+      self.settle_breakdown = None
+      f._set("DRIVE", "start", {"v_kph": self.speed_kph, "fare": self.meter.fare_won})
+    elif cmd == "pause":
+      if self.fsm_mode and f.state == "DRIVE":
+        self.paused = not self.paused
+        self.meter._last_sample_t = None        # no time base across the pause: nothing is counted for it
+        self.meter._last_now = None
+    elif cmd == "settle":
+      if self.fsm_mode and f.state == "DRIVE":
+        self.paused = False
+        self.settle_breakdown = self.breakdown()
+        f._set(SETTLE, "settle", {"v_kph": self.speed_kph, "fare": self.meter.fare_won})
+        self.meter._last_sample_t = None
+        self.meter._last_now = None
+
+  def breakdown(self) -> dict:
+    """정산 numbers of the current drive: base, distance / time steps, night surcharge, total (shown fare), km, s."""
+    m, fare, bd = self.meter, self.meter.fare, self._bd
+    base = fare.base_fare_won
+    dist = bd["dist_units"] * fare.distance_unit_won
+    tim = bd["time_units"] * fare.time_unit_won
+    total = m.fare_won
+    night = max(0, total - base - dist - tim)   # the rest of the shown (10 won rounded) total = 심야 할증
+    return {"total": int(total), "base": int(base), "base_km": fare.base_distance_m / 1000.0,
+            "dist_units": int(bd["dist_units"]), "dist_won": int(dist), "dist_unit_m": fare.distance_unit_m,
+            "time_units": int(bd["time_units"]), "time_won": int(tim), "time_unit_s": fare.time_unit_s,
+            "unit_won": int(fare.distance_unit_won), "night_won": int(night), "night_rate": bd["base_rate"],
+            "km": m.distance_m / 1000.0, "elapsed_s": m.elapsed_s}
+
+  def _count(self, fn, *args) -> None:
+    """One meter call while 주행; its new steps go to the 정산 breakdown (by the mode that charged them)."""
+    added = fn(*args) or 0
+    if added > 0:
+      key = "time_units" if self.meter.mode == "time" else "dist_units"
+      self._bd[key] += added
+
   def set_season_setting(self, value) -> None:
     self.season_setting = normalize_meter_season(value)
 
@@ -743,6 +887,10 @@ class C1MeterPanel:
     self.fsm_mode = False
     self._last_t = None
     self._tap = False
+    self.paused = False
+    self._cmds = []
+    self.settle_breakdown = None
+    self._bd = self._new_breakdown(0.0)
 
   @property
   def step_won(self) -> int:
@@ -781,6 +929,9 @@ class C1MeterPanel:
     dt = 0.0 if self._last_t is None else max(0.0, min(0.25, now - self._last_t))
     self._last_t = now
     tap, self._tap = self._tap, False
+    cmds, self._cmds = self._cmds, []
+    for cmd in cmds:
+      self._apply_command(cmd, hour)
     occ = self._occ_signal(now)
     if occ is not None or tap:
       self.fsm_mode = True       # occupant sensor seen (or the toggle used): C1 state machine from now on
@@ -799,15 +950,18 @@ class C1MeterPanel:
     if st in ("BOARD", "DRIVE") and prev_state not in ("BOARD", "DRIVE"):
       self.meter.reset(hour)                    # new passenger: base fare, 0 km, 0 s
       self.meter._was_onroad = True
+      self._bd = self._new_breakdown(night_surcharge_rate(self.meter.fare, hour))
+    if st != "DRIVE":
+      self.paused = False
     samples, self._speed_samples = self._speed_samples, []
-    if st == "DRIVE":                           # 주행 = moving with a passenger: counts (onroad flag not needed)
+    if st == "DRIVE" and not self.paused:       # 주행 = moving with a passenger: counts (onroad flag not needed)
       if self._speed_samples_live:
         for t_s, v in samples:
-          self.meter.feed_sample(t_s, v, hour, now)
+          self._count(self.meter.feed_sample, t_s, v, hour, now)
       else:
         dtm = 0.0 if self.meter._last_now is None else now - self.meter._last_now
         self.meter._last_now = now
-        self.meter.step(dtm, speed, hour, now)
+        self._count(self.meter.step, dtm, speed, hour, now)
     else:
       self.meter._last_sample_t = None          # next DRIVE sample only sets the time base
       self.meter._last_now = None
@@ -823,7 +977,7 @@ class C1MeterPanel:
     if not self.fsm_mode:
       return self.meter.fare_won
     st = self.fsm.state
-    if st == "DRIVE":
+    if st in ("DRIVE", SETTLE):
       return self.meter.fare_won
     if st == "PAY":
       return int(self.fsm.pay_fare if self.fsm.pay_fare is not None else self.meter.fare_won)
@@ -953,8 +1107,21 @@ class C1MeterPanel:
     f = self._font_for(size)
     if f is None:
       return renderer._measure_text(text, size)
-    v = rl.measure_text_ex(f, text, size, max(1.0, size * 0.02))
-    return float(v.x), float(v.y)
+    return self._measure_ex(rl, f, text, size, max(1.0, size * 0.02))
+
+  C1_MEASURE_CACHE_MAX = 512
+
+  def _measure_ex(self, rl, f, text: str, size: float, sp: float) -> tuple[float, float]:
+    """rl.measure_text_ex of a C1 atlas, cached (meter_improve CPU: ~28 measures per frame, mostly the same strings;
+    the atlases never change while loaded, the cache is dropped with them)."""
+    key = (int(f.texture.id), text, size, sp)
+    v = self._measure_cache.get(key)
+    if v is None:
+      if len(self._measure_cache) >= self.C1_MEASURE_CACHE_MAX:
+        self._measure_cache.clear()
+      m = rl.measure_text_ex(f, text, size, sp)
+      v = self._measure_cache[key] = (float(m.x), float(m.y))
+    return v
 
   def _snap(self, v: float, axis: int) -> float:
     """Design coordinate -> the nearest one that lands on a whole device pixel (card drawn at k = 1)."""
@@ -975,9 +1142,9 @@ class C1MeterPanel:
       renderer._draw_text(text, x, y, size, color)
       return
     sp = max(1.0, size * 0.02)
-    v = rl.measure_text_ex(f, text, size, sp)
+    _, vy = self._measure_ex(rl, f, text, size, sp)
     integral = abs(size - round(size)) < 1e-6
-    dx, dy = x, y - float(v.y) * 0.5
+    dx, dy = x, y - vy * 0.5
     if integral:
       dx, dy = self._snap(dx, 0), self._snap(dy, 1)
     if shadow is not None:
@@ -985,6 +1152,7 @@ class C1MeterPanel:
     rl.draw_text_ex(f, text, rl.Vector2(dx, dy), size, sp, rl.Color(*_c4(color)))
 
   def close(self, rl) -> None:
+    self._measure_cache.clear()
     for f in self._fonts.values():
       try:
         rl.unload_font(f)
@@ -1160,7 +1328,7 @@ class C1MeterPanel:
       self._limb(rl, self._quad((sx, sy), (ex, ey), (hx, hy)), 9.0 * BONO_S, fill, outline)
     cx, cy = g["center"]
     self._last_center = (cx, cy)
-    self._sprite(rl, "shell", (cx, cy), g["rotation"], tint=(255, 255, 255, 255) if self.lfa_active else CLAM_OFF_TINT)
+    self._sprite(rl, "shell", (cx, cy), g["rotation"])   # own colours always (meter_improve 20:43, no LFA dimming)
     self.last_clam_rotation = g["rotation"]
     for hx, hy in g["hands"]:
       rl.draw_circle_v(rl.Vector2(hx, hy), (6.4 + 0.8) * BONO_S, rl.Color(*outline, 255))
@@ -1197,24 +1365,27 @@ class C1MeterPanel:
     self._text(renderer, rl, text, x + bx + 14, mid, 17, (*BUBBLE_TEXT, a))
     self.last_bubble = text
 
-  def _draw_think(self, renderer, rl, text: str, x: float, y: float, bob: float, alpha: float) -> None:
-    """보노보노's thought bubble (C1.html .bub.th): the 포로리 bubble look, no tail, two dots to the head."""
+  def _draw_think(self, renderer, rl, text: str, x: float, y: float, bob: float, alpha: float, slot: str = "up") -> None:
+    """보노보노's thought bubble (C1.html .bub.th): the 포로리 bubble look, no tail, two dots to the head (slot 'low':
+    the lower place, dots going up)."""
     if alpha <= 0.01 or not text:
       return
     a = int(255 * alpha)
     tw, _ = self._measure(renderer, rl, text, 17)
-    bx, by, w, h = think_rect(tw, bob)
+    low = slot == "low"
+    bx, by, w, h = think_rect_low(tw, bob) if low else think_rect(tw, bob)
     bx, by = self._snap(x + bx, 0) - x, self._snap(y + by, 1) - y
     for grow, sa in ((3.0, 0.16), (1.5, 0.22)):
       rl.draw_rectangle_rounded(rl.Rectangle(x + bx - grow, y + by + 2.0 - grow * 0.5, w + 2 * grow, h + 2 * grow), 0.9, 12,
                                 rl.Color(0, 0, 0, int(a * sa)))
     rl.draw_rectangle_rounded(rl.Rectangle(x + bx, y + by, w, h), 0.9, 12, rl.Color(*BUBBLE_FILL, a))
-    for ddx, ddy, r in THINK_DOTS:
-      c = rl.Vector2(x + bx + w + ddx, y + by + h + ddy)
+    for ddx, ddy, r in (THINK_LOW_DOTS if low else THINK_DOTS):
+      c = rl.Vector2(x + bx + w + ddx, y + by + (0.0 if low else h) + ddy)
       rl.draw_circle_v(rl.Vector2(c.x, c.y + 1.0), r + 1.0, rl.Color(0, 0, 0, int(a * 0.18)))
       rl.draw_circle_v(c, r, rl.Color(*BUBBLE_FILL, a))
     self._text(renderer, rl, text, x + bx + 14, y + by + h / 2, 17, (*BUBBLE_TEXT, a))
     self.last_think = text
+    self.last_think_slot = slot
 
   def _draw_particles(self, rl, x: float, y: float, t: float) -> None:
     bw = self.bg_weights
@@ -1232,7 +1403,8 @@ class C1MeterPanel:
                           rl.Vector2(h, h), rot, rl.Color(*col, int(round(255 * op))))
 
   def _draw_lfa_badge(self, renderer, rl, x: float, y: float, tw: dict) -> None:
-    """LFA on/off + lane lines in use (the carrot wheel's lane icon rule), small, in the sea under the clam."""
+    """LFA on/off + lane lines in use (the carrot wheel's lane icon rule; icon colour = LFA), small, in the sea under
+    the clam. No 'LFA' text (보노보노 20:43)."""
     bx, by, bw, bh = LFA_BADGE
     box = rl.Rectangle(x + bx, y + by, bw, bh)
     rl.draw_rectangle_rounded(box, 1.0, 12, rl.Color(*theme_color("pillBg", tw)))
@@ -1242,7 +1414,6 @@ class C1MeterPanel:
     ix, iy, iw, ih = x + bx + 11, y + by + 5, 26.0, bh - 10.0
     for a, b in (((ix + 6, iy), (ix, iy + ih)), ((ix + iw - 6, iy), (ix + iw, iy + ih))):
       rl.draw_line_ex(rl.Vector2(*a), rl.Vector2(*b), 3.0, rl.Color(*col, la))
-    self._text(renderer, rl, "LFA", ix + iw + 9, y + by + bh / 2, 14, (*col, 255))
 
   def _draw_night_lamp(self, renderer, rl, lx: float, ly: float, t: float) -> None:
     """'심야 할증 20%' lamp, same lamp and place as the bd09c076 meter (top row, between brand and moon)."""
@@ -1303,6 +1474,9 @@ class C1MeterPanel:
     measure = lambda s_, z_: self._measure(renderer, rl, s_, z_)   # noqa: E731
     shadow = theme_color("dsh", tw, 0.75)
 
+    if st == SETTLE:
+      self._draw_settle(renderer, rl, x, y, t, tw, since)
+      return
     self._back_and_moving(rl, x, y, t)
     # progress track
     p = meter.step_progress if st == "DRIVE" else 0.0
@@ -1331,7 +1505,7 @@ class C1MeterPanel:
     self._draw_lfa_badge(renderer, rl, x, y, tw)
 
     # status pill (text drawn live; frame colours from the theme)
-    label, dot = ("대기", (110, 98, 70)) if legacy else PILL[st]
+    label, dot = ("대기", (110, 98, 70)) if legacy else (PAUSE_PILL if (st == "DRIVE" and self.paused) else PILL[st])
     tw_px, _ = measure(label, 16)
     pw = 17 + 9 + 9 + tw_px + 17
     pill = rl.Rectangle(x + 750 - pw, y + 24, pw, 34)
@@ -1357,8 +1531,10 @@ class C1MeterPanel:
     text(fare_text, x + 24, y + 143, size, theme_color("g2", tw, fare_alpha))
     text("원", x + 24 + fw + 10, y + 166, 30, theme_color("unit", tw, fare_alpha))
     if st == "DRIVE" and tk < 1.2:
-      text(f"+{format_won(self.step_won)}원", x + max(372.0, 24 + fw + 60), y + 118 - tk * 40, 30,
-           theme_color("plus", tw, 1.0 - tk / 1.2))
+      plus = f"+{format_won(self.step_won)}원"
+      # meter_improve: a 6-digit fare (100,000원 and up) pushed '+100원' onto the stats glass: keep it left of the glass
+      px_plus = min(max(372.0, 24 + fw + 60), PLUS_RIGHT - measure(plus, 30)[0])
+      text(plus, x + px_plus, y + 118 - tk * 40, 30, theme_color("plus", tw, 1.0 - tk / 1.2))
     # stats
     km = f"{meter.distance_m / 1000.0:.2f}"
     kw, _ = measure(km, 27)
@@ -1367,7 +1543,9 @@ class C1MeterPanel:
     text(format_hms(meter.elapsed_s), x + 566, y + 199, 27, theme_color("tx", tw))
     # next line
     nx, ny = x + 28, y + 350
-    if st == "DRIVE":
+    if st == "DRIVE" and self.paused:
+      parts = ((PAUSE_MSG, "acc"),)
+    elif st == "DRIVE":
       time_mode = meter.mode == "time"
       if time_mode:
         remaining, unit = max(1, int(math.ceil(meter.next_step_remaining_s - 1e-6))), "초"
@@ -1391,13 +1569,92 @@ class C1MeterPanel:
     # 보노보노's thought bubble (only while 포로리 says nothing)
     think, top = self.think_now(st, tk, t, op > 0.0)
     self.last_think = ""
+    self.last_think_slot = ""
+    slot = "up"
     if top > 0.0:
-      top *= think_poro_fade(measure(think, 17)[0], pxp)
-    self._draw_think(renderer, rl, think, x, y, pose.bono_bob, top)
+      tw17 = measure(think, 17)[0]
+      slot = self.think_slot(tw17, pxp, nx - x, tk, t)
+      if slot == "up":
+        top *= think_poro_fade(tw17, pxp)
+      if self._think_last is not None and self._think_last[2] == t:
+        self._think_last = (think, top, t, self._think_key)   # the opacity as drawn (a cut thought fades from it)
+    self._draw_think(renderer, rl, think, x, y, pose.bono_bob, top, slot)
+
+  def _draw_settle(self, renderer, rl, x: float, y: float, t: float, tw: dict, since: float) -> None:
+    """정산 screen (button 정산): the scene behind a panel, 총 요금 large, 기본/거리/시간/심야 할증 lines, 운행 거리·시간,
+    포로리 bowing with '감사합니다!' and 보노보노 with the clam (C1 chibi look, same sprites, theme colours)."""
+    text = lambda s_, x_, y_, z_, c_, sh_=None: self._text(renderer, rl, s_, x_, y_, z_, c_, sh_)   # noqa: E731
+    measure = lambda s_, z_: self._measure(renderer, rl, s_, z_)[0]   # noqa: E731
+    b = self.settle_breakdown or self.breakdown()
+    self.last_settle = b
+    self._back_and_moving(rl, x, y, t)
+    panel = rl.Rectangle(x + SETTLE_PANEL[0], y + SETTLE_PANEL[1], SETTLE_PANEL[2], SETTLE_PANEL[3])
+    rl.draw_rectangle_rounded(panel, 0.08, 16, rl.Color(*theme_color("stBg", tw)))
+    rl.draw_rectangle_rounded_lines_ex(panel, 0.08, 16, 1.5, rl.Color(*theme_color("pillB", tw)))
+    # title: 정 산 pill + brand line
+    pill = rl.Rectangle(x + 36, y + 32, 76, 32)
+    rl.draw_rectangle_rounded(pill, 1.0, 16, rl.Color(*theme_color("pillBg", tw)))
+    rl.draw_rectangle_rounded_lines_ex(pill, 1.0, 16, 1.0, rl.Color(*theme_color("pillB", tw)))
+    rl.draw_circle_v(rl.Vector2(pill.x + 17, pill.y + 16), 4.5, rl.Color(111, 216, 255, 255))
+    text("정 산", pill.x + 28, pill.y + 16, 16, theme_color("pillT", tw))
+    text("보노보노 택시 · 오늘도 고마워요", x + 126, y + 48, 16, theme_color("sub", tw))
+    # total
+    shadow = theme_color("dsh", tw, 0.75)
+    text("총 요 금", x + 40, y + 88, 13, theme_color("lb", tw), shadow)
+    total = format_won(b["total"])
+    fw = measure(total, 98)
+    text(total, x + 36, y + 148 + 1.5, 98, theme_color("dsh", tw))
+    text(total, x + 36, y + 148, 98, theme_color("g2", tw))
+    text("원", x + 36 + fw + 10, y + 171, 30, theme_color("unit", tw))
+    # lines (right column)
+    rows = [("기본요금", f"({b['base_km']:g}km)", f"{format_won(b['base'])}원"),
+            ("거리요금", f"{b['dist_unit_m']:g}m × {b['dist_units']}회", f"{format_won(b['dist_won'])}원"),
+            ("시간요금", f"{b['time_unit_s']:g}초 × {b['time_units']}회", f"{format_won(b['time_won'])}원"),
+            ("심야 할증", f"{int(round(b['night_rate'] * 100))}%" if b["night_won"] > 0 else "",
+             f"{format_won(b['night_won'])}원" if b["night_won"] > 0 else "없음")]
+    rx0, rx1, ry = x + SETTLE_ROWS[0], x + SETTLE_ROWS[1], y + SETTLE_ROWS[2]
+    for i, (name, detail, amount) in enumerate(rows):
+      cy = ry + i * SETTLE_ROW_H
+      if i % 2 == 0:
+        rl.draw_rectangle_rounded(rl.Rectangle(rx0 - 10, cy - SETTLE_ROW_H / 2 + 2, rx1 - rx0 + 20, SETTLE_ROW_H - 4), 0.5, 8,
+                                  rl.Color(*theme_color("stRow", tw)))
+      text(name, rx0, cy, 16, theme_color("tx", tw))
+      if detail:
+        text(detail, rx0 + 82, cy, 14, theme_color("sub", tw))
+      text(amount, rx1 - measure(amount, 17), cy, 17, theme_color("acc" if i == 3 and b["night_won"] > 0 else "tx", tw))
+    # distance / time
+    for i, (lab, val, unit) in enumerate((("운 행  거 리", f"{b['km']:.2f}", "km"), ("운 행  시 간", format_hms(b["elapsed_s"]), ""))):
+      sx = x + 44 + i * 190
+      text(lab, sx, y + 246, 13, theme_color("lb", tw))
+      text(val, sx, y + 276, 27, theme_color("tx", tw))
+      if unit:
+        text(unit, sx + measure(val, 27) + 5, y + 280, 15, theme_color("sub", tw))
+    text("시작을 누르면 새 운행을 시작합니다", x + SETTLE_HINT[0], y + SETTLE_HINT[1], 14, theme_color("nx", tw), shadow)
+    # characters: 포로리 bows (thanks), 보노보노 holds the clam
+    pose = taxi_meter_pose(self.anim, t, 9.0)
+    bow = max(0.0, math.sin(min(since, 2.4) / 1.2 * math.pi)) if since < 2.4 else 0.0
+    self._draw_porori(rl, (x + SETTLE_PORO[0], y + SETTLE_PORO[1] + bow * 6.0), pose, 0.0, bow)
+    self._draw_bono(rl, x, y, pose, 0.0)
+    op = _win(since, 0.1, 9e9)
+    if op > 0.0:
+      self._draw_bubble(renderer, rl, "감사합니다!", SETTLE_PORO[0], x, y + SETTLE_BUBBLE_DY, op)
 
   def bubble_now(self, st: str, since: float, tk: float, t: float) -> tuple[str, float]:
     """One bubble at a time: the state-change line (SAY) first, then the C1.html main-loop lines of 포로리:
     TICK_SAY after every fare step while 주행, STOP_SAY when the car comes to a stop while 주행."""
+    out = self._bubble_now(st, since, tk, t)
+    last = self._say_last
+    if st != self._say_st:
+      self._say_switch = (last[0], last[1], t) if (last is not None and last[1] > 0.0 and last[2] == self._say_t) else None
+      self._say_st = st
+    self._say_t = t
+    sw = self._say_switch
+    if out[1] <= 0.0 and sw is not None and 0.0 <= t - sw[2] < SWITCH_FADE_S and sw[0] != out[0]:
+      out = (sw[0], sw[1] * (1.0 - (t - sw[2]) / SWITCH_FADE_S))   # the line of the state before, fading out
+    self._say_last = (out[0], out[1], t) if out[1] > 0.0 else None
+    return out
+
+  def _bubble_now(self, st: str, since: float, tk: float, t: float) -> tuple[str, float]:
     fsm = self.fsm
     stopped = st == "DRIVE" and self.speed_kph <= C1_LOGIC["stop_kph"]
     if not stopped:
@@ -1423,27 +1680,178 @@ class C1MeterPanel:
     """보노보노's thought bubble (C1.html bth), after bubble_now() of the same frame: WAIT_THINK after STOP_SAY while
     stopped, TICK_THINK after TICK_SAY. Never while 포로리 says something; it fades out in the 0.15 s before a
     포로리 line starts (TICK_SAY / STOP_SAY begin 0.15 s after their event), so the two never show together."""
+    self._think_prev_t, self._think_t = self._think_t, t
+    out = self._think_now(st, tk, t, poro_says)
+    if out[1] > 0.0:
+      self._think_last = (out[0], out[1], t, self._think_key)
+    return out
+
+  def _next_step_in_s(self) -> float:
+    """Seconds to the next fare step at the current speed (meter_improve item 2), inf when unknown."""
+    m = self.meter
+    rem = m.next_step_remaining_m
+    v = max(0.0, self.speed_kph) / 3.6
+    if self.speed_kph < m.fare.time_fare_below_kph:   # time fare (stopped / slow): the 30 s clock
+      v = m.fare.distance_unit_m / m.fare.time_unit_s
+    return rem / v if v > 1e-6 else float("inf")
+
+  def _progress_rate(self) -> float:
+    """step_progress per second at the current speed (0..1 per step)."""
+    m = self.meter
+    span = m.fare.distance_unit_m + (m.fare.base_distance_m if m.units == 0 else 0.0)
+    v = max(0.0, self.speed_kph) / 3.6
+    if self.speed_kph < m.fare.time_fare_below_kph:
+      v = m.fare.distance_unit_m / m.fare.time_unit_s
+    return v / span if span > 0.0 else 0.0
+
+  def _tick_think_end(self, tk: float) -> float:
+    """End (tk) of '또 올라가는 걸까…' for this step: TICK_THINK[2], or earlier when the next step comes first."""
+    return min(TICK_THINK[2], tk + self._next_step_in_s() - THINK_STEP_MARGIN)
+
+  def think_slot(self, text_w: float, x_char: float, next_line_right: float, tk: float, t: float) -> str:
+    """'up' (C1.html place) or 'low' for the thought on screen, chosen once per thought: 'low' when 포로리 will be
+    under the upper place by the end of the thought and the lower place is free."""
+    key = self._think_key
+    if key is not None and key == self._think_slot_key:
+      return self._think_slot
+    self._think_slot_key = key
+    if key is not None and key[0] == "tick":
+      left = max(0.0, self._tick_think_end(tk) - tk)
+    elif key is not None and key[0] == "wait":
+      left = max(0.0, key[1] + WAIT_THINK[2] - t)
+    else:
+      left = 0.0
+    p_end = min(1.0, self.meter.step_progress + self._progress_rate() * left) if key is not None and key[0] in ("tick", "wait") else 0.0
+    x_end = max(x_char, max(X0 + PORO_MIN, X0 + (X1 - X0) * p_end))
+    up_ok = think_poro_fade(text_w, x_end) >= 1.0
+    self._think_slot = "low" if (not up_ok and think_low_fits(text_w, next_line_right)) else "up"
+    if key is not None and key[0] in ("carry", "leave"):
+      self._think_slot = key[2]
+    return self._think_slot
+
+  def _think_now(self, st: str, tk: float, t: float, poro_says: bool) -> tuple[str, float]:
     if st != "DRIVE":
       self._think_stop = None
+      last = self._think_last
+      if self._think_key is not None and self._think_key[0] != "leave":
+        ok = last is not None and last[1] > 0.0 and last[2] == self._think_prev_t
+        self._think_switch = (last[0], last[1], t, self._think_slot) if ok else None
+      self._think_key = None
+      sw = self._think_switch
+      if sw is not None and 0.0 <= t - sw[2] < SWITCH_FADE_S and not poro_says:
+        self._think_key = ("leave", sw[2], sw[3])
+        return sw[0], sw[1] * (1.0 - (t - sw[2]) / SWITCH_FADE_S)   # left 주행: fade out before the next line
+      self._think_switch = None
       return "", 0.0
     if poro_says:
+      self._think_key = None
       return "", 0.0
     stop = self._stop_since
     if stop is not None and self._think_stop != stop and t - stop >= WAIT_THINK[1]:
       self._think_stop = stop      # this stop lasted long enough: think once (also after the car pulls away)
-    best, bop = "", 0.0
+    best, bop, key = "", 0.0, None
     if self._think_stop is not None:
       op = _win(t - self._think_stop, WAIT_THINK[1], WAIT_THINK[2])
       if op > bop:
-        best, bop = WAIT_THINK[0], op
-    op = _win(tk, TICK_THINK[1], TICK_THINK[2])
-    if op > bop:
-      best, bop = TICK_THINK[0], op
-    if bop <= 0.0:
-      return "", 0.0
+        best, bop, key = WAIT_THINK[0], op, ("wait", self._think_stop)
+    step_t = round(t - tk, 3)      # the fare step this tk counts from (= meter.last_tick_s on the live card)
+    if tk >= TICK_THINK[1] - 1e-9 and tk < TICK_THINK[2]:
+      end = self._tick_think_end(tk)
+      if self._tick_decided != step_t:   # decided once, on the first frame of the window
+        self._tick_decided = step_t
+        if end - max(tk, TICK_THINK[1]) < THINK_MIN_S:
+          self._tick_skip = step_t       # the next step comes too soon: no thought for this step
+      op = 0.0 if self._tick_skip == step_t else _win(tk, TICK_THINK[1], end)
+      if op > bop:
+        best, bop, key = TICK_THINK[0], op, ("tick", step_t)
     lead = TICK_SAY[1]   # = STOP_SAY[1]
+    if bop <= 0.0:
+      # a thought that was on screen when this fare step came (the car sped up): fade it out before 포로리 speaks
+      last = self._think_last
+      if tk < lead:
+        if self._think_carry is None or self._think_carry[2] != step_t:
+          # only a thought still on in the frame right before the step (not one that had already faded out)
+          ok = last is not None and last[3] is not None and last[3][0] in ("tick", "carry") and last[1] > 0.0 \
+            and last[2] == self._think_prev_t and last[2] < t - tk + 1e-6
+          self._think_carry = (last[0], last[1], step_t, self._think_slot) if ok else (None, 0.0, step_t, "up")
+        text, op0 = self._think_carry[0], self._think_carry[1]
+        if text:
+          self._think_key = ("carry", step_t, self._think_carry[3])
+          return text, op0 * max(0.0, (lead - tk) / lead)
+      self._think_key = None
+      return "", 0.0
     if tk < TICK_SAY[2]:                                   # a fare step just happened: 포로리 is about to speak
       bop *= max(0.0, (lead - tk) / lead)
     if stop is not None and t - stop < STOP_SAY[2]:        # the car just stopped: '또 멈췄네?' is about to come
       bop *= max(0.0, (lead - (t - stop)) / lead)
+    self._think_key = key if bop > 0.0 else None
     return (best, bop) if bop > 0.0 else ("", 0.0)
+
+
+class MeterButtonLink:
+  """K9ExtHud=1 meter remote <-> HUD (meter_improve 20:46 / 21:20: the 시작·일시정지·정산 app, carrot k9_meter_link.py).
+  poll(now) reads the memory param K9MeterCmd at most every POLL_S: a queue "token:cmd;token:cmd;..." of the last few
+  presses (one "token:cmd" also works); it returns the commands of tokens not seen before, in order. What is already
+  there when the HUD starts is not a press, so a restart never repeats an old one. publish(status) writes K9MeterState
+  (JSON: state, fare, km, sec, night, ts) when it changes, at most every PUBLISH_S, and at least every HEARTBEAT_S."""
+  POLL_S = 0.2
+  PUBLISH_S = 0.5
+  HEARTBEAT_S = 2.0
+  SEEN_MAX = 64
+
+  def __init__(self, params, wall=time.time) -> None:
+    self._params = params
+    self._wall = wall
+    self._seen: list[str] = []
+    self._primed = False
+    self._next = 0.0
+    self._last: dict | None = None
+    self._last_t = -1e9
+
+  def _read(self) -> str:
+    try:
+      v = self._params.get(METER_CMD_PARAM)
+    except Exception:
+      return ""
+    if isinstance(v, bytes):
+      v = v.decode("utf-8", "replace")
+    return str(v or "")
+
+  def poll(self, now: float) -> list[str]:
+    if now < self._next:
+      return []
+    self._next = now + self.POLL_S
+    entries = []
+    for part in self._read().split(";"):
+      tok, _, cmd = part.strip().rpartition(":")
+      if tok:
+        entries.append((tok, cmd.strip()))
+    if not self._primed:
+      self._primed = True
+      self._seen = [t for t, _ in entries][-self.SEEN_MAX:]
+      return []
+    out = []
+    for tok, cmd in entries:
+      if tok in self._seen:
+        continue
+      self._seen = (self._seen + [tok])[-self.SEEN_MAX:]
+      if cmd in METER_COMMANDS:
+        out.append(cmd)
+    return out
+
+  def publish(self, status, now: float | None = None) -> None:
+    if not status:
+      return
+    if isinstance(status, str):
+      status = {"state": status}
+    now = time.monotonic() if now is None else now
+    changed = status != self._last
+    urgent = self._last is None or status.get("state") != self._last.get("state") or status.get("fare") != self._last.get("fare")
+    if not ((changed and (urgent or now - self._last_t >= self.PUBLISH_S)) or now - self._last_t >= self.HEARTBEAT_S):
+      return
+    try:
+      put = getattr(self._params, "put_nonblocking", None) or self._params.put
+      put(METER_STATE_PARAM, json.dumps({**status, "ts": round(self._wall(), 2)}, ensure_ascii=False))
+      self._last, self._last_t = dict(status), now
+    except Exception:
+      pass
