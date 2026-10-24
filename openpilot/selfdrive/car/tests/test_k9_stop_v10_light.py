@@ -1,10 +1,15 @@
-"""K9StopMode 5 = v10 + light shudder fix (the K9Creep kind V10_LIGHT = 6; 2026-10-24 brake_methods candidate L0.6_V9_f0,
+"""K9StopMode 2 (5 before the 2026-10-24 evening trim) = v10 + light shudder fix (the K9Creep kind V10_LIGHT = 6; 2026-10-24 brake_methods candidate L0.6_V9_f0,
 the driver's order 08:03). update() (accel, StopReq, feather, latch ramp, 3.0 m lead latch, interlocks) and jerk_u are
 exactly K9StopMode 1 (the page v10, test_k9_stop_v10.py) on every frame. Only SCC14 ComfortBand differs: where menu 1
 sends 0/0, menu 5 sends 0.60 / 0.50 at or below 2.5 m/s (9 km/h), linear down to 0 at 3.0 m/s and 0 above (= menu 1), on
 the exact 0.02 CAN grid, moved at most 0.04 per make_jerk call from the band sent before. Menus 0-4 are byte-identical to
 the frozen c89f726e (carrot-wip before menu 5) controller. All new (2026-10-24). Sim/replay only; NOT verified on the
-vehicle."""
+vehicle.
+Rewritten 2026-10-24 evening (보노보노 "브레이크 2.3.4 제거"; this menu moved 5 -> 2, kinds 3-5 removed), number references
+only: menu 5 -> 2 (test_menu_and_constants, the two CarController comparisons, K7, live switch), the frozen c89f726e CAN
+comparison only for 0/1 (its 2/3/4 are removed kinds) and the kind comparison only for kinds 1/2, removed-kind flags dropped,
+the 0.04 step pinned as a number (V10_BAND_STEP is gone), 4 and up act as 0, live switch starts 1/3 (old 3/4 removed).
+"""
 import math
 import random
 
@@ -13,7 +18,7 @@ import pytest
 
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SMOOTH, V10_LIGHT
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V10_LIGHT, V11
 from opendbc.car.hyundai.values import CAR
 from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig, load_frozen_cc
 from openpilot.selfdrive.car.tests.test_k9_creep_mode import SEQS, _random_inputs
@@ -50,14 +55,14 @@ def frozen_cc(tmp_path_factory):
 
 
 def test_menu_and_constants():
-  assert kc.MENU[5] == V10_LIGHT == 6 and kc.MENU[4] == V10_SMOOTH and kc.MENU[1] == V10 and 5 in kc.MODES
-  assert carcontroller.K9_CREEP_MENU[5] == V10_LIGHT
+  assert kc.MENU[2] == V10_LIGHT == 6 and kc.MENU[3] == V11 and kc.MENU[1] == V10 and 2 in kc.MODES
+  assert carcontroller.K9_CREEP_MENU[2] == V10_LIGHT
   c = K9Creep(V10_LIGHT)
-  assert c.v10 and c.v10_light and not c.v10_band and not c.v10_smooth and not c.shudder_fix
-  assert not any(K9Creep(k).v10_light for k in (V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SMOOTH))
+  assert c.v10 and c.v10_light and not c.v11
+  assert not any(K9Creep(k).v10_light for k in (V9, V10, V11))
   assert (kc.LIGHT_UPPER, kc.LIGHT_LOWER, kc.LIGHT_FULL_SPEED, kc.LIGHT_OFF_SPEED) == (0.6, 0.5, 2.5, 3.0)
   assert (kc.LIGHT_UPPER_UNITS, kc.LIGHT_LOWER_UNITS, kc.LIGHT_STEP_UNITS, kc.CB_UNIT) == (30, 25, 2, 0.02)
-  assert kc.LIGHT_STEP_UNITS * kc.CB_UNIT == pytest.approx(kc.V10_BAND_STEP)
+  assert kc.LIGHT_STEP_UNITS * kc.CB_UNIT == pytest.approx(0.04)
 
 
 @pytest.mark.parametrize("seed", range(8))
@@ -163,18 +168,18 @@ def _stop_run(r):
   return out
 
 
-def test_through_carcontroller_menu_5_only_scc14_band(monkeypatch):
-  """menu 5 vs menu 1 through the CarController: accel and SCC12 identical on every frame, SCC14 differs only in
-  ComfortBand (JerkUpper/Lower identical); settled at or below 2.5 m/s menu 5 sends exactly 0.60/0.50, at or above
+def test_through_carcontroller_menu_2_only_scc14_band(monkeypatch):
+  """menu 2 (old 5) vs menu 1 through the CarController: accel and SCC12 identical on every frame, SCC14 differs only in
+  ComfortBand (JerkUpper/Lower identical); settled at or below 2.5 m/s menu 2 sends exactly 0.60/0.50, at or above
   3.0 m/s exactly 0 (menu 1); <= 0.04 per frame; every sent band is on the 0.02 grid."""
   runs = {}
-  for mode in (1, 5):
+  for mode in (1, 2):
     r = Rig(monkeypatch, K9StopMode=mode)
     out = _stop_run(r)
     assert r.cc.k9_creep.mode == kc.MENU[mode]
     runs[mode] = (out, r.scc14)
     monkeypatch.undo()
-  (o1, b1), (o5, b5) = runs[1], runs[5]
+  (o1, b1), (o5, b5) = runs[1], runs[2]
   assert o1 == o5
   low = high = 0
   prev = None
@@ -201,9 +206,9 @@ def test_through_carcontroller_menu_5_only_scc14_band(monkeypatch):
 
 
 @pytest.mark.parametrize("seq", list(SEQS))
-def test_through_carcontroller_menu_5_scc12_and_accel_equal_menu_1_on_all_sequences(monkeypatch, seq):
+def test_through_carcontroller_menu_2_scc12_and_accel_equal_menu_1_on_all_sequences(monkeypatch, seq):
   runs = {}
-  for mode in (1, 5):
+  for mode in (1, 2):
     r = Rig(monkeypatch, K9StopMode=mode)
     acc = []
     orig_step = r.step
@@ -216,15 +221,15 @@ def test_through_carcontroller_menu_5_scc12_and_accel_equal_menu_1_on_all_sequen
     SEQS[seq](r)
     runs[mode] = (acc, r.scc14, [[m for m in f if m[0] != 905] for f in r.can])
     monkeypatch.undo()
-  assert runs[1][0] == runs[5][0]  # accel + decoded SCC12 every frame
-  assert runs[1][2] == runs[5][2]  # every other CAN message byte-identical
-  for (_, _, d1), (_, _, d5) in zip(runs[1][1], runs[5][1], strict=True):
+  assert runs[1][0] == runs[2][0]  # accel + decoded SCC12 every frame
+  assert runs[1][2] == runs[2][2]  # every other CAN message byte-identical
+  for (_, _, d1), (_, _, d5) in zip(runs[1][1], runs[2][1], strict=True):
     assert {k: v for k, v in d1.items() if "ComfortBand" not in k} == {k: v for k, v in d5.items() if "ComfortBand" not in k}
 
 
 @pytest.mark.parametrize("seq", list(SEQS))
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 2, 3, 4])
+@pytest.mark.parametrize("mode", [None, 0, 1])
 def test_menus_0_to_4_identical_can_to_c89f726e(monkeypatch, frozen_cc, mode, fingerprint, seq):
   kw = {} if mode is None else {"K9StopMode": mode}
   ref = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=frozen_cc, **kw))
@@ -235,15 +240,15 @@ def test_menus_0_to_4_identical_can_to_c89f726e(monkeypatch, frozen_cc, mode, fi
 
 
 @pytest.mark.parametrize("seq", list(SEQS))
-def test_menu_5_on_k7_is_menu_0_of_c89f726e(monkeypatch, frozen_cc, seq):
+def test_menu_2_on_k7_is_menu_0_of_c89f726e(monkeypatch, frozen_cc, seq):
   ref = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), module=frozen_cc, K9StopMode=0))
   monkeypatch.undo()
-  new = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=5))
+  new = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=2))
   assert ref.can == new.can and new.cc.k9_creep is None
 
 
 @pytest.mark.parametrize("seed", range(6))
-@pytest.mark.parametrize("kind", (V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SMOOTH))
+@pytest.mark.parametrize("kind", (V9, V10))
 def test_kinds_1_to_5_object_identical_to_c89f726e(frozen_cc, kind, seed):
   rng = random.Random(f"k9-light-frozen-{seed}")
   old, new = frozen_cc.K9Creep(kind), K9Creep(kind)
@@ -262,21 +267,21 @@ def test_kinds_1_to_5_object_identical_to_c89f726e(frozen_cc, kind, seed):
 
 
 def test_menu_7_and_up_act_as_0(monkeypatch):
-  # 2026-10-24: 6 is now v11 (test_k9_stop_v11.py) (menu-set pin rewritten)
-  for value in (7, 8, 99, -1):
+  # 2026-10-24: 6 is now v11 (test_k9_stop_v11.py) (menu-set pin rewritten); evening trim: 4 and up act as 0
+  for value in (4, 5, 6, 7, 8, 99, -1):
     r = Rig(monkeypatch, K9StopMode=value)
     r.step(-0.5, LCS.pid, 3.0)
     assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
     monkeypatch.undo()
 
 
-@pytest.mark.parametrize("start", [1, 3, 4])
+@pytest.mark.parametrize("start", [1, 3])
 def test_live_switch_to_5_band_does_not_jump(monkeypatch, start):
   r = Rig(monkeypatch, K9StopMode=start)
   for _ in range(60):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
   b0 = float(r.cc.hyundai_jerk.cb_upper)
-  r.params.values["K9StopMode"] = 5
+  r.params.values["K9StopMode"] = 2
   bands = []
   for _ in range(80):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)

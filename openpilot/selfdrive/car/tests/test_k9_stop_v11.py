@@ -1,4 +1,4 @@
-"""K9StopMode 6 = creep_fix v11 (the K9Creep kind V11 = 7; 2026-10-24, the driver's order 12:46 "v11 추가해라").
+"""K9StopMode 3 (6 before the 2026-10-24 evening trim) = creep_fix v11 (the K9Creep kind V11 = 7; 2026-10-24, the driver's order 12:46 "v11 추가해라").
 update() is bit-identical to a literal reference port of the page v11 code (selectMode v11 carcontroller.py block, the
 changelog v10 -> v11 diff) with the K9 adaption (V11Ref(k9=True)): the page's pid creep table / accel fade / 1.5 m/s gate
 and PID over-braking blend are replaced by v10's pid creep compensation (closed-loop sim: they made the K9 stop longer and
@@ -7,7 +7,10 @@ is 0 (as v10). The pure page code (k9=False) is kept as the reference of what wa
 fail toward more braking): 3.0 m lead latch, original command on disengage/override/pedal/invalid CAN/non-finite input, and
 no re-press guard with a lead within 3.0 m.
 Menus 0-5 are byte-identical to the frozen 6ec4a36d (carrot-wip before menu 6) controller. All new (2026-10-24).
-Sim/replay only; NOT verified on the vehicle."""
+Rewritten 2026-10-24 evening (보노보노 "브레이크 2.3.4 제거"; this menu moved 6 -> 3, kinds 3-5 removed), number references
+only: menu 6 -> 3 (constants, CarController runs, K7/CAN-FD, live switch), the frozen 6ec4a36d CAN comparison for new 0/1
+and new 2 = 6ec4a36d 5 (its 2/3/4 are removed kinds), the kind comparison for kinds 1/2/6, removed-kind flags dropped,
+4 and up act as 0, live switch starts 1/2 (old 4/5 -> 2). Sim/replay only; NOT verified on the vehicle."""
 import math
 import random
 
@@ -17,7 +20,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SMOOTH, V10_LIGHT, V11
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V10_LIGHT, V11
 from opendbc.car.hyundai.values import CAR, HyundaiFlags, CarControllerParams
 from openpilot.selfdrive.car.tests import k9_rig
 from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig, load_frozen_cc
@@ -112,11 +115,11 @@ def frozen_cc(tmp_path_factory):
 
 
 def test_menu_and_constants():
-  assert kc.MENU[6] == V11 == 7 and kc.MENU[5] == V10_LIGHT and kc.MENU[1] == V10 and 6 in kc.MODES
-  assert carcontroller.K9_CREEP_MENU[6] == V11 and kc.KINDS[-1] == V11
+  assert kc.MENU[3] == V11 == 7 and kc.MENU[2] == V10_LIGHT and kc.MENU[1] == V10 and 3 in kc.MODES
+  assert carcontroller.K9_CREEP_MENU[3] == V11 and kc.KINDS[-1] == V11
   c = K9Creep(V11)
-  assert c.v11 and not c.v10 and not c.v10_band and not c.v10_smooth and not c.v10_light and not c.shudder_fix
-  assert not any(K9Creep(k).v11 for k in (V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SMOOTH, V10_LIGHT))
+  assert c.v11 and not c.v10 and not c.v10_light
+  assert not any(K9Creep(k).v11 for k in (V9, V10, V10_LIGHT))
   assert kc.V11_STANDSTILL_FRAMES == 12 and kc.V11_HOLD_STEP == 0.0025 and kc.V11_UP_LOW == 0.0030
   assert (kc.V11_FEATHER_BP, kc.V11_FEATHER_V) == ([0.05, 0.11, 0.16, 0.25, 0.42], [-0.28, -0.29, -0.34, -0.42, -0.52])
   assert (kc.V11_MIN_DECEL_BP, kc.V11_MIN_DECEL_V) == ([0.06, 0.12, 0.25, 0.40], [-0.04, -0.09, -0.20, -0.30])
@@ -303,9 +306,9 @@ def _stop_run(r, lead=None):
 def test_through_carcontroller_menu_6(monkeypatch):
   """menu 6 runs kind 7 in the CarController: ComfortBand 0 wherever applied, StopReq only from the 12th standstill
   frame, the hold ramps 0.0025 per frame, JerkUpper follows the page profile below 0.65 m/s."""
-  r = Rig(monkeypatch, K9StopMode=6)
+  r = Rig(monkeypatch, K9StopMode=3)
   out = _stop_run(r)
-  assert r.cc.k9_creep.mode == V11 and r.cc.k9_creep_mode == 6
+  assert r.cc.k9_creep.mode == V11 and r.cc.k9_creep_mode == 3
   sent = [s for _, s in out]
   sr = [s["StopReq"] for s in sent if s is not None]
   st = [i for i, s in enumerate(sent) if s is not None]
@@ -319,7 +322,7 @@ def test_through_carcontroller_menu_6(monkeypatch):
 
 
 def test_through_carcontroller_menu_6_lead_latch(monkeypatch):
-  r = Rig(monkeypatch, K9StopMode=6)
+  r = Rig(monkeypatch, K9StopMode=3)
   out = _stop_run(r, lead=(2.9, 0.0))
   sent = [s for _, s in out]
   first_stop = 220  # stopping starts
@@ -347,10 +350,11 @@ def test_tcs13_standstill_latches_stopreq_after_12_frames(monkeypatch):
 
 @pytest.mark.parametrize("seq", list(SEQS))
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize("mode", [None, 0, 1, 2])
 def test_menus_0_to_5_identical_can_to_6ec4a36d(monkeypatch, frozen_cc, mode, fingerprint, seq):
   kw = {} if mode is None else {"K9StopMode": mode}
-  ref = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=frozen_cc, **kw))
+  old = {} if mode is None else {"K9StopMode": {2: 5}.get(mode, mode)}  # new 2 = 6ec4a36d 5 (evening trim)
+  ref = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=frozen_cc, **old))
   monkeypatch.undo()
   new = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), **kw))
   assert len(new.can) > 400 and ref.can == new.can
@@ -362,15 +366,15 @@ def test_menu_6_on_k7_and_canfd_is_menu_0_of_6ec4a36d(monkeypatch, frozen_cc, se
   for cp in (make_cp(fingerprint=CAR.KIA_K7), make_cp(flags=int(K9_FLAGS & ~HyundaiFlags.CAMERA_SCC))):
     ref = SEQS[seq](Rig(monkeypatch, cp=cp, module=frozen_cc, K9StopMode=0))
     monkeypatch.undo()
-    new = SEQS[seq](Rig(monkeypatch, cp=cp, K9StopMode=6))
+    new = SEQS[seq](Rig(monkeypatch, cp=cp, K9StopMode=3))
     assert ref.can == new.can and new.cc.k9_creep is None
     monkeypatch.undo()
-  r = Rig(monkeypatch, cp=make_cp(flags=int(K9_FLAGS | HyundaiFlags.CANFD)), K9StopMode=6)
+  r = Rig(monkeypatch, cp=make_cp(flags=int(K9_FLAGS | HyundaiFlags.CANFD)), K9StopMode=3)
   assert r.cc.k9_creep_applies is False and r.cc.k9_creep is None
 
 
 @pytest.mark.parametrize("seed", range(6))
-@pytest.mark.parametrize("kind", (V9, V10, V9_SHUDDER_FIX, V10_BAND02, V10_SMOOTH, V10_LIGHT))
+@pytest.mark.parametrize("kind", (V9, V10, V10_LIGHT))
 def test_kinds_1_to_6_object_identical_to_6ec4a36d(frozen_cc, kind, seed):
   rng = random.Random(f"k9-v11-frozen-{seed}")
   old, new = frozen_cc.K9Creep(kind), K9Creep(kind)
@@ -390,22 +394,22 @@ def test_kinds_1_to_6_object_identical_to_6ec4a36d(frozen_cc, kind, seed):
 
 
 def test_menu_7_and_up_act_as_0(monkeypatch):
-  for value in (7, 8, 99, -1):
+  for value in (4, 5, 6, 7, 8, 99, -1):
     r = Rig(monkeypatch, K9StopMode=value)
     r.step(-0.5, LCS.pid, 3.0)
     assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
     monkeypatch.undo()
 
 
-@pytest.mark.parametrize("start", [1, 4, 5])
+@pytest.mark.parametrize("start", [1, 2])
 def test_live_switch_to_6_starts_fresh(monkeypatch, start):
   r = Rig(monkeypatch, K9StopMode=start)
   for _ in range(60):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-  r.params.values["K9StopMode"] = 6
+  r.params.values["K9StopMode"] = 3
   for _ in range(60):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-  assert r.cc.k9_creep.mode == V11 and r.cc.k9_creep_mode == 6
+  assert r.cc.k9_creep.mode == V11 and r.cc.k9_creep_mode == 3
   assert float(r.cc.hyundai_jerk.cb_upper) == 0.0 and float(r.cc.hyundai_jerk.cb_lower) == 0.0
 
 

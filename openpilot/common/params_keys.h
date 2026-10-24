@@ -266,6 +266,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"StopDistanceCarrot", {PERSISTENT, INT, "550"}},
     {"StoppingAccel", {PERSISTENT, INT, "-50"}},
     {"K9StopMode", {PERSISTENT, INT, "0"}},
+    {"K9StopModeVer", {PERSISTENT, INT}},  // K9StopMode menu version marker (one-time migration, k9_stop_mode_migration.py)
     {"K9LaneFix", {PERSISTENT, INT, "0"}},
     {"K9LRView", {PERSISTENT, INT, "0"}},
     {"K9ExtHud", {PERSISTENT, INT, "-1"}},

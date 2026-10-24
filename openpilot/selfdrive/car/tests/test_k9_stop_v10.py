@@ -80,12 +80,12 @@ def test_mode2_is_bit_identical_to_the_v10_page_code(seed):
 
 
 def test_v10_constants_are_the_page_values():
-  assert kc.MODES == (1, 2, 3, 4, 5, 6) and V10 == 2  # menus 4, 5 and 6 added 2026-10-24 (pin rewritten)
+  assert kc.MODES == (1, 2, 3) and V10 == 2  # menus 4, 5 and 6 added 2026-10-24, 2026-10-24 evening trim to 0-3 (pin rewritten)
   assert (kc.V10_FEATHER_BP, kc.V10_FEATHER_V) == ([0.05, 0.11, 0.16, 0.25, 0.42], [-0.26, -0.28, -0.34, -0.42, -0.52])
   assert (kc.V10_MIN_DECEL_BP, kc.V10_MIN_DECEL_V) == ([0.06, 0.12, 0.25, 0.40], [-0.02, -0.09, -0.20, -0.30])
   assert kc.V10_UP_LOW_SPEED == 0.12 and kc.V10_HOLD_STEP == 0.0035 and kc.LATCH_ACCEL == -0.50
   c = K9Creep(V10)
-  assert c.v10 and not c.shudder_fix and not K9Creep(V9).v10
+  assert c.v10 and not c.v10_light and not c.v11 and not K9Creep(V9).v10  # (shudder_fix flag removed with kind 3, pin rewritten)
 
 
 def test_v10_hold_ramp_and_urgent():
