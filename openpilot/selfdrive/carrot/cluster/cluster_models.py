@@ -507,6 +507,9 @@ class ClusterUiState:
     # absent, invalid, nonfinite, out of range or stale model data.
     left_lane_line_confidence: float | None = None
     right_lane_line_confidence: float | None = None
+    # SR / SAD lateral control actually uses (cluster_lat_values). None = unknown -> '-'.
+    applied_steer_ratio: float | None = None
+    applied_steer_delay_s: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -102,6 +102,7 @@ from cluster_scene import (
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
+from cluster_lat_values import lat_values_text
 from cluster_utils import blink_visible, clamp
 
 
@@ -364,6 +365,12 @@ FULLSCREEN_3D_CORE_USAGE_RIGHT_X = (
     - 18.0
 )
 TPMS_STATUS_FONT_SIZE = 21.0
+# SR / SAD line above the TPMS car (보노보노 2026-10-24): right edge = car icon right edge,
+# so it never crosses into the right panel; baseline just above the front wheel badges.
+LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
+LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
+LAT_VALUES_FONT_SIZE = 17.0
+LAT_VALUES_COLOR = (214, 224, 231, 255)
 NAVI_LIVE_ICON_X = NAVI_LIVE_PANEL_X + 72
 NAVI_LIVE_ICON_Y = NAVI_LIVE_PANEL_Y + 99
 NAVI_LIVE_ICON_SIZE = 78.0
@@ -3375,6 +3382,23 @@ class ClusterUiRenderer:
         )
         for center_x, center_y, pressure in badge_positions:
             self._draw_compact_tpms_value(pressure, center_x, center_y)
+
+    def _draw_lat_values(self, state: ClusterUiState) -> None:
+        text = lat_values_text(
+            getattr(state, "applied_steer_ratio", None),
+            getattr(state, "applied_steer_delay_s", None),
+        )
+        self._draw_text_with_stroke(
+            text,
+            LAT_VALUES_RIGHT_X,
+            LAT_VALUES_CENTER_Y,
+            LAT_VALUES_FONT_SIZE,
+            LAT_VALUES_COLOR,
+            (0, 0, 0),
+            2,
+            anchor="right",
+            cache=True,
+        )
 
     def _draw_tpms_car_icon(self) -> bool:
         texture = getattr(self, "_tpms_car_texture", None)
@@ -7152,6 +7176,7 @@ class ClusterUiRenderer:
             rl.rl_translatef(tpms_offset_x, 0.0, 0.0)
         try:
             self._draw_tpms_status(state)
+            self._draw_lat_values(state)
         finally:
             if tpms_translated:
                 rl.rl_pop_matrix()

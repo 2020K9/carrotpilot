@@ -23,6 +23,7 @@ from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_spee
 from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
+from cluster_lat_values import applied_steer_delay_s, applied_steer_ratio, live_parameters_usable
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -575,6 +576,10 @@ class OpenpilotLiveSource:
 
         left_lane_line_confidence, right_lane_line_confidence = self._live_lane_line_confidence(now)
 
+        try:
+            applied_sr, applied_sad = self._live_lat_values(now)
+        except Exception:
+            applied_sr, applied_sad = None, None
         return replace(
             state,
             onroad=onroad,
@@ -599,7 +604,33 @@ class OpenpilotLiveSource:
             cruise_override_color_mode=cruise_override_color_mode,
             left_lane_line_confidence=left_lane_line_confidence,
             right_lane_line_confidence=right_lane_line_confidence,
+            applied_steer_ratio=applied_sr,
+            applied_steer_delay_s=applied_sad,
         )
+
+    def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
+        """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""
+        if now >= getattr(self, "_next_lat_param_read_t", 0.0):
+            params = getattr(self, "params", None)
+            values = []
+            for key in ("CustomSR", "SteerRatioRate", "SteerActuatorDelay"):
+                try:
+                    values.append(float(params.get_float(key)) if params is not None else None)
+                except Exception:
+                    values.append(None)
+            self._lat_params = tuple(values)
+            self._next_lat_param_read_t = now + 1.0
+        custom_sr, sr_rate, sad_param = getattr(self, "_lat_params", (None, None, None))
+        live_parameters = self._service_data("liveParameters") if self._service_alive("liveParameters") else None
+        live_ok = live_parameters_usable(live_parameters)
+        parser = getattr(self, "parser", None)
+        # parser.steer_ratio = CarParams.steerRatio once CarParams was read (car_brand set), else unknown
+        nominal_sr = getattr(parser, "steer_ratio", None) if getattr(parser, "car_brand", "") else None
+        sr = applied_steer_ratio(safe_get(live_parameters, "steerRatio") if live_ok else None, live_ok,
+                                 nominal_sr, sr_rate, custom_sr)
+        live_delay = self._service_data("liveDelay") if self._service_alive("liveDelay") else None
+        sad = applied_steer_delay_s(sad_param, safe_get(live_delay, "lateralDelay") if live_delay is not None else None)
+        return sr, sad
 
     def _live_lane_line_confidence(self, now: float) -> tuple[float | None, float | None]:
         # modelV2.laneLineProbs is [outer left, inner left, inner right, outer right].
