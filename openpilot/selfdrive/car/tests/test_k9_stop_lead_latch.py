@@ -1,4 +1,4 @@
-"""K9StopMode lead latch through the CarController (2026-10-22 17:06 K9 drive, rlog 000001ad): the kept kinds v9 and v10
+"""K9StopMode lead latch through the CarController (2026-10-22 17:06 K9 drive, rlog 000001ad): the kept kinds v9 and v12k9 (v10 until 2026-10-25)
 (menu 1) latch StopReq on a lead at or within LEAD_LATCH_GAP (3.0 m) while still rolling.
 Rewritten 2026-10-24 evening (보노보노 "브레이크 2.3.4 제거"): the old menu 2 (v9 + shudder fix, kind V9_SHUDDER_FIX, its
 2.5 m lead latch LEAD_LATCH_GAP_2) and the old menu 3 (v10 + band 0.2, kind V10_BAND02) were removed with their code, so
@@ -13,7 +13,7 @@ import pytest
 
 from opendbc.car.hyundai import k9_creep as kc
 from opendbc.car.hyundai import carcontroller
-from opendbc.car.hyundai.k9_creep import V9, V10
+from opendbc.car.hyundai.k9_creep import V9, V12K9
 from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig
 
 
@@ -21,7 +21,8 @@ def test_constants():
   assert kc.LEAD_LATCH_GAP == 3.0 and not hasattr(kc, "LEAD_LATCH_GAP_2")
 
 
-@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V10, True)])
+# 2026-10-25: v10 deleted (보노보노 "브레이크 앞전꺼는 다 별로니 지워"); v12k9 (menu 2) keeps the 3.0 m lead latch of v10/v11
+@pytest.mark.parametrize("mode,expect_sr_rolling", [(V9, True), (V12K9, True)])
 def test_through_carcontroller_lead_2_9_m(monkeypatch, mode, expect_sr_rolling):
   # rewritten 2026-10-23 07:25: K9StopMode values moved, so the kind is mapped to menu 1 (test only); v10 keeps the
   # 3.0 m lead latch (safety addition of 1d0961da 2), v9 + shudder fix latches at 2.5 m; rewritten again in r2:

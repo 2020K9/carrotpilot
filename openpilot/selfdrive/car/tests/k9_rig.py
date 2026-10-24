@@ -12,11 +12,21 @@ from pathlib import Path
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.hyundai import carcontroller
-from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import BASE_PARAMS, MemoryParams, make_ci_state, make_cp
+from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import BASE_PARAMS, MemoryParams, make_cp
+from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import make_ci_state as _base_ci_state
 
 __all__ = ["BASE_PARAMS", "MemoryParams", "make_cp", "make_ci_state"]
 
 LCS = structs.CarControl.Actuators.LongControlState
+
+
+def make_ci_state():
+  """2026-10-25: with .cp = None like the real hyundai CarState before its first update (K9StopMode 1, the v12 page code,
+  reads CS.cp directly); everything else as test_k9_stop_soft_brake_removed.make_ci_state."""
+  cs = _base_ci_state()
+  cs.cp = None
+  return cs
+
 ROOT = Path(__file__).resolve().parents[4]
 CC_REL = "opendbc_repo/opendbc/car/hyundai/carcontroller.py"
 HY = "opendbc_repo/opendbc/car/hyundai"
@@ -128,6 +138,14 @@ def load_frozen_cc(commit, tmp_dir, tag):
     diff = subprocess.run(["git", "diff", commit, "--", f], cwd=ROOT, check=True, capture_output=True, text=True).stdout
     assert "K9" not in diff, f
   changed = [f for f in changed if f not in car_data]
+  # b6696b37 committed two generated corner-radar dbc files with only the generator's header comments added (CAN-FD
+  # corner radar, never loaded by the K9 controller): ignore a *_generated.dbc whose diff adds/removes comment lines only
+  for f in [f for f in changed if f.startswith("opendbc_repo/opendbc/dbc/") and f.endswith("_generated.dbc")]:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", f], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln[1:] for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    assert all(not ln.strip() or ln.startswith("CM_ \"") for ln in body), f
+    changed.remove(f)
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []

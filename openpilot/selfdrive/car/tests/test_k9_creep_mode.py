@@ -1,5 +1,12 @@
-"""K9StopMode single selector (2026-10-24 evening menu): 0 base braking, 1 v10 (test_k9_stop_v10.py), 2 v10 + light shudder
-fix (the old 5, test_k9_stop_v10_light.py), 3 v11 (the old 6, test_k9_stop_v11.py). Other values act as 0.
+"""K9StopMode single selector (2026-10-25 menu): 0 base braking, 1 v12 original (the creep_fix v12 page code unchanged), 2 v12k9
+(kind V12K9); both are tested in test_k9_stop_v12.py. Other values act as 0.
+Rewritten 2026-10-25 (보노보노 00:36 "브레이크 앞전꺼는 다 별로니 지워" / "v12 원본 ... v12k9"; v10, v10 + light shudder fix and v11
+removed with their kinds 2, 6, 7 and their own test files test_k9_stop_v10*.py / test_k9_stop_v11.py / test_k9_stop_menu_trim.py):
+menu-set pins only (MODES/MENU/KINDS/V12_ORIG_MENU, bad kinds, INVALID with 3, max 2 / 3 options); ALL_KINDS = (V9,) (kind 8
+waits 12 standstill frames like the old kind 7: its TCS13 / soft-hold checks are in test_k9_stop_v12.py); the 1d0961da
+comparison only for 0 (its 2 = v10 is deleted) and the kind-2 object comparison deleted (frozen pin of a deleted kind);
+test_controller_never_writes_the_menu_value, the CAN-FD jerk check and the two live-switch tests use the new 1 / 2 (the
+light-band ramp they pinned belonged to the deleted menu 2); the removed-names list gains the deleted kinds' names.
 Rewritten 2026-10-24 evening (보노보노 "브레이크 2.3.4 제거", the old 2 v9 + shudder fix, 3 v10 + band 0.2 and 4 v10 + shudder
 fix removed with their kinds 3, 4, 5): deleted the kind-3-only tests (band weight / blend / band comp / feather gate / pid
 gate / latch hold / v9-vs-mode-2 / ComfortBand ramp), ALL = (V9,), ALL_KINDS without kinds 3-5, the 1d0961da comparison
@@ -39,7 +46,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V10, V10_LIGHT, V11
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V12K9
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.car.tests import k9_rig
 from openpilot.selfdrive.car.tests.k9_rig import (CC_REL, LCS, ROOT, Rig, edge_sequence, gentle_sequence, load_frozen_cc,
@@ -50,11 +57,10 @@ OLD_MENU = "aeef67c6"  # K9CreepMode 0 base, 1 v8, 2 v9, 3/4/5 candidates, 6 v9 
 OLD_OF_NEW = {None: 0, 0: 0}  # aeef67c6 K9CreepMode of the new menu value (v9 = old 2 is checked as the kind V9 below)
 OLD_KIND = {V9: 2}  # aeef67c6 K9CreepMode 2 = v9 (the K9Creep kind V9 of this tree)
 PREV_MENU = "1d0961da"  # K9StopMode 0 base, 1 v9, 2 v10, 3 v9 + shudder fix
-PREV_OF_NEW = {None: None, 0: 0, 1: 2, 2: 3}  # 1d0961da K9StopMode of the new menu value (new 3 is new)
-KIND_OF_PREV = {2: V10}
+PREV_OF_NEW = {None: None, 0: 0}  # 1d0961da K9StopMode of the new menu value (new 1 / 2 are new)
 ALL = (V9,)
-ALL_KINDS = (V9, V10, V10_LIGHT)
-INVALID = (4, 5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))
+ALL_KINDS = (V9,)
+INVALID = (3, 4, 5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))
 
 
 def upd(c, **kw):
@@ -129,10 +135,10 @@ def test_constants_match_source_and_mode2():
   assert (kc.CREEP_BP, kc.CREEP_V) == ([0.25, 0.55, 1.0, 1.6], [-0.26, -0.26, -0.20, 0.0])
   assert kc.DOWN_EFF_AC == -0.02
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
-  assert kc.MODES == (1, 2, 3) and (V9, V10, V10_LIGHT, V11) == (1, 2, 6, 7)
-  assert kc.MENU == {1: V10, 2: V10_LIGHT, 3: V11} and kc.KINDS == ALL_KINDS + (V11,)
+  assert kc.MODES == (1, 2) and (V9, V12K9) == (1, 8) and kc.V12_ORIG_MENU == 1
+  assert kc.MENU == {2: V12K9} and kc.KINDS == ALL_KINDS + (V12K9,)
   assert not any(hasattr(K9Creep(m), "shudder_fix") for m in kc.KINDS)
-  for bad in (0, 3, 4, 5, 8, 9, -1):
+  for bad in (0, 2, 3, 4, 5, 6, 7, 9, -1):
     with pytest.raises(AssertionError):
       K9Creep(bad)
 
@@ -141,7 +147,9 @@ def test_removed_modes_are_gone_from_source():
   src = (ROOT / "opendbc_repo/opendbc/car/hyundai/k9_creep.py").read_text(encoding="utf-8")
   for word in ("V8", "_up_v8", "PROFILES", "C3_", "V9_C2", "V9_BL", "low_hold", "bl_band", "C2BL", "K9CreepMode = ",
                "V9_SHUDDER_FIX", "V10_BAND02", "V10_SMOOTH", "shudder_fix", "_band_comp", "band_weight", "blend_weight",
-               "smooth_band_target", "_band_toward", "LEAD_LATCH_GAP_2", "V10_BAND"):
+               "smooth_band_target", "_band_toward", "LEAD_LATCH_GAP_2", "V10_BAND", "V10_LIGHT", "LIGHT_MIN_DECEL",
+               "light_band_target_units", "_light_toward", "V10_HOLD_STEP", "V10_FEATHER", "_update_v11", "V11_",
+               "v10_light", "self.v11"):
     assert word not in src, word
   cc_src = (ROOT / CC_REL).read_text(encoding="utf-8")
   assert 'params.get_int("K9StopMode")' in cc_src and "K9CreepMode" not in cc_src
@@ -253,7 +261,7 @@ def test_new_modes_identical_can_to_old_menu(monkeypatch, old_cc, mode, fingerpr
 
 @pytest.mark.parametrize("seq", list(SEQS))
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1])
+@pytest.mark.parametrize("mode", [None, 0])
 def test_new_1_2_identical_can_to_1d0961da_2_3(monkeypatch, prev_cc, mode, fingerprint, seq):
   prev = PREV_OF_NEW[mode]
   ref = SEQS[seq](Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc,
@@ -262,38 +270,16 @@ def test_new_1_2_identical_can_to_1d0961da_2_3(monkeypatch, prev_cc, mode, finge
   new = SEQS[seq](rig(monkeypatch, mode, cp=make_cp(fingerprint=fingerprint)))
   assert len(new.can) > 400 and ref.can == new.can
   assert ref.scc14 == new.scc14
-  if fingerprint == CAR.KIA_K9 and mode:
-    assert new.cc.k9_creep.mode == KIND_OF_PREV[prev] and new.cc.k9_creep_mode == mode
-
-
-@pytest.mark.parametrize("seed", range(6))
-@pytest.mark.parametrize("new_menu", (1,))
-def test_k9creep_object_identical_to_1d0961da(prev_cc, new_menu, seed):
-  rng = random.Random(f"k9-stopmode-0725-{seed}")
-  old, new = prev_cc.K9Creep(PREV_OF_NEW[new_menu]), K9Creep(kc.MENU[new_menu])
-  cb_prev_o = cb_prev_n = 0.0
-  for kw, i in _random_inputs(rng, 4000):
-    ro, rn = old.update(**kw), new.update(**kw)
-    assert ro == rn or (math.isnan(ro[0]) and math.isnan(rn[0]) and ro[1] == rn[1]), (i, kw)
-    assert _state(old) == _state(new) or (math.isnan(old.last or 0.0) and math.isnan(new.last or 0.0))
-    o_s, n_s = getattr(old, "sent", None), getattr(new, "sent", None)
-    assert o_s == n_s or (math.isnan(o_s or 0.0) and math.isnan(n_s or 0.0))
-    if i % 2 == 0 and old.active:
-      cu, cl = float(np.clip(0.9 + rn[0] * 0.2, 0, 1.2)), float(np.clip(0.8 + rn[0] * 0.2, 0, 1.2))
-      ju = rng.uniform(0.5, 5.0)
-      bo = old.bands(ju, kw["v_ego"], cu, cl, cb_prev_o)
-      bn = new.bands(ju, kw["v_ego"], cu, cl, cb_prev_n)
-      assert bo == bn, i
-      cb_prev_o, cb_prev_n = bo[1], bn[1]
 
 
 def test_controller_never_writes_the_menu_value(monkeypatch):
   # rewritten 2026-10-24 evening (was test_stored_values_are_not_migrated): the CarController maps the stored value through
   # MENU and never writes it; the one-time stored-value migration runs in manager_init (test_k9_stop_menu_trim.py).
-  for stored, kind in ((1, V10), (2, V10_LIGHT), (3, V11)):
+  for stored, kind in ((1, None), (2, V12K9)):
     r = rig(monkeypatch, stored)
     r.step(-0.5, LCS.pid, 3.0)
-    assert r.cc.k9_creep_mode == stored and r.cc.k9_creep.mode == kind
+    assert r.cc.k9_creep_mode == stored and (r.cc.k9_creep is None if kind is None else r.cc.k9_creep.mode == kind)
+    assert r.cc.k9_v12_orig is (stored == 1)
     assert r.params.values["K9StopMode"] == stored  # the controller never writes the menu value
     monkeypatch.undo()
 
@@ -307,7 +293,7 @@ def test_invalid_values_act_as_0(monkeypatch, old_cc, value):
 
 
 @pytest.mark.parametrize("stale", [1, 2, 3, 4, 5, 6])
-@pytest.mark.parametrize("mode", [None, 1, 2, 3])
+@pytest.mark.parametrize("mode", [None, 1, 2])  # 2026-10-25: 3 is no longer a menu value
 def test_stale_old_key_is_never_read(monkeypatch, old_cc, stale, mode):
   if mode:  # no aeef67c6 reference for 1/2/3: same bytes as a fresh K9StopMode rig of that value
     ref = gentle_sequence(rig(monkeypatch, mode))
@@ -346,11 +332,15 @@ def test_canfd_jerk_branch_ignores_creep_flag():
     cs.out = structs.CarState(vEgo=0.5, aEgo=-0.3)
     act = structs.CarControl().actuators
     act.longControlState, act.accel = LCS.stopping, -0.6
-    j.make_jerk(cp, cs, -0.6, act, structs.CarControl().hudControl, creep=creep, creep_obj=obj)
+    j.make_jerk(cp, cs, -0.6, act, structs.CarControl().hudControl, creep=creep, creep_obj=obj, v12_orig=orig)
     return j.jerk_u, j.jerk_l, j.cb_upper, j.cb_lower
+  orig = False
   assert run(True) == run(False) == run(True, K9Creep(V9))
-  assert run(True) == run(True, K9Creep(V10))
-  assert run(True) == run(True, K9Creep(V10_LIGHT)) == run(True, K9Creep(V11))
+  assert run(True) == run(True, K9Creep(V12K9))
+  orig = True  # the v12 original jerk block is in the non-CAN-FD branch only
+  assert run(False) == run(True, K9Creep(V12K9))
+  orig = False
+  assert run(False) == run(True)
 
 
 class FakeCp:
@@ -387,32 +377,32 @@ def test_tcs13_standstill_latches_stopreq(monkeypatch, mode):
   assert all(c is None or (c["StopReq"] == 1 and c["aReqValue"] <= -0.5 + 0.006) for _, c in rows)
 
 
-def test_live_mode_switch_within_half_second_and_band_does_not_jump(monkeypatch):
-  r = rig(monkeypatch, 1)  # v10: band 0
+def test_live_mode_switch_within_half_second(monkeypatch):
+  # rewritten 2026-10-25: the light-band ramp this pinned belonged to the deleted menu 2; now 1 (v12 original) <-> 2 (v12k9)
+  r = rig(monkeypatch, 1)
   for _ in range(60):
     r.step(-0.5, LCS.pid, 3.5, a_target=-0.5)
   for _ in range(60):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-  assert r.cc.k9_creep.mode == V10 and r.cc.hyundai_jerk.cb_upper == 0.0
-  r.params.values["K9StopMode"] = 2  # v10 + light shudder fix: band 0.60 below 2.5 m/s (rewritten: was the old 2)
-  seen, bands = None, []
+  assert r.cc.k9_v12_orig and r.cc.k9_creep is None and r.cc.hyundai_jerk.cb_upper == 0.0
+  r.params.values["K9StopMode"] = 2
+  seen = None
   for i in range(80):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-    bands.append(float(r.cc.hyundai_jerk.cb_upper))
-    if seen is None and r.cc.k9_creep.mode == V10_LIGHT:
+    if seen is None and r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9:
       seen = i
-  assert seen is not None and seen <= 50  # read every 0.5 s
-  assert np.all(np.abs(np.diff(bands)) <= 0.04 + 1e-9)  # ramp, no jump
-  assert bands[-1] > 0.0
-  for value in (4, 7, 8, float("nan"), -1):
-    r.params.values["K9StopMode"] = 2
-    for _ in range(51):
-      r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-    assert r.cc.k9_creep.mode == V10_LIGHT
-    r.params.values["K9StopMode"] = value
-    for _ in range(51):
-      r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-    assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
+  assert seen is not None and seen <= 50 and not r.cc.k9_v12_orig  # read every 0.5 s
+  assert r.cc.hyundai_jerk.cb_upper == 0.0
+  for value in (3, 4, 7, 8, float("nan"), -1):
+    for back in (1, 2):
+      r.params.values["K9StopMode"] = back
+      for _ in range(51):
+        r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+      assert r.cc.k9_creep_mode == back
+      r.params.values["K9StopMode"] = value
+      for _ in range(51):
+        r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+      assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0 and not r.cc.k9_v12_orig
 
 
 def test_live_mode_change_resets(monkeypatch):
@@ -421,14 +411,15 @@ def test_live_mode_change_resets(monkeypatch):
     r.step(-1.0, LCS.pid, 3.0)
   for i in range(60):
     r.step(-1.2, LCS.stopping, max(0.5 - 0.005 * i, 0.1))
-  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == V10_LIGHT and r.cc.k9_creep.last is not None
+  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9 and r.cc.k9_creep.last is not None
   r.params.values["K9StopMode"] = 1
   for _ in range(60):
     r.step(-1.2, LCS.stopping, 0.1)
-  assert r.cc.k9_creep.mode == V10 and not r.cc.k9_creep.v10_light
+  assert r.cc.k9_creep is None and r.cc.k9_v12_orig and hasattr(r.cc, "accel_feather_last")
   r.params.values["K9StopMode"] = 0
   out = [r.step(-1.2, LCS.stopping, 0.1) for _ in range(60)]
-  assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
+  assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0 and not r.cc.k9_v12_orig
+  assert not hasattr(r.cc, "accel_feather_last") and r.cc.stop_req_latched is False  # the page state starts fresh
   sent = [o for o in out[-10:] if o[1] is not None]
   assert sent and all(o[1]["StopReq"] == 1 and o[0] == pytest.approx(-1.2) for o in sent)
 
@@ -437,8 +428,8 @@ def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 3, 0, 1)
-  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [4, 4, 4]
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 2, 0, 1)
+  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [3, 3, 3]
   assert not any(p["name"] in ("K9CreepMode", "K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopMode", {PERSISTENT, INT, "0"}},' in keys and '{"K9StopModeVer", {PERSISTENT, INT}},' in keys
