@@ -305,7 +305,7 @@ def test_hud_offset_and_text():
   assert 0.1 < f.update(0.3, 0.5) < 0.3
   assert f.update(None, 0.55) is None and f.update(0.2, 0.6) == pytest.approx(0.2)
   # 2026-10-25 23:49 (보노보노): one Korean line (pin rewritten for the new wording); shown with K9LaneAssist 0 too
-  assert lane_values_text(0.123, 2, 1.42, 1.18) == "치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬"
+  assert lane_values_text(0.123, 2, 1.87, 1.63) == "치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬"
   assert lane_values_text(-0.08, 3, 1.1, None) == "치우침 좌 8cm · 좌 1.10m 우 -- · 보정 켬"
   assert lane_values_text(None, 1) == "치우침 -- · 좌 -- 우 -- · 보정 대기"
   assert lane_values_text(0.004, 0, 0.8, 0.8) == "치우침 가운데 · 좌 0.80m 우 0.80m · 보정 꺼짐"
@@ -319,15 +319,18 @@ def test_hud_offset_and_text():
 def test_hud_lane_gaps():
   import sys
   sys.path.insert(0, str(ROOT / "selfdrive/carrot/cluster"))
-  from cluster_lat_values import K9_CAR_WIDTH_M, lane_gap_text, lane_gaps_m
-  half = K9_CAR_WIDTH_M / 2
+  from cluster_lat_values import lane_gap_text, lane_gaps_m
+  # 2026-10-26 01:20 (보노보노 "콤마 기준"): car centre (comma, y = 0) <-> middle of the inner line, no car width
   gl, gr = lane_gaps_m(_md(-1.9, 1.7))
-  assert gl == pytest.approx(1.9 - half) and gr == pytest.approx(1.7 - half)
-  assert lane_gaps_m(_md(-1.9, 1.7, p2=0.3)) == (pytest.approx(1.9 - half), None)   # weak right line -> '--'
+  assert gl == pytest.approx(1.9) and gr == pytest.approx(1.7)
+  assert lane_gaps_m(_md(-1.9, 1.7, p2=0.3)) == (pytest.approx(1.9), None)   # weak right line -> '--'
   assert lane_gaps_m(_md(-1.9, 1.7, p1=0.3, p2=0.3)) == (None, None)
   assert lane_gaps_m(_md(-1.9, 1.7, s=0.5)) == (None, None)
   assert lane_gaps_m(None) == (None, None)
   assert lane_gaps_m(_md(-9.0, 1.7))[0] is None                                     # implausible gap
+  assert lane_gaps_m(_md(-3.6, 1.7))[0] is None and lane_gaps_m(_md(-3.5, 1.7))[0] == pytest.approx(3.5)
+  assert lane_gaps_m(_md(-1.9, 0.1))[1] is None and lane_gaps_m(_md(-1.9, 0.2))[1] == pytest.approx(0.2)
+  assert lane_gaps_m(_md(0.3, 1.7))[0] is None                                      # 'left' line right of the car
   assert lane_gap_text(1.42, 1.18) == "좌 1.42m 우 1.18m"
   assert lane_gap_text(None, 0.684) == "좌 -- 우 0.68m"
   assert lane_gap_text(float("nan"), None) == "좌 -- 우 --"
@@ -335,18 +338,38 @@ def test_hud_lane_gaps():
 
 def test_hud_direction_from_model_y_and_gaps_add_up():
   # modelV2 y is + right: inner lines -1.70 / +1.50 -> lane centre at y -0.10, the car (y 0) is 10 cm RIGHT of it, so the
-  # right gap is the small one; left + right + car width == lane width
+  # right gap is the small one; left + right == lane width (comma basis, 2026-10-26 01:20)
   import sys
   sys.path.insert(0, str(ROOT / "selfdrive/carrot/cluster"))
-  from cluster_lat_values import K9_CAR_WIDTH_M, lane_gaps_m, lane_offset_m, lane_values_text
+  from cluster_lat_values import lane_gaps_m, lane_offset_m, lane_values_text
   md = _md(-1.70, 1.50)
   off = lane_offset_m(md); gl, gr = lane_gaps_m(md)
   assert off == pytest.approx(0.10) and gr < gl
-  assert gl + gr + K9_CAR_WIDTH_M == pytest.approx(1.50 - (-1.70))
-  assert lane_values_text(off, 2, gl, gr) == "치우침 우 10cm · 좌 0.74m 우 0.54m · 보정 켬"
+  assert gl + gr == pytest.approx(1.50 - (-1.70))
+  assert lane_values_text(off, 2, gl, gr) == "치우침 우 10cm · 좌 1.70m 우 1.50m · 보정 켬"
   md = _md(-1.50, 1.70)
   off = lane_offset_m(md); gl, gr = lane_gaps_m(md)
-  assert lane_values_text(off, 1, gl, gr) == "치우침 좌 10cm · 좌 0.54m 우 0.74m · 보정 대기" and gl < gr
+  assert lane_values_text(off, 1, gl, gr) == "치우침 좌 10cm · 좌 1.50m 우 1.70m · 보정 대기" and gl < gr
+
+
+def test_hud_gaps_comma_basis_relations():
+  # 보노보노 2026-10-26 01:20 "콤마 기준": 좌 + 우 = lane width and (좌 - 우) / 2 = 치우침 to the right, for every clear lane
+  import sys
+  sys.path.insert(0, str(ROOT / "selfdrive/carrot/cluster"))
+  from cluster_lat_values import lane_gaps_m, lane_offset_m, lane_values_text
+  for width in (2.8, 3.2, 3.5, 3.8, 4.2):
+    for off in (-0.6, -0.3, -0.12, -0.05, 0.0, 0.03, 0.12, 0.22, 0.6):
+      y1, y2 = -width / 2 - off, width / 2 - off           # car `off` m right of the lane centre
+      md = _md(y1, y2)
+      gl, gr = lane_gaps_m(md)
+      assert gl + gr == pytest.approx(width, abs=1e-9), (width, off)
+      assert (gl - gr) / 2 == pytest.approx(off, abs=1e-9) and lane_offset_m(md) == pytest.approx((gl - gr) / 2, abs=1e-9)
+      assert (gr < gl) == (off > 0) or off == 0.0
+  # lane 3.5 m, 12 cm right -> 좌 is 24 cm more than 우
+  md = _md(-1.87, 1.63)
+  gl, gr = lane_gaps_m(md)
+  assert gl - gr == pytest.approx(0.24) and gl + gr == pytest.approx(3.5)
+  assert lane_values_text(lane_offset_m(md), 2, gl, gr) == "치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬"
 
 
 def test_hud_examples_in_the_manual_match():
@@ -373,7 +396,7 @@ def test_hud_live_source():
   src._service_receive_time = lambda n: 10.0
   off, st, acc, gl, gr = src._live_lane_values(10.1)
   assert off == pytest.approx(0.10) and st == 2 and acc == pytest.approx(-0.03)
-  assert gl == pytest.approx(1.9 - 1.915 / 2) and gr == pytest.approx(1.7 - 1.915 / 2)
+  assert gl == pytest.approx(1.9) and gr == pytest.approx(1.7)
   off, _, _, gl, gr = src._live_lane_values(11.0)  # stale model frame (> 0.5 s) -> '--'
   assert off is None and gl is None and gr is None
   sm.pop("controlsState")

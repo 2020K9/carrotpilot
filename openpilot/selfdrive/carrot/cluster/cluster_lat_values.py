@@ -20,9 +20,13 @@ Lane line above it (보노보노 2026-10-25 20:16 "라이브값 따로 못보나
   holding, otherwise the lateral accel the hold adds now (m/s^2, + = toward the right).
 
 2026-10-25 23:49 (보노보노 "hud는 수정 다 했니"): one Korean line, shown whatever K9LaneAssist is set to:
-  '치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬'
-  치우침 = OFS above (좌 / 우 + cm, '가운데' under 2 cm, '--' while the lines are weak); 좌 / 우 = gap car side (K9 width 1.915 m) <-> that inner
-  lane line at x = 0 ('--' for a weak line); 보정 = 꺼짐 (switch 0) / 대기 (on, not pushing) / 켬 (pushing now).
+  '치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬'
+  치우침 = OFS above (좌 / 우 + cm, '가운데' under 2 cm, '--' while the lines are weak); 보정 = 꺼짐 (switch 0) / 대기 (on, not
+  pushing) / 켬 (pushing now).
+  좌 / 우 (보노보노 2026-10-26 01:20 "콤마 기준"): distance from the car centre (comma device, modelV2 y = 0) to the middle of that
+  inner lane line at x = 0, i.e. -y1 / y2 ('--' for a weak line, or outside GAP_MIN_M..GAP_MAX_M). So 좌 + 우 = lane width and
+  (좌 - 우) / 2 = 치우침 to the right (before the 0.5 s low-pass): 우 12cm -> 좌 is 24 cm more than 우. Until then it was the gap
+  from the car side (minus K9 half width 0.9575 m).
 """
 from __future__ import annotations
 
@@ -138,9 +142,10 @@ class LaneOffsetFilter:
         return self.value
 
 
-K9_CAR_WIDTH_M = 1.915   # Kia K9 (RJ) body width, same constant as k9_one_lane_hold
 CENTER_BAND_M = 0.02     # |offset| below -> '치우침 가운데' (보노보노 2026-10-25 23:52)
-GAP_MIN_M, GAP_MAX_M = -0.5, 2.5
+# car centre <-> inner line [m]; real 1c9 / 1ca clear lines 0.25..2.70 m (p0.1 0.76, p99.9 2.31): keeps them all, '--' for a
+# line under the car centre or farther than one wide lane
+GAP_MIN_M, GAP_MAX_M = 0.2, 3.5
 
 
 def _line_ok(model: Any, i: int) -> float | None:
@@ -159,7 +164,8 @@ def _line_ok(model: Any, i: int) -> float | None:
 
 
 def lane_gaps_m(model: Any | None) -> tuple[float | None, float | None]:
-    """(left, right) gap [m] between the car side (K9 width) and the inner lane line at the car; None per weak line."""
+    """(left, right) distance [m] from the car centre (comma, y = 0) to the middle of the inner lane line at the car
+    (-y1, y2; left + right = lane width); None per weak line or outside GAP_MIN_M..GAP_MAX_M."""
     if model is None:
         return None, None
     try:
@@ -167,10 +173,9 @@ def lane_gaps_m(model: Any | None) -> tuple[float | None, float | None]:
             return None, None
     except Exception:
         return None, None
-    half = K9_CAR_WIDTH_M / 2.0
     y1, y2 = _line_ok(model, 1), _line_ok(model, 2)
-    left = None if y1 is None else -y1 - half
-    right = None if y2 is None else y2 - half
+    left = None if y1 is None else -y1
+    right = None if y2 is None else y2
     left = left if left is not None and GAP_MIN_M <= left <= GAP_MAX_M else None
     right = right if right is not None and GAP_MIN_M <= right <= GAP_MAX_M else None
     return left, right
@@ -196,12 +201,12 @@ def lane_assist_text(lane_state: Any) -> str:
 
 
 def lane_gap_text(left_m: float | None, right_m: float | None) -> str:
-    """'좌 1.42m 우 1.18m' (car side <-> lane line); '--' for a weak / missing line."""
+    """'좌 1.87m 우 1.63m' (car centre / comma <-> lane line); '--' for a weak / missing line."""
     f = lambda v: "--" if v is None or not math.isfinite(v) else f"{v:.2f}m"
     return f"좌 {f(left_m)} 우 {f(right_m)}"
 
 
 def lane_values_text(offset_m: float | None, lane_state: Any, gap_left_m: float | None = None,
                      gap_right_m: float | None = None) -> str:
-    """'치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬' (one line right above SR / SAD; shown whatever K9LaneAssist is)."""
+    """'치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬' (one line right above SR / SAD; shown whatever K9LaneAssist is)."""
     return f"{lane_offset_text(offset_m)} · {lane_gap_text(gap_left_m, gap_right_m)} · {lane_assist_text(lane_state)}"

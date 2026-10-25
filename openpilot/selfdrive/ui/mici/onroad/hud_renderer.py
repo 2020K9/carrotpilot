@@ -657,7 +657,7 @@ class HudRenderer(Widget):
       draw_text_ui_style(road_name, info_x, road_y, side_font, rl.Color(255, 255, 255, 210), font=self._font_display, border_width=1.0, shadow_offset=8.0, align="left_top", y_offset=0.0)
 
     # K9LaneAssist live values (보노보노 2026-10-25, display only): two lines right under the block above (whose place is
-    # unchanged) - '치우침 우 12cm · 보정 켬' / '좌 1.42m 우 1.18m' (the external HUD line split in two for this narrow screen),
+    # unchanged) - '치우침 우 12cm · 보정 켬' / '좌 1.87m 우 1.63m' (the external HUD line split in two for this narrow screen),
     # '--' while a line is weak; shown whatever K9LaneAssist is set to.
     try:
       lane_lines = self._k9_lane_lines()

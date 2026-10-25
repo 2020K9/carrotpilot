@@ -371,7 +371,7 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
 LAT_VALUES_FONT_SIZE = 17.0
 LAT_VALUES_COLOR = (214, 224, 231, 255)
-# K9 lane line (보노보노 2026-10-25 23:49): one Korean line '치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬', same right edge,
+# K9 lane line (보노보노 2026-10-25 23:49): one Korean line '치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬', same right edge,
 # right above SR / SAD (whose place is unchanged, 4a44e564).
 LANE_VALUES_RIGHT_X = LAT_VALUES_RIGHT_X
 LANE_VALUES_CENTER_Y = LAT_VALUES_CENTER_Y - 20.0
