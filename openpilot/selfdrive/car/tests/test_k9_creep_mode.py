@@ -2,6 +2,8 @@
 (kind V12K9); both are tested in test_k9_stop_v12.py. Other values act as 0.
 2026-10-26 (보노보노 "v12그냥놓아두고 v13추가하는걸로"): 3 = v13 original (test_k9_stop_v13.py). Menu-set pins only: MODES (1, 2, 3),
 INVALID and the live-switch invalid list without 3, settings max 3 / 4 options.
+Pin updated 2026-10-25 evening (brake_v12k9_live_fix, menu 2 ComfortBand): test_live_mode_switch_within_half_second expects the
+original band (0.9 + 0.2 * accel) after the switch to 2 at 1.0 m/s instead of 0.
 Rewritten 2026-10-25 (보노보노 00:36 "브레이크 앞전꺼는 다 별로니 지워" / "v12 원본 ... v12k9"; v10, v10 + light shudder fix and v11
 removed with their kinds 2, 6, 7 and their own test files test_k9_stop_v10*.py / test_k9_stop_v11.py / test_k9_stop_menu_trim.py):
 menu-set pins only (MODES/MENU/KINDS/V12_ORIG_MENU, bad kinds, INVALID with 3, max 2 / 3 options); ALL_KINDS = (V9,) (kind 8
@@ -390,11 +392,12 @@ def test_live_mode_switch_within_half_second(monkeypatch):
   r.params.values["K9StopMode"] = 2
   seen = None
   for i in range(80):
-    r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
+    acc, _ = r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
     if seen is None and r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9:
       seen = i
   assert seen is not None and seen <= 50 and not r.cc.k9_v12_orig  # read every 0.5 s
-  assert r.cc.hyundai_jerk.cb_upper == 0.0
+  # pin updated 2026-10-25 brake_v12k9_live_fix: menu 2 now sends the original ComfortBand below 2.5 m/s (was 0)
+  assert r.cc.hyundai_jerk.cb_upper == pytest.approx(float(np.clip(0.9 + 0.2 * acc, 0, 1.2)))
   for value in (4, 7, 8, float("nan"), -1):  # 3 = v13 original since 2026-10-26
     for back in (1, 2):
       r.params.values["K9StopMode"] = back

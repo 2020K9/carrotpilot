@@ -55,7 +55,20 @@ limit and jerk profile. Against v9:
   (f9cd0960 limited the fall everywhere below 1.0 m/s and held the release always; in the closed-loop sim the held brake
   slowed the car early and the stop phase then braked lighter: weaker-than-v9 frames 46367 vs v11 43370.)
 - jerk (applied non-CAN-FD frames): below V12_JERK_U_SPEED (1.15 m/s) jerk_u = max(jerk_u, page v12 7-point table) and
-  jerk_l = max(jerk_l, interp(v, [0.55, 0.75, 0.95, 1.15], [1.0, 1.3, 1.3, 1.0])) (jerk_l_floor()). ComfortBand 0/0.
+  jerk_l = max(jerk_l, interp(v, [0.55, 0.75, 0.95, 1.15], [1.0, 1.3, 1.3, 1.0])) (jerk_l_floor()).
+- ComfortBand (K9 fix 2026-10-25 brake_v12k9_live_fix): the original band of the frame (0.9 / 0.8 + 0.2 * accel, the same
+  as menu 0) at or below V12K9_BAND_FULL_SPEED (2.5 m/s), scaled linearly to 0 at V12K9_BAND_ZERO_SPEED (3.0 m/s), 0 at or
+  above it as before (the page sends 0 everywhere). Once StopReq is latched (standstill, lead within 3.0 m, aTarget <= -1.0,
+  weak decel) it ramps back to 0 by V12K9_BAND_LATCH_STEP (0.04) per call, so the latch phase is the old menu 2 again.
+  Why: on the car (2026-10-25) the three feathered band-0 stops of menus 1 and 2 shuddered below 7 km/h (17:32:41 env
+  0.087, 6-7 Hz share 0.295; 17:39:05 env 0.059; 17:43:10 env 0.092, 0.285), the band-on stops of menu 0 did not (env
+  0.019-0.040); in the 10/21-23 logs the same v9 logic shuddered 0.086 with band 0 and 0.019 with the band (aBasis 5-9 Hz),
+  and the band only mattered below 9 km/h. The band changes no accel / StopReq / jerk value; the stop jolts of those logs
+  followed a StopReq sent while rolling (lead latch, base stopping), not the band. Whether the band itself changes the
+  decel is not separable from 0 in the logs (-0.056 +- 0.128 m/s^2 per unit band, 28 stops). Closed-loop sim (1440): with
+  b = 0 identical stops; b = -0.056 stop distance -0.19 m median, lead overlaps 33 -> 26; b = +0.03 +0.10 m median (max
+  +0.48 m), overlaps 5 -> 9, not stopped within 3 s 96 -> 132 (without the latch ramp: 5 -> 18 and 141). Log estimate and
+  sim only, not car-verified.
 Page v12 parts NOT taken on the K9 (2026-10-25 closed-loop replay, 20 K9 stops x 72 conditions, sim only):
 - the page pid creep table [0.22, 0.50, 0.92, 1.45] -> [-0.25, -0.22, -0.18, 0.0] and the PID over-braking blend (up to 30 %
   toward aTarget - 0.14 at 1.05 m/s, 0 at 1.50 m/s): both brake less, target the Niro EV regen -> hydraulic hand-over at 3.25
@@ -131,6 +144,10 @@ V12_UP_LIM_SPEED = 0.52  # m/s: the scheduled release limit above it only (the p
 V12_JERK_U_SPEED = 1.15  # m/s
 V12_JERK_U_BP, V12_JERK_U_V = [0.05, 0.08, 0.14, 0.38, 0.60, 0.92, 1.15], [0.7, 0.9, 1.6, 1.6, 1.3, 1.2, 0.8]
 V12_JERK_L_BP, V12_JERK_L_V = [0.55, 0.75, 0.95, 1.15], [1.0, 1.3, 1.3, 1.0]
+# v12k9 ComfortBand (brake_v12k9_live_fix): original band at or below FULL, linear to 0 at ZERO, 0 above (as the page)
+V12K9_BAND_FULL_SPEED = 2.5  # m/s (9 km/h: the logged band effect on the 5-9 Hz shudder was below it)
+V12K9_BAND_ZERO_SPEED = 3.0  # m/s
+V12K9_BAND_LATCH_STEP = 0.04  # per make_jerk call (50 Hz): band ramp to 0 once StopReq is latched (0.8 -> 0 in 0.4 s)
 
 
 def k9_creep_applies(CP) -> bool:
@@ -155,7 +172,7 @@ class K9Creep:
   def __init__(self, mode: int = V9):
     assert mode in KINDS, mode
     self.mode = mode
-    self.v12 = mode == V12K9  # kind 8: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band 0)
+    self.v12 = mode == V12K9  # kind 8: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
     self.reset()
 
   def reset(self):
@@ -274,10 +291,19 @@ class K9Creep:
   def bands(self, jerk_u: float, v_ego: float, cb_upper: float, cb_lower: float, cb_prev: float,
             cb_prev_lower=None):
     """Applied non-CAN-FD, non-off frames: (jerk_u, cb_upper, cb_lower) to send. cb_upper/lower are the original band of
-    this frame, cb_prev / cb_prev_lower the band sent on the previous make_jerk call (unused since the light band of the
-    deleted kind 6 is gone; kept in the signature for the caller)."""
-    if self.v12:  # kind 8: page v12 jerk_u profile below 1.15 m/s, ComfortBand 0; jerk_l: jerk_l_floor()
+    this frame, cb_prev / cb_prev_lower the band sent on the previous make_jerk call (kind 8: the latch ramp; cb_prev_lower
+    None = cb_prev - 0.1)."""
+    if self.v12:  # kind 8: page v12 jerk_u profile below 1.15 m/s; jerk_l: jerk_l_floor()
       if v_ego < V12_JERK_U_SPEED:
         jerk_u = max(jerk_u, float(np.interp(v_ego, V12_JERK_U_BP, V12_JERK_U_V)))
-      return jerk_u, 0.0, 0.0
+      if not v_ego < V12K9_BAND_ZERO_SPEED:  # as the page: band 0 (bit for bit the old kind 8 here; NaN too)
+        return jerk_u, 0.0, 0.0
+      # K9 (brake_v12k9_live_fix): the original band below 3.0 m/s (full at or below 2.5 m/s) against the 6-7 Hz shudder
+      w = float(np.interp(v_ego, [V12K9_BAND_FULL_SPEED, V12K9_BAND_ZERO_SPEED], [1.0, 0.0]))
+      cu, cl = float(cb_upper) * w, float(cb_lower) * w
+      if self.latched:  # StopReq latched: back to band 0 as before, ramped down V12K9_BAND_LATCH_STEP per call
+        pu = float(cb_prev)
+        pl = max(pu - 0.1, 0.0) if cb_prev_lower is None else float(cb_prev_lower)
+        cu, cl = max(0.0, min(cu, pu - V12K9_BAND_LATCH_STEP)), max(0.0, min(cl, pl - V12K9_BAND_LATCH_STEP))
+      return jerk_u, cu, cl
     return K9Creep.jerk_bands(jerk_u, v_ego)  # kind 1: exactly the v9 band (0)

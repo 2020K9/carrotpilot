@@ -5,6 +5,8 @@ Model-only harness with synthetic inputs: source logic and SCC12/SCC14 encoding,
 2026-10-26 (보노보노 23:14 "v12그냥놓아두고 v13추가하는걸로"): 3 is now the v13 original (test_k9_stop_v13.py). Menu-set pins only:
 MODES (1, 2, 3), settings max 3, 3 left the "other values act as 0" list (4, 7, 99, -1 stay), and the diff-vs-b6696b37
 check also accepts the v13 page lines (their own pin is in test_k9_stop_v13.py).
+Pin updated 2026-10-25 evening (brake_v12k9_live_fix): test_v12k9_jerk_and_band expects the menu 2 ComfortBand (original band at
+or below 2.5 m/s, linear to 0 at 3.0 m/s, 0 above) instead of 0 everywhere.
 """
 import hashlib
 import math
@@ -214,11 +216,14 @@ def test_v12k9_pid_rate_limit():
 
 
 def test_v12k9_jerk_and_band():
+  # pin updated 2026-10-25 brake_v12k9_live_fix: the band is the original one at or below 2.5 m/s, linear to 0 at 3.0 m/s,
+  # 0 at or above 3.0 m/s (was 0 everywhere); the jerk values are unchanged
   c = K9Creep(V12K9)
-  for v in (0.05, 0.1, 0.3, 0.6, 0.9, 1.1, 1.2, 2.0):
+  for v in (0.05, 0.1, 0.3, 0.6, 0.9, 1.1, 1.2, 2.0, 2.5, 2.75, 3.0, 3.5, 8.0):
     ju, cu, cl = c.bands(0.5, v, 0.9, 0.8, 0.0, 0.0)
     want = max(0.5, float(np.interp(v, kc.V12_JERK_U_BP, kc.V12_JERK_U_V))) if v < 1.15 else 0.5
-    assert ju == pytest.approx(want) and cu == 0.0 and cl == 0.0
+    w = float(np.interp(v, [2.5, 3.0], [1.0, 0.0]))
+    assert ju == pytest.approx(want) and cu == pytest.approx(0.9 * w) and cl == pytest.approx(0.8 * w)
     jl = c.jerk_l_floor(1.0, v)
     assert jl == pytest.approx(max(1.0, float(np.interp(v, kc.V12_JERK_L_BP, kc.V12_JERK_L_V))) if v < 1.15 else 1.0)
   assert kc.V12_JERK_U_V == [0.7, 0.9, 1.6, 1.6, 1.3, 1.2, 0.8] and kc.V12_JERK_L_V == [1.0, 1.3, 1.3, 1.0]
