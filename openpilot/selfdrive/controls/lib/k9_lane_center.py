@@ -6,7 +6,8 @@ weakly (fit dc = road + c0 * offset + h * heading: c0 ~ -1.0e-3 1/m per m, h ~ -
 the chain (model plan, angle-offset / roll term of the vehicle model while paramsd re-learns the fast offset) of 1e-4 1/m
 therefore leaves the car 8-10 cm off centre, 2e-4 -> 15-20 cm (17:50-17:52 1ca, 18:17 1ca: +15..+22 cm right for minutes,
 the model path at 1 s / 2 s stayed at the same offset). This module adds the missing centre pull from the lane lines.
-Gain: K_C = 2e-3 1/m per m (2x the measured model pull), so P alone cuts a bias offset to ~1/3 and the slow integral removes the rest.
+Gain: K_C = 2x the measured model pull (2.7e-3 1/m per m below 36 km/h -> 1.2e-3 above 72 km/h), so P alone cuts a bias offset
+to ~1/3; a slow, leaky integral (learning only while the car is quasi-steady) removes the rest.
 
 Param K9LaneCenter (int, default 0):
   0 (or anything else): off - controlsd.py behaves exactly as before (this module returns 0.0, no state kept).
@@ -38,7 +39,12 @@ A_TURN0, A_TURN1, K_TURN = 0.8, 1.5, 0.006
 DB = 0.05                    # dead band [m]: natural offsets below this are left to the model
 E_OFF = 0.6                  # |offset| above = implausible (lane change, wrong lines) -> off
 S_MAX = 0.4
-K_C, ZETA, KI, I_MAX = 2.0e-3, 0.9, 0.10, 0.3   # centre gain in curvature per m of offset (2x the model's own c0 ~1e-3)
+# centre gain in curvature per m of offset = 2x the laneless model's own pull measured on 2026-10-25 (c0 1.34e-3 below 50 km/h,
+# 0.60e-3 above): constant curvature gain gives too much lateral accel at highway speed (closed loop overshoot at 80-90 km/h)
+K_C_BP, K_C_V = [10.0, 20.0], [2.7e-3, 1.2e-3]
+ZETA, KI, I_MAX = 0.9, 0.05, 0.25
+I_RATE = 0.05                # the integral only learns while the car is quasi-steady (|d offset/dt| below) [m/s]
+TAU_LEAK = 30.0              # integral leak while holding [s]: it represents a slow bias, not a transient swing
 A_MAX, J_MAX = 0.20, 0.15
 RAMP_T, RAMP_OUT = 1.0, 1.0
 TAU_E, TAU_RATE, TAU_W, TAU_I = 0.5, 0.3, 1.0, 5.0
@@ -152,14 +158,16 @@ class LaneCenter:
       e = self.e_f
       s = float(np.sign(e)) * max(abs(e) - DB, 0.0)
       s = float(np.clip(s, -S_MAX, S_MAX))
-      self.integ = float(np.clip(self.integ + KI * s * DT * gate, -I_MAX, I_MAX))
+      if abs(self.u_f) < I_RATE:
+        self.integ += KI * s * DT * gate
+      self.integ = float(np.clip(self.integ * (1.0 - DT / TAU_LEAK), -I_MAX, I_MAX))
       u = self.u_f                 # car lateral velocity relative to the lane centre (right +)
       if u * e < 0.0:              # moving toward the centre: damp only the hold's own share of that velocity
         u = float(np.sign(u)) * min(abs(u), max(self.hv * float(np.sign(u)), 0.0))
       elif u * e > 0.0:            # moving away: the offset term already pulls back
         u = 0.0
       # openpilot curvature and model y are right-positive (controlsd: curvature = -VM.calc_curvature)
-      omega = max(v, V_MIN) * np.sqrt(K_C)   # pull frequency [rad/s]: speed-independent curvature gain K_C
+      omega = max(v, V_MIN) * np.sqrt(float(np.interp(v, K_C_BP, K_C_V)))   # pull frequency [rad/s] from the curvature gain
       self.k_raw = -(omega ** 2 * (s + self.integ) + 2.0 * ZETA * omega * u) / v2
       self.w = min(self.w + DT / RAMP_T, 1.0)
     else:
