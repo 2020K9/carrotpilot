@@ -62,7 +62,7 @@ LP_PARENT = load_module(REF / "lane_planner_2.parent.py.ref", "k9_ref_lp_parent"
 LP_F1 = load_module(REF / "lane_planner_2.F1.py.ref", "k9_ref_lp_F1")
 # 2026-10-25 23:38 (보노보노 "1초로 해라"): F1 times shortened in place - merge 2 -> 1 s, longest merge 4 -> 2 s, hand-over cap
 # at most 2 -> 1 s (entry jerk 2.5 unchanged). The frozen F1 reference keeps its code; only these three numbers follow.
-F1_TIMES = {"LANE_CONVERGE_T": 1.0, "LANE_CONVERGE_T_MAX": 2.0}
+F1_TIMES = {"LANE_CONVERGE_T": 1.0, "LANE_CONVERGE_T_MAX": 2.0, "LANE_CONVERGE_T_EREF": 0.075}   # 2026-10-26 audit D3: t_eref 0.3 -> 0.075
 F1_ENTRY_T = 1.0
 for _k, _v in F1_TIMES.items():
   setattr(LP_F1, _k, _v)
@@ -325,11 +325,11 @@ def test_controls_switch_resets(seed):
 def test_profile_table_and_mode_reader():
   assert set(K9.K9_LANE_FIX_PROFILES) == {1}
   f1 = K9.K9_LANE_FIX_PROFILES[1]
-  assert f1 == {"name": "F1", "converge_mode": "smootherstep", "converge_t": 1.0, "ramp_in_t": 0.5, "t_eref": 0.3, "t_max": 2.0,
+  assert f1 == {"name": "F1", "converge_mode": "smootherstep", "converge_t": 1.0, "ramp_in_t": 0.5, "t_eref": 0.075, "t_max": 2.0,
                 "t_kref": 0.003, "entry_jerk": 2.5, "entry_t": 1.0}   # 2026-10-25 23:38: times 2 / 4 / 2 -> 1 / 2 / 1 s
   # the same constants as the frozen F1 files
   assert (LP_F1.LANE_CONVERGE_MODE, LP_F1.LANE_CONVERGE_T, LP_F1.LANE_RAMP_IN_T, LP_F1.LANE_CONVERGE_T_EREF,
-          LP_F1.LANE_CONVERGE_T_MAX, LP_F1.LANE_CONVERGE_T_KREF) == ("smootherstep", 1.0, 0.5, 0.3, 2.0, 0.003)
+          LP_F1.LANE_CONVERGE_T_MAX, LP_F1.LANE_CONVERGE_T_KREF) == ("smootherstep", 1.0, 0.5, 0.075, 2.0, 0.003)
   cd_src = (REF / "controlsd.F1.py.ref").read_text(encoding="utf8")
   assert "LANELESS_ENTRY_JERK = 2.5" in cd_src and "LANELESS_ENTRY_T = 2.0" in cd_src and "LANELESS_LANE_ENTRY_JERK = 0.0" in cd_src
   for value, expect in ((0, 0), (1, 1), (2, 0), (-1, 0), (99, 0)):

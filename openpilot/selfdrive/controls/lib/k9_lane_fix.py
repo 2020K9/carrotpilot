@@ -26,7 +26,7 @@ K9_LANE_FIX_PROFILES = {
     "converge_mode": "smootherstep",
     "converge_t": 1.0,      # 2026-10-25 23:38 보노보노 "1초로 해라" (was 2.0)
     "ramp_in_t": 0.5,
-    "t_eref": 0.3,
+    "t_eref": 0.075,       # 2026-10-26 audit D3: with converge_t 1 s keeps the 2 s peak merge accel (5.77 e0 / T^2) for |e0| > 7.5 cm
     "t_max": 2.0,           # was 4.0
     "t_kref": 0.003,
     # controlsd.py (lane-mode -> laneless command hand-over)
