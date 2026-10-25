@@ -161,8 +161,8 @@ def test_lane_fix_on_lr_view_output_equals_frozen_references(seed, lr_view):
     assert msgs == [modelv2_bytes(f['outputs']) for f in frames]  # K9LRView 0: modelV2 byte-identical
   else:
     assert msgs != raw  # the view really changed the lanes
-  off = run_planner(make_lp(LP_NEW, params(K9LaneFix=0)), frames, msgs)
-  on = run_planner(make_lp(LP_NEW, params(K9LaneFix=1)), frames, msgs)
+  off = run_planner(make_lp(LP_NEW, params(K9LaneAssist=0)), frames, msgs)
+  on = run_planner(make_lp(LP_NEW, params(K9LaneAssist=1)), frames, msgs)
   assert same(off, run_planner(make_lp(LP_PARENT, params()), frames, msgs))
   assert same(on, run_planner(make_lp(LP_F1, params()), frames, msgs))
   assert sum(a for _, a in on) > 50  # lane mode was really used
@@ -174,9 +174,9 @@ def test_lane_fix_on_lr_view_output_equals_frozen_references(seed, lr_view):
 def test_both_on_differs_from_each_alone_and_keeps_raw_stds(lr_view):
   frames = model_frames(7)
   msgs, raw = published(frames, lr_view), published(frames, 0)
-  both = run_planner(make_lp(LP_NEW, params(K9LaneFix=1)), frames, msgs)
-  fix_only = run_planner(make_lp(LP_NEW, params(K9LaneFix=1)), frames, raw)
-  view_only = run_planner(make_lp(LP_NEW, params(K9LaneFix=0)), frames, msgs)
+  both = run_planner(make_lp(LP_NEW, params(K9LaneAssist=1)), frames, msgs)
+  fix_only = run_planner(make_lp(LP_NEW, params(K9LaneAssist=1)), frames, raw)
+  view_only = run_planner(make_lp(LP_NEW, params(K9LaneAssist=0)), frames, msgs)
   assert not same(both, fix_only) and not same(both, view_only)
   # K9LRView changes lane-line y / probs only; the stds lane_planner_2 uses for lane weighting stay the raw ones
   for a, b in zip(msgs, raw, strict=True):

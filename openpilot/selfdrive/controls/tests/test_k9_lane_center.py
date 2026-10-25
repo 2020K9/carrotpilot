@@ -105,7 +105,7 @@ def test_closed_loop_no_overshoot_from_offset():
 
 
 def test_off_in_lane_change_pressed_lane_mode_low_speed_turn():
-  for kw in (dict(lane_change=True), dict(laneless=False), dict(pressed=True), dict(v=3.0), dict(model_curv=0.01),
+  for kw in (dict(lane_change=True), dict(laneless=False), dict(pressed=True), dict(v=0.2), dict(model_curv=0.01),
              dict(model_curv=1.6 / 400.0)):
     out, _ = run(H.LaneCenter(), world(), 4.0, y0=0.3, **kw)
     assert np.max(np.abs(out)) < 1e-12, kw

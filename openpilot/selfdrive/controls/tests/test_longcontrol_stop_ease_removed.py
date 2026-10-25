@@ -146,7 +146,8 @@ def test_catalog_param_keys_and_experimental_menu_removed():
   # EXPERIMENTAL 묶음의 옛 항목(K9 약제동 3개·LongMpcJerkCost)은 지워졌고, 지금은 화면 이름 "실행중" 아래
   # K9StopMode(옛 K9CreepMode, 2026-10-22 교체)와 K9LaneFix·K9LRView가 있다(옛 K9StopTaper 항목은 2026-10-22 삭제됨).
   experimental = [x for x in entries if x.get("id") == "EXPERIMENTAL"]
-  assert len(experimental) == 1 and experimental[0]["params"] == ["K9StopMode", "K9LaneFix", "K9LRView", "K9ExtHud", "K9MeterSeason", "K9OneLaneHold", "K9LaneCenter"]
+  # 2026-10-25 차선 실험 메뉴 통합: K9LaneFix·K9LRView·K9OneLaneHold·K9LaneCenter -> K9LaneAssist + K9LaneCenterGain
+  assert len(experimental) == 1 and experimental[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "K9ExtHud", "K9MeterSeason"]
   assert "LongMpcJerkCost" not in text
 
 

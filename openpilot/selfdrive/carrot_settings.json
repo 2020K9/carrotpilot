@@ -395,12 +395,10 @@
           "zh": "试验中",
           "params": [
             "K9StopMode",
-            "K9LaneFix",
-            "K9LRView",
+            "K9LaneAssist",
+            "K9LaneCenterGain",
             "K9ExtHud",
-            "K9MeterSeason",
-            "K9OneLaneHold",
-            "K9LaneCenter"
+            "K9MeterSeason"
           ]
         }
       ]
@@ -656,13 +654,13 @@
       "group": "조향일반",
       "name": "PathOffset",
       "title": "차선치우침 좌우보정(0)",
-      "descr": "(레인모드)\n (-)좌측 / (+)우측",
+      "descr": "(레인모드) 경로를 좌우로 옮김.\n K9 차선 보조(1 켬) 레인리스: 차로 가운데 유지 목표를 이만큼 옮김(±30cm까지)\n (-)좌측 / (+)우측",
       "egroup": "LAT",
       "etitle": "Lane Deviation Left/Right Correction(0)",
-      "edescr": "LaneMode only — (-)Left / (+)Right",
+      "edescr": "LaneMode: shifts the path. K9 Lane Assist (1 On), laneless: moves the lane-centre hold target by this much (up to ±30 cm) — (-)Left / (+)Right",
       "cgroup": "转向",
       "ctitle": "车道偏移左右修正(0)",
-      "cdescr": "仅限车道模式 — (-)左侧 / (+)右侧",
+      "cdescr": "车道模式：左右平移路径。K9车道辅助（1 开启）无车道线模式：把车道中央保持目标移动此值（最多±30cm）— (-)左侧 / (+)右侧",
       "min": -150,
       "max": 150,
       "default": 0,
@@ -3424,15 +3422,15 @@
     },
     {
       "group": "레인모드",
-      "name": "K9LaneFix",
-      "title": "K9 레인모드 쏠림 수정안 선택 (실험)",
-      "descr": "레인모드(차선 따라가기)를 켜고 끌 때 핸들이 휙 도는 것을 줄임. 0 끔(기존). 1 F1: 켜질 때 지금 위치에서 차선 쪽으로 부드럽게 들어가고, 꺼질 때 핸들을 천천히 돌림. 실차 미확인.",
+      "name": "K9LaneAssist",
+      "title": "K9 차선 보조 (실험)",
+      "descr": "K9 차선 실험 4개(옛 LaneFix·LRView·OneLaneHold·LaneCenter)를 하나로 합침. 0 끔(기존). 1 켬: 차선 흔들림 줄이기 + 차로 가운데 유지(1km/h부터) + 레인모드 전환 부드럽게. 강도·좌우는 아래 값. 실차 미확인.",
       "egroup": "LANE",
-      "etitle": "K9 Lane-Mode Drift Fix Selector (Trial)",
-      "edescr": "Smoother steering when lane mode (following lane lines) turns on or off. 0 Off (existing). 1 F1: eases from where the car is into the lane path when it turns on, and turns the wheel gently when it turns off. Not tested in the car.",
+      "etitle": "K9 Lane Assist (Trial)",
+      "edescr": "Turns the 4 K9 lane trials (old K9LaneFix, K9LRView, K9OneLaneHold, K9LaneCenter) on/off at once. 0 Off (existing). 1 On: steadier lane lines + lane-centre hold (from 1 km/h) + smoother lane-mode switching. Strength / left-right position: the values below and PathOffset. Not tested in the car.",
       "cgroup": "转向",
-      "ctitle": "K9 车道模式偏移修正选择（试验）",
-      "cdescr": "车道模式（沿车道线行驶）开关时让转向更平顺。0 关闭（现有）。1 F1：开启时从当前位置平滑并入车道，关闭时方向盘缓慢回转。未经实车确认。",
+      "ctitle": "K9 车道辅助（试验）",
+      "cdescr": "一次开关4项K9车道试验（原 K9LaneFix、K9LRView、K9OneLaneHold、K9LaneCenter）。0 关闭（现有）。1 开启：车道线去抖 + 保持车道中央（1km/h起）+ 车道模式切换平顺。强度和左右位置用下面的值和PathOffset调节。未经实车确认。",
       "min": 0,
       "max": 1,
       "default": 0,
@@ -3441,50 +3439,35 @@
       "options": {
         "ko": [
           "0 끔(기존 그대로)",
-          "1 F1(부드럽게 전환)"
+          "1 켬(차선 보조 전부)"
         ],
         "en": [
           "0 Off (existing)",
-          "1 F1 (smooth switch)"
+          "1 On (all lane assist)"
         ],
         "zh": [
           "0 关闭（现有）",
-          "1 F1（平顺切换）"
+          "1 开启（全部车道辅助）"
         ]
       },
       "risk": "high"
     },
     {
       "group": "레인모드",
-      "name": "K9LRView",
-      "title": "K9 차선 인식 후처리 선택 (실험)",
-      "descr": "차선 인식 흔들림 줄이기. 0 끔(기존). 1 켬: 차선 위치를 매끄럽게 다듬어 깜빡임을 줄임(커브에서 아주 조금 늦게 따라감). 실차 미확인.",
+      "name": "K9LaneCenterGain",
+      "title": "중앙 보정 강도 (100)%",
+      "descr": "K9 차선 보조(1 켬)일 때 차로 가운데로 당기는 힘. 100 = 검증한 기본 세기, 0 = 당기지 않음, 200 = 2배(최대 횡가속·변화율 한도는 그대로). 주행 중 바꾸면 0.1초 안에 반영. 실차 미확인.",
       "egroup": "LANE",
-      "etitle": "K9 Lane-Line Post-Processing Selector (Trial)",
-      "edescr": "Steadier lane-line detection. 0 Off (existing). 1 On: smooths the lane lines so they flicker less (follows curves a touch later). Not tested in the car.",
+      "etitle": "Centre Hold Strength (100)%",
+      "edescr": "How hard K9 Lane Assist (1 On) pulls toward the lane centre. 100 = validated default, 0 = no pull, 200 = twice (the lateral-accel and rate limits stay). Applied within 0.1 s while driving. Not tested in the car.",
       "cgroup": "转向",
-      "ctitle": "K9 车道线后处理选择（试验）",
-      "cdescr": "减少车道线识别抖动。0 关闭（现有）。1 开启：平滑车道线位置，减少闪烁（入弯时稍有滞后）。未经实车确认。",
+      "ctitle": "中央修正强度 (100)%",
+      "cdescr": "K9车道辅助（1 开启）时拉回车道中央的力度。100 = 验证过的默认力度，0 = 不拉，200 = 两倍（最大横向加速度和变化率限制不变）。行驶中修改0.1秒内生效。未经实车确认。",
       "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1,
-      "control": "select",
-      "options": {
-        "ko": [
-          "0 끔(기존 그대로)",
-          "1 켬(차선 추적)"
-        ],
-        "en": [
-          "0 Off (existing)",
-          "1 On (lane-line tracker)"
-        ],
-        "zh": [
-          "0 关闭（现有）",
-          "1 开启（车道线跟踪）"
-        ]
-      },
-      "risk": "high"
+      "max": 200,
+      "default": 100,
+      "unit": 10,
+      "display_unit": "percent"
     },
     {
       "group": "외부 HUD",
@@ -3559,70 +3542,6 @@
           "4 冬"
         ]
       }
-    },
-    {
-      "group": "레인모드",
-      "name": "K9OneLaneHold",
-      "title": "한쪽 차선 간격 유지 (실험)",
-      "descr": "한쪽 차선만 보일 때도 차로 가운데를 지키게 도움. 0 끔(기존). 1 켬: 양쪽 차선이 보일 때 간격을 기억해 두고, 한쪽만 보이면 그 간격대로 살짝 조향함. 레인리스·29km/h 이상에서만, 핸들·깜빡이를 쓰면 멈춤. 실차 미확인.",
-      "egroup": "LANE",
-      "etitle": "One-Lane-Line Gap Hold (Trial)",
-      "edescr": "Helps keep the lane centre when only one lane line is visible. 0 Off (existing). 1 On: remembers the gaps while both lines are visible and steers gently to keep that gap to the one line left. Laneless only, above 29 km/h; stops when you steer or signal. Not tested in the car.",
-      "cgroup": "转向",
-      "ctitle": "单侧车道线间距保持（试验）",
-      "cdescr": "只看到一侧车道线时也帮助保持车道中央。0 关闭（现有）。1 开启：两侧车道线可见时记住间距，只剩一侧时轻微转向保持该间距。仅无车道线模式、29km/h以上；转方向盘或打转向灯即停止。未经实车确认。",
-      "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1,
-      "control": "select",
-      "options": {
-        "ko": [
-          "0 끔(기존 그대로)",
-          "1 켬(한쪽 차선 간격 유지)"
-        ],
-        "en": [
-          "0 Off (existing)",
-          "1 On (one-line gap hold)"
-        ],
-        "zh": [
-          "0 关闭（现有）",
-          "1 开启（单侧车道线间距保持）"
-        ]
-      },
-      "risk": "high"
-    },
-    {
-      "group": "레인모드",
-      "name": "K9LaneCenter",
-      "title": "차로 가운데 유지 (실험)",
-      "descr": "양쪽 차선이 다 보이는데 차가 한쪽(예: 오른쪽)으로 붙어 가면 가운데로 살짝 당김. 0 끔(기존). 1 켬: 차로 가운데에서 5cm 넘게 벗어나 있으면 조향 곡률을 조금 더해 가운데로 돌아오게 함(횡가속 0.2m/s² 이하, 1초 램프). 레인리스·11km/h 이상·양쪽 차선 또렷할 때만, 핸들·깜빡이·차선변경·급커브·합류/분기에서는 멈춤. 실차 미확인.",
-      "egroup": "LANE",
-      "etitle": "Lane Centre Hold (Trial)",
-      "edescr": "Gently pulls the car back to the lane centre when both lane lines are visible but the car keeps driving off to one side (e.g. right). 0 Off (existing). 1 On: more than 5 cm off the centre adds a small steering curvature back to the centre (lateral accel 0.2 m/s^2 or less, 1 s ramp). Laneless only, above 11 km/h, both lines clear; stops when you steer, signal, change lanes, in sharp turns and at merges/splits. Not tested in the car.",
-      "cgroup": "转向",
-      "ctitle": "保持车道中央（试验）",
-      "cdescr": "两侧车道线都可见但车辆一直偏向一侧（例如右侧）时，轻轻拉回车道中央。0 关闭（现有）。1 开启：偏离中央超过5cm时加一点转向曲率回到中央（横向加速度不超过0.2m/s²，1秒渐变）。仅无车道线模式、11km/h以上、两侧车道线清晰时；转方向盘、打转向灯、变道、急弯、合流/分流时停止。未经实车确认。",
-      "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1,
-      "control": "select",
-      "options": {
-        "ko": [
-          "0 끔(기존 그대로)",
-          "1 켬(차로 가운데 유지)"
-        ],
-        "en": [
-          "0 Off (existing)",
-          "1 On (lane centre hold)"
-        ],
-        "zh": [
-          "0 关闭（现有）",
-          "1 开启（保持车道中央）"
-        ]
-      },
-      "risk": "high"
     },
     {
       "group": "가속설정",

@@ -267,14 +267,17 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"StoppingAccel", {PERSISTENT, INT, "-50"}},
     {"K9StopMode", {PERSISTENT, INT, "0"}},
     {"K9StopModeVer", {PERSISTENT, INT}},  // K9StopMode menu version marker (one-time migration, k9_stop_mode_migration.py)
-    {"K9LaneFix", {PERSISTENT, INT, "0"}},
-    {"K9LRView", {PERSISTENT, INT, "0"}},
+    {"K9LaneFix", {PERSISTENT, INT, "0"}},  // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
+    {"K9LRView", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9ExtHud", {PERSISTENT, INT, "-1"}},
     {"K9MeterSeason", {PERSISTENT, INT, "0"}},
     {"K9MeterCmd", {CLEAR_ON_MANAGER_START, STRING}},    // K9ExtHud=1 meter button press "<token>:<start|pause|settle>" (memory)
     {"K9MeterState", {CLEAR_ON_MANAGER_START, STRING}},  // K9ExtHud=1 meter state for the buttons (memory)
-    {"K9OneLaneHold", {PERSISTENT, INT, "0"}},
-    {"K9LaneCenter", {PERSISTENT, INT, "0"}},
+    {"K9OneLaneHold", {PERSISTENT, INT, "0"}},  // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
+    {"K9LaneCenter", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
+    {"K9LaneAssist", {PERSISTENT, INT, "0"}},
+    {"K9LaneCenterGain", {PERSISTENT, INT, "100"}},
+    {"K9LaneVer", {PERSISTENT, INT}},  // K9LaneAssist menu merge marker (one-time migration, k9_lane.py)
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},
     {"CancelButtonMode", {PERSISTENT, INT, "0"}},
     {"LfaButtonMode", {PERSISTENT, INT, "0"}},

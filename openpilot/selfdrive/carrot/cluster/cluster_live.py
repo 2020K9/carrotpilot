@@ -23,7 +23,7 @@ from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_spee
 from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
-from cluster_lat_values import applied_steer_delay_s, applied_steer_ratio, live_parameters_usable
+from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_offset_m, live_parameters_usable
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -580,6 +580,10 @@ class OpenpilotLiveSource:
             applied_sr, applied_sad = self._live_lat_values(now)
         except Exception:
             applied_sr, applied_sad = None, None
+        try:
+            k9_lane_offset, k9_lane_state, k9_lane_accel = self._live_lane_values(now)
+        except Exception:
+            k9_lane_offset, k9_lane_state, k9_lane_accel = None, None, None
         return replace(
             state,
             onroad=onroad,
@@ -606,7 +610,30 @@ class OpenpilotLiveSource:
             right_lane_line_confidence=right_lane_line_confidence,
             applied_steer_ratio=applied_sr,
             applied_steer_delay_s=applied_sad,
+            k9_lane_offset_m=k9_lane_offset,
+            k9_lane_state=k9_lane_state,
+            k9_lane_accel=k9_lane_accel,
         )
+
+    def _live_lane_values(self, now: float) -> tuple[float | None, int | None, float | None]:
+        """OFS / LC for the line above SR / SAD (display only, see cluster_lat_values)."""
+        filt = getattr(self, "_lane_offset_filter", None)
+        if filt is None:
+            filt = self._lane_offset_filter = LaneOffsetFilter()
+        model = None
+        if self._service_alive("modelV2"):
+            receive_t = self._service_receive_time("modelV2") if hasattr(self, "_service_receive_time") else now
+            if receive_t is not None and 0.0 <= now - receive_t <= LANE_LINE_CONFIDENCE_MAX_AGE_S:
+                model = self._service_data("modelV2")
+        offset = filt.update(lane_offset_m(model), now)
+        controls_state = self._service_data("controlsState") if self._service_alive("controlsState") else None
+        state = safe_get(controls_state, "k9LaneState") if controls_state is not None else None
+        accel = safe_get(controls_state, "k9LaneAccel") if controls_state is not None else None
+        try:
+            state = int(state) if state is not None else None
+        except (TypeError, ValueError):
+            state = None
+        return offset, state, finite_float(accel) if accel is not None else None
 
     def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
         """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""

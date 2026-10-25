@@ -510,6 +510,11 @@ class ClusterUiState:
     # SR / SAD lateral control actually uses (cluster_lat_values). None = unknown -> '-'.
     applied_steer_ratio: float | None = None
     applied_steer_delay_s: float | None = None
+    # K9LaneAssist line above SR / SAD (cluster_lat_values.lane_values_text): lane-centre offset [m]
+    # (+ right, None = '--'), controlsState.k9LaneState (None = unknown) and k9LaneAccel [m/s^2].
+    k9_lane_offset_m: float | None = None
+    k9_lane_state: int | None = None
+    k9_lane_accel: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

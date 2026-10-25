@@ -10,6 +10,14 @@ here is read back by controls.
   is not usable yet controlsd uses NominalLateralParameters(CP.steerRatio).
 - SAD: modeld (laneless) uses SteerActuatorDelay*0.01 when > 0, otherwise
   liveDelay.lateralDelay (learned); controlsd lane mode does the same (== 0 -> liveDelay).
+
+Lane line above it (보노보노 2026-10-25 20:16 "라이브값 따로 못보나, 좌우치우침"):
+- OFS: car offset from the lane centre in cm (+ right, - left), from modelV2 inner lane lines at
+  the car (x = 0), the same measurement K9LaneAssist's centre hold uses ( -(y1 + y2) / 2 ), with a
+  0.5 s low-pass. '--' while either inner line is weak (prob < LANE_P_MIN, std > LANE_STD_MAX) or the
+  width is implausible (outside LANE_W_MIN..LANE_W_MAX) - shown whatever K9LaneAssist is set to.
+- LC: controlsState.k9LaneState / k9LaneAccel from controlsd: 'off' switch off, '--' on but not
+  holding, otherwise the lateral accel the hold adds now (m/s^2, + = toward the right).
 """
 from __future__ import annotations
 
@@ -74,3 +82,71 @@ def lat_values_text(steer_ratio: float | None, steer_delay_s: float | None) -> s
     sr = "-" if steer_ratio is None or not math.isfinite(steer_ratio) else f"{steer_ratio:.2f}"
     sad = "-" if steer_delay_s is None or not math.isfinite(steer_delay_s) else f"{steer_delay_s:.2f}s"
     return f"SR {sr}  SAD {sad}"
+
+
+LANE_P_MIN = 0.6
+LANE_STD_MAX = 0.2
+LANE_W_MIN, LANE_W_MAX = 2.6, 4.4
+LANE_TAU_S = 0.5
+
+
+def lane_offset_m(model: Any | None) -> float | None:
+    """Car offset from the lane centre at the car [m], + right; None while the inner lines are weak."""
+    if model is None:
+        return None
+    try:
+        lines = model.laneLines
+        probs = model.laneLineProbs
+        stds = model.laneLineStds
+        if len(lines) < 4 or len(probs) < 4 or len(lines[1].y) == 0 or len(lines[2].y) == 0:
+            return None
+        p1, p2 = float(probs[1]), float(probs[2])
+        s1, s2 = (float(stds[1]), float(stds[2])) if len(stds) >= 4 else (0.0, 0.0)
+        y1, y2 = float(lines[1].y[0]), float(lines[2].y[0])
+    except Exception:
+        return None
+    if not all(math.isfinite(v) for v in (p1, p2, s1, s2, y1, y2)):
+        return None
+    if min(p1, p2) < LANE_P_MIN or max(s1, s2) > LANE_STD_MAX or not LANE_W_MIN <= y2 - y1 <= LANE_W_MAX:
+        return None
+    return -(y1 + y2) / 2.0
+
+
+class LaneOffsetFilter:
+    """0.5 s low-pass of lane_offset_m; restarts after a weak / missing frame (shows '--' meanwhile)."""
+
+    def __init__(self, tau_s: float = LANE_TAU_S):
+        self.tau_s = tau_s
+        self.value: float | None = None
+        self.t: float | None = None
+
+    def update(self, offset_m: float | None, now: float) -> float | None:
+        if offset_m is None:
+            self.value, self.t = None, None
+            return None
+        if self.value is None or self.t is None:
+            self.value = offset_m
+        else:
+            dt = min(max(now - self.t, 0.0), 1.0)
+            self.value += dt / (self.tau_s + dt) * (offset_m - self.value)
+        self.t = now
+        return self.value
+
+
+def lane_values_text(offset_m: float | None, lane_state: Any, lane_accel: Any) -> str:
+    """'OFS +12cm  LC -0.04' ; '--' when unknown, LC 'off' when K9LaneAssist is off."""
+    ofs = "--" if offset_m is None or not math.isfinite(offset_m) else f"{round(offset_m * 100.0):+d}cm"
+    try:
+        state = int(lane_state)
+    except (TypeError, ValueError):
+        state = None
+    accel = _finite(lane_accel)
+    if state is None:
+        lc = "--"
+    elif state == 0:
+        lc = "off"
+    elif state in (2, 3) and accel is not None:
+        lc = f"{accel:+.2f}"
+    else:
+        lc = "--"
+    return f"OFS {ofs}  LC {lc}"

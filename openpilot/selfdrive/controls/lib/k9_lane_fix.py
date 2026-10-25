@@ -1,8 +1,8 @@
 """K9LaneFix: numbered lane-mode reference / hand-over profiles (experimental menu, NOT vehicle-validated).
 
-Param K9LaneFix (int, default 0):
-  0 (or any value not in K9_LANE_FIX_PROFILES): off - lane_planner_2.py and controlsd.py behave exactly as before.
-  1: "F1" (LANEFIX4, replay / closed-loop simulation only):
+Switch (2026-10-25 menu merge, see k9_lane.py): K9LaneAssist (int, default 0) - the old K9LaneFix menu item is gone.
+  K9LaneAssist 0 (or anything else): mode 0 = off - lane_planner_2.py and controlsd.py behave exactly as before.
+  K9LaneAssist 1: mode 1 = "F1" (LANEFIX4, replay / closed-loop simulation only):
      lane_planner_2.py - when the lane path is blended into the plan, the reference starts at the model path start and merges
        into the lane path over converge_t s (quintic smootherstep); the merge time is extended for large offsets
        (T * sqrt(|e0| / t_eref), at most t_max s) but only as far as the merge curvature would exceed t_kref 1/m, so at high
@@ -14,7 +14,9 @@ Param K9LaneFix (int, default 0):
 Add a new number only for a candidate that passed the same checks; never edit an existing number's constants.
 """
 
-K9_LANE_FIX_PARAM = "K9LaneFix"
+from openpilot.selfdrive.controls.lib.k9_lane import K9_LANE_PARAM
+
+K9_LANE_FIX_PARAM = K9_LANE_PARAM   # was "K9LaneFix" (migrated by k9_lane.migrate_k9_lane)
 
 K9_LANE_FIX_PROFILES = {
   1: {
@@ -34,7 +36,7 @@ K9_LANE_FIX_PROFILES = {
 
 
 def k9_lane_fix_mode(params) -> int:
-  """Read K9LaneFix; anything unknown / unreadable is 0 (off)."""
+  """Read K9LaneAssist; 1 -> profile 1 (F1), anything else / unreadable is 0 (off)."""
   try:
     mode = int(params.get_int(K9_LANE_FIX_PARAM))
   except Exception:

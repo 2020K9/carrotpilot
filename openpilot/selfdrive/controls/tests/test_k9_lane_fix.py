@@ -113,7 +113,7 @@ def run_lp(planner, frames, modes=None, params=None):
   out = []
   for k, f in enumerate(frames):
     if modes is not None:
-      params.values["K9LaneFix"] = modes[k]
+      params.values["K9LaneAssist"] = modes[k]
     out.append(lp_step(planner, f))
   return out
 
@@ -127,7 +127,7 @@ def same(a, b):
 def test_lane_planner_off_equals_parent(seed, off_value):
   frames = lp_frames(seed)
   base = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)
-  new = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneFix=off_value)
+  new = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=off_value)
   ref = run_lp(make_lp(LP_PARENT, base), frames)
   got = run_lp(make_lp(LP_NEW, new), frames)
   assert same(ref, got)
@@ -138,7 +138,7 @@ def test_lane_planner_off_equals_parent(seed, off_value):
 def test_lane_planner_on_equals_f1(seed):
   frames = lp_frames(seed)
   ref = run_lp(make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
-  got = run_lp(make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneFix=1)), frames)
+  got = run_lp(make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1)), frames)
   assert same(ref, got)
   off = run_lp(make_lp(LP_PARENT, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
   assert not same(off, got)  # F1 really changes the lane-mode reference
@@ -148,11 +148,11 @@ def test_lane_planner_on_equals_f1(seed):
 def test_lane_planner_switch_resets_and_returns_to_parent(seed):
   frames = lp_frames(seed)
   modes = [1] * 200 + [0] * 150 + [1] * 250
-  params = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneFix=1)
+  params = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1)
   planner = make_lp(LP_NEW, params)
   got = []; states = []
   for k, f in enumerate(frames):
-    params.values["K9LaneFix"] = modes[k]
+    params.values["K9LaneAssist"] = modes[k]
     got.append(lp_step(planner, f))
     states.append((planner.lane_ramp_phase, planner.lane_ramp_g, planner.k9_lane_fix_mode))
   ref_off = run_lp(make_lp(LP_PARENT, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
@@ -174,7 +174,7 @@ def test_lane_planner_switch_resets_and_returns_to_parent(seed):
 def test_lane_planner_unreadable_param_is_off():
   class Broken(MemParams):
     def get_int(self, k, *a, **kw):
-      if k == "K9LaneFix":
+      if k == "K9LaneAssist":
         raise KeyError(k)
       return super().get_int(k)
   frames = lp_frames(9, 200)
@@ -242,7 +242,8 @@ def cd_step(c, f, k):
   CS = car.CarState.new_message(vEgo=f["v"], gearShifter="drive", latEnabled=True)
   plan = NS(laneBlendWeight=0.0, useLaneLines=f["use"], mpcSolutionValid=True, laneChangeState=f["lcs"], modelMonoTime=k,
             psis=f["psis"], curvatures=f["curvs"], distances=f["dist"])
-  sm = SM(carState=CS, modelV2=NS(meta=NS(laneChangeState=f["lcs"], laneChangeDirection=0), action=NS(desiredCurvature=f["dc"])),
+  sm = SM(carState=CS, modelV2=NS(meta=NS(laneChangeState=f["lcs"], laneChangeDirection=0), action=NS(desiredCurvature=f["dc"]),
+                              laneLines=[], laneLineProbs=[], laneLineStds=[]),   # 2026-10-25: no lane lines -> the K9LaneAssist holds add 0
           lateralPlan=plan, liveParameters=NS(stiffnessFactor=1.0, steerRatio=15.0, angleOffsetDeg=0.0, roll=f["roll"]),
           longitudinalPlan=NS(), selfdriveState=NS(enabled=True, active=True), onroadEvents=[], radarState=NS(),
           carrotMan=NS(vTurnSpeed=f["vturn"]), liveDelay=NS(lateralDelay=0.2))
@@ -259,7 +260,7 @@ def run_cd(c, frames, params=None, modes=None, sync_from=None):
   out = []
   for k, f in enumerate(frames):
     if modes is not None:
-      params.values["K9LaneFix"] = modes[k]
+      params.values["K9LaneAssist"] = modes[k]
     if sync_from is not None:
       sync_from(k, c)
     out.append(cd_step(c, f, k))
@@ -274,7 +275,7 @@ CD_SETTINGS = dict(LatSmoothSec=13, SteerActuatorDelay=23, UseLaneLineCurveSpeed
 def test_controls_off_equals_parent(seed, off_value):
   frames = cd_frames(seed)
   ref = run_cd(make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS)), frames)
-  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneFix=off_value)), frames)
+  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneAssist=off_value)), frames)
   assert np.array_equal(ref, got)
 
 
@@ -282,7 +283,7 @@ def test_controls_off_equals_parent(seed, off_value):
 def test_controls_on_equals_f1(seed):
   frames = cd_frames(seed)
   ref = run_cd(make_controls(REF / "controlsd.F1.py.ref", MemParams(**CD_SETTINGS)), frames)
-  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneFix=1)), frames)
+  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneAssist=1)), frames)
   assert np.array_equal(ref, got)
   off = run_cd(make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS)), frames)
   assert not np.array_equal(off, got)  # the hand-over cap really acts on this sequence
@@ -291,13 +292,13 @@ def test_controls_on_equals_f1(seed):
 @pytest.mark.parametrize("seed", SEEDS[:3])
 def test_controls_switch_resets(seed):
   frames = cd_frames(seed)
-  params = MemParams(**CD_SETTINGS, K9LaneFix=1)
+  params = MemParams(**CD_SETTINGS, K9LaneAssist=1)
   c = make_controls(CONTROLS / "controlsd.py", params)
   modes = [1] * 1500 + [0] * 1000 + [1] * 1500
   parent = make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS))
   got = []; ref = []; ks = []
   for k, f in enumerate(frames):
-    params.values["K9LaneFix"] = modes[k]
+    params.values["K9LaneAssist"] = modes[k]
     prev = c.desired_curvature  # parent steps from the same command level each tick
     got.append(cd_step(c, f, k))
     if k >= 1500:
@@ -324,19 +325,21 @@ def test_profile_table_and_mode_reader():
   cd_src = (REF / "controlsd.F1.py.ref").read_text(encoding="utf8")
   assert "LANELESS_ENTRY_JERK = 2.5" in cd_src and "LANELESS_ENTRY_T = 2.0" in cd_src and "LANELESS_LANE_ENTRY_JERK = 0.0" in cd_src
   for value, expect in ((0, 0), (1, 1), (2, 0), (-1, 0), (99, 0)):
-    assert K9.k9_lane_fix_mode(MemParams(K9LaneFix=value)) == expect
+    assert K9.k9_lane_fix_mode(MemParams(K9LaneAssist=value)) == expect   # 2026-10-25 merge: K9LaneAssist
   assert K9.k9_lane_fix_profile(0) is None and K9.k9_lane_fix_profile(2) is None
 
 
 def test_param_registered_default_off():
   keys = (ROOT / "openpilot" / "common" / "params_keys.h").read_text(encoding="utf8")
-  assert '{"K9LaneFix", {PERSISTENT, INT, "0"}},' in keys
+  assert '{"K9LaneFix", {PERSISTENT, INT, "0"}},' in keys   # old key kept (migration only)
+  assert '{"K9LaneAssist", {PERSISTENT, INT, "0"}},' in keys
 
 
 def test_menu_schema():
+  # 2026-10-25 lane menu merge (pin rewritten deliberately): K9LaneFix is part of the single K9LaneAssist switch
   settings = json.loads((ROOT / "openpilot" / "selfdrive" / "carrot_settings.json").read_text(encoding="utf8"))
   text = json.dumps(settings["menu"])
-  assert "K9LaneFix" in text
+  assert "K9LaneAssist" in text and "K9LaneFix" not in text
 
   def groups(node):
     if isinstance(node, dict):
@@ -348,19 +351,20 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneFix", "K9LRView", "K9ExtHud", "K9MeterSeason", "K9OneLaneHold", "K9LaneCenter"]
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "K9ExtHud", "K9MeterSeason"]
   params = settings["params"]
-  p = next(x for x in params if x["name"] == "K9LaneFix")
+  p = next(x for x in params if x["name"] == "K9LaneAssist")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")
   for locale in ("ko", "en", "zh"):
     assert [o.split(" ", 1)[0] for o in p["options"][locale]] == ["0", "1"]
-  # 2026-10-24: web text rewritten short and plain (pin rewritten); the numbers (2.5 m/s³, 2 s, 4 s, 0.5 s) live in the docs rows
+  # 2026-10-24: web text short and plain; the numbers (2.5 m/s³, 2 s, 4 s, 0.5 s) live in the docs rows
   assert "실차 미확인" in p["descr"] and "Not tested in the car" in p["edescr"] and "未经实车确认" in p["cdescr"]
   assert len(p["descr"]) <= 150 and "m/s" not in p["descr"] and "m/s" not in p["edescr"]
   docs_ko = (ROOT / "docs" / "user" / "ko" / "settings.md").read_text(encoding="utf8")
   docs_en = (ROOT / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf8")
   for doc in (docs_ko, docs_en):
-    row = doc.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
+    row = doc.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]
+    assert "`K9LaneFix`" in row
     assert "2.5" in row and re.search(r"2\s?(초|s)", row) and re.search(r"4\s?(초|s)", row) and "0.5" in row
-  assert "`K9LaneFix`" in docs_ko and "실차 미검증" in docs_ko.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
-  assert "`K9LaneFix`" in docs_en and "not vehicle-validated" in docs_en.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
+  assert "실차 미검증" in docs_ko.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]
+  assert "not vehicle-validated" in docs_en.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]

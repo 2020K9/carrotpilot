@@ -860,6 +860,10 @@ struct ControlsState @0x97ff69c53601abf1 {
   forceDecel @51 :Bool;
 
   activeLaneLine @67 : Bool;
+  # K9LaneAssist (experimental, display only): 0 switch off, 1 on but not holding, 2 both-lines centre hold,
+  # 3 one-line hold; k9LaneAccel = lateral accel the holds add [m/s^2], + = toward the right
+  k9LaneState @68 :UInt8;
+  k9LaneAccel @69 :Float32;
 
   lateralControlState :union {
     pidState @53 :LateralPIDState;

@@ -209,6 +209,16 @@ class Controls:
     # laneless command below is computed exactly as before.
     from openpilot.selfdrive.controls.lib.k9_lane_center import k9_lane_center_step
     k9_lc_add = k9_lane_center_step(self, CS, CC, model_v2, LaneChangeState.off)
+    # K9LaneAssist HUD values (display only, controlsState.k9LaneState / k9LaneAccel; nothing reads them back)
+    if getattr(self, 'k9_lc_mode', 0) != 1:
+      self.k9_lane_state = 0
+    elif getattr(self, 'k9_lc', None) is not None and (self.k9_lc.active or k9_lc_add != 0.0):
+      self.k9_lane_state = 2
+    elif getattr(self, 'k9_olh', None) is not None and (self.k9_olh.active or k9_olh_add != 0.0):
+      self.k9_lane_state = 3
+    else:
+      self.k9_lane_state = 1
+    self.k9_lane_accel = (k9_lc_add + k9_olh_add) * float(CS.vEgo) ** 2
     lane_cmd_active = False
     if not CC.latActive:
       new_desired_curvature = self.curvature
@@ -491,6 +501,8 @@ class Controls:
       cs.lateralControlState.torqueState = lac_log
 
     cs.activeLaneLine = self.lanefull_mode_enabled
+    cs.k9LaneState = int(getattr(self, 'k9_lane_state', 0))
+    cs.k9LaneAccel = float(getattr(self, 'k9_lane_accel', 0.0))
     self.pm.send('controlsState', dat)
 
     # carControl

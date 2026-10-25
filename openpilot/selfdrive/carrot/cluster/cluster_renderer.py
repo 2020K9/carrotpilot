@@ -102,7 +102,7 @@ from cluster_scene import (
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
-from cluster_lat_values import lat_values_text
+from cluster_lat_values import lane_values_text, lat_values_text
 from cluster_utils import blink_visible, clamp
 
 
@@ -371,6 +371,9 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
 LAT_VALUES_FONT_SIZE = 17.0
 LAT_VALUES_COLOR = (214, 224, 231, 255)
+# K9LaneAssist OFS / LC line (보노보노 2026-10-25): same right edge, one line above SR / SAD.
+LANE_VALUES_RIGHT_X = LAT_VALUES_RIGHT_X
+LANE_VALUES_CENTER_Y = LAT_VALUES_CENTER_Y - 20.0
 NAVI_LIVE_ICON_X = NAVI_LIVE_PANEL_X + 72
 NAVI_LIVE_ICON_Y = NAVI_LIVE_PANEL_Y + 99
 NAVI_LIVE_ICON_SIZE = 78.0
@@ -3392,6 +3395,24 @@ class ClusterUiRenderer:
             text,
             LAT_VALUES_RIGHT_X,
             LAT_VALUES_CENTER_Y,
+            LAT_VALUES_FONT_SIZE,
+            LAT_VALUES_COLOR,
+            (0, 0, 0),
+            2,
+            anchor="right",
+            cache=True,
+        )
+
+    def _draw_lane_values(self, state: ClusterUiState) -> None:
+        text = lane_values_text(
+            getattr(state, "k9_lane_offset_m", None),
+            getattr(state, "k9_lane_state", None),
+            getattr(state, "k9_lane_accel", None),
+        )
+        self._draw_text_with_stroke(
+            text,
+            LANE_VALUES_RIGHT_X,
+            LANE_VALUES_CENTER_Y,
             LAT_VALUES_FONT_SIZE,
             LAT_VALUES_COLOR,
             (0, 0, 0),
@@ -7177,6 +7198,7 @@ class ClusterUiRenderer:
         try:
             self._draw_tpms_status(state)
             self._draw_lat_values(state)
+            self._draw_lane_values(state)
         finally:
             if tpms_translated:
                 rl.rl_pop_matrix()

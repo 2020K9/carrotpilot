@@ -9,7 +9,7 @@ the model path at 1 s / 2 s stayed at the same offset). This module adds the mis
 Gain: K_C = 2x the measured model pull (2.7e-3 1/m per m below 36 km/h -> 1.2e-3 above 72 km/h), so P alone cuts a bias offset
 to ~1/3; a slow, leaky integral (learning only while the car is quasi-steady) removes the rest.
 
-Param K9LaneCenter (int, default 0):
+Switch (2026-10-25 menu merge, see k9_lane.py): K9LaneAssist (int, default 0) - the old K9LaneCenter menu item is gone.
   0 (or anything else): off - controlsd.py behaves exactly as before (this module returns 0.0, no state kept).
   1: on. Only while controlsd follows the laneless model command (model desiredCurvature), never in lane mode:
      - both lane lines reliable (prob >= P_ON, hysteresis P_OFF, std <= STD_MAX, no line jump / jitter) for BOTH_T s,
@@ -22,10 +22,19 @@ Param K9LaneCenter (int, default 0):
      - capped at A_MAX lateral accel, rate limited at J_MAX lateral jerk, ramped in / out over RAMP_T / RAMP_OUT s, and
        faded out in turns (model lateral accel A_TURN0 -> A_TURN1) and at low speed (V_MIN -> V_FULL);
      - off (ramp back to 0) in lane change / blinker / steering pressed / lane mode / lines unreliable.
+  Live values (read with the switch every 0.1 s): K9LaneCenterGain % scales the push (k_raw, 100 = as validated; caps and
+  rate limits unchanged), PathOffset cm (+-30, + right) moves the hold target off the lane centre.
+  From 1 km/h (보노보노 2026-10-25 20:15 "1km부터해야지"; was 11 km/h): the push fades in from V_MIN 0.28 m/s to V_FULL 1.4 m/s
+  (5 km/h). Below ~11 km/h the lateral-accel cap A_MAX / v^2 alone would allow a huge curvature (a / v^2 -> inf), so the push
+  is also capped at K_MAX curvature (~4.6 deg steering wheel on the K9, SR 12.9) and its rate at KR_MAX (~9 deg/s steering
+  wheel) on top of the lateral-jerk limit. The slow integral still learns only from 11 km/h (same speed weight as before),
+  below that it is held, so creeping / stop-and-go cannot wind it up.
 """
 import numpy as np
 
-K9_LANE_CENTER_PARAM = "K9LaneCenter"
+from openpilot.selfdrive.controls.lib.k9_lane import K9_LANE_PARAM, k9_lane_gain, k9_lane_offset_m
+
+K9_LANE_CENTER_PARAM = K9_LANE_PARAM   # was "K9LaneCenter" (migrated by k9_lane.migrate_k9_lane)
 DT = 0.01                    # controlsd tick
 P_ON, P_OFF, STD_MAX = 0.7, 0.6, 0.2
 W_MIN, W_MAX = 2.8, 4.2      # plausible lane width [m]
@@ -34,7 +43,11 @@ W_RATE = 0.15                # filtered |d width / dt| above = a line is moving 
 X_FAR = 30.0
 LINE_JUMP, JIT_MAX = 0.3, 0.06
 BOTH_T = 1.0
-V_MIN, V_FULL = 3.0, 5.0     # m/s (11 -> 18 km/h): the 17:50 1ca right-hug was at 15-30 km/h
+V_MIN, V_FULL = 0.28, 1.4    # m/s (1 -> 5 km/h) push fade-in (was 3.0 -> 5.0, 11 -> 18 km/h)
+V_I0, V_I1 = 3.0, 5.0        # m/s (11 -> 18 km/h): the slow integral learns only above this (speed weight as before)
+K_MAX = 2.0e-3               # |push| cap [1/m] (~4.6 deg steering wheel at L 3.105 m, SR 12.9); binds only below ~36 km/h
+KR_MAX = 4.0e-3              # |d push / dt| cap [1/m/s] (~9 deg/s steering wheel); binds only below ~21 km/h
+V_D = 3.0                    # m/s: below this the damping term uses V_D instead of v (no 1 / v noise gain near standstill)
 A_TURN0, A_TURN1, K_TURN = 0.8, 1.5, 0.006
 DB = 0.05                    # dead band [m]: natural offsets below this are left to the model
 E_OFF = 0.6                  # |offset| above = implausible (lane change, wrong lines) -> off
@@ -90,6 +103,8 @@ class LaneCenter:
     self.k_out = 0.0
     self.hv = 0.0                # integral of the hold lateral accel = its own share of the lateral velocity [m/s]
     self.active = False
+    self.gain = 1.0              # K9LaneCenterGain / 100 (set by k9_lane_center_step)
+    self.off = 0.0               # PathOffset (+-0.30 m, + right): hold target right of the lane centre
     self.why = 0                 # debug: 0 ok, 1 lines, 2 jump, 3 width, 4 width ahead, 5 width step, 6 width rate, 7 offset
 
   # ---- model frame (20 Hz) ----
@@ -155,11 +170,12 @@ class LaneCenter:
     ok = (laneless and not lane_change and not pressed and self.meas_ok and self.frame_dt <= STALE_T and
           self.e_f is not None and abs(model_curv) < K_TURN and gate > 0.0)
     if ok:
-      e = self.e_f
+      e = self.e_f - self.off if self.off != 0.0 else self.e_f    # PathOffset: offset from the hold target (right +)
       s = float(np.sign(e)) * max(abs(e) - DB, 0.0)
       s = float(np.clip(s, -S_MAX, S_MAX))
-      if abs(self.u_f) < I_RATE:
-        self.integ += KI * s * DT * gate
+      if abs(self.u_f) < I_RATE and v > V_I0:
+        g_i = float(np.clip((v - V_I0) / (V_I1 - V_I0), 0.0, 1.0)) * float(np.clip((A_TURN1 - alat) / (A_TURN1 - A_TURN0), 0.0, 1.0))
+        self.integ += KI * s * DT * g_i
       self.integ = float(np.clip(self.integ * (1.0 - DT / TAU_LEAK), -I_MAX, I_MAX))
       u = self.u_f                 # car lateral velocity relative to the lane centre (right +)
       if u * e < 0.0:              # moving toward the centre: damp only the hold's own share of that velocity
@@ -167,19 +183,27 @@ class LaneCenter:
       elif u * e > 0.0:            # moving away: the offset term already pulls back
         u = 0.0
       # openpilot curvature and model y are right-positive (controlsd: curvature = -VM.calc_curvature)
-      omega = max(v, V_MIN) * np.sqrt(float(np.interp(v, K_C_BP, K_C_V)))   # pull frequency [rad/s] from the curvature gain
-      self.k_raw = -(omega ** 2 * (s + self.integ) + 2.0 * ZETA * omega * u) / v2
+      if v >= V_D:
+        omega = max(v, V_MIN) * np.sqrt(float(np.interp(v, K_C_BP, K_C_V)))   # pull frequency [rad/s] from the curvature gain
+        self.k_raw = -(omega ** 2 * (s + self.integ) + 2.0 * ZETA * omega * u) / v2
+      else:
+        # below 11 km/h: same spatial P gain K_C, but the damping (lateral velocity / speed = heading) is taken at V_D so
+        # line-estimate noise in u is not amplified by 1 / v near standstill
+        k_c = float(np.interp(v, K_C_BP, K_C_V))
+        self.k_raw = -(k_c * (s + self.integ) + 2.0 * ZETA * np.sqrt(k_c) * u / V_D)
+      if self.gain != 1.0:
+        self.k_raw *= self.gain    # K9LaneCenterGain (caps / rate limits unchanged)
       self.w = min(self.w + DT / RAMP_T, 1.0)
     else:
       self.integ *= max(1.0 - DT / TAU_I, 0.0) if not pressed else 1.0
       self.w = max(self.w - DT / RAMP_OUT, 0.0)
     self.active = ok
-    dk = J_MAX / v2 * DT
+    dk = min(J_MAX / v2, KR_MAX) * DT
     if self.w <= 0.0 and not ok and abs(self.k_out) <= dk:
       self.k_out = 0.0; self.hv = 0.0
       return 0.0
     g = self.w * self.w * (3.0 - 2.0 * self.w)
-    amax = A_MAX / v2
+    amax = min(A_MAX / v2, K_MAX)
     tgt = g * gate * float(np.clip(self.k_raw, -amax, amax)) if ok else g * float(np.clip(self.k_raw, -amax, amax))
     if not ok:
       # ramping out: the push only shrinks toward 0 (never grows, never changes sign)
@@ -192,10 +216,12 @@ class LaneCenter:
 
 def k9_lane_center_step(controls, CS, CC, model_v2, lane_change_off):
   """called from controlsd.state_control every tick; returns the curvature to add to the laneless model command.
-  Param read every 10 ticks (0.1 s); anything but 1 = off: state dropped, 0.0 returned, nothing else touched."""
+  Switch / gain / offset read every 10 ticks (0.1 s); K9LaneAssist anything but 1 = off: state dropped, 0.0 returned, nothing else touched."""
   n = getattr(controls, 'k9_lc_read_n', 0)
   if n <= 0:
     controls.k9_lc_mode = k9_lane_center_mode(controls.params)
+    controls.k9_lc_gain = k9_lane_gain(controls.params) if controls.k9_lc_mode == 1 else 1.0
+    controls.k9_lc_off = k9_lane_offset_m(controls.params) if controls.k9_lc_mode == 1 else 0.0
     n = 10
   controls.k9_lc_read_n = n - 1
   if controls.k9_lc_mode != 1:
@@ -203,6 +229,7 @@ def k9_lane_center_step(controls, CS, CC, model_v2, lane_change_off):
     return 0.0
   if getattr(controls, 'k9_lc', None) is None:
     controls.k9_lc = LaneCenter()
+  controls.k9_lc.gain = getattr(controls, 'k9_lc_gain', 1.0); controls.k9_lc.off = getattr(controls, 'k9_lc_off', 0.0)
   laneless = bool(CC.latActive) and not controls.is_vw_meb and not controls.lanefull_mode_enabled
   lane_change = model_v2.meta.laneChangeState != lane_change_off or bool(CS.leftBlinker) or bool(CS.rightBlinker)
   return controls.k9_lc.update(model_v2, float(CS.vEgo), laneless, lane_change, bool(CS.steeringPressed),

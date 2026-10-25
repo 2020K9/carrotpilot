@@ -97,17 +97,19 @@ def normalize_mode(mode):
 
 
 def read_one_lane_hold(params):
-  """K9OneLaneHold as controlsd reads it (k9_one_lane_hold_mode: 1 = on, anything else / unreadable = off)."""
+  """The one-lane hold as controlsd reads it (k9_one_lane_hold_mode: K9LaneAssist 1 = on, anything else / unreadable = off).
+  2026-10-25 menu merge (k9_lane.py): K9LRView and K9OneLaneHold are both the single switch K9LaneAssist now."""
   try:
-    return int(params.get_int("K9OneLaneHold")) == 1
+    return int(params.get_int("K9LaneAssist")) == 1
   except Exception:
     return False
 
 
 def read_mode(params):
-  """Param read that can never stop modeld (e.g. a build whose params keys predate K9LRView) -> 0 (off)."""
+  """Param read that can never stop modeld (e.g. a build whose params keys predate K9LaneAssist) -> 0 (off).
+  2026-10-25 menu merge (k9_lane.py): the tracker is on with K9LaneAssist 1 (only 1; the old K9LRView 2 / 3 are migrated)."""
   try:
-    return normalize_mode(params.get_int("K9LRView"))
+    return K9_LR_VIEW_ON if int(params.get_int("K9LaneAssist")) == 1 else K9_LR_VIEW_OFF
   except Exception:
     return K9_LR_VIEW_OFF
 
