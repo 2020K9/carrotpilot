@@ -144,3 +144,53 @@ def test_jumpy_lane_estimate_never_pushes_away_from_centre():
   bad = (out * np.sign(ys) > 0.0) & (np.abs(ys) > H.DB + 0.05)
   assert not bad.any()
   assert abs(ys[-1]) < 0.12
+
+
+import pytest  # noqa: E402
+
+SEEDS = [0, 1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_random_input_caps_and_no_runaway(seed):
+  """2026-10-26 (23:26 order, seed x5): random lane frames - offsets, noise, probability drops, width changes, speed 0-30 m/s,
+  lane change / pressed / lane mode / turn flags - the push stays inside its caps every tick, ramps out to exact zero and is 0
+  when not laneless."""
+  rng = np.random.default_rng(seed)
+  h = H.LaneCenter()
+  k_prev, v = 0.0, float(rng.uniform(0.0, 30.0))
+  y = 0.0; half = 1.75; p = 0.9
+  flags = dict(laneless=True, lane_change=False, pressed=False, model_curv=0.0)
+  md = None
+  noisy = False; active = 0; acc = 0.0
+  for k in range(30000):
+    if k % 500 == 0:
+      y = float(rng.uniform(-0.6, 0.6)); half = float(rng.uniform(1.5, 2.0)); p = float(rng.choice([0.95, 0.95, 0.8, 0.65, 0.3]))
+      noisy = bool(rng.random() < 0.3)
+      flags = dict(laneless=bool(rng.random() > 0.15), lane_change=bool(rng.random() < 0.1), pressed=bool(rng.random() < 0.1),
+                   model_curv=float(rng.choice([0.0, 0.0, 0.0, 1e-3, 4e-3, -6e-3])))
+    if k % 100 == 0:
+      acc = float(rng.uniform(-3.0, 3.0))       # m/s^2, a car-like speed change
+    v = float(np.clip(v + acc * DT, 0.0, 30.0))
+    if k % 5 == 0:
+      if noisy:   # jittery / weak estimate
+        yy = y + float(rng.normal(0.0, 0.05))
+        md = frame(-half - yy, half - yy, p_left=p, p_right=float(np.clip(p + rng.normal(0.0, 0.1), 0.0, 1.0)),
+                   std=float(rng.uniform(0.03, 0.3)), slope=float(rng.normal(0.0, 0.003)))
+      else:       # steady lane, the car drifts slowly
+        y += float(rng.normal(0.0, 0.002))
+        md = frame(-half - y, half - y, p_left=p, p_right=p)
+    kk = h.update(md, v, flags["laneless"], flags["lane_change"], flags["pressed"], flags["model_curv"])
+    v2 = max(v, H.V_MIN) ** 2
+    assert np.isfinite(kk)
+    assert abs(kk) <= min(H.A_MAX / v2, H.K_MAX) + 1e-12
+    assert abs(kk - k_prev) <= min(H.J_MAX / v2, H.KR_MAX) * DT + 1e-12
+    if not flags["laneless"]:
+      assert abs(kk) <= abs(k_prev) + 1e-15     # lane mode: only ramps out
+    k_prev = kk
+    active += kk != 0.0
+  assert active > 3000            # the hold really pushed in the steady blocks
+  # everything off -> exact zero within the ramp-out
+  for _ in range(400):
+    k_prev = h.update(md, 20.0, False, False, False, 0.0)
+  assert k_prev == 0.0
