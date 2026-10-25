@@ -11,7 +11,8 @@ Switch (2026-10-25 menu merge, see k9_lane.py): K9LaneAssist (int, default 0) - 
        desiredCurvature, the per-tick command change is capped at entry_jerk m/s^3 lateral jerk until the normal step fits
        under the cap or entry_t s have passed. Not used in lane change / when lateral is inactive.
      clip_curvature, jerk/accel limits, LatMpc*Cost, the laneless path and the lane-mode on/off conditions are unchanged.
-Add a new number only for a candidate that passed the same checks; never edit an existing number's constants.
+Menu rule (2026-10-22): 0 / 1 only, profile 1 is improved in place. 2026-10-25 23:38 (보노보노 "1초로 해라"): merge 2 -> 1 s,
+longest merge 4 -> 2 s, hand-over cap at most 2 -> 1 s; entry_jerk 2.5 m/s^3 and every existing safety limit unchanged.
 """
 
 from openpilot.selfdrive.controls.lib.k9_lane import K9_LANE_PARAM
@@ -23,14 +24,14 @@ K9_LANE_FIX_PROFILES = {
     "name": "F1",
     # lane_planner_2.py (reference shaping)
     "converge_mode": "smootherstep",
-    "converge_t": 2.0,
+    "converge_t": 1.0,      # 2026-10-25 23:38 보노보노 "1초로 해라" (was 2.0)
     "ramp_in_t": 0.5,
     "t_eref": 0.3,
-    "t_max": 4.0,
+    "t_max": 2.0,           # was 4.0
     "t_kref": 0.003,
     # controlsd.py (lane-mode -> laneless command hand-over)
     "entry_jerk": 2.5,
-    "entry_t": 2.0,
+    "entry_t": 1.0,         # was 2.0 (entry_jerk 2.5 unchanged)
   },
 }
 

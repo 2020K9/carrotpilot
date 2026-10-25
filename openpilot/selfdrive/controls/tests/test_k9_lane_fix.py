@@ -60,6 +60,12 @@ def load_module(path, name):
 # ---------------------------------------------------------------- lane planner
 LP_PARENT = load_module(REF / "lane_planner_2.parent.py.ref", "k9_ref_lp_parent")
 LP_F1 = load_module(REF / "lane_planner_2.F1.py.ref", "k9_ref_lp_F1")
+# 2026-10-25 23:38 (보노보노 "1초로 해라"): F1 times shortened in place - merge 2 -> 1 s, longest merge 4 -> 2 s, hand-over cap
+# at most 2 -> 1 s (entry jerk 2.5 unchanged). The frozen F1 reference keeps its code; only these three numbers follow.
+F1_TIMES = {"LANE_CONVERGE_T": 1.0, "LANE_CONVERGE_T_MAX": 2.0}
+F1_ENTRY_T = 1.0
+for _k, _v in F1_TIMES.items():
+  setattr(LP_F1, _k, _v)
 N = LP_NEW.TRAJECTORY_SIZE
 PATH_T = (np.linspace(0.0, 1.0, N) ** 2) * 10.0
 
@@ -282,7 +288,9 @@ def test_controls_off_equals_parent(seed, off_value):
 @pytest.mark.parametrize("seed", SEEDS)
 def test_controls_on_equals_f1(seed):
   frames = cd_frames(seed)
-  ref = run_cd(make_controls(REF / "controlsd.F1.py.ref", MemParams(**CD_SETTINGS)), frames)
+  ref_c = make_controls(REF / "controlsd.F1.py.ref", MemParams(**CD_SETTINGS))
+  ref_c.LANELESS_ENTRY_T = F1_ENTRY_T   # 2026-10-25 23:38: 2 -> 1 s
+  ref = run_cd(ref_c, frames)
   got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneAssist=1)), frames)
   assert np.array_equal(ref, got)
   off = run_cd(make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS)), frames)
@@ -317,11 +325,11 @@ def test_controls_switch_resets(seed):
 def test_profile_table_and_mode_reader():
   assert set(K9.K9_LANE_FIX_PROFILES) == {1}
   f1 = K9.K9_LANE_FIX_PROFILES[1]
-  assert f1 == {"name": "F1", "converge_mode": "smootherstep", "converge_t": 2.0, "ramp_in_t": 0.5, "t_eref": 0.3, "t_max": 4.0,
-                "t_kref": 0.003, "entry_jerk": 2.5, "entry_t": 2.0}
+  assert f1 == {"name": "F1", "converge_mode": "smootherstep", "converge_t": 1.0, "ramp_in_t": 0.5, "t_eref": 0.3, "t_max": 2.0,
+                "t_kref": 0.003, "entry_jerk": 2.5, "entry_t": 1.0}   # 2026-10-25 23:38: times 2 / 4 / 2 -> 1 / 2 / 1 s
   # the same constants as the frozen F1 files
   assert (LP_F1.LANE_CONVERGE_MODE, LP_F1.LANE_CONVERGE_T, LP_F1.LANE_RAMP_IN_T, LP_F1.LANE_CONVERGE_T_EREF,
-          LP_F1.LANE_CONVERGE_T_MAX, LP_F1.LANE_CONVERGE_T_KREF) == ("smootherstep", 2.0, 0.5, 0.3, 4.0, 0.003)
+          LP_F1.LANE_CONVERGE_T_MAX, LP_F1.LANE_CONVERGE_T_KREF) == ("smootherstep", 1.0, 0.5, 0.3, 2.0, 0.003)
   cd_src = (REF / "controlsd.F1.py.ref").read_text(encoding="utf8")
   assert "LANELESS_ENTRY_JERK = 2.5" in cd_src and "LANELESS_ENTRY_T = 2.0" in cd_src and "LANELESS_LANE_ENTRY_JERK = 0.0" in cd_src
   for value, expect in ((0, 0), (1, 1), (2, 0), (-1, 0), (99, 0)):
@@ -351,20 +359,30 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "K9ExtHud", "K9MeterSeason"]
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]   # 2026-10-25 23:30: PathOffset under the lane switch
   params = settings["params"]
   p = next(x for x in params if x["name"] == "K9LaneAssist")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")
   for locale in ("ko", "en", "zh"):
     assert [o.split(" ", 1)[0] for o in p["options"][locale]] == ["0", "1"]
   # 2026-10-24: web text short and plain; the numbers (2.5 m/s³, 2 s, 4 s, 0.5 s) live in the docs rows
-  assert "실차 미확인" in p["descr"] and "Not tested in the car" in p["edescr"] and "未经实车确认" in p["cdescr"]
+  # 2026-10-25 23:33 (보노보노 "설명서 간단하면서 딱 알 수 있게"): no '실차 미확인', no old menu names, no internal limits
+  for key, gone in (("descr", "실차 미확인"), ("edescr", "Not tested in the car"), ("cdescr", "未经实车确认")):
+    assert gone not in p[key]
+  for key in ("descr", "edescr", "cdescr"):
+    assert not any(o in p[key] for o in ("K9LaneFix", "K9LRView", "K9OneLaneHold", "K9LaneCenter ", "LaneFix", "LRView"))
   assert len(p["descr"]) <= 150 and "m/s" not in p["descr"] and "m/s" not in p["edescr"]
   docs_ko = (ROOT / "docs" / "user" / "ko" / "settings.md").read_text(encoding="utf8")
   docs_en = (ROOT / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf8")
+  # 2026-10-25 23:33: the user rows are short; the long technical text moved to docs/dev/k9_lane_assist.md (times 23:38: 1 / 2 / 1 s)
   for doc in (docs_ko, docs_en):
     row = doc.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]
+    assert "k9_lane_assist.md" in row and "m/s" not in row
+  dev = (ROOT / "docs" / "dev" / "k9_lane_assist.md").read_text(encoding="utf8")
+  ko = dev.split("## K9LaneAssist (ko", 1)[1].split("\n## ", 1)[0]
+  en = dev.split("## K9LaneAssist (en", 1)[1].split("\n## ", 1)[0]
+  for row in (ko, en):
     assert "`K9LaneFix`" in row
-    assert "2.5" in row and re.search(r"2\s?(초|s)", row) and re.search(r"4\s?(초|s)", row) and "0.5" in row
-  assert "실차 미검증" in docs_ko.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]
-  assert "not vehicle-validated" in docs_en.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]
+    assert "2.5" in row and re.search(r"1\s?(초|s)", row) and re.search(r"최대 2초|up to 2 s", row) and "0.5" in row
+    assert not re.search(r"최대 4초|up to 4 s|over 2 s|2초에 걸쳐", row)
+  assert "실차 미검증" in ko and "not vehicle-validated" in en

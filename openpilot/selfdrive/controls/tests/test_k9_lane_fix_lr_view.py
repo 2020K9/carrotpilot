@@ -57,6 +57,7 @@ def load_module(path, name):
 
 LP_PARENT = load_module(REF / "lane_planner_2.parent.py.ref", "k9_ref_lp_parent_lrv")
 LP_F1 = load_module(REF / "lane_planner_2.F1.py.ref", "k9_ref_lp_F1_lrv")
+LP_F1.LANE_CONVERGE_T, LP_F1.LANE_CONVERGE_T_MAX = 1.0, 2.0   # 2026-10-25 23:38: F1 merge 2 -> 1 s, longest 4 -> 2 s (in place)
 
 
 def make_lp(mod, params):
