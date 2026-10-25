@@ -189,7 +189,7 @@ def test_menu_and_keys():
   data = json.loads((OP / "selfdrive" / "carrot_settings.json").read_text(encoding="utf-8"))
   exp = [g for g in _walk(data["menu"]) if g.get("id") == "EXPERIMENTAL"]
   # 11:51 K9MeterSeason is the sub-option right under K9ExtHud (registration pin updated deliberately); K9OneLaneHold follows it
-  assert len(exp) == 1 and exp[0]["params"][-3:] == ["K9ExtHud", "K9MeterSeason", "K9OneLaneHold"]
+  assert len(exp) == 1 and exp[0]["params"][-4:] == ["K9ExtHud", "K9MeterSeason", "K9OneLaneHold", "K9LaneCenter"]
   p = next(x for x in data["params"] if x["name"] == "K9ExtHud")
   assert (p["min"], p["max"], p["default"], p["control"]) == (-1, 1, -1, "select")
   assert all(len(p["options"][loc]) == 3 for loc in ("ko", "en", "zh"))

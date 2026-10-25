@@ -399,7 +399,8 @@
             "K9LRView",
             "K9ExtHud",
             "K9MeterSeason",
-            "K9OneLaneHold"
+            "K9OneLaneHold",
+            "K9LaneCenter"
           ]
         }
       ]
@@ -3587,6 +3588,38 @@
         "zh": [
           "0 关闭（现有）",
           "1 开启（单侧车道线间距保持）"
+        ]
+      },
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9LaneCenter",
+      "title": "차로 가운데 유지 (실험)",
+      "descr": "양쪽 차선이 다 보이는데 차가 한쪽(예: 오른쪽)으로 붙어 가면 가운데로 살짝 당김. 0 끔(기존). 1 켬: 차로 가운데에서 5cm 넘게 벗어나 있으면 조향 곡률을 조금 더해 가운데로 돌아오게 함(횡가속 0.2m/s² 이하, 1초 램프). 레인리스·11km/h 이상·양쪽 차선 또렷할 때만, 핸들·깜빡이·차선변경·급커브·합류/분기에서는 멈춤. 실차 미확인.",
+      "egroup": "LANE",
+      "etitle": "Lane Centre Hold (Trial)",
+      "edescr": "Gently pulls the car back to the lane centre when both lane lines are visible but the car keeps driving off to one side (e.g. right). 0 Off (existing). 1 On: more than 5 cm off the centre adds a small steering curvature back to the centre (lateral accel 0.2 m/s^2 or less, 1 s ramp). Laneless only, above 11 km/h, both lines clear; stops when you steer, signal, change lanes, in sharp turns and at merges/splits. Not tested in the car.",
+      "cgroup": "转向",
+      "ctitle": "保持车道中央（试验）",
+      "cdescr": "两侧车道线都可见但车辆一直偏向一侧（例如右侧）时，轻轻拉回车道中央。0 关闭（现有）。1 开启：偏离中央超过5cm时加一点转向曲率回到中央（横向加速度不超过0.2m/s²，1秒渐变）。仅无车道线模式、11km/h以上、两侧车道线清晰时；转方向盘、打转向灯、变道、急弯、合流/分流时停止。未经实车确认。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(기존 그대로)",
+          "1 켬(차로 가운데 유지)"
+        ],
+        "en": [
+          "0 Off (existing)",
+          "1 On (lane centre hold)"
+        ],
+        "zh": [
+          "0 关闭（现有）",
+          "1 开启（保持车道中央）"
         ]
       },
       "risk": "high"
