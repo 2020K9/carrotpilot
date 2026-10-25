@@ -515,6 +515,9 @@ class ClusterUiState:
     k9_lane_offset_m: float | None = None
     k9_lane_state: int | None = None
     k9_lane_accel: float | None = None
+    # gap car side <-> left / right inner lane line [m] (cluster_lat_values.lane_gaps_m, None = '--')
+    k9_lane_gap_left_m: float | None = None
+    k9_lane_gap_right_m: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

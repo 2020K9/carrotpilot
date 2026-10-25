@@ -18,6 +18,11 @@ Lane line above it (보노보노 2026-10-25 20:16 "라이브값 따로 못보나
   width is implausible (outside LANE_W_MIN..LANE_W_MAX) - shown whatever K9LaneAssist is set to.
 - LC: controlsState.k9LaneState / k9LaneAccel from controlsd: 'off' switch off, '--' on but not
   holding, otherwise the lateral accel the hold adds now (m/s^2, + = toward the right).
+
+2026-10-25 23:49 (보노보노 "hud는 수정 다 했니"): one Korean line, shown whatever K9LaneAssist is set to:
+  '치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬'
+  치우침 = OFS above (좌 / 우 + cm, '가운데' under 2 cm, '--' while the lines are weak); 좌 / 우 = gap car side (K9 width 1.915 m) <-> that inner
+  lane line at x = 0 ('--' for a weak line); 보정 = 꺼짐 (switch 0) / 대기 (on, not pushing) / 켬 (pushing now).
 """
 from __future__ import annotations
 
@@ -133,20 +138,70 @@ class LaneOffsetFilter:
         return self.value
 
 
-def lane_values_text(offset_m: float | None, lane_state: Any, lane_accel: Any) -> str:
-    """'OFS +12cm  LC -0.04' ; '--' when unknown, LC 'off' when K9LaneAssist is off."""
-    ofs = "--" if offset_m is None or not math.isfinite(offset_m) else f"{round(offset_m * 100.0):+d}cm"
+K9_CAR_WIDTH_M = 1.915   # Kia K9 (RJ) body width, same constant as k9_one_lane_hold
+CENTER_BAND_M = 0.02     # |offset| below -> '치우침 가운데' (보노보노 2026-10-25 23:52)
+GAP_MIN_M, GAP_MAX_M = -0.5, 2.5
+
+
+def _line_ok(model: Any, i: int) -> float | None:
+    """y [m, + right] of lane line i at the car when that line is clear (prob >= LANE_P_MIN, std <= LANE_STD_MAX)."""
+    try:
+        line = model.laneLines[i]
+        p = float(model.laneLineProbs[i])
+        stds = model.laneLineStds
+        s = float(stds[i]) if len(stds) > i else 0.0
+        y = float(line.y[0])
+    except Exception:
+        return None
+    if not all(math.isfinite(v) for v in (p, s, y)) or p < LANE_P_MIN or s > LANE_STD_MAX:
+        return None
+    return y
+
+
+def lane_gaps_m(model: Any | None) -> tuple[float | None, float | None]:
+    """(left, right) gap [m] between the car side (K9 width) and the inner lane line at the car; None per weak line."""
+    if model is None:
+        return None, None
+    try:
+        if len(model.laneLines) < 4 or len(model.laneLineProbs) < 4:
+            return None, None
+    except Exception:
+        return None, None
+    half = K9_CAR_WIDTH_M / 2.0
+    y1, y2 = _line_ok(model, 1), _line_ok(model, 2)
+    left = None if y1 is None else -y1 - half
+    right = None if y2 is None else y2 - half
+    left = left if left is not None and GAP_MIN_M <= left <= GAP_MAX_M else None
+    right = right if right is not None and GAP_MIN_M <= right <= GAP_MAX_M else None
+    return left, right
+
+
+def lane_offset_text(offset_m: float | None) -> str:
+    """'치우침 우 12cm' / '치우침 좌 8cm' / '치우침 가운데' (|offset| < CENTER_BAND_M) / '치우침 --' (lines weak).
+    offset = car from the lane centre in modelV2 y (+ = right)."""
+    if offset_m is None or not math.isfinite(offset_m):
+        return "치우침 --"
+    if abs(offset_m) < CENTER_BAND_M:
+        return "치우침 가운데"
+    return f"치우침 {'우' if offset_m > 0 else '좌'} {int(round(abs(offset_m) * 100.0))}cm"
+
+
+def lane_assist_text(lane_state: Any) -> str:
+    """'보정 꺼짐' (K9LaneAssist 0) / '보정 대기' (on, not pushing) / '보정 켬' (pushing now) / '보정 --' (unknown)."""
     try:
         state = int(lane_state)
     except (TypeError, ValueError):
-        state = None
-    accel = _finite(lane_accel)
-    if state is None:
-        lc = "--"
-    elif state == 0:
-        lc = "off"
-    elif state in (2, 3) and accel is not None:
-        lc = f"{accel:+.2f}"
-    else:
-        lc = "--"
-    return f"OFS {ofs}  LC {lc}"
+        return "보정 --"
+    return {0: "보정 꺼짐", 1: "보정 대기", 2: "보정 켬", 3: "보정 켬"}.get(state, "보정 --")
+
+
+def lane_gap_text(left_m: float | None, right_m: float | None) -> str:
+    """'좌 1.42m 우 1.18m' (car side <-> lane line); '--' for a weak / missing line."""
+    f = lambda v: "--" if v is None or not math.isfinite(v) else f"{v:.2f}m"
+    return f"좌 {f(left_m)} 우 {f(right_m)}"
+
+
+def lane_values_text(offset_m: float | None, lane_state: Any, gap_left_m: float | None = None,
+                     gap_right_m: float | None = None) -> str:
+    """'치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬' (one line right above SR / SAD; shown whatever K9LaneAssist is)."""
+    return f"{lane_offset_text(offset_m)} · {lane_gap_text(gap_left_m, gap_right_m)} · {lane_assist_text(lane_state)}"

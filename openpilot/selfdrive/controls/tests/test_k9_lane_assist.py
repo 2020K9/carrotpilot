@@ -304,12 +304,62 @@ def test_hud_offset_and_text():
   assert f.update(0.1, 0.0) == pytest.approx(0.1)
   assert 0.1 < f.update(0.3, 0.5) < 0.3
   assert f.update(None, 0.55) is None and f.update(0.2, 0.6) == pytest.approx(0.2)
-  assert lane_values_text(0.123, 2, -0.0412) == "OFS +12cm  LC -0.04"
-  assert lane_values_text(-0.08, 3, 0.051) == "OFS -8cm  LC +0.05"
-  assert lane_values_text(None, 1, 0.0) == "OFS --  LC --"
-  assert lane_values_text(0.0, 0, 0.0) == "OFS +0cm  LC off"
-  assert lane_values_text(0.05, None, None) == "OFS +5cm  LC --"
-  assert lane_values_text(float("nan"), 2, float("nan")) == "OFS --  LC --"
+  # 2026-10-25 23:49 (보노보노): one Korean line (pin rewritten for the new wording); shown with K9LaneAssist 0 too
+  assert lane_values_text(0.123, 2, 1.42, 1.18) == "치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬"
+  assert lane_values_text(-0.08, 3, 1.1, None) == "치우침 좌 8cm · 좌 1.10m 우 -- · 보정 켬"
+  assert lane_values_text(None, 1) == "치우침 -- · 좌 -- 우 -- · 보정 대기"
+  assert lane_values_text(0.004, 0, 0.8, 0.8) == "치우침 가운데 · 좌 0.80m 우 0.80m · 보정 꺼짐"
+  assert lane_values_text(-0.0199, 0) == "치우침 가운데 · 좌 -- 우 -- · 보정 꺼짐"
+  assert lane_values_text(0.02, 1) == "치우침 우 2cm · 좌 -- 우 -- · 보정 대기"
+  assert lane_values_text(-0.024, 1) == "치우침 좌 2cm · 좌 -- 우 -- · 보정 대기"
+  assert lane_values_text(0.05, None) == "치우침 우 5cm · 좌 -- 우 -- · 보정 --"
+  assert lane_values_text(float("nan"), 7, float("nan"), float("inf")) == "치우침 -- · 좌 -- 우 -- · 보정 --"
+
+
+def test_hud_lane_gaps():
+  import sys
+  sys.path.insert(0, str(ROOT / "selfdrive/carrot/cluster"))
+  from cluster_lat_values import K9_CAR_WIDTH_M, lane_gap_text, lane_gaps_m
+  half = K9_CAR_WIDTH_M / 2
+  gl, gr = lane_gaps_m(_md(-1.9, 1.7))
+  assert gl == pytest.approx(1.9 - half) and gr == pytest.approx(1.7 - half)
+  assert lane_gaps_m(_md(-1.9, 1.7, p2=0.3)) == (pytest.approx(1.9 - half), None)   # weak right line -> '--'
+  assert lane_gaps_m(_md(-1.9, 1.7, p1=0.3, p2=0.3)) == (None, None)
+  assert lane_gaps_m(_md(-1.9, 1.7, s=0.5)) == (None, None)
+  assert lane_gaps_m(None) == (None, None)
+  assert lane_gaps_m(_md(-9.0, 1.7))[0] is None                                     # implausible gap
+  assert lane_gap_text(1.42, 1.18) == "좌 1.42m 우 1.18m"
+  assert lane_gap_text(None, 0.684) == "좌 -- 우 0.68m"
+  assert lane_gap_text(float("nan"), None) == "좌 -- 우 --"
+
+
+def test_hud_direction_from_model_y_and_gaps_add_up():
+  # modelV2 y is + right: inner lines -1.70 / +1.50 -> lane centre at y -0.10, the car (y 0) is 10 cm RIGHT of it, so the
+  # right gap is the small one; left + right + car width == lane width
+  import sys
+  sys.path.insert(0, str(ROOT / "selfdrive/carrot/cluster"))
+  from cluster_lat_values import K9_CAR_WIDTH_M, lane_gaps_m, lane_offset_m, lane_values_text
+  md = _md(-1.70, 1.50)
+  off = lane_offset_m(md); gl, gr = lane_gaps_m(md)
+  assert off == pytest.approx(0.10) and gr < gl
+  assert gl + gr + K9_CAR_WIDTH_M == pytest.approx(1.50 - (-1.70))
+  assert lane_values_text(off, 2, gl, gr) == "치우침 우 10cm · 좌 0.74m 우 0.54m · 보정 켬"
+  md = _md(-1.50, 1.70)
+  off = lane_offset_m(md); gl, gr = lane_gaps_m(md)
+  assert lane_values_text(off, 1, gl, gr) == "치우침 좌 10cm · 좌 0.54m 우 0.74m · 보정 대기" and gl < gr
+
+
+def test_hud_examples_in_the_manual_match():
+  # the developer manual shows the HUD line; every example there is exactly what the code prints
+  import re, sys
+  sys.path.insert(0, str(ROOT / "selfdrive/carrot/cluster"))
+  from cluster_lat_values import lane_values_text
+  doc = (ROOT.parent / "docs/dev/k9_lane_assist.md").read_text(encoding="utf-8")
+  ex = re.findall(r"<!-- hud: ([^>]*) -->\s*`([^`]*)`", doc)
+  assert len(ex) >= 4
+  for args, text in ex:
+    off, st, gl, gr = [None if a.strip() == "None" else float(a) for a in args.split(",")]
+    assert lane_values_text(off, None if st is None else int(st), gl, gr) == text, (args, text)
 
 
 def test_hud_live_source():
@@ -321,10 +371,11 @@ def test_hud_live_source():
   src._service_data = lambda n: sm.get(n)
   src._service_alive = lambda n: sm.get(n) is not None
   src._service_receive_time = lambda n: 10.0
-  off, st, acc = src._live_lane_values(10.1)
+  off, st, acc, gl, gr = src._live_lane_values(10.1)
   assert off == pytest.approx(0.10) and st == 2 and acc == pytest.approx(-0.03)
-  off, _, _ = src._live_lane_values(11.0)          # stale model frame (> 0.5 s) -> '--'
-  assert off is None
+  assert gl == pytest.approx(1.9 - 1.915 / 2) and gr == pytest.approx(1.7 - 1.915 / 2)
+  off, _, _, gl, gr = src._live_lane_values(11.0)  # stale model frame (> 0.5 s) -> '--'
+  assert off is None and gl is None and gr is None
   sm.pop("controlsState")
-  assert src._live_lane_values(10.2)[1:] == (None, None)
+  assert src._live_lane_values(10.2)[1:3] == (None, None)
   assert math.isfinite(src._live_lane_values(10.2)[0])

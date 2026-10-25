@@ -23,7 +23,7 @@ from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_spee
 from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
-from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_offset_m, live_parameters_usable
+from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_gaps_m, lane_offset_m, live_parameters_usable
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -581,9 +581,9 @@ class OpenpilotLiveSource:
         except Exception:
             applied_sr, applied_sad = None, None
         try:
-            k9_lane_offset, k9_lane_state, k9_lane_accel = self._live_lane_values(now)
+            k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = self._live_lane_values(now)
         except Exception:
-            k9_lane_offset, k9_lane_state, k9_lane_accel = None, None, None
+            k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = None, None, None, None, None
         return replace(
             state,
             onroad=onroad,
@@ -613,19 +613,25 @@ class OpenpilotLiveSource:
             k9_lane_offset_m=k9_lane_offset,
             k9_lane_state=k9_lane_state,
             k9_lane_accel=k9_lane_accel,
+            k9_lane_gap_left_m=k9_gap_l,
+            k9_lane_gap_right_m=k9_gap_r,
         )
 
-    def _live_lane_values(self, now: float) -> tuple[float | None, int | None, float | None]:
-        """OFS / LC for the line above SR / SAD (display only, see cluster_lat_values)."""
+    def _live_lane_values(self, now: float) -> tuple[float | None, int | None, float | None, float | None, float | None]:
+        """치우침 / 보정 / 좌·우 차선 간격 for the lines above SR / SAD (display only, see cluster_lat_values)."""
         filt = getattr(self, "_lane_offset_filter", None)
         if filt is None:
             filt = self._lane_offset_filter = LaneOffsetFilter()
+            self._lane_gap_filters = (LaneOffsetFilter(), LaneOffsetFilter())
         model = None
         if self._service_alive("modelV2"):
             receive_t = self._service_receive_time("modelV2") if hasattr(self, "_service_receive_time") else now
             if receive_t is not None and 0.0 <= now - receive_t <= LANE_LINE_CONFIDENCE_MAX_AGE_S:
                 model = self._service_data("modelV2")
         offset = filt.update(lane_offset_m(model), now)
+        gl, gr = lane_gaps_m(model)
+        gap_l = self._lane_gap_filters[0].update(gl, now)
+        gap_r = self._lane_gap_filters[1].update(gr, now)
         controls_state = self._service_data("controlsState") if self._service_alive("controlsState") else None
         state = safe_get(controls_state, "k9LaneState") if controls_state is not None else None
         accel = safe_get(controls_state, "k9LaneAccel") if controls_state is not None else None
@@ -633,7 +639,7 @@ class OpenpilotLiveSource:
             state = int(state) if state is not None else None
         except (TypeError, ValueError):
             state = None
-        return offset, state, finite_float(accel) if accel is not None else None
+        return offset, state, finite_float(accel) if accel is not None else None, gap_l, gap_r
 
     def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
         """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""

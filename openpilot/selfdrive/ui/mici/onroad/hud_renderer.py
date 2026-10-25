@@ -656,6 +656,34 @@ class HudRenderer(Widget):
     if road_name:
       draw_text_ui_style(road_name, info_x, road_y, side_font, rl.Color(255, 255, 255, 210), font=self._font_display, border_width=1.0, shadow_offset=8.0, align="left_top", y_offset=0.0)
 
+    # K9LaneAssist live values (보노보노 2026-10-25, display only): two lines right under the block above (whose place is
+    # unchanged) - '치우침 우 12cm · 보정 켬' / '좌 1.42m 우 1.18m' (the external HUD line split in two for this narrow screen),
+    # '--' while a line is weak; shown whatever K9LaneAssist is set to.
+    try:
+      lane_lines = self._k9_lane_lines()
+    except Exception:
+      lane_lines = ()
+    lane_y = base_y + total_h + line_gap
+    for line in lane_lines:
+      draw_text_ui_style(line, info_x, lane_y, side_font, rl.Color(255, 255, 255, 210), font=self._font_display, border_width=1.0, shadow_offset=8.0, align="left_top", y_offset=0.0)
+      lane_y += measure_text_cached(self._font_display, line, side_font).y + line_gap
+
+  def _k9_lane_lines(self) -> tuple[str, str]:
+    """Same texts / rules as the external HUD (selfdrive/carrot/cluster/cluster_lat_values.py)."""
+    from openpilot.selfdrive.carrot.cluster.cluster_lat_values import (LaneOffsetFilter, lane_assist_text, lane_gap_text,
+                                                                       lane_gaps_m, lane_offset_m, lane_offset_text)
+    filters = getattr(self, "_k9_lane_filters", None)
+    if filters is None:
+      filters = self._k9_lane_filters = (LaneOffsetFilter(), LaneOffsetFilter(), LaneOffsetFilter())
+    sm = ui_state.sm
+    now = time.monotonic()
+    model = sm['modelV2'] if sm.alive['modelV2'] else None
+    offset = filters[0].update(lane_offset_m(model), now)
+    gl, gr = lane_gaps_m(model)
+    gl, gr = filters[1].update(gl, now), filters[2].update(gr, now)
+    state = getattr(sm['controlsState'], 'k9LaneState', None) if sm.alive['controlsState'] else None
+    return f"{lane_offset_text(offset)} · {lane_assist_text(state)}", lane_gap_text(gl, gr)
+
 
   def _get_gear_text(self) -> str:
     sm = ui_state.sm

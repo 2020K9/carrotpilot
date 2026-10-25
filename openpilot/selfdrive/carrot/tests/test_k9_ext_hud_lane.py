@@ -1,4 +1,5 @@
-"""K9LaneAssist OFS / LC line above the external HUD SR / SAD line (보노보노 2026-10-25 20:16 "라이브값 따로 못보나").
+"""K9 lane line above the external HUD SR / SAD line (보노보노 2026-10-25 20:16 "라이브값 따로 못보나"; 23:49 one Korean line
+'치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬').
 
 GL checks (xvfb-run): the line is drawn in its own empty box right above the SR / SAD line, never on that line, the TPMS
 car or the info panel, for both panel layouts and with the C1 taxi meter on. Text / source checks are in
@@ -38,6 +39,7 @@ def test_state_fields_default_unknown():
   fields = ClusterUiState.__dataclass_fields__
   assert fields["k9_lane_offset_m"].default is None and fields["k9_lane_state"].default is None
   assert fields["k9_lane_accel"].default is None
+  assert fields["k9_lane_gap_left_m"].default is None and fields["k9_lane_gap_right_m"].default is None
 
 
 @gl
@@ -64,8 +66,9 @@ def test_lane_line_in_its_own_box_above_sr_sad():
       r.set_taxi_meter_enabled(meter)
       for layout in (CLUSTER_PANEL_LAYOUT_DRIVING_LEFT, CLUSTER_PANEL_LAYOUT_DRIVING_RIGHT):
         r.set_panel_layout(layout)
-        for off, st, acc in ((0.123, 2, -0.0412), (None, 1, 0.0), (-0.3, 3, 0.2), (0.0, 0, 0.0), (-9.99, 2, -9.99)):
-          s = _state(k9_lane_offset_m=off, k9_lane_state=st, k9_lane_accel=acc)
+        for off, st, gl, gr in ((0.123, 2, 1.42, 1.18), (None, 1, None, None), (-0.3, 3, 2.49, -0.49), (0.0, 0, 0.8, None),
+                                (-9.99, 2, 0.0, 0.0)):
+          s = _state(k9_lane_offset_m=off, k9_lane_state=st, k9_lane_gap_left_m=gl, k9_lane_gap_right_m=gr)
           full = render(s)
           no_lane = render(s, ("_draw_lane_values",))
           no_both = render(s, ("_draw_lane_values", "_draw_lat_values"))
@@ -86,7 +89,8 @@ def test_lane_line_in_its_own_box_above_sr_sad():
           icon_top = (cr.TPMS_STATUS_CAR_CENTER_Y - cr.TPMS_STATUS_ICON_H * 0.5) * sy
           assert y1 <= icon_top + 1
           assert y0 >= (cr.TPMS_STATUS_CAR_CENTER_Y - 110.0) * sy, box
-          assert x0 >= (shift + cr.TPMS_STATUS_CENTER_X - 300.0) * sx, box
+          # 23:49 one longer Korean line ('치우침 … · 좌 …m 우 …m · 보정 …'): may reach 430 px left of the TPMS car centre
+          assert x0 >= (shift + cr.TPMS_STATUS_CENTER_X - 430.0) * sx, box
           # nothing else is drawn under the line
           under = no_lane.crop(box).convert("L")
           bright = sum(under.histogram()[91:])

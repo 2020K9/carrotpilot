@@ -371,9 +371,11 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
 LAT_VALUES_FONT_SIZE = 17.0
 LAT_VALUES_COLOR = (214, 224, 231, 255)
-# K9LaneAssist OFS / LC line (보노보노 2026-10-25): same right edge, one line above SR / SAD.
+# K9 lane line (보노보노 2026-10-25 23:49): one Korean line '치우침 우 12cm · 좌 1.42m 우 1.18m · 보정 켬', same right edge,
+# right above SR / SAD (whose place is unchanged, 4a44e564).
 LANE_VALUES_RIGHT_X = LAT_VALUES_RIGHT_X
 LANE_VALUES_CENTER_Y = LAT_VALUES_CENTER_Y - 20.0
+LANE_VALUES_FONT_SIZE = LAT_VALUES_FONT_SIZE
 NAVI_LIVE_ICON_X = NAVI_LIVE_PANEL_X + 72
 NAVI_LIVE_ICON_Y = NAVI_LIVE_PANEL_Y + 99
 NAVI_LIVE_ICON_SIZE = 78.0
@@ -3407,13 +3409,14 @@ class ClusterUiRenderer:
         text = lane_values_text(
             getattr(state, "k9_lane_offset_m", None),
             getattr(state, "k9_lane_state", None),
-            getattr(state, "k9_lane_accel", None),
+            getattr(state, "k9_lane_gap_left_m", None),
+            getattr(state, "k9_lane_gap_right_m", None),
         )
         self._draw_text_with_stroke(
             text,
             LANE_VALUES_RIGHT_X,
             LANE_VALUES_CENTER_Y,
-            LAT_VALUES_FONT_SIZE,
+            LANE_VALUES_FONT_SIZE,
             LAT_VALUES_COLOR,
             (0, 0, 0),
             2,
