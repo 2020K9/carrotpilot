@@ -242,6 +242,10 @@ class Controls:
         new_desired_curvature = self.curvature
       else:
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
+        if k9_lane_add != 0.0:
+          # K9LaneAssist 1 (2026-10-26 conflict audit C1): laneless -> lane mode, the hold push ramps out at its jerk limit
+          # (the holds see laneless False) instead of dropping in one tick. 0.0 with the switch off / nothing to ramp out.
+          curvature = curvature + k9_lane_add
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
       dc_model = model_v2.action.desiredCurvature

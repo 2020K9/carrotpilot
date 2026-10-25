@@ -353,5 +353,9 @@ def k9_one_lane_hold_step(controls, CS, CC, model_v2, lane_change_off):
   controls.k9_olh.gain = getattr(controls, 'k9_olh_gain', 1.0); controls.k9_olh.off = getattr(controls, 'k9_olh_off', 0.0)
   laneless = bool(CC.latActive) and not controls.is_vw_meb and not controls.lanefull_mode_enabled
   lane_change = model_v2.meta.laneChangeState != lane_change_off or bool(CS.leftBlinker) or bool(CS.rightBlinker)
+  # 2026-10-26 conflict audit C4: a model desire (ATC turn without blinker, keep / turn desires) also turns the hold off
+  desire = getattr(model_v2.meta, 'desire', None)
+  if desire is not None and str(desire) not in ('none', '0'):
+    lane_change = True
   return controls.k9_olh.update(model_v2, float(CS.vEgo), laneless, lane_change, bool(CS.steeringPressed),
                                 float(model_v2.action.desiredCurvature))

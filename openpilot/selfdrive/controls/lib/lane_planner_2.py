@@ -292,7 +292,19 @@ class LanePlanner:
 
     path_xyz[:, 1] += (CAMERA_OFFSET + self.lane_offset_filtered.x)
 
+    self.k9_path_offset_applied = False
     if fix is not None:
+      # K9LaneAssist 1 (2026-10-26 conflict audit A1): PathOffset is added here, before the F1 merge, so the merge starts at the
+      # car (model path start, without the offset) and ends on lane path + PathOffset; lateral_planner then does not add it
+      # again (k9_path_offset_applied). Before, PathOffset was added after F1 to the whole path, so the reference started
+      # PathOffset beside the car every frame and the car crept past the offset. The laneless reference (model_path_y, used
+      # for the ramp-in) keeps the offset, as the laneless branch output has it.
+      po = float(getattr(self, 'k9_path_offset', 0.0))
+      if po != 0.0:
+        path_xyz[:, 1] += po
+        if model_path_y is not None:
+          model_path_y = model_path_y + po
+      self.k9_path_offset_applied = True
       self.k9_lane_fix_apply(fix, v_ego, path_t, path_xyz, lane_blended, model_path_y0, model_path_y)
 
     self.offset_total = self.lane_offset_filtered.x
