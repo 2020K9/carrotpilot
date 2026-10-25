@@ -4,6 +4,9 @@
     controlsd.state_control lateral command are compared bit for bit with frozen copies of the parent files.
 (b) K9LaneFix=1 gives exactly the LANEFIX4 "F1" outputs (frozen copy of the replay / simulation tree_F1 files,
     lane_planner_2.py sha256 9d7bbe26..., controlsd.py sha256 1a2dbb64...). Tolerance: 0 (np.array_equal / ==).
+    2026-10-26 recheck_0208 (lane-mode merge latch): the lane planner now latches the F1 merge once per lane-mode run, so it
+    equals the frozen F1 file on the first lane-mode frame of each run, the frozen parent minus the LATCHED e0 * s(t + elapsed)
+    (same ramp-in) while the merge runs, and the frozen parent after the merge time (check_latched). controlsd: unchanged.
 (c) changing the number restarts the K9LaneFix transition state.
 (d) the param is registered, in the 'EXPERIMENTAL' (실험중) menu right after K9StopMode, and described per number.
 Inputs are synthetic random sequences (several seeds) built to cross lane-mode on/off, lane change, lateral off and
@@ -128,6 +131,73 @@ def same(a, b):
   return all(np.array_equal(x[0], y[0]) and x[1] == y[1] for x, y in zip(a, b, strict=True))
 
 
+def lp_state(planner, ph0):
+  return dict(k=planner.lane_merge_k, e0=planner.lane_merge_e0, T=planner.lane_merge_t, r0=planner.lane_merge_r0, a0=planner.lane_merge_a0,
+              g=planner.lane_ramp_g, ph0=ph0, lof=float(planner.lane_offset_filtered.x))
+
+
+def ref_e0t(planner):
+  return (getattr(planner, "lane_converge_e0_used", None), getattr(planner, "lane_converge_t_used", None))
+
+
+def check_latched(got, st, par, f1, f1_e0t, model_ys, k_from=0):
+  """2026-10-26 recheck_0208: K9LaneAssist 1 lane planner (merge latched once per lane-mode run) against the frozen files.
+  got / st: new planner outputs and lp_state per frame; par: frozen parent outputs; f1 / f1_e0t: frozen F1 outputs and its
+  (e0, merge time) per frame; model_ys: the model path y fed in. Entry frame: the frozen F1 start offset (capped at
+  t_eref * (t_max / converge_t)^2) and, uncapped, its merge time; rate / accel from the frozen parent path. Every lane-mode frame:
+  frozen parent path - lane_merge_offset(t + elapsed) with the latched values (same ramp-in), bit for bit (np.array_equal)."""
+  prof = K9.K9_LANE_FIX_PROFILES[1]; mode = prof["converge_mode"]
+  cap = prof["t_eref"] * (max(prof["t_max"], prof["converge_t"]) / prof["converge_t"]) ** 2
+  n = {"off": 0, "entry": 0, "capped": 0, "merge": 0, "after": 0}
+  for k in range(k_from, len(got)):
+    s = st[k]
+    if s["k"] < 0:
+      assert same([got[k]], [par[k]]); n["off"] += 1; continue
+    if s["k"] == 0:
+      e0_f1, t_f1 = f1_e0t[k]
+      assert s["e0"] == float(np.clip(e0_f1, -cap, cap))          # the frozen F1 start offset (car - lane path start), capped
+      t_hi = max(prof["t_max"], prof["converge_t"])
+      t_j = min(float(np.cbrt(60.0 * abs(s["e0"]) / LP_NEW.LANE_MERGE_J_REF)), t_hi) if LP_NEW.LANE_MERGE_J_REF > 0.0 else 0.0
+      if abs(e0_f1) <= cap:
+        assert s["T"] == max(t_f1, t_j)                            # its merge time, or longer for the merge jerk bound
+      else:
+        n["capped"] += 1
+        assert prof["converge_t"] <= s["T"] <= t_hi
+      assert (s["r0"], s["a0"]) == LP_NEW.lane_merge_rates(PATH_T, par[k][0][:, 1] - model_ys[k])
+      n["entry"] += 1
+    else:
+      assert all(s[q] == st[k - 1][q] for q in ("e0", "T", "r0", "a0")) and s["k"] == st[k - 1]["k"] + 1   # latched, not measured again
+    el = s["k"] * DT_MDL
+    y = par[k][0][:, 1].copy()
+    if el < s["T"]:
+      y -= LP_NEW.lane_merge_offset(PATH_T + el, mode, s["T"], s["e0"], s["r0"], s["a0"]); n["merge"] += 1
+    else:
+      n["after"] += 1
+    if s["ph0"] != 2:   # ramp-in step
+      ref = model_ys[k] + (LP_NEW.CAMERA_OFFSET + s["lof"])
+      y = ref + s["g"] * (y - ref)
+    assert np.array_equal(got[k][0][:, 1], y) and np.array_equal(got[k][0][:, [0, 2]], par[k][0][:, [0, 2]]) and got[k][1] == par[k][1]
+  return n
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_lane_merge_offset_boundary_values(seed):
+  # 2026-10-26 recheck_0208: E(0) = e0, E'(0) = r0, E''(0) = a0, E = E' = E'' = 0 at T and after; r0 = a0 = 0 -> the old e0 * s(t)
+  rng = np.random.default_rng(seed)
+  for _ in range(20):
+    T = float(rng.uniform(1.0, 2.0)); e0, r0, a0 = rng.uniform(-0.3, 0.3), rng.uniform(-1.0, 1.0), rng.uniform(-1.5, 1.5)
+    h = 1e-4
+    E = lambda t: float(LP_NEW.lane_merge_offset(np.array([t]), "smootherstep", T, e0, r0, a0)[0])
+    assert E(0.0) == pytest.approx(e0, abs=1e-12)
+    assert (E(h) - E(0.0)) / h == pytest.approx(r0 + a0 * h / 2, abs=1e-3)
+    assert (E(2 * h) - 2 * E(h) + E(0.0)) / h ** 2 == pytest.approx(a0, abs=2e-2)
+    for t in (T, T + 0.3, 10.0):
+      assert abs(E(t)) < 1e-12
+    assert abs(E(T - h) - E(T)) < 1e-8
+    w = LP_NEW.lane_merge_offset(PATH_T, "smootherstep", T, e0)
+    assert np.array_equal(w, e0 * LP_NEW.lane_converge_weight(PATH_T, "smootherstep", T))
+
+
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("off_value", [0, -1, 2, 7])
 def test_lane_planner_off_equals_parent(seed, off_value):
@@ -141,12 +211,23 @@ def test_lane_planner_off_equals_parent(seed, off_value):
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_lane_planner_on_equals_f1(seed):
+def test_lane_planner_on_latched_merge(seed):
+  # pin rewritten 2026-10-26 recheck_0208: was "on == frozen F1 every frame" (merge measured again every frame = the lane-mode
+  # oscillation of the closed-loop sim); now the merge is latched once per lane-mode run (check_latched)
   frames = lp_frames(seed)
-  ref = run_lp(make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
-  got = run_lp(make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1)), frames)
-  assert same(ref, got)
+  planner = make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1))
+  got, st = [], []
+  for f in frames:
+    ph0 = planner.lane_ramp_phase
+    got.append(lp_step(planner, f)); st.append(lp_state(planner, ph0))
+  f1p = make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6))
+  f1, e0t = [], []
+  for f in frames:
+    f1.append(lp_step(f1p, f)); e0t.append(ref_e0t(f1p))
   off = run_lp(make_lp(LP_PARENT, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
+  n = check_latched(got, st, off, f1, e0t, [f["path"][:, 1] for f in frames])
+  assert n["entry"] >= 3 and n["merge"] > 20 and n["after"] > 0   # the sequence really had lane-mode runs, merges and after-merge
+  assert any(s["k"] == 0 and (s["r0"] != 0.0 or s["a0"] != 0.0) for s in st)   # the rate / accel take-over really acted
   assert not same(off, got)  # F1 really changes the lane-mode reference
 
 
@@ -156,25 +237,29 @@ def test_lane_planner_switch_resets_and_returns_to_parent(seed):
   modes = [1] * 200 + [0] * 150 + [1] * 250
   params = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1)
   planner = make_lp(LP_NEW, params)
-  got = []; states = []
+  got = []; states = []; st = []
   for k, f in enumerate(frames):
     params.values["K9LaneAssist"] = modes[k]
+    ph0 = planner.lane_ramp_phase
     got.append(lp_step(planner, f))
-    states.append((planner.lane_ramp_phase, planner.lane_ramp_g, planner.k9_lane_fix_mode))
+    states.append((planner.lane_ramp_phase, planner.lane_ramp_g, planner.k9_lane_fix_mode)); st.append(lp_state(planner, ph0))
   ref_off = run_lp(make_lp(LP_PARENT, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
   # OFF stretch is bit-identical to the parent fed the same whole sequence (F1 keeps no state that leaks into OFF)
   assert same(ref_off[200:350], got[200:350])
   # every change of the number restarted the K9LaneFix state: idle ramp state while OFF
   assert all(s[0] == 0 and s[1] == 0.0 and s[2] == 0 for s in states[200:350])
+  assert all(s["k"] == -1 for s in st[200:350])          # merge latch idle while OFF
   # back ON: identical to a fresh F1 planner whose base filters saw the same history -> compare against F1 fed the
-  # same whole sequence with its K9 state reset at frame 350 (base filters are shared behaviour)
+  # same whole sequence with its K9 state reset at frame 350 (base filters are shared behaviour); 2026-10-26 recheck_0208:
+  # with the merge latch the comparison is check_latched (frozen F1 on entry frames, frozen parent + latched merge after)
   f1 = make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6))
-  ref_on = []
+  ref_on = []; e0t = []
   for k, f in enumerate(frames):
     if k == 350:
       f1.lane_ramp_g, f1.lane_ramp_from, f1.lane_ramp_k, f1.lane_ramp_phase, f1.lane_ramp_delta = 0.0, 0.0, 0, 0, None
-    ref_on.append(lp_step(f1, f))
-  assert same(ref_on[350:], got[350:])
+    ref_on.append(lp_step(f1, f)); e0t.append(ref_e0t(f1))
+  n = check_latched(got, st, ref_off, ref_on, e0t, [f["path"][:, 1] for f in frames], k_from=350)
+  assert n["entry"] >= 1
 
 
 def test_lane_planner_unreadable_param_is_off():

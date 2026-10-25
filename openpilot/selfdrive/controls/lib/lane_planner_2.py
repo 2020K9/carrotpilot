@@ -51,6 +51,44 @@ def lane_converge_weight(t, mode, T):
     return np.exp(-np.maximum(t, 0.0) / T)
   return np.zeros_like(t)
 
+# K9LaneFix F1 merge latch (2026-10-26 recheck_0208): at lane-mode entry the merge also takes over the car's current lateral
+# rate / accel relative to the lane path (from the model path vs the lane path over the first LANE_MERGE_FIT_T s), so the
+# reference continues the car's motion instead of first stopping it and then pulling hard (quintic, smootherstep only).
+LANE_MERGE_MATCH = 2          # 0 position only, 1 + rate, 2 + rate and accel
+LANE_MERGE_FIT_T = 1.0        # s
+LANE_MERGE_R_MAX = 1.0        # |rate| cap [m/s]
+LANE_MERGE_A_MAX = 1.5        # |accel| cap [m/s^2]
+# Only |e0| <= t_eref * (t_max / converge_t)^2 is merged (the largest offset t_max can merge at the t_eref peak lateral accel);
+# the rest is left to the MPC as with K9LaneAssist 0 (a 1 m offset at lane-mode start no longer asks for ~1.4 m/s^2).
+LANE_MERGE_J_REF = 1.0        # m/s^3: merge time at least (60 |e0| / J_REF)^(1/3) (peak lateral jerk of the merge), within t_max;
+                              # converge_t 1 s stays for |e0| <= 1.7 cm, 9 cm -> 1.75 s, 13 cm or more -> t_max 2 s
+
+
+def lane_merge_rates(path_t, d):
+  """rate / accel of d(t) = lane path - model path at t = 0 (quadratic least squares over t <= LANE_MERGE_FIT_T)"""
+  if LANE_MERGE_MATCH <= 0:
+    return 0.0, 0.0
+  t = np.asarray(path_t, dtype=float); d = np.asarray(d, dtype=float)
+  m = np.isfinite(t) & np.isfinite(d) & (t <= LANE_MERGE_FIT_T)
+  if m.sum() < 4:
+    return 0.0, 0.0
+  c2, c1, _ = np.polyfit(t[m], d[m], 2)
+  r0 = float(np.clip(c1, -LANE_MERGE_R_MAX, LANE_MERGE_R_MAX))
+  a0 = float(np.clip(2.0 * c2, -LANE_MERGE_A_MAX, LANE_MERGE_A_MAX)) if LANE_MERGE_MATCH >= 2 else 0.0
+  return r0, a0
+
+
+def lane_merge_offset(t, mode, T, e0, r0=0.0, a0=0.0):
+  """F1 merge offset E(t) subtracted from the lane path: E(0) = e0, E'(0) = r0, E''(0) = a0, E = E' = E'' = 0 from T on."""
+  out = e0 * lane_converge_weight(t, mode, T)
+  if mode != "smootherstep" or (r0 == 0.0 and a0 == 0.0):
+    return out
+  u = np.clip(np.asarray(t, dtype=float) / T, 0.0, 1.0)
+  h1 = u - 6.0 * u ** 3 + 8.0 * u ** 4 - 3.0 * u ** 5
+  h2 = 0.5 * (u ** 2 - 3.0 * u ** 3 + 3.0 * u ** 4 - u ** 5)
+  return out + r0 * T * h1 + a0 * T * T * h2
+
+
 def lane_ramp_step(u):
   u = min(max(u, 0.0), 1.0)
   return u * u * (3.0 - 2.0 * u)
@@ -98,6 +136,11 @@ class LanePlanner:
 
   def k9_lane_fix_reset(self):
     self.lane_converge_e0 = 0.0
+    self.lane_merge_k = -1      # F1 merge latch: -1 idle, else model frames since the lane-mode merge was latched
+    self.lane_merge_e0 = 0.0    # latched start offset (lane path start - model path start) [m]
+    self.lane_merge_t = 0.0     # latched merge time [s]
+    self.lane_merge_r0 = 0.0    # latched rate / accel of (lane path - model path) at entry [m/s, m/s^2]
+    self.lane_merge_a0 = 0.0
     self.lane_ramp_g = 0.0
     self.lane_ramp_from = 0.0
     self.lane_ramp_k = 0
@@ -274,6 +317,7 @@ class LanePlanner:
     if fix is not None:
       model_path_y0 = float(path_xyz[0, 1])
       model_path_y = path_xyz[:, 1].copy() if fix["ramp_in_t"] > 0.0 else None
+      self.k9_model_path_y_raw = path_xyz[:, 1].copy()   # merge latch: car's lateral motion (model path) at lane-mode entry
       self.lane_converge_e0 = 0.0
     self.d_prob_count = self.d_prob_count + 1 if self.d_prob > 0.3 else 0
     if self.lanefull_mode and self.d_prob_count > int(1 / DT_MDL):
@@ -313,22 +357,42 @@ class LanePlanner:
 
   def k9_lane_fix_apply(self, fix, v_ego, path_t, path_xyz, lane_blended, model_path_y0, model_path_y):
     # K9LaneFix reference shaping, only when the lane path was blended into path_xyz (lane-mode branch above).
+    # 2026-10-26 recheck_0208 (보노보노 02:35): the merge is latched ONCE when lane mode starts (start = model path start ~ the
+    # car, target = lane path, merge time) and then only advances in time; it is not measured again every model frame. Before,
+    # e0 was taken again each frame, so the reference always started at the car and the 1 s merge acted as a 1 s feedback
+    # loop (closed-loop sim, new K9 spec: 3.5 s period +-0.6 m in lane mode, and a weaker centre pull -> 1-2 cm right with
+    # roll). The merge starts with the car's lateral rate / accel relative to the lane path (lane_merge_rates). After the
+    # merge time the lane-mode path is exactly the K9LaneAssist 0 path.
     if lane_blended:
-      # start the lane-mode reference at the model path start and merge into the lane path over converge_t
-      self.lane_converge_e0 = float(path_xyz[0, 1]) - model_path_y0
-      e0 = self.lane_converge_e0
-      T = fix["converge_t"]
-      converge_t = T
-      if fix["t_eref"] > 0.0:
-        # longer merge for a large offset (same peak lateral accel as |e0| = t_eref at T), limited to the time at which
-        # the merge curvature stays under t_kref (high speed keeps T), and to t_max
-        t_acc = T * np.sqrt(abs(self.lane_converge_e0) / fix["t_eref"])
-        if t_acc >= T:
-          t_ext = t_acc
-          if fix["t_kref"] > 0.0:
-            t_ext = min(t_acc, np.sqrt(5.7735 * abs(self.lane_converge_e0) / (fix["t_kref"] * max(v_ego, 1.0) ** 2)))
-          converge_t = float(np.clip(t_ext, T, max(fix["t_max"], T)))
-      path_xyz[:, 1] -= e0 * lane_converge_weight(path_t, fix["converge_mode"], converge_t)
+      if self.lane_merge_k < 0:
+        e0 = float(path_xyz[0, 1]) - model_path_y0
+        T = fix["converge_t"]
+        if fix["t_eref"] > 0.0:
+          cap = fix["t_eref"] * (max(fix["t_max"], T) / T) ** 2
+          e0 = float(np.clip(e0, -cap, cap))
+        converge_t = T
+        if fix["t_eref"] > 0.0:
+          # longer merge for a large offset (same peak lateral accel as |e0| = t_eref at T), limited to the time at which
+          # the merge curvature stays under t_kref (high speed keeps T), and to t_max
+          t_acc = T * np.sqrt(abs(e0) / fix["t_eref"])
+          if t_acc >= T:
+            t_ext = t_acc
+            if fix["t_kref"] > 0.0:
+              t_ext = min(t_acc, np.sqrt(5.7735 * abs(e0) / (fix["t_kref"] * max(v_ego, 1.0) ** 2)))
+            converge_t = float(np.clip(t_ext, T, max(fix["t_max"], T)))
+        if LANE_MERGE_J_REF > 0.0:
+          converge_t = max(converge_t, min(float(np.cbrt(60.0 * abs(e0) / LANE_MERGE_J_REF)), max(fix["t_max"], T)))
+        self.lane_merge_k, self.lane_merge_e0, self.lane_merge_t = 0, e0, converge_t
+        self.lane_merge_r0, self.lane_merge_a0 = lane_merge_rates(path_t, path_xyz[:, 1] - self.k9_model_path_y_raw)
+      else:
+        self.lane_merge_k += 1
+      el = self.lane_merge_k * DT_MDL
+      if el < self.lane_merge_t:
+        self.lane_converge_e0 = self.lane_merge_e0
+        path_xyz[:, 1] -= lane_merge_offset(path_t + el, fix["converge_mode"], self.lane_merge_t, self.lane_merge_e0,
+                                            self.lane_merge_r0, self.lane_merge_a0)
+    else:
+      self.lane_merge_k = -1
     if model_path_y is not None:
       # lane-mode start: ramp the lane-mode correction in over ramp_in_t (laneless_ref = what the laneless branch outputs)
       laneless_ref = model_path_y + (CAMERA_OFFSET + self.lane_offset_filtered.x)

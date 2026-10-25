@@ -40,10 +40,22 @@ def test_a1_path_offset_target_and_start_at_the_car(po):
   assert abs(path[0, 1]) < 0.02                         # starts at the car
   assert abs(path[-1, 1]) < 0.02                        # ends at lane centre + po = the car's place (no extra po)
   # car at the lane centre: the reference ends po beside it (on lane path + PathOffset) and starts at the car
+  # (pin rewritten 2026-10-26 recheck_0208 merge latch: "starts at the car" holds on the lane-mode entry frame, where the merge
+  # is latched; this frame sequence never moves the car, so after the merge time the reference is lane path + po itself)
   lp2 = make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=0, K9LaneAssist=1))
   lp2.k9_path_offset = po
-  path2, _ = [lp_step(lp2, _steady_frame(20.0, 0.0)) for _ in range(60)][-1]
-  assert abs(path2[0, 1]) < 0.02 and path2[-1, 1] == pytest.approx(po, abs=0.02)
+  # On the entry frame the 0.5 s ramp-in (unchanged) blends from the laneless reference (model path + po) with weight g, so
+  # the merge being ramped in is recovered as po + (path - po) / g.
+  out2 = []
+  for _ in range(80):   # lane mode from frame ~21, merge up to t_max 2 s
+    p_, a_ = lp_step(lp2, _steady_frame(20.0, 0.0)); out2.append((p_, a_, lp2.lane_merge_k, lp2.lane_ramp_g))
+  entry = [(p, g) for p, a, mk, g in out2 if mk == 0]
+  assert len(entry) == 1 and entry[0][1] > 0.0
+  merged = po + (entry[0][0][:, 1] - po) / entry[0][1]
+  assert abs(merged[0]) < 0.02 and merged[-1] == pytest.approx(po, abs=0.02)
+  path2 = out2[-1][0]
+  assert out2[-1][2] * 0.05 > lp2.lane_merge_t                    # merge over
+  assert path2[-1, 1] == pytest.approx(po, abs=0.02) and path2[0, 1] == pytest.approx(po, abs=0.02)   # po once, not twice
 
 
 @pytest.mark.parametrize("seed", SEEDS[:3])
