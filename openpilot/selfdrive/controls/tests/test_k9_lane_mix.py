@@ -136,3 +136,42 @@ def test_same_path_offset_for_both_holds():
   lc = (ROOT / "selfdrive/controls/lib/k9_lane_center.py").read_text()
   olh = (ROOT / "selfdrive/controls/lib/k9_one_lane_hold.py").read_text()
   assert "k9_lane_offset_m(controls.params)" in lc and "k9_lane_offset_m(controls.params)" in olh
+
+
+class _Hold:
+  def __init__(self, active):
+    self.active = active; self.hv = 0.0; self.close = False
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_damping_reference_counts_only_the_applied_share(seed):
+  # audit A6: the hold that is not used must not keep its own k_out in hv; the used one keeps exactly the mixed output
+  rng = np.random.default_rng(seed)
+  v = float(rng.uniform(8.0, 30.0)); v2 = v * v
+  c = type("C", (), {})()
+  c.k9_lc = _Hold(False); c.k9_olh = _Hold(True)
+  hv_lc = hv_olh = 0.0
+  for _ in range(400):
+    k_lc = float(rng.uniform(-1, 1)) * 0.2 / v2; k_olh = float(rng.uniform(-1, 1)) * 0.25 / v2
+    # what the holds do themselves this tick
+    c.k9_lc.hv = (c.k9_lc.hv + DT * k_lc * v2) * (1.0 - DT / 3.0)
+    c.k9_olh.hv += DT * k_olh * v2
+    out = M.k9_lane_mix_step(c, k_lc, k_olh, v)
+    hv_lc = hv_lc * (1.0 - DT / 3.0)                # owner is the one-line hold: centre share 0
+    hv_olh += DT * out * v2
+    assert c.k9_mix.owner == M.OWNER_OLH
+    assert abs(c.k9_lc.hv - hv_lc) < 1e-9 and abs(c.k9_olh.hv - hv_olh) < 1e-9
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_damping_reference_unchanged_for_one_hold_alone(seed):
+  rng = np.random.default_rng(seed)
+  v = float(rng.uniform(8.0, 30.0)); v2 = max(v, M.V_MIN) ** 2   # the one-line hold runs from 8 m/s (k9_one_lane_hold.V_MIN)
+  ks = _limited_walk(rng, 900, v, M.A_MAX, M.J_MAX)
+  c = type("C", (), {})()
+  c.k9_lc = None; c.k9_olh = _Hold(True)
+  hv = 0.0
+  for k in ks:
+    c.k9_olh.hv += DT * k * v2; hv += DT * k * v2
+    assert M.k9_lane_mix_step(c, 0.0, k, v) == k
+    assert c.k9_olh.hv == hv

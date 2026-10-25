@@ -70,6 +70,19 @@ def k9_lane_mix_step(controls, k_lc, k_olh, v):
   olh = getattr(controls, 'k9_olh', None)
   out = mix.update(k_lc, k_olh, bool(lc is not None and lc.active), bool(olh is not None and olh.active),
                    bool(olh is not None and getattr(olh, 'close', False)), float(v))
+  # audit A6 (2026-10-26): each hold's damping reference hv must hold only the lateral velocity it really added. The holds
+  # integrated their own k_out this tick; swap that for their applied share (owner: the mixed output, other: 0). With one
+  # hold pushing and no hand-over the share equals its k_out, so nothing changes.
+  v2 = max(float(v), V_MIN) ** 2
+  for h, k_own, own in ((lc, k_lc, OWNER_LC), (olh, k_olh, OWNER_OLH)):
+    if h is None or not hasattr(h, 'hv'):
+      continue
+    share = out if mix.owner == own else 0.0
+    if share != k_own:
+      corr = DT * (share - k_own) * v2
+      if own == OWNER_LC:
+        corr *= max(1.0 - DT / 3.0, 0.0)   # k9_lane_center decays hv after adding
+      h.hv += corr
   if out == 0.0 and mix.owner == OWNER_NONE:
     controls.k9_mix = None
   return out
