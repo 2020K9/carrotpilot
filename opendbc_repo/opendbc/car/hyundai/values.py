@@ -800,7 +800,7 @@ class CAR(Platforms):
   )
   KIA_K9 = HyundaiPlatformConfig(
     [HyundaiCarDocs("Kia K9 2016-2019", "All", car_parts=CarParts.common([CarHarness.hyundai_h]))],
-    CarSpecs(mass=2075, wheelbase=3.15, steerRatio=14.5, tireStiffnessFactor=0.7),
+    CarSpecs(mass=2015, wheelbase=3.105, steerRatio=14.5, tireStiffnessFactor=0.7),  # 2020 K9 RJ: 축거 3,105 mm, 공차 약 2,015 kg (보노보노 02:20 제원)
     flags=HyundaiFlags.LEGACY,
   )
   KIA_EV_SK3 = HyundaiPlatformConfig(
