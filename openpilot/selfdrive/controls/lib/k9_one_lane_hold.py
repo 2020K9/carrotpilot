@@ -32,6 +32,11 @@ Switch (2026-10-25 menu merge, see k9_lane.py): K9LaneAssist (int, default 0) - 
         r6: while ramping out the push only shrinks (never grows, never changes sign: r5 kept moving toward the frozen last
         target, DASH 160), and the push is scaled by the visible line probability (0 at P_OFF -> 1 at P_FULL; weak lines
         pushed the car shortly before they were lost, R20 1a3 / MERGE 167).
+        r7 (2026-10-25 lane_unify_finish): lane estimate jumping = no hold. Over the last UNST_T s, if a lane line with
+        probability >= UNST_P moved by more than UNST_M at the car (max - min of its x=0 point), or the lane width
+        (both lines >= UNST_P) did, the hold is off for UNST_HOLD (10) s after the last such frame: push target cut to 0 at
+        once (output still jerk limited) and the memory dropped (1c9 17:30:10-30: the model lane estimate swung
+        +-30 cm in 1 s and the hold pushed after it; closed-loop roll>=1.8 p95 30.4 -> 32.1 cm vs K9LaneCenter only).
 """
 import numpy as np
 
@@ -70,6 +75,7 @@ ONE_GAP = 0.3               # one-line episode survives a measurement gap up to 
 BOTH_T, STALE_T = 1.0, 0.3      # both lines steady before remembering / model frame older than this = no measurement
 TAU_GAP, TAU_W, TAU_RATE = 0.5, 1.0, 0.3
 X_NEAR, X_FAR = 20.0, 30.0
+UNST_T, UNST_M, UNST_P, UNST_HOLD = 1.0, 0.3, 0.3, 10.0   # r7: lane estimate jump window [s] / range [m] / min prob / hold-off [s] (2 s still pushed 6 s after the 1c9 17:30:14 jumps)
 P_FULL, P_POW = 0.9, 2.0   # r6: push scale by the visible line probability ((p - P_OFF) / (P_FULL - P_OFF)) ** P_POW
 
 
@@ -138,6 +144,10 @@ class OneLaneHold:
     self.pf = 1.0                   # r6: push scale from the visible line probability
     self.gain = 1.0                 # K9LaneCenterGain / 100 (set by k9_one_lane_hold_step)
     self.off = 0.0                  # PathOffset (+-0.30 m, + right): target position right of the lane centre
+    self.hist = []                  # r7: (t, y0 left or None, y0 right or None, width or None) over the last UNST_T s
+    self.ht = 0.0                   # r7: model frame clock [s]
+    self.unst_t = 0.0               # r7: hold-off left after the lane estimate jumped [s]
+    self.unst = False               # r7: the lane estimate jumped in this frame
 
   # ---- model frame (20 Hz) ----
   def _frame(self, md, v, dt):
@@ -159,6 +169,17 @@ class OneLaneHold:
         e_ = fits[i][0] - (float(np.polyval(self.prev[0][i], s_)) - pth)
         inn[i] = e_ if abs(e_) <= INN_JUMP else None
     self.prev = (coefs, px, py)
+    # r7: lane estimate jumping (max - min over UNST_T s of each line at the car / of the lane width) -> no hold
+    self.ht += dt
+    yl = fits[0][0] if probs[0] >= UNST_P else None; yr = fits[1][0] if probs[1] >= UNST_P else None
+    self.hist.append((self.ht, yl, yr, (yr - yl) if (yl is not None and yr is not None) else None))
+    while self.hist and self.hist[0][0] < self.ht - UNST_T - 1e-6:
+      self.hist.pop(0)
+    self.unst = False
+    for j in (1, 2, 3):
+      vals = [h[j] for h in self.hist if h[j] is not None]
+      if len(vals) >= 2 and max(vals) - min(vals) > UNST_M:
+        self.unst = True
     jump = False
     for i in (0, 1):
       y0, a = fits[i]
@@ -228,6 +249,11 @@ class OneLaneHold:
         self.rel = [False, False]; self.meas = None
       self.frame_dt = 0.0
     self.block_t = max(self.block_t - DT, 0.0)
+    if self.unst:
+      self.unst = False; self.unst_t = UNST_HOLD
+      self.w = 0.0; self.cut = True; self.mem = None; self.recede_t = 0.0   # r7: like the watch: target cut to 0 at once
+    else:
+      self.unst_t = max(self.unst_t - DT, 0.0)
     if self.moved:
       self.w = 0.0       # r4: push target cut to 0 at once (the output still moves at the jerk limit)
       self.cut = True
@@ -240,7 +266,7 @@ class OneLaneHold:
     m = self.meas if self.frame_dt <= STALE_T else None
     self.gap_t = 0.0 if m is not None else self.gap_t + DT
     self.one_t = self.one_t + DT if m is not None else (self.one_t if self.gap_t <= ONE_GAP else 0.0)
-    ok = (laneless and not lane_change and not pressed and v >= V_MIN and abs(model_curv) < K_TURN and self.block_t <= 0.0
+    ok = (laneless and not lane_change and not pressed and v >= V_MIN and abs(model_curv) < K_TURN and self.block_t <= 0.0 and self.unst_t <= 0.0
           and self.one_t >= T_PROBE and self.mem is not None and m is not None and m[3] and -0.2 <= m[1] <= self.mem["target"] + S_MAX + 0.5)
     v2 = max(v, V_MIN) ** 2
     if self.mk_prev is not None:
