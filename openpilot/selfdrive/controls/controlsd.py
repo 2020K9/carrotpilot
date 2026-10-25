@@ -209,16 +209,20 @@ class Controls:
     # laneless command below is computed exactly as before.
     from openpilot.selfdrive.controls.lib.k9_lane_center import k9_lane_center_step
     k9_lc_add = k9_lane_center_step(self, CS, CC, model_v2, LaneChangeState.off)
+    # K9LaneAssist 1 (k9_lane_mix, 보노보노 2026-10-25 23:38): one of the two holds pushes at a time, hand-over without a step,
+    # combined caps 0.25 m/s^2 (0.6 inside the one-line minimum gap) / 0.15 m/s^3. Both 0.0 (switch 0) -> 0.0.
+    from openpilot.selfdrive.controls.lib.k9_lane_mix import k9_lane_mix_step
+    k9_lane_add = k9_lane_mix_step(self, k9_lc_add, k9_olh_add, CS.vEgo)
     # K9LaneAssist HUD values (display only, controlsState.k9LaneState / k9LaneAccel; nothing reads them back)
+    mix = getattr(self, 'k9_mix', None)
     if getattr(self, 'k9_lc_mode', 0) != 1:
       self.k9_lane_state = 0
-    elif getattr(self, 'k9_lc', None) is not None and (self.k9_lc.active or k9_lc_add != 0.0):
-      self.k9_lane_state = 2
-    elif getattr(self, 'k9_olh', None) is not None and (self.k9_olh.active or k9_olh_add != 0.0):
-      self.k9_lane_state = 3
+    elif mix is not None and mix.owner in (2, 3) and (k9_lane_add != 0.0 or mix.owner == 3 and self.k9_olh.active
+                                                      or mix.owner == 2 and self.k9_lc.active):
+      self.k9_lane_state = mix.owner
     else:
       self.k9_lane_state = 1
-    self.k9_lane_accel = (k9_lc_add + k9_olh_add) * float(CS.vEgo) ** 2
+    self.k9_lane_accel = k9_lane_add * float(CS.vEgo) ** 2
     lane_cmd_active = False
     if not CC.latActive:
       new_desired_curvature = self.curvature
@@ -241,10 +245,8 @@ class Controls:
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
       dc_model = model_v2.action.desiredCurvature
-      if k9_olh_add != 0.0:
-        dc_model = dc_model + k9_olh_add   # K9OneLaneHold 1: one-lane-line gap hold (laneless only)
-      if k9_lc_add != 0.0:
-        dc_model = dc_model + k9_lc_add    # K9LaneCenter 1: both-lines lane-centre hold (laneless only)
+      if k9_lane_add != 0.0:
+        dc_model = dc_model + k9_lane_add   # K9LaneAssist 1: lane-centre hold, both lines or one line (laneless only)
       new_desired_curvature = smooth_value(dc_model, self.desired_curvature, 0.1)
 
     # K9LaneFix (experimental, see controls/lib/k9_lane_fix.py): read every control tick like the other lateral params

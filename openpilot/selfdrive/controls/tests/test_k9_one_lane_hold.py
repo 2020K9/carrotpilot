@@ -133,7 +133,8 @@ def test_controlsd_off_path_is_the_old_expression():
   import openpilot.selfdrive.controls.controlsd as C
   with open(C.__file__) as f:
     src = f.read()
-  assert "      if k9_olh_add != 0.0:\n        dc_model = dc_model + k9_olh_add" in src
+  assert "      if k9_lane_add != 0.0:\n        dc_model = dc_model + k9_lane_add" in src   # 23:38: one mixed add (k9_lane_mix)
+  assert "k9_lane_mix_step(self, k9_lc_add, k9_olh_add, CS.vEgo)" in src
   assert "new_desired_curvature = smooth_value(dc_model, self.desired_curvature, 0.1)" in src
   assert "self.curvature = -self.VM.calc_curvature(" in src   # right-positive curvature, the sign the hold is written for
   c = C.Controls.__new__(C.Controls)

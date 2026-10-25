@@ -130,6 +130,7 @@ class OneLaneHold:
     self.k_raw = 0.0
     self.k_out = 0.0
     self.active = False
+    self.close = False            # inside the remembered minimum gap this tick (k9_lane_mix: 0.6 cap)
     self.recede_t = 0.0
     self.prev = None                # previous frame (line fits, path x, path y) for the line-moved detector
     self.ib = [0.0, 0.0]            # learned innovation bias [m/s] per line
@@ -311,6 +312,7 @@ class OneLaneHold:
     if self.w <= 0.0 and not ok and abs(self.k_out) <= dk:
       self.k_out = 0.0; self.integ = 0.0; self.cut = False; self.hv = 0.0
       return 0.0
+    self.close = close
     amax = (A_MAX_CLOSE if close else A_MAX) / v2
     g = self.w * self.w * (3.0 - 2.0 * self.w)
     fade = 1.0
