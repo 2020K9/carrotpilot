@@ -274,7 +274,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9MeterCmd", {CLEAR_ON_MANAGER_START, STRING}},    // K9ExtHud=1 meter button press "<token>:<start|pause|settle>" (memory)
     {"K9MeterState", {CLEAR_ON_MANAGER_START, STRING}},  // K9ExtHud=1 meter state for the buttons (memory)
     {"K9OneLaneHold", {PERSISTENT, INT, "0"}},
-    {"K9ActiveSound", {PERSISTENT, INT, "0"}},  // 1 = engine rpm/gear/load to the Carlinkit active-sound app (UDP 7730, selfdrive/carrot/k9_active_sound.py)
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},
     {"CancelButtonMode", {PERSISTENT, INT, "0"}},
     {"LfaButtonMode", {PERSISTENT, INT, "0"}},

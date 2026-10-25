@@ -5,7 +5,6 @@ import importlib.util
 from openpilot.cereal import car
 from openpilot.common.params import Params
 from openpilot.selfdrive.carrot.ext_hud import ext_hud_active, read_ext_hud
-from openpilot.selfdrive.carrot.k9_active_sound import active_sound_mode
 from openpilot.system.hardware import PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
@@ -112,10 +111,6 @@ def c3x_lite(started: bool, params: Params, CP: car.CarParams) -> bool:
 def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
   return cluster_hud_active(params)
 
-def enable_k9_active_sound(started, params, CP: car.CarParams) -> bool:
-  # K9ActiveSound 1 (주행 제어 > 실험중, last): onroad only. 0 / anything else: never started -> no UDP port at all.
-  return started and active_sound_mode(params) == 1
-
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
 
@@ -189,7 +184,6 @@ procs = [
   PythonProcess("carrot_bluetooth", "openpilot.selfdrive.carrot.bluetooth.daemon", always_run, enabled=TICI, restart_if_crash=True),
   PythonProcess("cweb_push", "openpilot.selfdrive.carrot.cweb_push", always_run, enabled=not PC),
   PythonProcess("carrot_cluster", "openpilot.selfdrive.carrot.cluster_autorun", enable_cluster_hud, restart_if_crash=True),
-  PythonProcess("k9_active_sound", "openpilot.selfdrive.carrot.k9_active_sound", enable_k9_active_sound, restart_if_crash=True),
 
   #Xiaoge data broadcaster (conditional on ShareData param)
   # Starts after onroad readiness, when manager already has live IPC mappings.
