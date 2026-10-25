@@ -66,8 +66,10 @@ def test_lane_line_in_its_own_box_above_sr_sad():
       r.set_taxi_meter_enabled(meter)
       for layout in (CLUSTER_PANEL_LAYOUT_DRIVING_LEFT, CLUSTER_PANEL_LAYOUT_DRIVING_RIGHT):
         r.set_panel_layout(layout)
-        for off, st, gl, gr in ((0.123, 2, 1.87, 1.63), (0.123, 2, 1.42, 1.18), (None, 1, None, None), (-0.3, 3, 2.49, -0.49), (0.0, 0, 0.8, None),
-                                (-9.99, 2, 0.0, 0.0)):
+        # real lanes (comma basis: 좌 + 우 = lane width, (좌 - 우) / 2 = 치우침) plus layout extremes, not lanes: -9.99 / 3.50 m
+        # (widest reachable text) and the pre-1c5bf4c0 widest -0.49 m (lane_gaps_m no longer gives < 0.2, kept for the box)
+        for off, st, gl, gr in ((0.123, 2, 1.87, 1.63), (None, 1, None, None), (-0.3, 3, 1.45, 2.05), (0.0, 0, 1.75, None),
+                                (-9.99, 2, 3.5, 3.5), (-0.3, 3, 2.49, -0.49), (-9.99, 2, 0.0, 0.0)):
           s = _state(k9_lane_offset_m=off, k9_lane_state=st, k9_lane_gap_left_m=gl, k9_lane_gap_right_m=gr)
           full = render(s)
           no_lane = render(s, ("_draw_lane_values",))

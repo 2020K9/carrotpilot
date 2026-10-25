@@ -11,17 +11,17 @@ here is read back by controls.
 - SAD: modeld (laneless) uses SteerActuatorDelay*0.01 when > 0, otherwise
   liveDelay.lateralDelay (learned); controlsd lane mode does the same (== 0 -> liveDelay).
 
-Lane line above it (보노보노 2026-10-25 20:16 "라이브값 따로 못보나, 좌우치우침"):
-- OFS: car offset from the lane centre in cm (+ right, - left), from modelV2 inner lane lines at
-  the car (x = 0), the same measurement K9LaneAssist's centre hold uses ( -(y1 + y2) / 2 ), with a
-  0.5 s low-pass. '--' while either inner line is weak (prob < LANE_P_MIN, std > LANE_STD_MAX) or the
-  width is implausible (outside LANE_W_MIN..LANE_W_MAX) - shown whatever K9LaneAssist is set to.
-- LC: controlsState.k9LaneState / k9LaneAccel from controlsd: 'off' switch off, '--' on but not
-  holding, otherwise the lateral accel the hold adds now (m/s^2, + = toward the right).
+Lane line above it (보노보노 2026-10-25 20:16 "라이브값 따로 못보나, 좌우치우침"; the first 'OFS / LC' text of 7ba6432e is
+replaced by the Korean line below since 6fc96445):
+- offset: car (comma device, modelV2 y = 0) from the lane centre [m] (+ right, - left), modelV2 inner lane lines at x = 0,
+  the same measurement K9LaneAssist's centre hold uses ( -(y1 + y2) / 2 ), with a 0.5 s low-pass. None ('--') while either
+  inner line is weak (prob < LANE_P_MIN, std > LANE_STD_MAX) or the width is implausible (outside LANE_W_MIN..LANE_W_MAX).
+- state: controlsState.k9LaneState from controlsd (0 switch off, 1 on but not holding, 2 / 3 holding). controlsState.k9LaneAccel
+  (lateral accel the hold adds, m/s^2, + = toward the right) is logged but not shown.
 
 2026-10-25 23:49 (보노보노 "hud는 수정 다 했니"): one Korean line, shown whatever K9LaneAssist is set to:
   '치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬'
-  치우침 = OFS above (좌 / 우 + cm, '가운데' under 2 cm, '--' while the lines are weak); 보정 = 꺼짐 (switch 0) / 대기 (on, not
+  치우침 = offset above (좌 / 우 + cm, '가운데' under 2 cm, '--' while the lines are weak); 보정 = 꺼짐 (switch 0) / 대기 (on, not
   pushing) / 켬 (pushing now).
   좌 / 우 (보노보노 2026-10-26 01:20 "콤마 기준"): distance from the car centre (comma device, modelV2 y = 0) to the middle of that
   inner lane line at x = 0, i.e. -y1 / y2 ('--' for a weak line, or outside GAP_MIN_M..GAP_MAX_M). So 좌 + 우 = lane width and

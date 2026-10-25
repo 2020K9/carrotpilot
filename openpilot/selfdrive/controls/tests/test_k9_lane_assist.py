@@ -72,6 +72,40 @@ def test_manager_runs_the_migration_before_processes():
   assert "migrate_k9_lane(params)" in init
 
 
+@pytest.mark.parametrize("pre", [None, 0, 1, 2])
+def test_migration_every_combination(pre):
+  # 2026-10-26 01:27 (보노보노 "모든 조합"): every combination of the four old switches (K9LRView 0..4, the others -1 / 0 / 1 /
+  # absent), with K9LaneAssist absent / 0 / 1 / 2 before the first start
+  import itertools
+  for fix, lrv, olh, lc in itertools.product((None, -1, 0, 1), (None, 0, 1, 2, 3, 4), (None, -1, 0, 1), (None, -1, 0, 1)):
+    old = {k: v for k, v in zip(OLD, (fix, lrv, olh, lc)) if v is not None}
+    vals = dict(old)
+    if pre is not None:
+      vals["K9LaneAssist"] = pre
+    p = MemParams(**vals)
+    any_on = fix == 1 or lrv in (1, 2, 3) or olh == 1 or lc == 1
+    changed = KL.migrate_k9_lane(p)
+    assert p.values.get("K9LaneAssist") == (1 if any_on else pre), (old, pre)
+    assert changed == (any_on and pre != 1), (old, pre)
+    assert p.values["K9LaneVer"] == KL.K9_LANE_VER
+    assert all(p.values.get(k) == old.get(k) for k in OLD)            # old keys are never rewritten
+    assert KL.k9_lane_on(p) == (any_on or pre == 1)
+    before = dict(p.values)
+    assert not KL.migrate_k9_lane(p) and p.values == before            # second start: nothing
+
+
+def test_path_offset_text_says_laneless_only_with_lane_assist():
+  # controlsd laneless follows model desiredCurvature; PathOffset reaches it only through the K9LaneAssist 1 holds
+  cat = json.loads((ROOT / "selfdrive/carrot_settings.json").read_text())
+  po = next(p for p in cat["params"] if p["name"] == "PathOffset")
+  assert "레인리스는 차선 보조 1일 때만, ±30cm까지" in po["descr"]
+  assert "Laneless: only with Lane Assist 1, up to ±30 cm" in po["edescr"]
+  assert "无车道线模式仅在车道辅助为1时适用，最多±30cm" in po["cdescr"]
+  src = (ROOT / "selfdrive/controls/controlsd.py").read_text()
+  laneless = src[src.index("dc_model = model_v2.action.desiredCurvature"):src.index("new_desired_curvature = smooth_value(dc_model")]
+  assert "pathOffset" not in laneless and "PathOffset" not in laneless and "k9_lane_add" in laneless
+
+
 def test_every_module_reads_the_one_switch():
   for v, on in ((0, False), (1, True), (2, False), (-1, False), (KeyError(), False)):
     p = MemParams(K9LaneAssist=v, K9LaneFix=1, K9LRView=1, K9OneLaneHold=1, K9LaneCenter=1)   # old keys: no effect
@@ -306,9 +340,9 @@ def test_hud_offset_and_text():
   assert f.update(None, 0.55) is None and f.update(0.2, 0.6) == pytest.approx(0.2)
   # 2026-10-25 23:49 (보노보노): one Korean line (pin rewritten for the new wording); shown with K9LaneAssist 0 too
   assert lane_values_text(0.123, 2, 1.87, 1.63) == "치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬"
-  assert lane_values_text(-0.08, 3, 1.1, None) == "치우침 좌 8cm · 좌 1.10m 우 -- · 보정 켬"
+  assert lane_values_text(-0.08, 3, 1.67, None) == "치우침 좌 8cm · 좌 1.67m 우 -- · 보정 켬"
   assert lane_values_text(None, 1) == "치우침 -- · 좌 -- 우 -- · 보정 대기"
-  assert lane_values_text(0.004, 0, 0.8, 0.8) == "치우침 가운데 · 좌 0.80m 우 0.80m · 보정 꺼짐"
+  assert lane_values_text(0.004, 0, 1.754, 1.746) == "치우침 가운데 · 좌 1.75m 우 1.75m · 보정 꺼짐"
   assert lane_values_text(-0.0199, 0) == "치우침 가운데 · 좌 -- 우 -- · 보정 꺼짐"
   assert lane_values_text(0.02, 1) == "치우침 우 2cm · 좌 -- 우 -- · 보정 대기"
   assert lane_values_text(-0.024, 1) == "치우침 좌 2cm · 좌 -- 우 -- · 보정 대기"
@@ -331,8 +365,8 @@ def test_hud_lane_gaps():
   assert lane_gaps_m(_md(-3.6, 1.7))[0] is None and lane_gaps_m(_md(-3.5, 1.7))[0] == pytest.approx(3.5)
   assert lane_gaps_m(_md(-1.9, 0.1))[1] is None and lane_gaps_m(_md(-1.9, 0.2))[1] == pytest.approx(0.2)
   assert lane_gaps_m(_md(0.3, 1.7))[0] is None                                      # 'left' line right of the car
-  assert lane_gap_text(1.42, 1.18) == "좌 1.42m 우 1.18m"
-  assert lane_gap_text(None, 0.684) == "좌 -- 우 0.68m"
+  assert lane_gap_text(1.87, 1.63) == "좌 1.87m 우 1.63m"
+  assert lane_gap_text(None, 1.684) == "좌 -- 우 1.68m"
   assert lane_gap_text(float("nan"), None) == "좌 -- 우 --"
 
 
@@ -370,6 +404,24 @@ def test_hud_gaps_comma_basis_relations():
   gl, gr = lane_gaps_m(md)
   assert gl - gr == pytest.approx(0.24) and gl + gr == pytest.approx(3.5)
   assert lane_values_text(lane_offset_m(md), 2, gl, gr) == "치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬"
+
+
+def test_hud_example_numbers_are_a_real_lane():
+  # 2026-10-26 01:27 (보노보노 "기준점 없이 만든 숫자"): every 좌 / 우 example (manual, HUD line pins) is comma-centre based, so
+  # 좌 + 우 is a real lane (2.8 .. 3.8 m) and (좌 - 우) / 2 is the shown 치우침 (within rounding)
+  import re
+  doc = (ROOT.parent / "docs/dev/k9_lane_assist.md").read_text(encoding="utf-8")
+  n = 0
+  for args in re.findall(r"<!-- hud: ([^>]*) -->", doc):
+    off, _, gl, gr = [None if a.strip() == "None" else float(a) for a in args.split(",")]
+    if gl is None or gr is None:
+      continue
+    n += 1
+    assert 2.8 <= gl + gr <= 3.8, args
+    assert off is not None and abs((gl - gr) / 2 - off) <= 0.006, args
+  assert n >= 3
+  for m in re.findall(r"좌 (\d\.\d\d)m 우 (\d\.\d\d)m", doc):
+    assert 2.8 <= float(m[0]) + float(m[1]) <= 3.8, m
 
 
 def test_hud_examples_in_the_manual_match():
