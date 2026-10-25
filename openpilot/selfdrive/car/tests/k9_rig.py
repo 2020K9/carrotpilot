@@ -42,6 +42,7 @@ class Rig:
     self.frame = 0
     self.can = []
     self.scc14 = []
+    self.scc12 = []  # (frame, v, decoded SCC12) of frames that sent SCC12
 
   def step(self, accel, state, v, standstill=False, a_target=None, gas=False, brake=False, a_ego=None, lead=None,
            lead_visible=True):
@@ -61,6 +62,7 @@ class Rig:
       self.parser.update([self.frame * 10_000_000, scc])
       if any(m[0] == 1057 for m in scc):
         sent = dict(self.parser.vl["SCC12"])
+        self.scc12.append((self.frame, v, sent))
       if any(m[0] == 905 for m in scc):
         self.scc14.append((self.frame, v, dict(self.parser.vl["SCC14"])))
     self.frame += 1

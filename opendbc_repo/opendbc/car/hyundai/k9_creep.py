@@ -69,6 +69,17 @@ limit and jerk profile. Against v9:
   b = 0 identical stops; b = -0.056 stop distance -0.19 m median, lead overlaps 33 -> 26; b = +0.03 +0.10 m median (max
   +0.48 m), overlaps 5 -> 9, not stopped within 3 s 96 -> 132 (without the latch ramp: 5 -> 18 and 141). Log estimate and
   sim only, not car-verified.
+- band compensation and stall latch (K9 fix 2026-10-26 brake_shudder_1025): over 48 logged K9 stops the band made the car
+  brake weaker than asked, +0.146 +- 0.054 m/s^2 per unit band (the 28-stop estimate above was -0.056 +- 0.128). With that
+  the band alone (62eb5798) stopped later in the closed-loop sim (beta 0.14: stop distance +0.39 m median, not stopped
+  within 3 s 2 -> 37, lead gap min -1.39 m). So while the band is sent the request is V12K9_BAND_COMP (0.20) stronger, times
+  band_w (the sent share of the original band, from the previous bands() call) and faded in over accel 0 .. -0.3 (none while
+  accelerating, none at or above 3.0 m/s); self.last stays the uncompensated feather / rate-limit state. A feathered stop
+  that still hangs with the band (stopping, below V12K9_STALL_SPEED 0.3 m/s, low-passed eff_ac above -0.10 for 15 frames)
+  latches StopReq (the band then ramps out as on every latch). Closed-loop sim (48 stops x 210 conditions, band effect beta
+  -0.06..0.25, fitted ESC model): 5-9 Hz shudder runs 9288 -> 723 (menu 0: 853), not stopped within 3 s 46 -> 9, lead gap
+  min -0.02 -> 1.19 m, stop-line overrun > 0.3 m 8 / 10080 (max +0.66 m, only at beta 0.25); at beta 0.14 jmax / rebound
+  paired with 6f518e35 median -0.14 / +0.006, at beta 0.25 jmax median +0.42. Log estimate and sim only, not car-verified.
 Page v12 parts NOT taken on the K9 (2026-10-25 closed-loop replay, 20 K9 stops x 72 conditions, sim only):
 - the page pid creep table [0.22, 0.50, 0.92, 1.45] -> [-0.25, -0.22, -0.18, 0.0] and the PID over-braking blend (up to 30 %
   toward aTarget - 0.14 at 1.05 m/s, 0 at 1.50 m/s): both brake less, target the Niro EV regen -> hydraulic hand-over at 3.25
@@ -148,6 +159,16 @@ V12_JERK_L_BP, V12_JERK_L_V = [0.55, 0.75, 0.95, 1.15], [1.0, 1.3, 1.3, 1.0]
 V12K9_BAND_FULL_SPEED = 2.5  # m/s (9 km/h: the logged band effect on the 5-9 Hz shudder was below it)
 V12K9_BAND_ZERO_SPEED = 3.0  # m/s
 V12K9_BAND_LATCH_STEP = 0.04  # per make_jerk call (50 Hz): band ramp to 0 once StopReq is latched (0.8 -> 0 in 0.4 s)
+# v12k9 band compensation (brake_shudder_1025): with the band the logged K9 stops braked weaker than asked (+0.146 +- 0.054
+# m/s^2 per unit band, 48 stops); while the band is sent the decel request is this much stronger (times the sent band share)
+V12K9_BAND_COMP = 0.20  # m/s^2 at the full band
+V12K9_BAND_COMP_FADE = 0.3  # m/s^2: full compensation at accel <= -0.3, linear to 0 at accel 0 (none while accelerating)
+# v12k9 stall latch (brake_shudder_1025): with the band the ESC does not trim a decel shortfall, so a feathered stop can hang at
+# 0.06-0.15 m/s (sim); stopping, band on, below STALL_SPEED and the low-passed eff_ac above STALL_EFF_AC for STALL_FRAMES -> StopReq
+V12K9_STALL_SPEED = 0.3  # m/s
+V12K9_STALL_EFF_AC = -0.10  # m/s^2 (low-passed eff_ac, V12K9_STALL_ALPHA per frame)
+V12K9_STALL_FRAMES = 15  # 0.15 s at 100 Hz
+V12K9_STALL_ALPHA = 0.05
 
 
 def k9_creep_applies(CP) -> bool:
@@ -180,6 +201,10 @@ class K9Creep:
     self.last = None  # previous sent accel; None means "start from the current command"
     self.active = False  # True only on a frame where update() applied (jerk/band change follows it)
     self.ss_count = 0  # kind 8: consecutive stopping frames with standstill
+    self.band_w = 0.0  # kind 8: share of the original ComfortBand sent on the last bands() call (0..1)
+    self.stall = False  # kind 8: stall latch fired in this stop
+    self.stall_n = 0
+    self.eff_f = None  # kind 8: low-passed eff_ac
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
@@ -193,8 +218,20 @@ class K9Creep:
     lon_ac = long_accel if long_accel is not None and math.isfinite(long_accel) else a_ego
     eff_ac = min(lon_ac, a_ego + 0.10)
     if self.v12:
-      return self._update_v12k9(accel, a_target, stopping, pid, v_ego, v_ego_raw, a_ego, eff_ac, esp_standstill,
-                                lead_visible, lead_distance)
+      self.eff_f = eff_ac if self.eff_f is None else self.eff_f + V12K9_STALL_ALPHA * (eff_ac - self.eff_f)
+      if not stopping:
+        self.stall, self.stall_n = False, 0
+      elif not self.stall:
+        hang = v_ego < V12K9_STALL_SPEED and self.eff_f > V12K9_STALL_EFF_AC and self.band_w > 0.0
+        self.stall_n = self.stall_n + 1 if hang else 0
+        if self.stall_n >= V12K9_STALL_FRAMES:
+          self.stall = True
+          self.latched = True  # StopReq now (ESC hold); the band ramps out as on any latch
+      accel, stopping = self._update_v12k9(accel, a_target, stopping, pid, v_ego, v_ego_raw, a_ego, eff_ac, esp_standstill,
+                                           lead_visible, lead_distance)
+      if self.band_w > 0.0 and accel < 0.0 and v_ego < V12K9_BAND_ZERO_SPEED:  # K9 band compensation (self.last uncompensated)
+        accel = float(accel - V12K9_BAND_COMP * self.band_w * min(1.0, -accel / V12K9_BAND_COMP_FADE))
+      return accel, stopping
 
     if not stopping:
       self.latched = False
@@ -297,6 +334,7 @@ class K9Creep:
       if v_ego < V12_JERK_U_SPEED:
         jerk_u = max(jerk_u, float(np.interp(v_ego, V12_JERK_U_BP, V12_JERK_U_V)))
       if not v_ego < V12K9_BAND_ZERO_SPEED:  # as the page: band 0 (bit for bit the old kind 8 here; NaN too)
+        self.band_w = 0.0
         return jerk_u, 0.0, 0.0
       # K9 (brake_v12k9_live_fix): the original band below 3.0 m/s (full at or below 2.5 m/s) against the 6-7 Hz shudder
       w = float(np.interp(v_ego, [V12K9_BAND_FULL_SPEED, V12K9_BAND_ZERO_SPEED], [1.0, 0.0]))
@@ -305,5 +343,6 @@ class K9Creep:
         pu = float(cb_prev)
         pl = max(pu - 0.1, 0.0) if cb_prev_lower is None else float(cb_prev_lower)
         cu, cl = max(0.0, min(cu, pu - V12K9_BAND_LATCH_STEP)), max(0.0, min(cl, pl - V12K9_BAND_LATCH_STEP))
+      self.band_w = float(min(1.0, max(0.0, cu / float(cb_upper)))) if cb_upper > 0.0 else 0.0
       return jerk_u, cu, cl
     return K9Creep.jerk_bands(jerk_u, v_ego)  # kind 1: exactly the v9 band (0)

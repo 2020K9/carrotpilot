@@ -2,7 +2,11 @@
 (v12k9) ComfortBand. On the car the feathered band-0 stops of menus 1 and 2 shuddered at 6-7 Hz below 7 km/h (17:32:41, 17:39:05,
 17:43:10), the band-on stops of menu 0 did not; kind 8 now sends the original ComfortBand (0.9 / 0.8 + 0.2 * accel) at or below
 2.5 m/s, linear to 0 at 3.0 m/s, 0 at or above 3.0 m/s (as before); once StopReq is latched it ramps back to 0 by 0.04 per
-make_jerk call (the latch phase is the old menu 2 again). Accel, StopReq and the jerk limits are unchanged.
+make_jerk call (the latch phase is the old menu 2 again). Jerk limits unchanged.
+brake_shudder_1025 (2026-10-26, 보노보노 23:54 / 00:50): with the band the logged K9 stops braked weaker than asked (+0.146 +- 0.054
+m/s^2 per unit band); while the band is sent the decel request is V12K9_BAND_COMP stronger (times the sent band share, faded in
+over accel 0 .. -0.3, none while accelerating), and a feathered stop that hangs below 0.3 m/s with the band (low-passed eff_ac
+above -0.10 for 0.15 s) latches StopReq. Above 3.0 m/s and with the band off everything is the frozen kind 8.
 Menus 0 / 1 / other values and other cars: CAN identical to 6f518e35 (the brake code of the car's 5ab624e8).
 Model-only harness with synthetic inputs: source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour (실차 미검증).
 """
@@ -29,6 +33,47 @@ def frozen_cc(tmp_path_factory):
 
 def test_band_constants():
   assert (kc.V12K9_BAND_FULL_SPEED, kc.V12K9_BAND_ZERO_SPEED, kc.V12K9_BAND_LATCH_STEP) == (2.5, 3.0, 0.04)
+  assert 0.0 < kc.V12K9_BAND_COMP <= 0.30 and kc.V12K9_BAND_COMP_FADE == 0.3
+  assert (kc.V12K9_STALL_SPEED, kc.V12K9_STALL_EFF_AC, kc.V12K9_STALL_FRAMES) == (0.3, -0.10, 15)
+
+
+def _kw1(v, accel=-0.5, stopping=False, a_ego=-0.5, long_accel=None, a_target=-0.5):
+  return dict(accel=accel, a_target=a_target, stopping=stopping, pid=not stopping, v_ego=v, v_ego_raw=v, a_ego=a_ego,
+              long_accel=long_accel, esp_standstill=False, long_active=True, override=False, gas=False, brake=False,
+              can_valid=True, lead_visible=False, lead_distance=0.0)
+
+
+def test_band_compensation_object():
+  """the sent accel is the frozen command minus COMP x sent band share x fade(accel); none without the band or while accelerating"""
+  c = K9Creep(V12K9)
+  assert c.update(**_kw1(2.0, accel=-0.5))[0] == -0.5  # no band sent yet
+  c.bands(0.5, 2.0, 0.8, 0.7, 0.0, 0.0)  # full band at 2.0 m/s
+  assert c.band_w == 1.0
+  assert c.update(**_kw1(2.0, accel=-0.5))[0] == pytest.approx(-0.5 - kc.V12K9_BAND_COMP)
+  assert c.update(**_kw1(2.0, accel=-0.15))[0] == pytest.approx(-0.15 - kc.V12K9_BAND_COMP * 0.5)
+  assert c.update(**_kw1(2.0, accel=0.3))[0] == 0.3
+  c.bands(0.5, 2.75, 0.8, 0.7, 0.8, 0.7)  # half band
+  assert c.band_w == pytest.approx(0.5)
+  assert c.update(**_kw1(2.75, accel=-0.6))[0] == pytest.approx(-0.6 - kc.V12K9_BAND_COMP * 0.5)
+  c.bands(0.5, 3.2, 0.8, 0.7, 0.4, 0.35)  # band 0 above 3.0 m/s: frozen kind 8
+  assert c.band_w == 0.0 and c.update(**_kw1(3.2, accel=-0.6))[0] == -0.6
+  assert c.last == -0.6  # the feather / rate-limit state never carries the compensation
+
+
+def test_stall_latch_object():
+  """stopping with the band below 0.3 m/s and no decel for 0.15 s -> StopReq; never without the band or while decelerating"""
+  def run(band, a_ego, n=40):
+    c = K9Creep(V12K9)
+    c.bands(0.5, 0.2, 0.84, 0.74, 0.0, 0.0) if band else None
+    out = []
+    for _ in range(n):
+      out.append(c.update(**_kw1(0.12, accel=-0.4, stopping=True, a_ego=a_ego, long_accel=a_ego, a_target=-0.3))[1])
+      if band and not c.latched:
+        c.bands(0.5, 0.12, 0.84, 0.74, 0.84, 0.74)
+    return out
+  hang = run(True, 0.0)
+  assert hang[:kc.V12K9_STALL_FRAMES - 1] == [False] * (kc.V12K9_STALL_FRAMES - 1) and all(hang[kc.V12K9_STALL_FRAMES:])
+  assert not any(run(True, -0.3)) and not any(run(False, 0.0))
 
 
 def test_latched_band_ramps_to_zero():
@@ -120,9 +165,11 @@ def test_menu2_other_cars_can_identical_to_frozen(monkeypatch, frozen_cc):
     assert ref.can == new.can
 
 
-def test_menu2_only_the_band_changes(monkeypatch, frozen_cc):
-  """K9 menu 2: every message other than SCC14 is byte-identical to the frozen menu 2; in SCC14 only ComfortBandUpper / Lower
-  change, only below 3.0 m/s, and never down."""
+def test_menu2_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
+  """K9 menu 2 against the frozen menu 2 (6f518e35): every message other than SCC12 / SCC14 is byte-identical; at or above
+  3.0 m/s SCC12 and SCC14 are identical; below it the band is never lower, aReqValue never higher (more decel by at most
+  V12K9_BAND_COMP) and StopReq never earlier-released (only earlier set, by the stall latch). Was 62eb5798's pin "only the band
+  changes", updated for the band compensation."""
   changed = 0
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), module=frozen_cc, K9StopMode=2))
@@ -131,18 +178,24 @@ def test_menu2_only_the_band_changes(monkeypatch, frozen_cc):
     monkeypatch.undo()
     assert len(ref.can) == len(new.can) > 400
     for a, b in zip(ref.can, new.can, strict=True):
-      assert [m for m in a if m[0] != 905] == [m for m in b if m[0] != 905]
-    assert len(ref.scc14) == len(new.scc14)
-    for (fo, vo, so), (fn, vn, sn) in zip(ref.scc14, new.scc14, strict=True):
+      assert [m for m in a if m[0] not in (905, 1057)] == [m for m in b if m[0] not in (905, 1057)]
+    assert len(ref.scc12) == len(new.scc12) and len(ref.scc14) == len(new.scc14)
+    for (fo, vo, so), (fn, vn, sn) in zip(ref.scc12, new.scc12, strict=True):
       assert (fo, vo) == (fn, vn)
-      for sig in so:
-        if sig in ("ComfortBandUpper", "ComfortBandLower"):
-          continue
-        assert so[sig] == sn[sig], sig
       if vo >= 3.0:
         assert so == sn
+        continue
+      assert sn["aReqValue"] <= so["aReqValue"] + 0.011 and so["aReqValue"] - sn["aReqValue"] <= kc.V12K9_BAND_COMP + 0.011
+      assert sn["StopReq"] >= so["StopReq"]
+      changed += sn["aReqValue"] != so["aReqValue"]
+    for (fo, vo, so), (fn, vn, sn) in zip(ref.scc14, new.scc14, strict=True):
+      assert (fo, vo) == (fn, vn)
+      if vo >= 3.0:
+        assert so == sn
+      for sig in so:
+        if sig not in ("ComfortBandUpper", "ComfortBandLower"):
+          assert so[sig] == sn[sig], sig
       assert sn["ComfortBandUpper"] >= so["ComfortBandUpper"] and sn["ComfortBandLower"] >= so["ComfortBandLower"]
-      changed += sn["ComfortBandUpper"] != so["ComfortBandUpper"]
   assert changed > 50
 
 
