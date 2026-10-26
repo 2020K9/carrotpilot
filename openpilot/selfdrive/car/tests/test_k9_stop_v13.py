@@ -180,6 +180,8 @@ def test_carcontroller_diff_is_the_page_code_plus_menu_wiring():
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
 @pytest.mark.parametrize("mode", [None, 0, 1, 2, 4, 7, 99, -1, float("nan")])
 def test_other_values_identical_to_prev(monkeypatch, prev_cc, mode, fingerprint):
+  if mode == 2 and fingerprint == CAR.KIA_K9:
+    pytest.skip("2026-10-26 23:27 (보노보노 \"2에 k2넣어\"): K9 menu 2 is k2 now (04c88723), pinned in test_k9_stop_v12k9_band.py")
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, **_kw(mode)))
     monkeypatch.undo()

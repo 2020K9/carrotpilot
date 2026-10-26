@@ -140,7 +140,13 @@ def load_frozen_cc(commit, tmp_dir, tag):
               "opendbc_repo/opendbc/car/torque_data/params.toml"}
   for f in set(changed) & car_data:
     diff = subprocess.run(["git", "diff", commit, "--", f], cwd=ROOT, check=True, capture_output=True, text=True).stdout
-    assert "K9" not in diff, f
+    # 2026-10-26 (brake_v13): fd0f3cd8 changed only the KIA_K9 CarSpecs line (wheelbase 3.105, mass 2015). Car specs reach
+    # both controllers the same way (through the CP of make_cp, built from this tree's values.py), so a hunk near the K9 may
+    # change CarSpecs(...) lines only; any other changed line in a hunk that mentions K9 still stops the frozen load.
+    for hunk in diff.split("\n@@")[1:]:
+      if "K9" in hunk:
+        body = [ln[1:] for ln in hunk.splitlines()[1:] if ln[:1] in "+-"]
+        assert body and all(ln.strip().startswith("CarSpecs(") for ln in body), f
   changed = [f for f in changed if f not in car_data]
   # b6696b37 committed two generated corner-radar dbc files with only the generator's header comments added (CAN-FD
   # corner radar, never loaded by the K9 controller): ignore a *_generated.dbc whose diff adds/removes comment lines only
@@ -150,6 +156,15 @@ def load_frozen_cc(commit, tmp_dir, tag):
     body = [ln[1:] for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
     assert all(not ln.strip() or ln.startswith("CM_ \"") for ln in body), f
     changed.remove(f)
+  # 2026-10-26 (brake_v13): the f29102fa upstream merge (6f05191c) changed hyundaicanfd.py inside create_acc_control_scc2
+  # only (CAN-FD SCC_CONTROL, never built for the non-CAN-FD K9); accept that file only while every hunk is in that function.
+  canfd = f"{HY}/hyundaicanfd.py"
+  if canfd in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", canfd], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    heads = [ln for ln in diff if ln.startswith("@@")]
+    assert heads and all(ln.split("@@")[2].strip().startswith("def create_acc_control_scc2(") for ln in heads), canfd
+    changed.remove(canfd)
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
