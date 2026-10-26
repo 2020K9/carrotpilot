@@ -30,12 +30,12 @@ def configure_cluster_locale() -> None:
 
 def configure_cluster_scheduling() -> None:
     from openpilot.common.realtime import drop_realtime
-    from openpilot.common.display_scheduling import DisplayScheduler
+    from openpilot.common.display_scheduling import CLUSTER_MIN_NICE, DisplayScheduler
     from openpilot.system.hardware import TICI
 
     drop_realtime()
     # Bootstrap on always-online CPUs. The live render loop handles transitions.
-    DisplayScheduler(4, enabled=TICI).update(False, force=True)
+    DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE).update(False, force=True)
 
 
 def configure_cluster_graphics() -> None:

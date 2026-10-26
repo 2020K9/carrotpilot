@@ -6,6 +6,8 @@ from pathlib import Path
 
 LITTLE_CORES = {0, 1, 2, 3}
 DISPLAY_NICE = 19
+# External HUD (carrot cluster) floor: never above this nice, also offroad / while starting (보노보노 2026-10-26 18:12)
+CLUSTER_MIN_NICE = 10
 
 
 def core_online(core: int) -> bool:
@@ -24,8 +26,9 @@ def thread_ids(pid: int | str = 'self') -> list[int]:
 
 class DisplayScheduler:
   def __init__(self, onroad_core: int, *, enabled: bool, include_little: bool = False,
-               extra_onroad_cores: tuple[int, ...] = ()):
+               extra_onroad_cores: tuple[int, ...] = (), min_nice: int = 0):
     self.core = onroad_core
+    self.min_nice = min_nice
     self.include_little = include_little
     self.extra_onroad_cores = extra_onroad_cores
     self.enabled = enabled and sys.platform == 'linux'
@@ -45,7 +48,7 @@ class DisplayScheduler:
     if onroad and self.include_little:
       cores = cores | LITTLE_CORES
     low_priority = bool(big_cores) or (onroad and self.include_little)
-    nice = DISPLAY_NICE if low_priority else 0
+    nice = max(DISPLAY_NICE if low_priority else 0, self.min_nice)
     workers = thread_ids()
     if child_pid is not None:
       workers.extend(thread_ids(child_pid))

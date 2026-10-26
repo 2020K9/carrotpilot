@@ -549,6 +549,7 @@ def _wait_for_usbgpu_startup(params: Params) -> None:
 def main() -> None:
     from openpilot.common.realtime import drop_realtime
     from openpilot.common.display_scheduling import DisplayScheduler
+    import openpilot.common.display_scheduling as display_scheduling
 
     drop_realtime()
     _configure_autorun_locale()
@@ -558,7 +559,8 @@ def main() -> None:
     from cluster_profile import release_finished_session_memory
     from cluster_usb_display import find_supported_usb_product, product_id_for_hud_mode, product_label
 
-    scheduler = DisplayScheduler(4, enabled=TICI)
+    # external HUD never above nice CLUSTER_MIN_NICE (10), offroad / while starting too; onroad DISPLAY_NICE 19 as before
+    scheduler = DisplayScheduler(4, enabled=TICI, min_nice=getattr(display_scheduling, "CLUSTER_MIN_NICE", 10))
     scheduler.update(False, force=True)
     params = Params()
     params.put_bool_nonblocking("ClusterHudConnected", False)

@@ -82,7 +82,7 @@ from cluster_simulator import ClusterSimulator, RandomInputSource
 from cluster_system_monitor import ClusterProcessCoreUsageSampler, NetworkAddressProvider
 from cluster_usb_display import TuringUsbDisplay, find_supported_usb_product, product_id_for_hud_mode, _set_cluster_hud_connected
 from cluster_usb_pipeline import AsyncJpegUsbPipeline
-from openpilot.common.display_scheduling import DisplayScheduler
+from openpilot.common.display_scheduling import CLUSTER_MIN_NICE, DisplayScheduler
 from openpilot.selfdrive.controls.lib.cutin_alert import CutinAlertCandidate, CutinAlertTracker
 
 DEFAULT_FPS = 0.0
@@ -774,7 +774,7 @@ def run_demo(
     language: str | None,
     is_metric: bool | None,
 ) -> None:
-    scheduler = DisplayScheduler(4, enabled=TICI)
+    scheduler = DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE)
     scheduler.update(False, force=True)
     profile = ProfileReporter(profile_render, profile_interval_s)
     gc_hook = GcProfileHook(profile) if profile_render else None
