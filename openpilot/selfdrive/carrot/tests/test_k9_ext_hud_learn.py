@@ -54,8 +54,15 @@ def test_texts():
   assert delay_learn_text(None, None) == "지연학습 -  -"
   assert torque_learn_text(61, 2.5, 0.131) == "토크학습 61%  횡가속 2.50  마찰 0.13"
   assert torque_learn_text(0, None, None) == "토크학습 0%  횡가속 -  마찰 -"
-  assert lane_offset_text(0.123) == "치우침 오른쪽 12cm" and lane_offset_text(-0.08) == "치우침 왼쪽 8cm"
+  assert lane_offset_text(0.123) == "치우침 → 12cm" and lane_offset_text(-0.08) == "치우침 ← 8cm"
   assert lane_offset_text(0.01) == "치우침 가운데" and lane_offset_text(None) == "치우침 --"
+
+
+def test_lane_offset_arrows_are_in_the_hud_font_atlas():
+  # 2026-10-26 20:37 arrows: the Korean HUD font loads only listed codepoints; a missing one draws as "?"
+  src = (CLUSTER / "cluster_renderer.py").read_text(encoding="utf-8")
+  body = src.split("def _navi_font_codepoints", 1)[1].split("def ", 1)[0]
+  assert "0x2190" in body and "0x2192" in body
   assert lane_gap_text(1.87, 1.63) == "좌 1.87m   우 1.63m"
   for t in (lat_values_text(12.9, 0.2), delay_learn_text(63, 0.24), torque_learn_text(61, 2.5, 0.131)):
     assert "적용" not in t and not any(w in t for w in ("SR", "SAD", "LD", "LT", "AF"))

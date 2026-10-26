@@ -374,7 +374,7 @@ LAT_VALUES_COLOR = (214, 224, 231, 255)
 # 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines (since 18:04 lines 1..3 above the TPMS car,
 # line 3 where SR / SAD was (4a44e564), lines 4 / 5 left of the car, see below):
 #   1 '조향비 12.90  지연설정 0.20초'  2 '지연학습 63%  0.24초'  3 '토크학습 61%  횡가속 3.16  마찰 0.09'   (_draw_lat_values)
-#   4 '치우침 오른쪽 12cm'  5 '좌 1.87m   우 1.63m'                                          (_draw_lane_values)
+#   4 '치우침 → 12cm'  5 '좌 1.87m   우 1.63m'                                          (_draw_lane_values)
 HUD_LINE_STEP = 20.0
 # 2026-10-26 18:04 (보노보노 "외부hud에 차선치우침.현재차선좌우간격 아래 tpms보여주는 차모양 왼쪽으로 옮겨놔"): lines 4 / 5 moved
 # to the left of the TPMS car (right edge LANE_VALUES_GAP_X left of the icon incl. the left pressure badges, the two lines
@@ -3057,6 +3057,7 @@ class ClusterUiRenderer:
             *range(0x20, 0x0250),
             *range(0x2000, 0x2070),
             0x20A9,
+            0x2190, 0x2192,  # ← → for HUD line 4 치우침 (보노보노 2026-10-26 20:37)
             *range(0x3131, 0x3190),
             *range(0xAC00, 0xD7A4),
         )
