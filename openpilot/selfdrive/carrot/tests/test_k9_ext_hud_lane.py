@@ -87,11 +87,14 @@ def test_lane_line_in_its_own_box_above_sr_sad():
           sr = (sr[0] + drive[0], sr[1], sr[2] + drive[0], sr[3])
           x0, y0, x1, y1 = box
           assert x1 <= panel_edge - 4, (box, panel_edge)       # never into the info panel
-          # 2026-10-26 (k9-hud-ld-lt): lines 4 / 5 (치우침, 좌 / 우 차선) are now BELOW lines 1..3, not on them
+          # 2026-10-26 (k9-hud-ld-lt): lines 4 / 5 (치우침, 좌 / 우) are BELOW lines 1..3, not on them; since 18:04
+          # (보노보노 "tpms보여주는 차모양 왼쪽으로 옮겨놔") they sit LEFT of the TPMS car, within the car's height
           assert y0 >= sr[3] - 1, (box, sr)
           icon_top = (cr.TPMS_STATUS_CAR_CENTER_Y - cr.TPMS_STATUS_ICON_H * 0.5) * sy
-          assert y1 <= icon_top + 1
-          assert y0 >= (cr.TPMS_STATUS_CAR_CENTER_Y - 110.0) * sy, box
+          icon_bottom = (cr.TPMS_STATUS_CAR_CENTER_Y + cr.TPMS_STATUS_ICON_H * 0.5) * sy
+          icon_left = (shift + cr.TPMS_STATUS_CENTER_X - cr.TPMS_STATUS_ICON_W * 0.5) * sx
+          assert y0 >= icon_top - 1 and y1 <= icon_bottom + 1, (box, icon_top, icon_bottom)
+          assert x1 <= icon_left + 1, (box, icon_left)
           # 23:49 one longer Korean line ('치우침 … · 좌 …m 우 …m · 보정 …'): may reach 430 px left of the TPMS car centre
           assert x0 >= (shift + cr.TPMS_STATUS_CENTER_X - 430.0) * sx, box
           # nothing else is drawn under the line

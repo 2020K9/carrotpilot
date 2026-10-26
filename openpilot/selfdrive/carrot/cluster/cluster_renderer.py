@@ -371,15 +371,20 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
 LAT_VALUES_FONT_SIZE = 17.0
 LAT_VALUES_COLOR = (214, 224, 231, 255)
-# 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines, same right edge, bottom line right above the
-# TPMS car where SR / SAD was (4a44e564), top to bottom:
+# 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines (since 18:04 lines 1..3 above the TPMS car,
+# line 3 where SR / SAD was (4a44e564), lines 4 / 5 left of the car, see below):
 #   1 '조향비 12.90  지연설정 0.20초'  2 '지연학습 63%  0.24초'  3 '토크학습 61%  횡가속 3.16  마찰 0.09'   (_draw_lat_values)
-#   4 '치우침 오른쪽 12cm'  5 '좌 차선 1.87m   우 차선 1.63m'                                          (_draw_lane_values)
+#   4 '치우침 오른쪽 12cm'  5 '좌 1.87m   우 1.63m'                                          (_draw_lane_values)
 HUD_LINE_STEP = 20.0
-LAT_VALUES_LINE_Y = tuple(LAT_VALUES_CENTER_Y - HUD_LINE_STEP * (4 - i) for i in range(3))     # lines 1..3
-LANE_VALUES_RIGHT_X = LAT_VALUES_RIGHT_X
-LANE_VALUES_LINE_Y = (LAT_VALUES_CENTER_Y - HUD_LINE_STEP, LAT_VALUES_CENTER_Y)                 # lines 4, 5
-LANE_VALUES_CENTER_Y = LANE_VALUES_LINE_Y[0]
+# 2026-10-26 18:04 (보노보노 "외부hud에 차선치우침.현재차선좌우간격 아래 tpms보여주는 차모양 왼쪽으로 옮겨놔"): lines 4 / 5 moved
+# to the left of the TPMS car (right edge LANE_VALUES_GAP_X left of the icon incl. the left pressure badges, the two lines
+# centred on the car's height); lines 1..3 moved down so that line 3 sits right above the car (where line 5 was).
+LAT_VALUES_LINE_Y = tuple(LAT_VALUES_CENTER_Y - HUD_LINE_STEP * (2 - i) for i in range(3))     # lines 1..3
+LANE_VALUES_GAP_X = 8.0
+LANE_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X - TPMS_STATUS_ICON_W * 0.5 - LANE_VALUES_GAP_X
+LANE_VALUES_LINE_Y = (TPMS_STATUS_CAR_CENTER_Y - HUD_LINE_STEP * 0.5,
+                      TPMS_STATUS_CAR_CENTER_Y + HUD_LINE_STEP * 0.5)                          # lines 4, 5
+LANE_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y
 LANE_VALUES_FONT_SIZE = LAT_VALUES_FONT_SIZE
 LANE_OFFSET_COLOR = (255, 214, 92, 255)      # 치우침 (mock out/hud_ld_lt/mock_preview.png)
 LANE_GAP_COLOR = (120, 220, 255, 255)        # 좌 / 우 차선

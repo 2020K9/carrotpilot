@@ -35,7 +35,7 @@ labels in Korean, no 적용 / 미적용 text, no 보정 state:
   3 '토크학습 61%  횡가속 3.16  마찰 0.09'  (liveTorqueParameters.calPerc, latAccelFactor / frictionCoefficient: Raw while calPerc < 100,
                                           Filtered at 100; '-' while nothing is learned yet: calPerc 0 and raw 0)
   4 '치우침 오른쪽 12cm'                     (offset above, 오른쪽 / 왼쪽, '가운데' under 2 cm, '--' weak lines)
-  5 '좌 차선 1.87m   우 차선 1.63m'          (comma-centre gaps above, unchanged since 98c9e407)
+  5 '좌 1.87m   우 1.63m'          (comma-centre gaps above, unchanged since 98c9e407)
   Lines 2 / 3 show the learners' current numbers whether or not lateral control uses them (SteerActuatorDelay > 0 and
   LateralTorqueCustom 1 mean the fixed values are used); the HUD does not say which.
 
@@ -312,13 +312,13 @@ def lane_assist_text(lane_state: Any) -> str:
 
 
 def lane_gap_text(left_m: float | None, right_m: float | None) -> str:
-    """HUD line 5: '좌 차선 1.87m   우 차선 1.63m' (car centre / comma <-> lane line); '--' for a weak / missing line."""
+    """HUD line 5: '좌 1.87m   우 1.63m' (car centre / comma <-> lane line); '--' for a weak / missing line."""
     f = lambda v: "--" if v is None or not math.isfinite(v) else f"{v:.2f}m"
-    return f"좌 차선 {f(left_m)}   우 차선 {f(right_m)}"
+    return f"좌 {f(left_m)}   우 {f(right_m)}"
 
 
 def lane_values_text(offset_m: float | None, lane_state: Any = None, gap_left_m: float | None = None,
                      gap_right_m: float | None = None) -> str:
-    """HUD lines 4 and 5 joined by ' / ' (manual / tests): '치우침 오른쪽 12cm / 좌 차선 1.87m   우 차선 1.63m'. Shown whatever
+    """HUD lines 4 and 5 joined by ' / ' (manual / tests): '치우침 오른쪽 12cm / 좌 1.87m   우 1.63m'. Shown whatever
     K9LaneAssist is; lane_state (보정) is no longer shown on the external HUD (2026-10-26), the argument is kept for callers."""
     return f"{lane_offset_text(offset_m)} / {lane_gap_text(gap_left_m, gap_right_m)}"
