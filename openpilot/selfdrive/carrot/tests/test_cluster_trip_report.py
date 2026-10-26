@@ -416,6 +416,7 @@ def test_fullscreen_3d_repositions_hud_widgets_and_suppresses_information_panels
   monkeypatch.setattr(renderer, "_draw_steering_output_block", lambda _state: calls.append(("steer", None)))
   monkeypatch.setattr(renderer, "_draw_turn_signal", lambda *_args, **_kwargs: None)
   monkeypatch.setattr(renderer, "_draw_drive_status", lambda _state: None)
+  monkeypatch.setattr(renderer, "_draw_lane_confidence", lambda *_args, **_kwargs: None)  # lane % now in every screen mode (2026-10-26)
   monkeypatch.setattr(
     renderer,
     "_draw_center_clock",

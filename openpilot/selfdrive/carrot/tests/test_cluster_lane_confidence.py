@@ -319,12 +319,20 @@ def test_nondefault_camera_view_modes_do_not_show_labels(monkeypatch, camera_vie
     CLUSTER_SCREEN_MODE_TRIP_REPORT,
   ),
 )
-def test_nondefault_requested_screen_modes_do_not_show_labels(monkeypatch, screen_mode):
+def test_nondefault_requested_screen_modes_show_labels_too(monkeypatch, screen_mode):
+  # 보노보노 2026-10-26 17:42 "외부hud 차선 % 안보이는데?" (car: ClusterHudScreenMode 2): labels in every screen mode
+  # (default camera view), each on its own arrow; arrows unchanged; lane-line hold / steady highlight stay default-mode only.
   renderer, draws = _renderer(monkeypatch, screen_mode=screen_mode)
   state = _hud_state()
   renderer._draw_driving_hud_content(state, screen_mode, False, True)
-  assert draws["texts"] == []
+  left_offset = renderer._turn_signal_center_x_offset(state, "left")
+  right_offset = renderer._turn_signal_center_x_offset(state, "right")
+  assert draws["texts"] == [
+    ("91%", LANE_TURN_SIGNAL_LEFT_CENTER_X + left_offset, LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
+    ("--%", LANE_TURN_SIGNAL_RIGHT_CENTER_X + right_offset, LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
+  ]
   assert [(side, lit) for side, lit, *_rest in draws["signals"]] == [("left", False), ("right", True)]
+  assert not renderer._lane_confidence_visible(state)
 
 
 def _label_rect(side, center_x_offset):

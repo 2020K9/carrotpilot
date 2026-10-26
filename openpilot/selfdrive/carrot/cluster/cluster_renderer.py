@@ -4367,7 +4367,7 @@ class ClusterUiRenderer:
                 center_x_offset=right_center_x_offset,
             )
             self._profile_add("hud.turn_signal_right", profile_stage)
-            if self._lane_confidence_visible(state):
+            if self._lane_confidence_label_visible(state):
                 profile_stage = self._profile_start()
                 self._draw_lane_confidence(
                     "left", getattr(state, "left_lane_line_confidence", None), left_center_x_offset,
@@ -7702,6 +7702,15 @@ class ClusterUiRenderer:
         # panel included) and default 3D camera view. Other modes stay unchanged.
         if getattr(self, "screen_mode", CLUSTER_SCREEN_MODE_DEFAULT) != CLUSTER_SCREEN_MODE_DEFAULT:
             return False
+        return normalize_cluster_camera_view_mode(
+            getattr(state, "camera_view_mode", CLUSTER_CAMERA_VIEW_MODE_DEFAULT)
+        ) == CLUSTER_CAMERA_VIEW_MODE_DEFAULT
+
+    @staticmethod
+    def _lane_confidence_label_visible(state: ClusterUiState) -> bool:
+        # The lane % labels under the turn-signal arrows: every screen mode (보노보노 2026-10-26 17:42 "외부hud 차선 % 안보이는데?":
+        # the car runs ClusterHudScreenMode 2 (1cc initData), where _lane_confidence_visible hid them), default 3D camera view
+        # only as before. Lane-line hold / steady lane highlight keep _lane_confidence_visible (default screen mode only).
         return normalize_cluster_camera_view_mode(
             getattr(state, "camera_view_mode", CLUSTER_CAMERA_VIEW_MODE_DEFAULT)
         ) == CLUSTER_CAMERA_VIEW_MODE_DEFAULT
