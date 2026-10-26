@@ -11,6 +11,10 @@ Rules, applied once while K9StopModeVer is not STOP_MODE_VER (3):
 - no / other K9StopModeVer (the 0-6 menu before 2026-10-24 evening, never migrated): 1-6 -> 2 for the same reason; 0 unchanged;
 - absent: nothing to change; any other value (outside the table, negative, unreadable) is left as stored: it acted as 0
   (base braking) on the old menu and still acts as 0 now (CarController maps everything outside 1 / 2 to 0).
+2026-10-26 (the driver's orders 23:14 "v12그냥놓아두고 v13추가하는걸로"): 3 v13 original was added as a new value with NO new
+marker and no table change: a K9StopModeVer 3 device keeps its value (the K9StopModeVer 3 settings screen allowed 0-2 only
+and the web server clamps to min/max, so a stored 3 there can only come from a hand-written param); the old tables still map
+an old 3 (v11 on the 0-3 menu, v9 + shudder fix on the 0-6 menu) to 2, never to the new 3.
 The marker is written right after the value (two atomic param writes). A marker that is already STOP_MODE_VER means the
 value is on the new menu and is never touched again. A power loss exactly between the two writes migrates again on the next
 start: 2 -> 2 in both tables, so nothing changes.

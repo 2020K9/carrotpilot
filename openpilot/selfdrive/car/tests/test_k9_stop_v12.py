@@ -2,6 +2,9 @@
 "브레이크 앞전꺼는 다 별로니 지워" / 00:39 "원본 그대로 수정하지 말고 올려라"): 0 base, 1 v12 original (the creep_fix v12 page
 code unchanged in carcontroller.py), 2 v12k9 (k9_creep kind V12K9). The old 1 v10 / 2 v10 + light / 3 v11 are deleted.
 Model-only harness with synthetic inputs: source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour (실차 미검증).
+2026-10-26 (보노보노 23:14 "v12그냥놓아두고 v13추가하는걸로"): 3 is now the v13 original (test_k9_stop_v13.py). Menu-set pins only:
+MODES (1, 2, 3), settings max 3, 3 left the "other values act as 0" list (4, 7, 99, -1 stay), and the diff-vs-b6696b37
+check also accepts the v13 page lines (their own pin is in test_k9_stop_v13.py).
 """
 import hashlib
 import math
@@ -17,6 +20,7 @@ from opendbc.car.hyundai.k9_creep import K9Creep, V9, V12K9
 from opendbc.car.hyundai.values import CAR
 from openpilot.selfdrive.car import k9_stop_mode_migration as mig
 from openpilot.selfdrive.car.tests.k9_rig import LCS, ROOT, CC_REL, Rig, edge_sequence, gentle_sequence, load_frozen_cc, make_cp, mixed_sequence
+from openpilot.selfdrive.car.tests.test_k9_stop_v13 import V13_BLOCK_1, V13_BLOCK_2
 
 PREV = "b6696b37"  # carrot-wip before this change: K9StopMode 0 base, 1 v10, 2 v10 + light shudder fix, 3 v11 (kind 7)
 PREV_V11 = 7
@@ -84,7 +88,7 @@ def prev_cc(tmp_path_factory):
 
 # --- menu ------------------------------------------------------------------------------------------------------------
 def test_menu():
-  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9} and kc.MODES == (1, 2)
+  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9} and kc.MODES == (1, 2, 3)  # 3 = v13 original since 2026-10-26
   assert kc.KINDS == (V9, V12K9) == (1, 8) and carcontroller.K9_CREEP_MENU is kc.MENU
   assert carcontroller.V12_ORIG_MENU == 1
   for gone in ("V10", "V10_LIGHT", "V11", "LIGHT_MIN_DECEL", "V10_FEATHER_V", "V11_FEATHER_V"):
@@ -115,18 +119,20 @@ def test_carcontroller_diff_is_the_page_code_plus_menu_wiring():
   """Every line added to carcontroller.py since PREV is a page line or one of the listed menu-wiring lines."""
   d = subprocess.run(["git", "diff", "-U0", PREV, "--", CC_REL], cwd=ROOT, capture_output=True, text=True, check=True).stdout
   page = {"  " + l for l in (PAGE_BLOCK_1 + PAGE_BLOCK_2).splitlines() if l}
+  v13 = {"  " + l for l in (V13_BLOCK_1 + V13_BLOCK_2).splitlines() if l}  # 2026-10-26 menu 3 (pinned in test_k9_stop_v13.py)
   added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-  other = [l for l in added if l.strip() and l not in page]
+  other = [l for l in added if l.strip() and l not in page and l not in v13]
   assert len(added) - len(other) >= len(page)
   for l in other:  # wiring only: comments, the menu switch, the call arguments
     s = l.strip()
-    assert (s.startswith("#") or "v12_orig" in s or "V12_ORIG_MENU" in s or "K9_CREEP_MENU" in s or "standstill_count" in s
-            or "accel_feather_last" in s or "cb_prev" in s or "jerk_u_cap" in s or "creep_obj" in s), l
+    assert (s.startswith("#") or "v12_orig" in s or "v13_orig" in s or "V13_ORIG_MENU" in s or "V12_ORIG_MENU" in s or "K9_CREEP_MENU" in s or "standstill_count" in s
+            or "accel_feather_last" in s or "cb_prev" in s or "jerk_u_cap" in s or "creep_obj" in s
+            or "whl_standstill_count" in s), l
 
 
 # --- 0 / other values: unchanged -------------------------------------------------------------------------------------
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 3, 4, 7, 99, -1])
+@pytest.mark.parametrize("mode", [None, 0, 4, 7, 99, -1])  # 3 left 2026-10-26 (v13 original, test_k9_stop_v13.py)
 def test_base_and_other_values_identical_to_prev_0(monkeypatch, prev_cc, mode, fingerprint):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, K9StopMode=0))
@@ -310,4 +316,4 @@ def test_settings_entry():
   ents = [e for e in d["params"] if e.get("name") == "K9StopMode"]
   assert len(ents) == 1
   e = ents[0]
-  assert e["min"] == 0 and e["max"] == 2 and e["default"] == 0
+  assert e["min"] == 0 and e["max"] == 3 and e["default"] == 0  # 3 v13 original since 2026-10-26

@@ -16,11 +16,12 @@ from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig, edge_sequence, gentle
 from openpilot.selfdrive.car.tests.test_k9_creep_mode import bl_stop_sequence
 
 BASE = "badf1ea7bf1e72ccb5d512bfc2aa7f0ae311e7ed"
-MENUS = (None, 0, 1, 2, 3)
+MENUS = (None, 0, 1, 2, 3, 4)
 # 2026-10-25 menu 0 base / 1 v12 original / 2 v12k9 (3 acts as 0): None / 0 / 3 against badf1ea7 menu 0 (unchanged base
 # braking); 1 and 2 are new stop methods, so against this tree with the hard-brake cap switched off (same inputs, same
 # checks: the ease-off changes JerkUpperLimit only and nothing outside it).
-BASE_MENU = {None: None, 0: 0, 3: 0}
+# 2026-10-26: 3 = v13 original, a new stop method like 1 / 2 (this tree, cap off); 4 now stands for "other values act as 0".
+BASE_MENU = {None: None, 0: 0, 4: 0}
 
 
 def base_and_new(monkeypatch, tmp_path, menu, tag):

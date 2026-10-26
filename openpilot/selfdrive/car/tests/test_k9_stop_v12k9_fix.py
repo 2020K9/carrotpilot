@@ -117,7 +117,7 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 3, 99, -1])
+@pytest.mark.parametrize("mode", [None, 0, 1, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0
 def test_menus_other_than_2_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mode, fingerprint):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=pushed_cc, **_kw(mode)))

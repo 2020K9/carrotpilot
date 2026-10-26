@@ -6,8 +6,11 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
 - 1 = v12 original: the creep_fix v12 page code for the Kia Niro EV, unchanged. It is NOT in this module: it is the page
   code itself, pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v12_orig:` / `if v12_orig:`
   (V12_ORIG_MENU below; test_k9_stop_v12.py pins it line by line against the page);
-- 2 = v12k9: the same page v12 fitted to the K9 the way v11 was (kind V12K9 below).
-Any other value (3 or more, negative, unreadable) acts as 0. The modes never stack.
+- 2 = v12k9: the same page v12 fitted to the K9 the way v11 was (kind V12K9 below);
+- 3 = v13 original (2026-10-26, the driver's orders 23:13/23:14 "v13나왔다" / "v12그냥놓아두고 v13추가하는걸로"): the creep_fix
+  v13 page code, unchanged, pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v13_orig:` /
+  `if v13_orig:` (V13_ORIG_MENU below; test_k9_stop_v13.py pins it line by line against the page). Not a K9Creep kind.
+Any other value (4 or more, negative, unreadable) acts as 0. The modes never stack.
 The 2026-10-24 menu (1 v10, 2 v10 + light shudder fix, 3 v11) is deleted with its code (kinds 2 v10, 6 v10 + light shudder
 fix and 7 v11 are gone). Stored values are migrated once at manager start (openpilot/selfdrive/car/k9_stop_mode_migration.py,
 marker K9StopModeVer 3): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged. Earlier menu history is in git log.
@@ -79,10 +82,12 @@ from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
 KINDS = (V9, V12K9)
 V12_ORIG_MENU = 1  # K9StopMode 1: the creep_fix v12 page code unchanged, in carcontroller.py (no K9Creep)
-# K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (V12_ORIG_MENU, not a kind), 2 v12k9)
+V13_ORIG_MENU = 3  # K9StopMode 3 (2026-10-26): the creep_fix v13 page code unchanged, in carcontroller.py (no K9Creep)
+# K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (V12_ORIG_MENU, not a kind), 2 v12k9;
+# 2026-10-26: 3 v13 original (V13_ORIG_MENU, not a kind))
 MENU = {2: V12K9}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
-MODES = tuple(sorted((V12_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
+MODES = tuple(sorted((V12_ORIG_MENU, V13_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
 
 # v9 profile (creep_fix source constants)
 FEATHER_BP, FEATHER_V = [0.05, 0.14, 0.25, 0.42], [-0.31, -0.35, -0.42, -0.52]
