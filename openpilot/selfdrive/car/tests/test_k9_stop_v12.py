@@ -159,7 +159,10 @@ def test_other_cars_never_run_the_menu(monkeypatch, prev_cc, mode):
 @pytest.mark.parametrize("seed", range(6))
 def test_v12k9_stop_phase_is_the_old_v11(prev_cc, monkeypatch, seed):
   """v12k9 = the old v11 with the v11 pid re-press guard replaced by the v12 two-way rate limit: with both switched off,
-  kind 8 is float-identical to b6696b37 kind 7 (v11), state too (stop phase, latch, creep compensation)."""
+  kind 8 is float-identical to b6696b37 kind 7 (v11), state too (stop phase, latch, creep compensation).
+  2026-10-26 (brake_0241, zone approved 08:54): kind 8 now differs from v11 inside the zone by design, so the identity is pinned
+  on the zone reference (c.ref / c.ref_out, the 66ca01d5 kind 8 without the band); outside the zone kind 8 sends the same StopReq
+  and an accel within [reference - V12K9_BAND_COMP, reference]."""
   monkeypatch.setattr(kc, "V12_RATE_SPEED", -1.0)
   monkeypatch.setitem(prev_cc.K9Creep._update_v11.__globals__, "V11_GUARD_SPEED", -1.0)
   rng = random.Random(f"k9-v12k9-{seed}")
@@ -167,8 +170,15 @@ def test_v12k9_stop_phase_is_the_old_v11(prev_cc, monkeypatch, seed):
   assert old.__class__ is not K9Creep
   for kw, i in _random_inputs(rng, 4000):
     ro, rn = old.update(**kw), new.update(**kw)
-    assert ro == rn or (math.isnan(ro[0]) and math.isnan(rn[0]) and ro[1] == rn[1]), (i, kw)
-    assert (old.latched, old.active) == (new.latched, new.active), i
+    rr = (new.ref_out, new.ref.latched)
+    assert ro[0] == rr[0] or (math.isnan(ro[0]) and math.isnan(rr[0])), (i, kw)
+    assert old.latched == rr[1], i
+    lead_in = (kw["lead_visible"] or kw["lead_distance"] != 0.0) and kw["lead_distance"] <= kc.V12K9_ZONE_LEAD
+    if kw["stopping"] and kw["v_ego"] < kc.V12K9_ZONE_SPEED and not lead_in:
+      continue
+    assert ro[1] == rn[1] and (old.latched, old.active) == (new.latched, new.active), (i, kw)
+    if not (math.isnan(ro[0]) or math.isnan(rn[0])):
+      assert ro[0] - kc.V12K9_BAND_COMP - 1e-12 <= rn[0] <= ro[0] + 1e-12, (i, kw, ro, rn)
 
 
 def _random_inputs(rng, n):

@@ -43,9 +43,11 @@ class Rig:
     self.can = []
     self.scc14 = []
     self.scc12 = []  # (frame, v, decoded SCC12) of frames that sent SCC12
+    self.inputs = []  # (longControlState, v, lead or None, lead_visible) of every step, index = frame
 
   def step(self, accel, state, v, standstill=False, a_target=None, gas=False, brake=False, a_ego=None, lead=None,
            lead_visible=True):
+    self.inputs.append((state, v, lead, lead_visible))
     cc = structs.CarControl(enabled=True, longActive=True)
     cc.actuators.accel, cc.actuators.aTarget = accel, accel if a_target is None else a_target
     cc.actuators.longControlState = state

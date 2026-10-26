@@ -54,15 +54,18 @@ def test_band_compensation_object():
   assert c.update(**_kw1(2.0, accel=0.3))[0] == 0.3
   c.bands(0.5, 2.75, 0.8, 0.7, 0.8, 0.7)  # half band
   assert c.band_w == pytest.approx(0.5)
-  assert c.update(**_kw1(2.75, accel=-0.6))[0] == pytest.approx(-0.6 - kc.V12K9_BAND_COMP * 0.5)
+  # 2026-10-26 (brake_0241): the brake-only slow trim (c.trim <= 0) is added on top of the compensation
+  assert c.update(**_kw1(2.75, accel=-0.6))[0] == pytest.approx(-0.6 - kc.V12K9_BAND_COMP * 0.5 + c.trim) and c.trim <= 0.0
   c.bands(0.5, 3.2, 0.8, 0.7, 0.4, 0.35)  # band 0 above 3.0 m/s: frozen kind 8
   assert c.band_w == 0.0 and c.update(**_kw1(3.2, accel=-0.6))[0] == -0.6
   assert c.last == -0.6  # the feather / rate-limit state never carries the compensation
 
 
 def test_stall_latch_object():
-  """stopping with the band below 0.3 m/s and no decel for 0.15 s -> StopReq; never without the band or while decelerating"""
-  def run(band, a_ego, n=40):
+  """stopping with the band below 0.3 m/s and no decel for 0.15 s -> StopReq; never without the band or while decelerating.
+  2026-10-26 (brake_0241): the stall latch is gone; the crawl (below V12K9_END_CRAWL_SPEED, no decel) gets StopReq from the end
+  profile's crawl fallback after V12K9_END_CRAWL_FRAMES, with or without the band; never while decelerating."""
+  def run(band, a_ego, n=90):
     c = K9Creep(V12K9)
     c.bands(0.5, 0.2, 0.84, 0.74, 0.0, 0.0) if band else None
     out = []
@@ -71,9 +74,11 @@ def test_stall_latch_object():
       if band and not c.latched:
         c.bands(0.5, 0.12, 0.84, 0.74, 0.84, 0.74)
     return out
-  hang = run(True, 0.0)
-  assert hang[:kc.V12K9_STALL_FRAMES - 1] == [False] * (kc.V12K9_STALL_FRAMES - 1) and all(hang[kc.V12K9_STALL_FRAMES:])
-  assert not any(run(True, -0.3)) and not any(run(False, 0.0))
+  n = kc.V12K9_END_CRAWL_FRAMES
+  for band in (True, False):
+    hang = run(band, 0.0)
+    assert hang[:n] == [False] * n and all(hang[n + 1:])
+  assert not any(run(True, -0.3))
 
 
 def test_latched_band_ramps_to_zero():
@@ -130,15 +135,23 @@ def test_band_object_grid(frozen_cc):
 
 @pytest.mark.parametrize("seed", range(6))
 def test_update_identical_to_frozen(frozen_cc, seed):
-  """accel / StopReq / latch state are bit for bit the frozen kind 8 for the same inputs."""
+  """accel / StopReq / latch state are bit for bit the frozen kind 8 for the same inputs.
+  2026-10-26 (brake_0241, zone approved 08:54): bit for bit on the zone reference (c.ref / c.ref_out); kind 8 itself outside the
+  zone: same StopReq / latch, accel within [frozen - V12K9_BAND_COMP, frozen]."""
   old, new = frozen_cc.K9Creep(V12K9), K9Creep(V12K9)
   rng = random.Random(f"k9-v12k9-band-{seed}")
   for kw, i in _random_inputs(rng, 3000):
     ro, rn = old.update(**kw), new.update(**kw)
-    assert ro[1] == rn[1], (i, kw)
-    assert (math.isnan(ro[0]) and math.isnan(rn[0])) or ro[0] == rn[0], (i, kw, ro, rn)
-    assert (old.latched, old.active, old.ss_count) == (new.latched, new.active, new.ss_count), i
-    assert old.last == new.last or (math.isnan(old.last) and math.isnan(new.last)), i
+    rr = new.ref_out
+    assert (math.isnan(ro[0]) and math.isnan(rr)) or ro[0] == rr, (i, kw, ro, rr)
+    assert (old.latched, old.ss_count) == (new.ref.latched, new.ref.ss_count), i
+    assert old.last == new.ref.last or (math.isnan(old.last) and math.isnan(new.ref.last)), i
+    lead_in = (kw["lead_visible"] or kw["lead_distance"] != 0.0) and kw["lead_distance"] <= kc.V12K9_ZONE_LEAD
+    if kw["stopping"] and kw["v_ego"] < kc.V12K9_ZONE_SPEED and not lead_in:
+      continue
+    assert ro[1] == rn[1] and (old.latched, old.active) == (new.latched, new.active), (i, kw)
+    if not (math.isnan(ro[0]) or math.isnan(rn[0])):
+      assert ro[0] - kc.V12K9_BAND_COMP - 1e-12 <= rn[0] <= ro[0] + 1e-12, (i, kw, ro, rn)
 
 
 def _kw(mode):
@@ -165,11 +178,18 @@ def test_menu2_other_cars_can_identical_to_frozen(monkeypatch, frozen_cc):
     assert ref.can == new.can
 
 
+def _zone(inp):
+  state, v, lead, lead_visible = inp
+  lead_in = lead is not None and (lead_visible or lead[0] != 0.0) and lead[0] <= kc.V12K9_ZONE_LEAD
+  return state == LCS.stopping and v < kc.V12K9_ZONE_SPEED and not lead_in
+
+
 def test_menu2_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
   """K9 menu 2 against the frozen menu 2 (6f518e35): every message other than SCC12 / SCC14 is byte-identical; at or above
   3.0 m/s SCC12 and SCC14 are identical; below it the band is never lower, aReqValue never higher (more decel by at most
   V12K9_BAND_COMP) and StopReq never earlier-released (only earlier set, by the stall latch). Was 62eb5798's pin "only the band
-  changes", updated for the band compensation."""
+  changes", updated for the band compensation. 2026-10-26 (the driver's approval 08:54): aReqValue / StopReq are not checked in
+  the zone (stopping, v < kc.V12K9_ZONE_SPEED, no lead within kc.V12K9_ZONE_LEAD; _zone below)."""
   changed = 0
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), module=frozen_cc, K9StopMode=2))
@@ -184,6 +204,8 @@ def test_menu2_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
       assert (fo, vo) == (fn, vn)
       if vo >= 3.0:
         assert so == sn
+        continue
+      if _zone(new.inputs[fn]):
         continue
       assert sn["aReqValue"] <= so["aReqValue"] + 0.011 and so["aReqValue"] - sn["aReqValue"] <= kc.V12K9_BAND_COMP + 0.011
       assert sn["StopReq"] >= so["StopReq"]

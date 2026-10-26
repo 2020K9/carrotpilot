@@ -42,14 +42,23 @@ def test_fix_constants_are_the_old_v11_guard(prev_cc):
   assert (kc.V12_DOWN_LIM, kc.V12_UP_LIM_BP, kc.V12_UP_LIM_V, kc.V12_UP_LIM_SPEED) == (0.004, [-0.05, 0.10], [0.0035, 0.0008], 0.52)
 
 
+def _in_zone(kw):
+  """2026-10-26 (the driver's approval 08:54): the zone where menu 2 may move StopReq and change the decel against v11 -
+  stopping input below kc.V12K9_ZONE_SPEED with no lead within kc.V12K9_ZONE_LEAD."""
+  lead_in = (kw["lead_visible"] or kw["lead_distance"] != 0.0) and kw["lead_distance"] <= kc.V12K9_ZONE_LEAD
+  return bool(kw["stopping"] and kw["v_ego"] < kc.V12K9_ZONE_SPEED and not lead_in)
+
+
 @pytest.mark.parametrize("seed", range(8))
 def test_never_brakes_less_than_v11_for_the_same_inputs(prev_cc, seed):
   """Open loop, same inputs every frame: v12k9 sends a command at or below (as much or more braking than) the old v11 and
-  the same StopReq on every frame."""
+  the same StopReq on every frame outside the zone (_in_zone, 2026-10-26)."""
   old, new = prev_cc.K9Creep(PREV_V11), K9Creep(V12K9)
   rng = random.Random(f"k9-v12k9-fix-{seed}")
   for kw, i in _random_inputs(rng, 4000):
     ro, rn = old.update(**kw), new.update(**kw)
+    if _in_zone(kw):
+      continue
     assert ro[1] == rn[1], (i, kw)
     if math.isnan(ro[0]) or math.isnan(rn[0]):
       assert math.isnan(ro[0]) and math.isnan(rn[0]), (i, kw)
