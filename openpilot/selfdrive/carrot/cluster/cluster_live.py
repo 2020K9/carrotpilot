@@ -25,6 +25,10 @@ from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, s
 from cluster_utils import clamp
 from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_gaps_m, lane_offset_m, live_parameters_usable
 from cluster_lat_values import applied_torque, learned_delay
+try:
+    from openpilot.selfdrive.controls.lib.k9_torque_learn import TorqueLearnSwitch
+except Exception:  # pragma: no cover - standalone HUD tools without the openpilot tree
+    TorqueLearnSwitch = None
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -669,7 +673,31 @@ class OpenpilotLiveSource:
         custom, custom_laf, custom_fr = getattr(self, "_torque_params", (None, None, None))
         live_delay = self._service_data("liveDelay") if self._service_alive("liveDelay") else None
         live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
-        return learned_delay(live_delay), applied_torque(live_torque, custom, custom_laf, custom_fr)
+        switch = self._torque_learn_switch(live_torque, now)
+        return learned_delay(live_delay), applied_torque(live_torque, custom, custom_laf, custom_fr, switch)
+
+    def _torque_learn_switch(self, live_torque: Any | None, now: float) -> Any | None:
+        """The HUD's copy of latcontrol_torque's menu -> learned cross-fade (k9_torque_learn), fed like controlsd does."""
+        sw = getattr(self, "_k9_torque_learn", None)
+        if sw is None:
+            if TorqueLearnSwitch is None:
+                return None
+            sw = self._k9_torque_learn = TorqueLearnSwitch()
+            self._k9_torque_learn_t = now
+        dt = min(max(now - getattr(self, "_k9_torque_learn_t", now), 0.0), 0.5)
+        self._k9_torque_learn_t = now
+        if live_torque is not None and bool(safe_get(live_torque, "useParams")) and self._torque_message_ok():
+            sw.update_learned(safe_get(live_torque, "liveValid"), safe_get(live_torque, "latAccelFactorFiltered"),
+                              safe_get(live_torque, "frictionCoefficientFiltered"), safe_get(live_torque, "decay"))
+        sw.step(dt)
+        return sw
+
+    def _torque_message_ok(self) -> bool:
+        valid = getattr(self, "_service_valid", None)
+        try:
+            return bool(valid("liveTorqueParameters")) if valid is not None else True
+        except Exception:
+            return True
 
     def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
         """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""

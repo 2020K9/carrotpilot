@@ -14,6 +14,8 @@ from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
 
 from openpilot.common.params import Params
+from openpilot.common.realtime import DT_CTRL
+from openpilot.selfdrive.controls.lib.k9_torque_learn import TorqueLearnSwitch
 
 # At higher speeds (25+mph) we can assume:
 # Lateral acceleration achieved by a specific car correlates to
@@ -82,6 +84,10 @@ class LatControlTorque(LatControl):
     self.latAccelFactor_default = self.torque_params.latAccelFactor
     self.latAccelOffset_default = self.torque_params.latAccelOffset
     self.friction_default = self.torque_params.friction
+    # LateralTorqueCustom > 0: menu values until torqued has learned (liveValid), then cross-fade to Filtered (k9_torque_learn)
+    self.k9_torque_learn = TorqueLearnSwitch()
+    self.k9_menu_torque = None
+    self.k9_torque_blending = False
 
     # Twilsonco's Lateral Neural Network Feedforward
     self.use_nnff = CI.use_nnff
@@ -131,8 +137,9 @@ class LatControlTorque(LatControl):
       self.past_future_len = len(self.past_times) + len(self.nn_future_times)
 
 
-  def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
+  def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction, live_valid=False, decay=0.0):
     if self.lateralTorqueCustom > 0:
+      self.k9_torque_learn.update_learned(live_valid, latAccelFactor, friction, decay)
       return
 
     self.torque_params.latAccelFactor = latAccelFactor
@@ -141,11 +148,13 @@ class LatControlTorque(LatControl):
 
   def update(self, active, CS, VM, params, steer_limited_by_controls, desired_curvature, CC, curvature_limited, model_data=None):
     self.frame += 1
+    self.k9_torque_learn.step(DT_CTRL)
     if self.frame % 10 == 0:
       lateralTorqueCustom = self.params.get_int("LateralTorqueCustom")
       if lateralTorqueCustom > 0:
         self.torque_params.latAccelFactor = self.params.get_float("LateralTorqueAccelFactor")*0.001
         self.torque_params.friction = self.params.get_float("LateralTorqueFriction")*0.001
+        self.k9_menu_torque = (self.torque_params.latAccelFactor, self.torque_params.friction)
         lateralTorqueKp = self.params.get_float("LateralTorqueKpV")*0.01
         lateralTorqueKi = self.params.get_float("LateralTorqueKiV")*0.01
         lateralTorqueKf = self.params.get_float("LateralTorqueKf")*0.01
@@ -160,6 +169,10 @@ class LatControlTorque(LatControl):
         self.torque_params.friction = self.friction_default
         self.torque_params.latAccelOffset = self.latAccelOffset_default
       self.lateralTorqueCustom = lateralTorqueCustom
+    if self.lateralTorqueCustom > 0 and self.k9_menu_torque is not None and (self.k9_torque_learn.w > 0.0 or self.k9_torque_blending):
+      # w == 0 (also the frame the fade-out ends): apply() returns the menu values exactly
+      self.torque_params.latAccelFactor, self.torque_params.friction = self.k9_torque_learn.apply(*self.k9_menu_torque)
+      self.k9_torque_blending = self.k9_torque_learn.w > 0.0
 
     pid_log = log.ControlsState.LateralTorqueState.new_message()
     nn_log = None

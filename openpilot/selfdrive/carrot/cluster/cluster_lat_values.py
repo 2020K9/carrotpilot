@@ -43,9 +43,11 @@ labels in Korean, no 적용 / 미적용 text, no 보정 state:
   - the comma (mici) screen no longer shows the two K9 lane lines (6fc96445); the external HUD keeps all five lines.
   - line 3 numbers = what latcontrol_torque applies (applied_torque), never Raw: LateralTorqueCustom > 0 -> the menu values
     LateralTorqueAccelFactor / LateralTorqueFriction x 0.001, else liveTorqueParameters Filtered (CarParams values until learned).
-    Raw is the instant fit of whatever points torqued has (rlog 1ca / 1cc at calPerc 14..61 %: 2.78..3.48, while the full fits
+    Raw is the instant fit of whatever points torqued has (rlog 1ca / 1cc at calPerc 14..63 %: 2.78..3.54, while the full fits
     of 1c8 / 1c9 at 100 % were 2.59..2.97 with Filtered 2.62..2.75), it jumps every update and lateral control never uses it.
     The % stays liveTorqueParameters.calPerc.
+  - (보노보노 17:29 "토크학습100%차면 현재학습값으로 변하게만들어") with LateralTorqueCustom 1 latcontrol_torque now cross-fades
+    from the menu values to Filtered once torqued is valid (controls/lib/k9_torque_learn.py); the HUD runs the same rule.
 """
 from __future__ import annotations
 
@@ -159,9 +161,11 @@ def _custom_on(custom: Any) -> bool | None:
 
 
 def applied_torque(live_torque: Any | None, custom: Any = None, custom_laf: Any = None,
-                   custom_fr: Any = None) -> tuple[int | None, float | None, float | None]:
+                   custom_fr: Any = None, switch: Any = None) -> tuple[int | None, float | None, float | None]:
     """(calPerc %, latAccelFactor, friction) for HUD line 3 = the values latcontrol_torque applies:
-    LateralTorqueCustom > 0 -> LateralTorqueAccelFactor / LateralTorqueFriction x 0.001 (menu values, set every 10 frames),
+    LateralTorqueCustom > 0 -> LateralTorqueAccelFactor / LateralTorqueFriction x 0.001 (menu values), cross-faded to the
+    learned Filtered values once torqued is valid (switch = the HUD's own controls/lib/k9_torque_learn.TorqueLearnSwitch fed
+    with the same liveTorqueParameters, same rule as latcontrol_torque, own clock),
     LateralTorqueCustom 0 -> liveTorqueParameters Filtered (controlsd update_live_torque_params; the CarParams values until
     torqued has learned). Raw is never shown. Values None ('-') when unknown (menu not read yet, no message)."""
     perc = None
@@ -175,8 +179,11 @@ def applied_torque(live_torque: Any | None, custom: Any = None, custom_laf: Any 
         return perc, None, None
     if on:
         af, fr = _finite(custom_laf), _finite(custom_fr)
-        return (perc, af * 0.001 if af is not None and af > 0.0 else None,
-                fr * 0.001 if fr is not None and fr >= 0.0 else None)
+        af = af * 0.001 if af is not None and af > 0.0 else None
+        fr = fr * 0.001 if fr is not None and fr >= 0.0 else None
+        if switch is not None and af is not None and fr is not None:
+            af, fr = switch.apply(af, fr)
+        return perc, af, fr
     if live_torque is None:
         return perc, None, None
     try:
