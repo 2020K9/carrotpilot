@@ -47,7 +47,7 @@ class WikiSettingsCiCheckTest(unittest.TestCase):
       self.assertTrue((output / "summary.md").is_file())
       self.assertTrue((output / "pages.diff").is_file())
       stored = json.loads((output / "summary.json").read_text(encoding="utf-8"))
-      self.assertEqual(stored["result"]["settings"], 199)  # 2026-10-25 lane menu merge: 201 -> 199
+      self.assertEqual(stored["result"]["settings"], 200)  # 2026-10-26 upstream merge (+OnnxBsdEnabled): 199 -> 200
       self.assertEqual(stored["validationIssues"], [])
       self.assertIn("Settings-Catalog.md", (output / "pages.diff").read_text(encoding="utf-8"))
 

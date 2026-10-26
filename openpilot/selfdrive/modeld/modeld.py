@@ -28,7 +28,8 @@ from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, POLICY_INPUTS
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
 from openpilot.common.file_chunker import open_file_chunked
-from openpilot.selfdrive.modeld.camera_sync import FrameMeta, receive_camera_pair
+from openpilot.selfdrive.modeld.camera_sync import FrameMeta
+from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
                                                 refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
@@ -422,6 +423,7 @@ def main(demo=False):
   k9_lr_view = K9LRView()
   k9_lr_view.set_mode(read_k9_lr_view(params))
   k9_lr_view.set_one_lane_hold(read_k9_olh(params))
+  camera_gap = CameraGapTrace(cloudlog.event)
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
     frame += 1
@@ -442,7 +444,7 @@ def main(demo=False):
         params.put_bool_nonblocking("UsbGpuHardwareSeen", True)
       params.put_bool_nonblocking("UsbGpuCompiled", usbgpu_compiled_path() is not None)
 
-    frames = receive_camera_pair(vipc_client_main, vipc_client_extra if use_extra_client else None)
+    frames = camera_gap.receive(vipc_client_main, vipc_client_extra if use_extra_client else None)
     if frames is None:
       cloudlog.debug("camera pair unavailable or out of sync")
       continue
@@ -505,8 +507,9 @@ def main(demo=False):
     }
 
     run_start_mono = time.monotonic()
+    inference_started = run_start_mono
     mt1 = time.perf_counter()
-    camera_age_at_run_ms = (time.monotonic() - meta_main.timestamp_eof * 1e-9) * 1000
+    camera_age_at_run_ms = (inference_started - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
     try:
       model_output = model.run(bufs, transforms, inputs, prepare_only)
@@ -638,6 +641,12 @@ def main(demo=False):
       gpu_sync_wait_ms = float(gpu_sync_wait_ms) if gpu_sync_wait_ms is not None and model_output is not None else float('nan')
     except Exception:
       pass
+    camera_gap.record(meta_main.frame_id, vipc_dropped_frames, inference_backend,
+                      camera_wait=(camera_ready - loop_start) * 1000,
+                      before_inference=(inference_started - camera_ready) * 1000,
+                      inference=model_execution_time * 1000,
+                      postprocess=(time.perf_counter() - mt2) * 1000,
+                      loop=(time.monotonic() - loop_start) * 1000)
     diagnostics.record(
       context=gpu_diag.context({'backend': inference_backend, 'usbgpu': inference_usbgpu, 'frame_id': meta_main.frame_id}),
       run_start_mono=run_start_mono, run_end_mono=run_end_mono, gpu_sync_wait_ms=gpu_sync_wait_ms,
