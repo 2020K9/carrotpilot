@@ -87,7 +87,8 @@ def test_lane_line_in_its_own_box_above_sr_sad():
           sr = (sr[0] + drive[0], sr[1], sr[2] + drive[0], sr[3])
           x0, y0, x1, y1 = box
           assert x1 <= panel_edge - 4, (box, panel_edge)       # never into the info panel
-          assert y1 <= sr[1] + 1, (box, sr)                     # above the SR / SAD line, not on it
+          # 2026-10-26 (k9-hud-ld-lt): lines 4 / 5 (치우침, 좌 / 우 차선) are now BELOW lines 1..3, not on them
+          assert y0 >= sr[3] - 1, (box, sr)
           icon_top = (cr.TPMS_STATUS_CAR_CENTER_Y - cr.TPMS_STATUS_ICON_H * 0.5) * sy
           assert y1 <= icon_top + 1
           assert y0 >= (cr.TPMS_STATUS_CAR_CENTER_Y - 110.0) * sy, box

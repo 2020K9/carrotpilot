@@ -24,6 +24,7 @@ from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
 from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_gaps_m, lane_offset_m, live_parameters_usable
+from cluster_lat_values import learned_delay, learned_torque
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -581,6 +582,10 @@ class OpenpilotLiveSource:
         except Exception:
             applied_sr, applied_sad = None, None
         try:
+            (d_perc, d_s), (t_perc, t_af, t_fr) = self._live_learn_values()
+        except Exception:
+            (d_perc, d_s), (t_perc, t_af, t_fr) = (None, None), (None, None, None)
+        try:
             k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = self._live_lane_values(now)
         except Exception:
             k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = None, None, None, None, None
@@ -610,6 +615,11 @@ class OpenpilotLiveSource:
             right_lane_line_confidence=right_lane_line_confidence,
             applied_steer_ratio=applied_sr,
             applied_steer_delay_s=applied_sad,
+            delay_learn_perc=d_perc,
+            delay_learn_s=d_s,
+            torque_learn_perc=t_perc,
+            torque_learn_lat_accel_factor=t_af,
+            torque_learn_friction=t_fr,
             k9_lane_offset_m=k9_lane_offset,
             k9_lane_state=k9_lane_state,
             k9_lane_accel=k9_lane_accel,
@@ -640,6 +650,12 @@ class OpenpilotLiveSource:
         except (TypeError, ValueError):
             state = None
         return offset, state, finite_float(accel) if accel is not None else None, gap_l, gap_r
+
+    def _live_learn_values(self) -> tuple[tuple[int | None, float | None], tuple[int | None, float | None, float | None]]:
+        """지연학습 / 토크학습 lines (display only, see cluster_lat_values.learned_delay / learned_torque)."""
+        live_delay = self._service_data("liveDelay") if self._service_alive("liveDelay") else None
+        live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
+        return learned_delay(live_delay), learned_torque(live_torque)
 
     def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
         """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""

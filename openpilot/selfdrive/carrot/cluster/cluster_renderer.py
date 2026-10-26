@@ -102,7 +102,7 @@ from cluster_scene import (
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
-from cluster_lat_values import lane_values_text, lat_values_text
+from cluster_lat_values import delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_learn_text
 from cluster_utils import blink_visible, clamp
 
 
@@ -371,11 +371,18 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
 LAT_VALUES_FONT_SIZE = 17.0
 LAT_VALUES_COLOR = (214, 224, 231, 255)
-# K9 lane line (보노보노 2026-10-25 23:49): one Korean line '치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬', same right edge,
-# right above SR / SAD (whose place is unchanged, 4a44e564).
+# 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines, same right edge, bottom line right above the
+# TPMS car where SR / SAD was (4a44e564), top to bottom:
+#   1 '조향비 12.90  지연설정 0.20초'  2 '지연학습 63%  0.24초'  3 '토크학습 61%  횡가속 3.16  마찰 0.09'   (_draw_lat_values)
+#   4 '치우침 오른쪽 12cm'  5 '좌 차선 1.87m   우 차선 1.63m'                                          (_draw_lane_values)
+HUD_LINE_STEP = 20.0
+LAT_VALUES_LINE_Y = tuple(LAT_VALUES_CENTER_Y - HUD_LINE_STEP * (4 - i) for i in range(3))     # lines 1..3
 LANE_VALUES_RIGHT_X = LAT_VALUES_RIGHT_X
-LANE_VALUES_CENTER_Y = LAT_VALUES_CENTER_Y - 20.0
+LANE_VALUES_LINE_Y = (LAT_VALUES_CENTER_Y - HUD_LINE_STEP, LAT_VALUES_CENTER_Y)                 # lines 4, 5
+LANE_VALUES_CENTER_Y = LANE_VALUES_LINE_Y[0]
 LANE_VALUES_FONT_SIZE = LAT_VALUES_FONT_SIZE
+LANE_OFFSET_COLOR = (255, 214, 92, 255)      # 치우침 (mock out/hud_ld_lt/mock_preview.png)
+LANE_GAP_COLOR = (120, 220, 255, 255)        # 좌 / 우 차선
 NAVI_LIVE_ICON_X = NAVI_LIVE_PANEL_X + 72
 NAVI_LIVE_ICON_Y = NAVI_LIVE_PANEL_Y + 99
 NAVI_LIVE_ICON_SIZE = 78.0
@@ -3389,40 +3396,24 @@ class ClusterUiRenderer:
             self._draw_compact_tpms_value(pressure, center_x, center_y)
 
     def _draw_lat_values(self, state: ClusterUiState) -> None:
-        text = lat_values_text(
-            getattr(state, "applied_steer_ratio", None),
-            getattr(state, "applied_steer_delay_s", None),
+        texts = (
+            lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
+            delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
+            torque_learn_text(getattr(state, "torque_learn_perc", None), getattr(state, "torque_learn_lat_accel_factor", None),
+                              getattr(state, "torque_learn_friction", None)),
         )
-        self._draw_text_with_stroke(
-            text,
-            LAT_VALUES_RIGHT_X,
-            LAT_VALUES_CENTER_Y,
-            LAT_VALUES_FONT_SIZE,
-            LAT_VALUES_COLOR,
-            (0, 0, 0),
-            2,
-            anchor="right",
-            cache=True,
-        )
+        for text, y in zip(texts, LAT_VALUES_LINE_Y):
+            self._draw_text_with_stroke(text, LAT_VALUES_RIGHT_X, y, LAT_VALUES_FONT_SIZE, LAT_VALUES_COLOR, (0, 0, 0), 2,
+                                        anchor="right", cache=True)
 
     def _draw_lane_values(self, state: ClusterUiState) -> None:
-        text = lane_values_text(
-            getattr(state, "k9_lane_offset_m", None),
-            getattr(state, "k9_lane_state", None),
-            getattr(state, "k9_lane_gap_left_m", None),
-            getattr(state, "k9_lane_gap_right_m", None),
+        texts = (
+            (lane_offset_text(getattr(state, "k9_lane_offset_m", None)), LANE_OFFSET_COLOR),
+            (lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None)), LANE_GAP_COLOR),
         )
-        self._draw_text_with_stroke(
-            text,
-            LANE_VALUES_RIGHT_X,
-            LANE_VALUES_CENTER_Y,
-            LANE_VALUES_FONT_SIZE,
-            LAT_VALUES_COLOR,
-            (0, 0, 0),
-            2,
-            anchor="right",
-            cache=True,
-        )
+        for (text, color), y in zip(texts, LANE_VALUES_LINE_Y):
+            self._draw_text_with_stroke(text, LANE_VALUES_RIGHT_X, y, LANE_VALUES_FONT_SIZE, color, (0, 0, 0), 2,
+                                        anchor="right", cache=True)
 
     def _draw_tpms_car_icon(self) -> bool:
         texture = getattr(self, "_tpms_car_texture", None)

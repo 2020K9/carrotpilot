@@ -27,6 +27,17 @@ replaced by the Korean line below since 6fc96445):
   inner lane line at x = 0, i.e. -y1 / y2 ('--' for a weak line, or outside GAP_MIN_M..GAP_MAX_M). So 좌 + 우 = lane width and
   (좌 - 우) / 2 = 치우침 to the right (before the 0.5 s low-pass): 우 12cm -> 좌 is 24 cm more than 우. Until then it was the gap
   from the car side (minus K9 half width 0.9575 m).
+
+2026-10-26 (보노보노 2026-10-25 20:28 / 20:38 / 20:43 / 20:53, branch k9-hud-ld-lt): five Korean lines above the TPMS car, all
+labels in Korean, no 적용 / 미적용 text, no 보정 state:
+  1 '조향비 12.90  지연설정 0.20초'         (SR / SAD as above)
+  2 '지연학습 63%  0.24초'                  (liveDelay.calPerc, learned lag: lateralDelayEstimate while calPerc < 100, lateralDelay at 100)
+  3 '토크학습 61%  횡가속 3.16  마찰 0.09'  (liveTorqueParameters.calPerc, latAccelFactor / frictionCoefficient: Raw while calPerc < 100,
+                                          Filtered at 100; '-' while nothing is learned yet: calPerc 0 and raw 0)
+  4 '치우침 오른쪽 12cm'                     (offset above, 오른쪽 / 왼쪽, '가운데' under 2 cm, '--' weak lines)
+  5 '좌 차선 1.87m   우 차선 1.63m'          (comma-centre gaps above, unchanged since 98c9e407)
+  Lines 2 / 3 show the learners' current numbers whether or not lateral control uses them (SteerActuatorDelay > 0 and
+  LateralTorqueCustom 1 mean the fixed values are used); the HUD does not say which.
 """
 from __future__ import annotations
 
@@ -87,10 +98,62 @@ def applied_steer_delay_s(steer_actuator_delay_param: Any, live_lateral_delay: A
     return _finite(live_lateral_delay)
 
 
+def _fmt(value: Any, spec: str, unit: str = "") -> str:
+    v = _finite(value)
+    return "-" if v is None else f"{v:{spec}}{unit}"
+
+
 def lat_values_text(steer_ratio: float | None, steer_delay_s: float | None) -> str:
-    sr = "-" if steer_ratio is None or not math.isfinite(steer_ratio) else f"{steer_ratio:.2f}"
-    sad = "-" if steer_delay_s is None or not math.isfinite(steer_delay_s) else f"{steer_delay_s:.2f}s"
-    return f"SR {sr}  SAD {sad}"
+    """HUD line 1: '조향비 12.90  지연설정 0.20초'."""
+    return f"조향비 {_fmt(steer_ratio, '.2f')}  지연설정 {_fmt(steer_delay_s, '.2f', '초')}"
+
+
+def _perc(value: Any) -> int | None:
+    v = _finite(value)
+    return None if v is None else int(round(min(max(v, 0.0), 100.0)))
+
+
+def learned_delay(live_delay: Any | None) -> tuple[int | None, float | None]:
+    """(calPerc %, learned lag s) of liveDelay: lateralDelayEstimate while learning (< 100 %), lateralDelay once done."""
+    if live_delay is None:
+        return None, None
+    try:
+        perc = _perc(live_delay.calPerc)
+        value = live_delay.lateralDelay if perc == 100 else live_delay.lateralDelayEstimate
+    except Exception:
+        return None, None
+    value = _finite(value)
+    return perc, value if value is not None and value > 0.0 else None
+
+
+def learned_torque(live_torque: Any | None) -> tuple[int | None, float | None, float | None]:
+    """(calPerc %, latAccelFactor, friction) of liveTorqueParameters: Raw while learning (< 100 %), Filtered once done;
+    None for both values while nothing is learned yet (calPerc 0 with raw 0)."""
+    if live_torque is None:
+        return None, None, None
+    try:
+        perc = _perc(live_torque.calPerc)
+        if perc == 100:
+            af, fr = live_torque.latAccelFactorFiltered, live_torque.frictionCoefficientFiltered
+        else:
+            af, fr = live_torque.latAccelFactorRaw, live_torque.frictionCoefficientRaw
+    except Exception:
+        return None, None, None
+    af, fr = _finite(af), _finite(fr)
+    if perc in (0, None) and not af and not fr:
+        return perc, None, None
+    return perc, af, fr
+
+
+def delay_learn_text(perc: int | None, delay_s: float | None) -> str:
+    """HUD line 2: '지연학습 63%  0.24초'."""
+    return f"지연학습 {'-' if perc is None else f'{perc}%'}  {_fmt(delay_s, '.2f', '초')}"
+
+
+def torque_learn_text(perc: int | None, lat_accel_factor: float | None, friction: float | None) -> str:
+    """HUD line 3: '토크학습 61%  횡가속 3.16  마찰 0.09'."""
+    return (f"토크학습 {'-' if perc is None else f'{perc}%'}  횡가속 {_fmt(lat_accel_factor, '.2f')}  "
+            f"마찰 {_fmt(friction, '.2f')}")
 
 
 LANE_P_MIN = 0.6
@@ -182,13 +245,13 @@ def lane_gaps_m(model: Any | None) -> tuple[float | None, float | None]:
 
 
 def lane_offset_text(offset_m: float | None) -> str:
-    """'치우침 우 12cm' / '치우침 좌 8cm' / '치우침 가운데' (|offset| < CENTER_BAND_M) / '치우침 --' (lines weak).
+    """HUD line 4: '치우침 오른쪽 12cm' / '치우침 왼쪽 8cm' / '치우침 가운데' (|offset| < CENTER_BAND_M) / '치우침 --' (lines weak).
     offset = car from the lane centre in modelV2 y (+ = right)."""
     if offset_m is None or not math.isfinite(offset_m):
         return "치우침 --"
     if abs(offset_m) < CENTER_BAND_M:
         return "치우침 가운데"
-    return f"치우침 {'우' if offset_m > 0 else '좌'} {int(round(abs(offset_m) * 100.0))}cm"
+    return f"치우침 {'오른쪽' if offset_m > 0 else '왼쪽'} {int(round(abs(offset_m) * 100.0))}cm"
 
 
 def lane_assist_text(lane_state: Any) -> str:
@@ -201,12 +264,13 @@ def lane_assist_text(lane_state: Any) -> str:
 
 
 def lane_gap_text(left_m: float | None, right_m: float | None) -> str:
-    """'좌 1.87m 우 1.63m' (car centre / comma <-> lane line); '--' for a weak / missing line."""
+    """HUD line 5: '좌 차선 1.87m   우 차선 1.63m' (car centre / comma <-> lane line); '--' for a weak / missing line."""
     f = lambda v: "--" if v is None or not math.isfinite(v) else f"{v:.2f}m"
-    return f"좌 {f(left_m)} 우 {f(right_m)}"
+    return f"좌 차선 {f(left_m)}   우 차선 {f(right_m)}"
 
 
-def lane_values_text(offset_m: float | None, lane_state: Any, gap_left_m: float | None = None,
+def lane_values_text(offset_m: float | None, lane_state: Any = None, gap_left_m: float | None = None,
                      gap_right_m: float | None = None) -> str:
-    """'치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬' (one line right above SR / SAD; shown whatever K9LaneAssist is)."""
-    return f"{lane_offset_text(offset_m)} · {lane_gap_text(gap_left_m, gap_right_m)} · {lane_assist_text(lane_state)}"
+    """HUD lines 4 and 5 joined by ' / ' (manual / tests): '치우침 오른쪽 12cm / 좌 차선 1.87m   우 차선 1.63m'. Shown whatever
+    K9LaneAssist is; lane_state (보정) is no longer shown on the external HUD (2026-10-26), the argument is kept for callers."""
+    return f"{lane_offset_text(offset_m)} / {lane_gap_text(gap_left_m, gap_right_m)}"

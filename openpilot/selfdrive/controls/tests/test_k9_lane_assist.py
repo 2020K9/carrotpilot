@@ -338,16 +338,17 @@ def test_hud_offset_and_text():
   assert f.update(0.1, 0.0) == pytest.approx(0.1)
   assert 0.1 < f.update(0.3, 0.5) < 0.3
   assert f.update(None, 0.55) is None and f.update(0.2, 0.6) == pytest.approx(0.2)
-  # 2026-10-25 23:49 (보노보노): one Korean line (pin rewritten for the new wording); shown with K9LaneAssist 0 too
-  assert lane_values_text(0.123, 2, 1.87, 1.63) == "치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬"
-  assert lane_values_text(-0.08, 3, 1.67, None) == "치우침 좌 8cm · 좌 1.67m 우 -- · 보정 켬"
-  assert lane_values_text(None, 1) == "치우침 -- · 좌 -- 우 -- · 보정 대기"
-  assert lane_values_text(0.004, 0, 1.754, 1.746) == "치우침 가운데 · 좌 1.75m 우 1.75m · 보정 꺼짐"
-  assert lane_values_text(-0.0199, 0) == "치우침 가운데 · 좌 -- 우 -- · 보정 꺼짐"
-  assert lane_values_text(0.02, 1) == "치우침 우 2cm · 좌 -- 우 -- · 보정 대기"
-  assert lane_values_text(-0.024, 1) == "치우침 좌 2cm · 좌 -- 우 -- · 보정 대기"
-  assert lane_values_text(0.05, None) == "치우침 우 5cm · 좌 -- 우 -- · 보정 --"
-  assert lane_values_text(float("nan"), 7, float("nan"), float("inf")) == "치우침 -- · 좌 -- 우 -- · 보정 --"
+  # 2026-10-25 23:49 (보노보노): one Korean line; 2026-10-26 k9-hud-ld-lt: lines 4 / 5 joined by ' / ', 오른쪽 / 왼쪽, no 보정
+  # (display-text pins rewritten for the new wording); shown with K9LaneAssist 0 too
+  assert lane_values_text(0.123, 2, 1.87, 1.63) == "치우침 오른쪽 12cm / 좌 차선 1.87m   우 차선 1.63m"
+  assert lane_values_text(-0.08, 3, 1.67, None) == "치우침 왼쪽 8cm / 좌 차선 1.67m   우 차선 --"
+  assert lane_values_text(None, 1) == "치우침 -- / 좌 차선 --   우 차선 --"
+  assert lane_values_text(0.004, 0, 1.754, 1.746) == "치우침 가운데 / 좌 차선 1.75m   우 차선 1.75m"
+  assert lane_values_text(-0.0199, 0) == "치우침 가운데 / 좌 차선 --   우 차선 --"
+  assert lane_values_text(0.02, 1) == "치우침 오른쪽 2cm / 좌 차선 --   우 차선 --"
+  assert lane_values_text(-0.024, 1) == "치우침 왼쪽 2cm / 좌 차선 --   우 차선 --"
+  assert lane_values_text(0.05, None) == "치우침 오른쪽 5cm / 좌 차선 --   우 차선 --"
+  assert lane_values_text(float("nan"), 7, float("nan"), float("inf")) == "치우침 -- / 좌 차선 --   우 차선 --"
 
 
 def test_hud_lane_gaps():
@@ -365,9 +366,9 @@ def test_hud_lane_gaps():
   assert lane_gaps_m(_md(-3.6, 1.7))[0] is None and lane_gaps_m(_md(-3.5, 1.7))[0] == pytest.approx(3.5)
   assert lane_gaps_m(_md(-1.9, 0.1))[1] is None and lane_gaps_m(_md(-1.9, 0.2))[1] == pytest.approx(0.2)
   assert lane_gaps_m(_md(0.3, 1.7))[0] is None                                      # 'left' line right of the car
-  assert lane_gap_text(1.87, 1.63) == "좌 1.87m 우 1.63m"
-  assert lane_gap_text(None, 1.684) == "좌 -- 우 1.68m"
-  assert lane_gap_text(float("nan"), None) == "좌 -- 우 --"
+  assert lane_gap_text(1.87, 1.63) == "좌 차선 1.87m   우 차선 1.63m"
+  assert lane_gap_text(None, 1.684) == "좌 차선 --   우 차선 1.68m"
+  assert lane_gap_text(float("nan"), None) == "좌 차선 --   우 차선 --"
 
 
 def test_hud_direction_from_model_y_and_gaps_add_up():
@@ -380,10 +381,10 @@ def test_hud_direction_from_model_y_and_gaps_add_up():
   off = lane_offset_m(md); gl, gr = lane_gaps_m(md)
   assert off == pytest.approx(0.10) and gr < gl
   assert gl + gr == pytest.approx(1.50 - (-1.70))
-  assert lane_values_text(off, 2, gl, gr) == "치우침 우 10cm · 좌 1.70m 우 1.50m · 보정 켬"
+  assert lane_values_text(off, 2, gl, gr) == "치우침 오른쪽 10cm / 좌 차선 1.70m   우 차선 1.50m"
   md = _md(-1.50, 1.70)
   off = lane_offset_m(md); gl, gr = lane_gaps_m(md)
-  assert lane_values_text(off, 1, gl, gr) == "치우침 좌 10cm · 좌 1.50m 우 1.70m · 보정 대기" and gl < gr
+  assert lane_values_text(off, 1, gl, gr) == "치우침 왼쪽 10cm / 좌 차선 1.50m   우 차선 1.70m" and gl < gr
 
 
 def test_hud_gaps_comma_basis_relations():
@@ -403,7 +404,7 @@ def test_hud_gaps_comma_basis_relations():
   md = _md(-1.87, 1.63)
   gl, gr = lane_gaps_m(md)
   assert gl - gr == pytest.approx(0.24) and gl + gr == pytest.approx(3.5)
-  assert lane_values_text(lane_offset_m(md), 2, gl, gr) == "치우침 우 12cm · 좌 1.87m 우 1.63m · 보정 켬"
+  assert lane_values_text(lane_offset_m(md), 2, gl, gr) == "치우침 오른쪽 12cm / 좌 차선 1.87m   우 차선 1.63m"
 
 
 def test_hud_example_numbers_are_a_real_lane():
@@ -420,7 +421,7 @@ def test_hud_example_numbers_are_a_real_lane():
     assert 2.8 <= gl + gr <= 3.8, args
     assert off is not None and abs((gl - gr) / 2 - off) <= 0.006, args
   assert n >= 3
-  for m in re.findall(r"좌 (\d\.\d\d)m 우 (\d\.\d\d)m", doc):
+  for m in re.findall(r"좌 차선 (\d\.\d\d)m   우 차선 (\d\.\d\d)m", doc):
     assert 2.8 <= float(m[0]) + float(m[1]) <= 3.8, m
 
 

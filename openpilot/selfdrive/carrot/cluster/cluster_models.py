@@ -510,6 +510,13 @@ class ClusterUiState:
     # SR / SAD lateral control actually uses (cluster_lat_values). None = unknown -> '-'.
     applied_steer_ratio: float | None = None
     applied_steer_delay_s: float | None = None
+    # learners' current numbers (cluster_lat_values.learned_delay / learned_torque, display only, None = '-'):
+    # liveDelay calPerc % and lag [s]; liveTorqueParameters calPerc %, latAccelFactor [m/s^2] and friction
+    delay_learn_perc: int | None = None
+    delay_learn_s: float | None = None
+    torque_learn_perc: int | None = None
+    torque_learn_lat_accel_factor: float | None = None
+    torque_learn_friction: float | None = None
     # K9LaneAssist line above SR / SAD (cluster_lat_values.lane_values_text): lane-centre offset [m]
     # (+ right, None = '--'), controlsState.k9LaneState (None = unknown) and k9LaneAccel [m/s^2].
     k9_lane_offset_m: float | None = None
