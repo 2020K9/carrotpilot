@@ -510,8 +510,8 @@ class ClusterUiState:
     # SR / SAD lateral control actually uses (cluster_lat_values). None = unknown -> '-'.
     applied_steer_ratio: float | None = None
     applied_steer_delay_s: float | None = None
-    # learners' current numbers (cluster_lat_values.learned_delay / learned_torque, display only, None = '-'):
-    # liveDelay calPerc % and lag [s]; liveTorqueParameters calPerc %, latAccelFactor [m/s^2] and friction
+    # display only, None = '-': liveDelay calPerc % and learned lag [s] (cluster_lat_values.learned_delay);
+    # liveTorqueParameters calPerc % and the latAccelFactor [m/s^2] / friction lateral control applies (applied_torque)
     delay_learn_perc: int | None = None
     delay_learn_s: float | None = None
     torque_learn_perc: int | None = None

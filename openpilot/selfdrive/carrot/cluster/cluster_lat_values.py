@@ -38,6 +38,14 @@ labels in Korean, no 적용 / 미적용 text, no 보정 state:
   5 '좌 차선 1.87m   우 차선 1.63m'          (comma-centre gaps above, unchanged since 98c9e407)
   Lines 2 / 3 show the learners' current numbers whether or not lateral control uses them (SteerActuatorDelay > 0 and
   LateralTorqueCustom 1 mean the fixed values are used); the HUD does not say which.
+
+2026-10-26 17:24 (보노보노 "외부uhd에 넣은거 콤마화면에서는 빼라", 17:23 "횡가속은 3.3~4 왔다갔다하는데 뭘 집어넣어 놓은 거니?"):
+  - the comma (mici) screen no longer shows the two K9 lane lines (6fc96445); the external HUD keeps all five lines.
+  - line 3 numbers = what latcontrol_torque applies (applied_torque), never Raw: LateralTorqueCustom > 0 -> the menu values
+    LateralTorqueAccelFactor / LateralTorqueFriction x 0.001, else liveTorqueParameters Filtered (CarParams values until learned).
+    Raw is the instant fit of whatever points torqued has (rlog 1ca / 1cc at calPerc 14..61 %: 2.78..3.48, while the full fits
+    of 1c8 / 1c9 at 100 % were 2.59..2.97 with Filtered 2.62..2.75), it jumps every update and lateral control never uses it.
+    The % stays liveTorqueParameters.calPerc.
 """
 from __future__ import annotations
 
@@ -145,13 +153,46 @@ def learned_torque(live_torque: Any | None) -> tuple[int | None, float | None, f
     return perc, af, fr
 
 
+def _custom_on(custom: Any) -> bool | None:
+    c = _finite(custom)
+    return None if c is None else c > 0
+
+
+def applied_torque(live_torque: Any | None, custom: Any = None, custom_laf: Any = None,
+                   custom_fr: Any = None) -> tuple[int | None, float | None, float | None]:
+    """(calPerc %, latAccelFactor, friction) for HUD line 3 = the values latcontrol_torque applies:
+    LateralTorqueCustom > 0 -> LateralTorqueAccelFactor / LateralTorqueFriction x 0.001 (menu values, set every 10 frames),
+    LateralTorqueCustom 0 -> liveTorqueParameters Filtered (controlsd update_live_torque_params; the CarParams values until
+    torqued has learned). Raw is never shown. Values None ('-') when unknown (menu not read yet, no message)."""
+    perc = None
+    if live_torque is not None:
+        try:
+            perc = _perc(live_torque.calPerc)
+        except Exception:
+            perc = None
+    on = _custom_on(custom)
+    if on is None:
+        return perc, None, None
+    if on:
+        af, fr = _finite(custom_laf), _finite(custom_fr)
+        return (perc, af * 0.001 if af is not None and af > 0.0 else None,
+                fr * 0.001 if fr is not None and fr >= 0.0 else None)
+    if live_torque is None:
+        return perc, None, None
+    try:
+        af, fr = _finite(live_torque.latAccelFactorFiltered), _finite(live_torque.frictionCoefficientFiltered)
+    except Exception:
+        return perc, None, None
+    return perc, af if af is not None and af > 0.0 else None, fr if fr is not None and fr >= 0.0 else None
+
+
 def delay_learn_text(perc: int | None, delay_s: float | None) -> str:
     """HUD line 2: '지연학습 63%  0.24초'."""
     return f"지연학습 {'-' if perc is None else f'{perc}%'}  {_fmt(delay_s, '.2f', '초')}"
 
 
 def torque_learn_text(perc: int | None, lat_accel_factor: float | None, friction: float | None) -> str:
-    """HUD line 3: '토크학습 61%  횡가속 3.16  마찰 0.09'."""
+    """HUD line 3: '토크학습 61%  횡가속 2.50  마찰 0.13'."""
     return (f"토크학습 {'-' if perc is None else f'{perc}%'}  횡가속 {_fmt(lat_accel_factor, '.2f')}  "
             f"마찰 {_fmt(friction, '.2f')}")
 

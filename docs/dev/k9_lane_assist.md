@@ -14,7 +14,7 @@ The settings screen and the user manual keep short texts only. Below is the prev
 
 1. `조향비 12.90  지연설정 0.20초` — 제어가 쓰는 조향비(CustomSR 고정이면 그 값, 아니면 학습 SR × SteerRatioRate)와 지연(SteerActuatorDelay > 0 이면 그 값, 0이면 liveDelay).
 2. `지연학습 63%  0.24초` — liveDelay 학습 %(calPerc)와 학습 지연: 100% 전에는 lateralDelayEstimate, 100%면 lateralDelay.
-3. `토크학습 61%  횡가속 3.16  마찰 0.09` — liveTorqueParameters 학습 %(calPerc)와 횡가속·마찰: 100% 전에는 Raw, 100%면 Filtered. 아직 하나도 못 배웠으면(0%, Raw 0) `-`. 2·3번은 제어가 그 값을 쓰는지(SteerActuatorDelay·LateralTorqueCustom)와 상관없이 학습기의 지금 값입니다.
+3. `토크학습 61%  횡가속 2.50  마찰 0.13` — liveTorqueParameters 학습 %(calPerc)와 조향 제어가 지금 쓰는 횡가속·마찰(2026-10-26 17:24 보노보노 "뭘 집어넣어 놓은 거니?"): `LateralTorqueCustom` 1이면 메뉴 값 `LateralTorqueAccelFactor`·`LateralTorqueFriction` × 0.001, 0이면 liveTorqueParameters Filtered(학습 전에는 CarParams 값). Raw(학습 중 즉석 맞춤값, 실차 1ca·1cc 61% 이하에서 2.78~3.48로 출렁임)는 제어가 쓰지 않으므로 보이지 않습니다. 2번은 학습기의 지금 값(제어가 쓰는지와 상관없음) 그대로입니다.
 4. `치우침 오른쪽 12cm` — 차로 가운데 기준 차 위치(modelV2 안쪽 두 차선 x=0, y는 + 오른쪽, 0.5초 평활). 오른쪽이면 `오른쪽`, 왼쪽이면 `왼쪽`, 2cm 미만은 `가운데`, 차선이 흐리면(확률 0.6 미만·std 0.2 초과·차로폭 2.6~4.4m 밖) `--`.
 5. `좌 차선 1.87m   우 차선 1.63m` — 콤마 장치 가운데(modelV2 y=0; carrot 레인모드도 CAMERA_OFFSET 0이라 같은 기준, 차 가운데와의 장착 어긋남은 보정하지 않음)에서 각 안쪽 차선 선 가운데까지의 거리(m, 2026-10-26 01:20 보노보노 "콤마 기준"; 그 전에는 차 옆면 기준이라 K9 반폭 0.9575m를 뺐음). 흐린 쪽이나 0.2~3.5m 밖이면 `--`. 좌 + 우 = 차로폭, (좌 − 우)/2 = 오른쪽 치우침(평활 전)이라 오른쪽 12cm면 좌가 우보다 24cm 크고, 치우친 쪽 간격이 작게 나옵니다.
 
@@ -28,7 +28,7 @@ The settings screen and the user manual keep short texts only. Below is the prev
 
 <!-- hud: None, 1, None, 1.64 --> `치우침 -- / 좌 차선 --   우 차선 1.64m`
 
-콤마 주행 화면(mici): 디버그 정보(ShowDebugUI) 칸 `SR:` 줄 아래 두 줄 — `치우침 오른쪽 12cm · 보정 켬` / `좌 차선 1.87m   우 차선 1.63m` (같은 함수, mici 줄 구성은 그대로).
+콤마 주행 화면(mici)에는 위 줄들을 넣지 않습니다(2026-10-26 17:24 보노보노 "외부uhd에 넣은거 콤마화면에서는 빼라"; 6fc96445~fd0f3cd8 동안 디버그 정보 `SR:` 줄 아래에 있던 치우침·좌우 차선 두 줄을 뺌, mici 화면은 6fc96445 전과 같음).
 
 ## K9LaneAssist (ko, 0ae1911f)
 

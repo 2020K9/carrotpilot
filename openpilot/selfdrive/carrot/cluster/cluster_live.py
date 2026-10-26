@@ -24,7 +24,7 @@ from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
 from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_gaps_m, lane_offset_m, live_parameters_usable
-from cluster_lat_values import learned_delay, learned_torque
+from cluster_lat_values import applied_torque, learned_delay
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -582,7 +582,7 @@ class OpenpilotLiveSource:
         except Exception:
             applied_sr, applied_sad = None, None
         try:
-            (d_perc, d_s), (t_perc, t_af, t_fr) = self._live_learn_values()
+            (d_perc, d_s), (t_perc, t_af, t_fr) = self._live_learn_values(now)
         except Exception:
             (d_perc, d_s), (t_perc, t_af, t_fr) = (None, None), (None, None, None)
         try:
@@ -651,11 +651,25 @@ class OpenpilotLiveSource:
             state = None
         return offset, state, finite_float(accel) if accel is not None else None, gap_l, gap_r
 
-    def _live_learn_values(self) -> tuple[tuple[int | None, float | None], tuple[int | None, float | None, float | None]]:
-        """지연학습 / 토크학습 lines (display only, see cluster_lat_values.learned_delay / learned_torque)."""
+    def _live_learn_values(self, now: float | None = None) -> tuple[tuple[int | None, float | None],
+                                                                     tuple[int | None, float | None, float | None]]:
+        """지연학습 / 토크학습 lines (display only, see cluster_lat_values.learned_delay / applied_torque).
+        LateralTorqueCustom / LateralTorqueAccelFactor / LateralTorqueFriction re-read once per second."""
+        now = time.monotonic() if now is None else now
+        if now >= getattr(self, "_next_torque_param_read_t", 0.0):
+            params = getattr(self, "params", None)
+            values = []
+            for key in ("LateralTorqueCustom", "LateralTorqueAccelFactor", "LateralTorqueFriction"):
+                try:
+                    values.append(float(params.get_float(key)) if params is not None else None)
+                except Exception:
+                    values.append(None)
+            self._torque_params = tuple(values)
+            self._next_torque_param_read_t = now + 1.0
+        custom, custom_laf, custom_fr = getattr(self, "_torque_params", (None, None, None))
         live_delay = self._service_data("liveDelay") if self._service_alive("liveDelay") else None
         live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
-        return learned_delay(live_delay), learned_torque(live_torque)
+        return learned_delay(live_delay), applied_torque(live_torque, custom, custom_laf, custom_fr)
 
     def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
         """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""
