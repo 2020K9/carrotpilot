@@ -15,6 +15,9 @@ Rules, applied once while K9StopModeVer is not STOP_MODE_VER (3):
 marker and no table change: a K9StopModeVer 3 device keeps its value (the K9StopModeVer 3 settings screen allowed 0-2 only
 and the web server clamps to min/max, so a stored 3 there can only come from a hand-written param); the old tables still map
 an old 3 (v11 on the 0-3 menu, v9 + shudder fix on the 0-6 menu) to 2, never to the new 3.
+2026-10-27 (the driver's orders 15:53 / 16:14 "c1.c1+ 3번 4번추가해", 16:45 "그럼 4.5에넣어야지"): 4 C1 and 5 C1+ were added,
+again with NO new marker and no table change (3 stays the v13 original, nothing moved): a K9StopModeVer 3 device that stored
+4 or 5 by hand (acted as 0 before) now runs C1 / C1+; the old tables still map an old 3 / 4 / 5 to 2.
 The marker is written right after the value (two atomic param writes). A marker that is already STOP_MODE_VER means the
 value is on the new menu and is never touched again. A power loss exactly between the two writes migrates again on the next
 start: 2 -> 2 in both tables, so nothing changes.

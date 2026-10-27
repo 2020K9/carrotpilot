@@ -199,6 +199,7 @@ class CarController(CarControllerBase):
     # K9StopMode single selector, read live every 0.5 s (2026-10-25): 0 = base braking, 1 = v12 original (the creep_fix v12
     # page code unchanged, the two `if self.k9_v12_orig` / `if v12_orig` blocks below), 2 = v12k9 (k9_creep.MENU),
     # 3 = v13 original (2026-10-26: the creep_fix v13 page code unchanged, the `if self.k9_v13_orig` / `if v13_orig` blocks);
+    # 4 = C1, 5 = C1+ (2026-10-27: k9_creep.MENU kinds 9 / 10, kind 8 with the C1 / C1+ stop end);
     # other values act as 0. Stored values of older menus are migrated once at manager start (k9_stop_mode_migration.py).
     # See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
@@ -318,7 +319,7 @@ class CarController(CarControllerBase):
           mode = params.get_int("K9StopMode")
         except (TypeError, ValueError, OverflowError):
           mode = 0
-        mode = mode if (mode in K9_CREEP_MENU or mode == V12_ORIG_MENU or mode == V13_ORIG_MENU) else 0  # 4+, negative, NaN, non-int: 0
+        mode = mode if (mode in K9_CREEP_MENU or mode == V12_ORIG_MENU or mode == V13_ORIG_MENU) else 0  # 6+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(K9_CREEP_MENU[mode]) if mode in K9_CREEP_MENU else None
@@ -529,7 +530,7 @@ class CarController(CarControllerBase):
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
         lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
-      # K9StopMode 2: v12k9; changes accel AND StopReq timing.
+      # K9StopMode 2 / 4 / 5: v12k9 / C1 / C1+; changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,

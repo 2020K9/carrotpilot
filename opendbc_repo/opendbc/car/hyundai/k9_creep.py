@@ -10,12 +10,23 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
 - 3 = v13 original (2026-10-26, the driver's orders 23:13/23:14 "v13나왔다" / "v12그냥놓아두고 v13추가하는걸로"): the creep_fix
   v13 page code, unchanged, pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v13_orig:` /
   `if v13_orig:` (V13_ORIG_MENU below; test_k9_stop_v13.py pins it line by line against the page). Not a K9Creep kind.
-Any other value (4 or more, negative, unreadable) acts as 0. The modes never stack.
+- 4 = C1 (2026-10-27, the driver's orders 15:53 / 16:14 "c1.c1+ 3번 4번추가해" and 16:45 "그럼 4.5에넣어야지"): kind V12K9_C1 below,
+  kind 8 with the C1 stop end profile (k9band 2026-10-27): end-profile integral V12K9_C1_END_KI 0.5 (kind 8: 1.5) against the
+  target lagged by V12K9_C1_END_REF_TAU, no more pressing once the predicted time to stand is below V12K9_C1_END_PRE_T, the end
+  profile starts at the last sent request (bumpless), no go StopReq while rolling (V12K9_C1_END_GO_SPEED 0; kind 8: 0.15);
+- 5 = C1+ (same orders): kind V12K9_C1P below, C1 plus the 05:15 lead filter (K9Creep.filter_lead: leadVisible 1 with
+  leadDistance 0.0 right after a far radar lead keeps that lead), the end-profile hand-over without a request step
+  (V12K9_C1P_END_HANDOFF) and, with a lead in the end profile, the lead target V12K9_C1P_END_LEAD_GAP behind it, the
+  predicted-gap gate V12K9_C1P_SG_* and the integral V12K9_C1P_END_KI_SAFE.
+Menus 4 and 5 are separate kinds: kind 8 (menu 2) and the v13 original (menu 3) are not changed by them (bit for bit 26daac1a).
+A value 4 or 5 stored before 2026-10-27 (it acted as 0 then) now selects C1 / C1+; there is no migration for it.
+Any other value (6 or more, negative, unreadable) acts as 0. The modes never stack.
 The 2026-10-24 menu (1 v10, 2 v10 + light shudder fix, 3 v11) is deleted with its code (kinds 2 v10, 6 v10 + light shudder
 fix and 7 v11 are gone). Stored values are migrated once at manager start (openpilot/selfdrive/car/k9_stop_mode_migration.py,
 marker K9StopModeVer 3): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged. Earlier menu history is in git log.
 Throughout this module "mode N" / "kind N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (not on the menu; kept
-only as the test reference of "never brake less than v9"), kind 8 = v12k9 (menu 2).
+only as the test reference of "never brake less than v9"), kind 8 = v12k9 (menu 2), kind 9 = C1 (menu 4), kind 10 = C1+ (menu 5).
+Kinds 9 and 10 run the kind-8 code (self.v12) and differ from it only where self.c1 / self.c1p is checked.
 
 Sources: https://leegrt.org/oppo/creep_fix/ (selectMode carcontroller.py code and changelog, written for the Kia Niro EV CAN,
 VEgoStopping 15). No license is stated on that page; kind 1 is an independent re-implementation of the v9 algorithm and its
@@ -122,12 +133,13 @@ import numpy as np
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
-KINDS = (V9, V12K9)
+V12K9_C1, V12K9_C1P = 9, 10  # (2026-10-27) kind 8 with the C1 / C1+ stop end (menus 4 / 5)
+KINDS = (V9, V12K9, V12K9_C1, V12K9_C1P)
 V12_ORIG_MENU = 1  # K9StopMode 1: the creep_fix v12 page code unchanged, in carcontroller.py (no K9Creep)
 V13_ORIG_MENU = 3  # K9StopMode 3 (2026-10-26): the creep_fix v13 page code unchanged, in carcontroller.py (no K9Creep)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (V12_ORIG_MENU, not a kind), 2 v12k9;
-# 2026-10-26: 3 v13 original (V13_ORIG_MENU, not a kind))
-MENU = {2: V12K9}
+# 2026-10-26: 3 v13 original (V13_ORIG_MENU, not a kind); 2026-10-27: 4 C1, 5 C1+)
+MENU = {2: V12K9, 4: V12K9_C1, 5: V12K9_C1P}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted((V12_ORIG_MENU, V13_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
 
@@ -218,6 +230,36 @@ V12K9_END_CRAWL_SPEED, V12K9_END_CRAWL_AEGO, V12K9_END_CRAWL_FRAMES = 0.15, -0.0
 V12K9_END_VS, V12K9_END_HOLD_T = 0.03, 1.0  # m/s, s
 V12K9_END_GO_TARGET, V12K9_END_GO_SPEED = 0.0, 0.15  # m/s^2, m/s
 V12K9_END_LINE_DECEL, V12K9_END_LINE_K, V12K9_END_LINE_SMIN, V12K9_END_LINE_CAP = 0.4, 1.333, 0.2, 1.0  # m/s^2, -, m, m/s^2
+# C1 (kinds 9 and 10, menus 4 / 5; k9band 2026-10-27, sim only, kind 8 keeps the constants above): the end profile starts at the
+# last sent request (offset = last - target, not last - aEgo); its integral V12K9_C1_END_KI compares aEgo with the target passed
+# through V12K9_C1_END_REF_TAU (the decel the car can show by now, no windup while the brake builds up) and stops pressing once
+# the predicted time to stand v / decel is below V12K9_C1_END_PRE_T; no go StopReq while rolling (V12K9_C1_END_GO_SPEED 0)
+V12K9_C1_END_KI = 0.5  # 1/s (kind 8: V12K9_END_KI 1.5, it wound up against the ESC lag)
+V12K9_C1_END_GO_SPEED = 0.0  # m/s (kind 8: V12K9_END_GO_SPEED 0.15)
+V12K9_C1_END_REF_TAU, V12K9_C1_END_PRE_T = 0.35, 0.5  # s, s
+# C1+ (kind 10, menu 5; k9-stop-0515c 2026-10-27, sim only), on top of C1:
+# - the end-profile lead target V12K9_C1P_END_LEAD_GAP behind the lead (kind 8 / C1: V12K9_END_LEAD_GAP 3.0)
+# - while the lead term of the end profile asks more than the profile (or the gate below is on) the integral presses with
+#   V12K9_C1P_END_KI_SAFE instead of V12K9_C1_END_KI
+# - predicted-gap gate (k9band X9): lead in the end profile and v SG_LAG + v^2 / (2 max(-aEgo_lp, 0.05)) > lead - SG_GAP -> the
+#   integral presses toward the decel that stops SG_GAP behind the lead; SG_REACH: the gate starts only while SG_GAP is still
+#   reachable (left - v SG_LAG > SG_SMIN), then stays on for the stop; SG_K: gate decel gain
+V12K9_C1P_END_LEAD_GAP = 4.0  # m
+V12K9_C1P_END_KI_SAFE = 1.25  # 1/s
+V12K9_C1P_SG_GAP, V12K9_C1P_SG_LAG, V12K9_C1P_SG_SMIN = 4.0, 0.45, 0.3  # m, s, m
+V12K9_C1P_SG_REACH, V12K9_C1P_SG_K = True, 1.0
+# - lead input (2026-10-27 05:15:17 drive: radarState lost a 40 m lead pulling away; for 2 carControl frames the HUD said
+#   leadVisible 1 (longitudinalPlan.hasLead of the frame before) with leadDistance 0.0 (radarState leadOne status 0 -> dRel 0),
+#   kind 8 took that for a lead at 0 m -> StopReq while rolling at 0.139 m/s, aReq -0.06 -> -0.59 -> 꾹), K9Creep.filter_lead():
+#   a positive distance is used as sent, at once; only leadVisible 1 with leadDistance 0.0 changes, and only when the last positive
+#   distance came at most V12K9_C1P_LF_HOLD frames ago (all of them visible without a distance) and that distance, shortened by the
+#   own travel since, is still beyond V12K9_C1P_LF_FAR (the 3.0 m lead latch gap): kind 10 then uses that shortened distance.
+#   The zone reference (_V12K9Ref) keeps the raw input.
+V12K9_C1P_LF_HOLD, V12K9_C1P_LF_FAR = 50, 3.0  # frames, m
+# - once the end profile ran in this stop and it ends (standstill, any latch) in the zone with no lead within
+#   V12K9_END_LEAD_MAX (a visible lead without a distance counts as near), the sent request falls from the last sent one by at
+#   most V12K9_HOLD_STEP per frame (no step from the end-profile request to the feather / latch hold request)
+V12K9_C1P_END_HANDOFF = True
 # zone (2026-10-26, the driver's approval 08:54): only in the stopping state below V12K9_ZONE_SPEED with no lead within
 # V12K9_ZONE_LEAD may kind 8 send a weaker request / move StopReq against the reference kind 8 (_V12K9Ref); it is never more
 # than V12K9_ZONE_PRESS_V (0.2 above 0.6 m/s, 0.4 below 0.3 m/s) stronger there, and outside the zone it stays within [reference - V12K9_BAND_COMP, reference]
@@ -324,8 +366,12 @@ class K9Creep:
   def __init__(self, mode: int = V9):
     assert mode in KINDS, mode
     self.mode = mode
-    self.v12 = mode == V12K9  # kind 8: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
-    self.ref = _V12K9Ref() if self.v12 else None  # kind 8: reference for the zone clamp
+    self.v12 = mode in (V12K9, V12K9_C1, V12K9_C1P)  # kinds 8 / 9 / 10: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
+    self.c1 = mode in (V12K9_C1, V12K9_C1P)  # kinds 9 / 10 (menus 4 / 5): the C1 stop end
+    self.c1p = mode == V12K9_C1P  # kind 10 (menu 5): C1+ (lead filter, hand-over, lead gate)
+    if self.c1p:
+      self.lead_f = (False, 0.0)  # kind 10: the lead of the last update() as kind 10 used it (after filter_lead)
+    self.ref = _V12K9Ref() if self.v12 else None  # kinds 8-10: reference for the zone clamp
     self.reset()
 
   @property
@@ -361,15 +407,44 @@ class K9Creep:
     self.trim = 0.0  # kind 8: brake-only slow trim
     self.trim_lp = None  # kind 8: low-passed eff_ac for the trim
     self.off_lp = None  # kind 8: low-passed eff_ac for the band compensation share outside the zone (V12K9_OFF_ALPHA)
+    if self.c1:
+      self.end_ref = None  # kinds 9 / 10: end-profile target through V12K9_C1_END_REF_TAU
+      self.end_bl = False  # kinds 9 / 10: bumpless start pending
+    if self.c1p:
+      self.sg_on = False  # kind 10: predicted-gap gate on (V12K9_C1P_SG_REACH)
+      self.lf_d, self.lf_n, self.lf_s = None, 0, 0.0  # kind 10: filter_lead() state (last positive distance, frames since, travel since)
+
+  def filter_lead(self, lead_visible: bool, lead_distance: float, v_ego: float):
+    """Kind 10 (C1+): the HUD lead (leadVisible, leadDistance) as kind 10 uses it (see V12K9_C1P_LF_HOLD); other kinds: unchanged."""
+    if not self.c1p:
+      return lead_visible, lead_distance
+    if not (math.isfinite(lead_distance) and math.isfinite(v_ego)):  # the interlock in update() resets on it as before
+      self.lf_d, self.lf_n, self.lf_s = None, 0, 0.0
+      return lead_visible, lead_distance
+    if lead_distance > 0.0:  # a radar distance: as sent
+      self.lf_d, self.lf_n, self.lf_s = float(lead_distance), 0, 0.0
+      return lead_visible, lead_distance
+    if not (lead_visible and lead_distance == 0.0) or self.lf_d is None:  # no lead (or a negative distance): as sent
+      self.lf_d, self.lf_n, self.lf_s = None, 0, 0.0
+      return lead_visible, lead_distance
+    self.lf_n += 1  # visible without a distance right after a radar distance
+    self.lf_s += max(v_ego, 0.0) * 0.01
+    d = self.lf_d - self.lf_s
+    if self.lf_n <= V12K9_C1P_LF_HOLD and d > V12K9_C1P_LF_FAR:
+      return True, float(d)
+    return lead_visible, lead_distance
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
              brake: bool, can_valid: bool, lead_visible: bool, lead_distance: float):
     """Returns (accel, stopping) to send."""
     ref = None
-    if self.ref is not None:  # kind 8: the reference runs on every frame (its own interlock reset)
+    if self.ref is not None:  # kind 8: the reference runs on every frame (its own interlock reset), on the raw lead
       ref = self.ref.update(accel, a_target, stopping, pid, v_ego, v_ego_raw, a_ego, long_accel, esp_standstill, long_active,
                             override, gas, brake, can_valid, lead_visible, lead_distance)[0]
+    if self.c1p:  # kind 10: the HUD lead as kind 10 itself uses it (zone, latches, end profile)
+      lead_visible, lead_distance = self.filter_lead(lead_visible, lead_distance, v_ego)
+      self.lead_f = (lead_visible, lead_distance)  # kind 10: the lead of this update() after filter_lead
     self.ref_out = ref  # kind 8: reference command of this frame (None for kind 1)
     values = (accel, a_target, v_ego, v_ego_raw, a_ego, lead_distance)
     if (not all(math.isfinite(x) for x in values) or not long_active or override or gas or brake or not can_valid):
@@ -418,6 +493,10 @@ class K9Creep:
             accel = float(min(max(accel, ref - V12K9_BAND_COMP), ref))
         else:
           accel = float(max(accel, ref_c - float(np.interp(v_ego, V12K9_ZONE_PRESS_BP, V12K9_ZONE_PRESS_V))))
+          if (self.c1p and V12K9_C1P_END_HANDOFF and end is None and self.end_on and self.end_out is not None
+              and a_target > URGENT_TARGET and math.isfinite(accel)
+              and not ((lead_visible or lead_distance != 0.0) and lead_distance < V12K9_END_LEAD_MAX)):
+            accel = float(max(accel, self.end_out - V12K9_HOLD_STEP))  # kind 10: end-profile hand-over, no step
       self.end_out = accel
       return accel, stopping
 
@@ -515,32 +594,45 @@ class K9Creep:
     if not stopping_in or self.latched or esp_standstill or stopping:
       if not stopping_in:
         self.end_on, self.end_ae, self.end_n, self.end_fb, self.end_k = False, None, 0, 0, 0
+        if self.c1:
+          self.end_ref = None
       return None
     dec = max(-self.end_ae, V12K9_END_DEC_MIN)
     vp = max(v_ego - dec * V12K9_END_LAG - V12K9_END_VS, 0.0)
     d = math.sqrt(V12K9_END_DECEL ** 2 + 2.0 * V12K9_END_JERK * vp)
+    d_prof, d_lead = d, 0.0
     lead_seen = lead_visible or lead_distance != 0.0
     if lead_seen and 0.0 < lead_distance < V12K9_END_LEAD_MAX:
       k_l = V12K9_END_LEAD_KB if V12K9_END_LEAD_BAND[0] <= lead_distance <= V12K9_END_LEAD_BAND[1] else V12K9_END_LEAD_K
-      d = max(d, min(k_l * v_ego ** 2 / (2.0 * max(lead_distance - V12K9_END_LEAD_GAP, V12K9_END_LEAD_SMIN)),
-                     V12K9_END_LEAD_CAP))
+      gap = V12K9_C1P_END_LEAD_GAP if self.c1p else V12K9_END_LEAD_GAP
+      d_lead = min(k_l * v_ego ** 2 / (2.0 * max(lead_distance - gap, V12K9_END_LEAD_SMIN)), V12K9_END_LEAD_CAP)
+      d = max(d, d_lead)
     if not self.end_on and (d <= dec or v_ego < V12K9_END_SPEED) and v_ego < V12K9_END_MAX_SPEED:
       self.end_on = True
       self.end_off = float((accel if self.end_out is None else self.end_out) - self.end_ae)
       self.end_k, self.end_sref, self.end_s = 0, v_ego ** 2 / (2.0 * V12K9_END_LINE_DECEL), 0.0
+      if self.c1:
+        self.end_ref, self.end_bl = self.end_ae, True
+      if self.c1p:
+        self.sg_on = False
     if not self.end_on:
       return None
     self.end_k += 1
     self.end_n += 1 if v_ego < V12K9_END_TMAX_SPEED else 0
     self.end_fb = self.end_fb + 1 if (v_ego < V12K9_END_CRAWL_SPEED and self.end_ae > V12K9_END_CRAWL_AEGO) else 0
+    go_speed = V12K9_C1_END_GO_SPEED if self.c1 else V12K9_END_GO_SPEED
     if (self.end_fb >= V12K9_END_CRAWL_FRAMES or (self.end_n > V12K9_END_TMAX * 100.0 and v_ego > 0.02)
-        or (a_target > V12K9_END_GO_TARGET and v_ego < V12K9_END_GO_SPEED)):
+        or (a_target > V12K9_END_GO_TARGET and v_ego < go_speed)):
       self.latched = True  # StopReq from the next frame (the band ramps out as on any latch)
     self.end_s += v_ego * 0.01
-    d = max(d, min(V12K9_END_LINE_K * v_ego ** 2 / (2.0 * max(self.end_sref - self.end_s, V12K9_END_LINE_SMIN)), V12K9_END_LINE_CAP))
+    d_line = min(V12K9_END_LINE_K * v_ego ** 2 / (2.0 * max(self.end_sref - self.end_s, V12K9_END_LINE_SMIN)), V12K9_END_LINE_CAP)
+    d = max(d, d_line)
     cmd = -d
-    off0 = self.end_off
-    self.end_off = float(np.clip(self.end_off - V12K9_END_KI * 0.01 * (self.end_ae - cmd), V12K9_END_OFF_MIN, V12K9_END_OFF_MAX))
+    if self.c1:
+      off0 = self._end_c1_integral(accel, cmd, v_ego, lead_seen, lead_distance, d_lead > d_prof)
+    else:
+      off0 = self.end_off
+      self.end_off = float(np.clip(self.end_off - V12K9_END_KI * 0.01 * (self.end_ae - cmd), V12K9_END_OFF_MIN, V12K9_END_OFF_MAX))
     if self.end_k <= V12K9_END_HOLD_T * 100.0 and self.end_off > off0:  # no release right after the start
       self.end_off = off0
     cmd = float(cmd + self.end_off)
@@ -550,6 +642,38 @@ class K9Creep:
     if lead_seen and lead_distance <= LEAD_LATCH_GAP:
       cmd = float(min(cmd, -(v_ego ** 2) / (2.0 * max(lead_distance - V12K9_LEAD_MARGIN, V12K9_LEAD_NEED_MIN)) - 0.0))
     return float(max(cmd, -3.5))
+
+  def _end_c1_integral(self, accel, cmd, v_ego, lead_seen, lead_distance, safe):
+    """Kinds 9 / 10 (C1 / C1+): end-profile offset update for the target cmd (-d); returns the offset before it (off0).
+    safe: the lead term of the end profile asks more than the profile itself (kind 10 only uses it)."""
+    if self.end_bl:  # bumpless start: the request continues from the last sent one
+      self.end_bl = False
+      self.end_off = float(np.clip((accel if self.end_out is None else self.end_out) - cmd, V12K9_END_OFF_MIN, V12K9_END_OFF_MAX))
+    off0 = self.end_off
+    self.end_ref = float(self.end_ref + 0.01 / (V12K9_C1_END_REF_TAU + 0.01) * (cmd - self.end_ref))
+    err = self.end_ae - self.end_ref
+    sg = False
+    if self.c1p:  # kind 10: predicted-gap gate
+      d_need = 0.0
+      if V12K9_C1P_SG_GAP > 0.0 and lead_seen and 0.0 < lead_distance < V12K9_END_LEAD_MAX:
+        left = lead_distance - V12K9_C1P_SG_GAP
+        over = v_ego * V12K9_C1P_SG_LAG + v_ego ** 2 / (2.0 * max(-self.end_ae, 0.05)) > left
+        if V12K9_C1P_SG_REACH:
+          if over and left - v_ego * V12K9_C1P_SG_LAG > V12K9_C1P_SG_SMIN:
+            self.sg_on = True
+          over = self.sg_on
+        if over:
+          d_need = min(V12K9_C1P_SG_K * v_ego ** 2 / (2.0 * max(left - v_ego * V12K9_C1P_SG_LAG, V12K9_C1P_SG_SMIN)), V12K9_END_LEAD_CAP)
+      sg = d_need > 0.0
+      if sg:
+        err = max(err, self.end_ae + d_need)
+    if err > 0.0 and v_ego < V12K9_C1_END_PRE_T * max(-self.end_ae, 0.05):
+      err = 0.0  # about to stand: no more pressing
+    ki = V12K9_C1_END_KI
+    if self.c1p and V12K9_C1P_END_KI_SAFE > 0.0 and (safe or sg) and err > 0.0:
+      ki = V12K9_C1P_END_KI_SAFE
+    self.end_off = float(np.clip(self.end_off - ki * 0.01 * err, V12K9_END_OFF_MIN, V12K9_END_OFF_MAX))
+    return off0
 
   def jerk_l_floor(self, jerk_l, v_ego: float):
     """Applied non-CAN-FD, non-off frames, after bands(): the JerkLowerLimit to send. Kind 8 (v12k9) only raises it below

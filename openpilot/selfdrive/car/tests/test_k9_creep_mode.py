@@ -2,6 +2,9 @@
 (kind V12K9); both are tested in test_k9_stop_v12.py. Other values act as 0.
 2026-10-26 (보노보노 "v12그냥놓아두고 v13추가하는걸로"): 3 = v13 original (test_k9_stop_v13.py). Menu-set pins only: MODES (1, 2, 3),
 INVALID and the live-switch invalid list without 3, settings max 3 / 4 options.
+2026-10-27 (보노보노 "c1.c1+ 3번 4번추가해", 16:45 "그럼 4.5에넣어야지"): 4 = C1 (kind 9), 5 = C1+ (kind 10); 3 stays the v13 original.
+Menu-set pins only: MODES (1-5), MENU / KINDS with kinds 9 and 10, bad kind 9 -> 11, INVALID and the live-switch invalid list
+without 4 / 5 (the "acts as 0" value 4 -> 6), settings max 5 / 6 options.
 Pin updated 2026-10-25 evening (brake_v12k9_live_fix, menu 2 ComfortBand): test_live_mode_switch_within_half_second expects the
 original band (0.9 + 0.2 * accel) after the switch to 2 at 1.0 m/s instead of 0.
 Rewritten 2026-10-25 (보노보노 00:36 "브레이크 앞전꺼는 다 별로니 지워" / "v12 원본 ... v12k9"; v10, v10 + light shudder fix and v11
@@ -64,7 +67,7 @@ PREV_MENU = "1d0961da"  # K9StopMode 0 base, 1 v9, 2 v10, 3 v9 + shudder fix
 PREV_OF_NEW = {None: None, 0: 0}  # 1d0961da K9StopMode of the new menu value (new 1 / 2 are new)
 ALL = (V9,)
 ALL_KINDS = (V9,)
-INVALID = (4, 5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))  # 3 = v13 original since 2026-10-26
+INVALID = (6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))  # 3 = v13 original since 2026-10-26; 4 C1 / 5 C1+ since 2026-10-27
 
 
 def upd(c, **kw):
@@ -139,10 +142,11 @@ def test_constants_match_source_and_mode2():
   assert (kc.CREEP_BP, kc.CREEP_V) == ([0.25, 0.55, 1.0, 1.6], [-0.26, -0.26, -0.20, 0.0])
   assert kc.DOWN_EFF_AC == -0.02
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
-  assert kc.MODES == (1, 2, 3) and (V9, V12K9) == (1, 8) and kc.V12_ORIG_MENU == 1 and kc.V13_ORIG_MENU == 3
-  assert kc.MENU == {2: V12K9} and kc.KINDS == ALL_KINDS + (V12K9,)
+  assert kc.MODES == (1, 2, 3, 4, 5) and (V9, V12K9) == (1, 8) and kc.V12_ORIG_MENU == 1 and kc.V13_ORIG_MENU == 3  # 4 / 5 since 2026-10-27
+  assert (kc.V12K9_C1, kc.V12K9_C1P) == (9, 10)
+  assert kc.MENU == {2: V12K9, 4: kc.V12K9_C1, 5: kc.V12K9_C1P} and kc.KINDS == ALL_KINDS + (V12K9, kc.V12K9_C1, kc.V12K9_C1P)
   assert not any(hasattr(K9Creep(m), "shudder_fix") for m in kc.KINDS)
-  for bad in (0, 2, 3, 4, 5, 6, 7, 9, -1):
+  for bad in (0, 2, 3, 4, 5, 6, 7, 11, -1):  # 9 is kind 9 (C1) since 2026-10-27
     with pytest.raises(AssertionError):
       K9Creep(bad)
 
@@ -398,7 +402,7 @@ def test_live_mode_switch_within_half_second(monkeypatch):
   assert seen is not None and seen <= 50 and not r.cc.k9_v12_orig  # read every 0.5 s
   # pin updated 2026-10-25 brake_v12k9_live_fix: menu 2 now sends the original ComfortBand below 2.5 m/s (was 0)
   assert r.cc.hyundai_jerk.cb_upper == pytest.approx(float(np.clip(0.9 + 0.2 * acc, 0, 1.2)))
-  for value in (4, 7, 8, float("nan"), -1):  # 3 = v13 original since 2026-10-26
+  for value in (6, 7, 8, float("nan"), -1):  # 3 = v13 original since 2026-10-26; 4 -> 6 on 2026-10-27 (4 C1, 5 C1+)
     for back in (1, 2):
       r.params.values["K9StopMode"] = back
       for _ in range(51):
@@ -433,8 +437,8 @@ def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 3, 0, 1)  # 3 v13 original since 2026-10-26
-  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [4, 4, 4]
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 5, 0, 1)  # 3 v13 original since 2026-10-26; 4 C1 / 5 C1+ since 2026-10-27
+  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [6, 6, 6]
   assert not any(p["name"] in ("K9CreepMode", "K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopMode", {PERSISTENT, INT, "0"}},' in keys and '{"K9StopModeVer", {PERSISTENT, INT}},' in keys

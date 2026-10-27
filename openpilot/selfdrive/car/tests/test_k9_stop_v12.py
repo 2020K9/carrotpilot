@@ -90,8 +90,9 @@ def prev_cc(tmp_path_factory):
 
 # --- menu ------------------------------------------------------------------------------------------------------------
 def test_menu():
-  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9} and kc.MODES == (1, 2, 3)  # 3 = v13 original since 2026-10-26
-  assert kc.KINDS == (V9, V12K9) == (1, 8) and carcontroller.K9_CREEP_MENU is kc.MENU
+  # 3 = v13 original since 2026-10-26; 2026-10-27: 4 C1 (kind 9), 5 C1+ (kind 10)
+  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9, 4: kc.V12K9_C1, 5: kc.V12K9_C1P} and kc.MODES == (1, 2, 3, 4, 5)
+  assert kc.KINDS == (V9, V12K9, kc.V12K9_C1, kc.V12K9_C1P) == (1, 8, 9, 10) and carcontroller.K9_CREEP_MENU is kc.MENU
   assert carcontroller.V12_ORIG_MENU == 1
   for gone in ("V10", "V10_LIGHT", "V11", "LIGHT_MIN_DECEL", "V10_FEATHER_V", "V11_FEATHER_V"):
     assert not hasattr(kc, gone), gone
@@ -134,7 +135,7 @@ def test_carcontroller_diff_is_the_page_code_plus_menu_wiring():
 
 # --- 0 / other values: unchanged -------------------------------------------------------------------------------------
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 4, 7, 99, -1])  # 3 left 2026-10-26 (v13 original, test_k9_stop_v13.py)
+@pytest.mark.parametrize("mode", [None, 0, 6, 7, 99, -1])  # 3 left 2026-10-26 (v13 original, test_k9_stop_v13.py); 4 -> 6 on 2026-10-27 (4 = C1)
 def test_base_and_other_values_identical_to_prev_0(monkeypatch, prev_cc, mode, fingerprint):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, K9StopMode=0))
@@ -331,4 +332,4 @@ def test_settings_entry():
   ents = [e for e in d["params"] if e.get("name") == "K9StopMode"]
   assert len(ents) == 1
   e = ents[0]
-  assert e["min"] == 0 and e["max"] == 3 and e["default"] == 0  # 3 v13 original since 2026-10-26
+  assert e["min"] == 0 and e["max"] == 5 and e["default"] == 0  # 3 v13 original since 2026-10-26; 4 C1 / 5 C1+ since 2026-10-27

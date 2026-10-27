@@ -9,6 +9,8 @@ copies identical). Menu 3 = those lines unchanged (two more leading spaces, unde
 1 v12 original and 2 v12k9 unchanged. Reference: the page one-liner applied to the f01c98fc carcontroller.py (the tree
 before this change), run as menu 0 = the page patch exactly as a page user would get it on this fork.
 Model-only harness with synthetic inputs: source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour (실차 미검증).
+2026-10-27 (보노보노 "그럼 4.5에넣어야지"): 4 = C1, 5 = C1+ added; the v13 original stays 3. Menu-number pins only: MODES (1-5),
+the "acts as 0" value 4 -> 6, settings max 5.
 """
 import hashlib
 import re
@@ -144,7 +146,7 @@ def test_page_sha_pinned():
 
 
 def test_menu():
-  assert kc.V13_ORIG_MENU == 3 and kc.V12_ORIG_MENU == 1 and kc.MODES == (1, 2, 3) and 3 not in kc.MENU
+  assert kc.V13_ORIG_MENU == 3 and kc.V12_ORIG_MENU == 1 and kc.MODES == (1, 2, 3, 4, 5) and 3 not in kc.MENU  # 4 / 5 since 2026-10-27
   assert carcontroller.V13_ORIG_MENU == 3 and carcontroller.V12_ORIG_MENU == 1
 
 
@@ -178,7 +180,7 @@ def test_carcontroller_diff_is_the_page_code_plus_menu_wiring():
 
 # --- every other value: byte-identical to f01c98fc -------------------------------------------------------------------
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 2, 4, 7, 99, -1, float("nan")])
+@pytest.mark.parametrize("mode", [None, 0, 1, 2, 6, 7, 99, -1, float("nan")])  # 4 -> 6 on 2026-10-27 (4 = C1)
 def test_other_values_identical_to_prev(monkeypatch, prev_cc, mode, fingerprint):
   if mode == 2 and fingerprint == CAR.KIA_K9:
     pytest.skip("2026-10-26 23:27 (보노보노 \"2에 k2넣어\"): K9 menu 2 is k2 now (04c88723), pinned in test_k9_stop_v12k9_band.py")
@@ -244,7 +246,7 @@ def test_menu3_jerk_page_values(monkeypatch):
 
 def test_live_switch_resets_v13_state(monkeypatch):
   r = Rig(monkeypatch, K9StopMode=3)
-  for value in (3, 1, 3, 0, 2, 3, 4, 3):
+  for value in (3, 1, 3, 0, 2, 3, 6, 3):  # "acts as 0": 4 -> 6 on 2026-10-27 (4 = C1)
     r.params.values["K9StopMode"] = value
     for i in range(60):
       r.step(-0.6, LCS.pid, max(1.0 - 0.02 * i, 0.1), a_target=-0.4, a_ego=-0.3)
@@ -267,7 +269,7 @@ def test_settings_entry():
   import json
   d = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   e = next(p for p in d["params"] if p.get("name") == "K9StopMode")
-  assert (e["min"], e["max"], e["default"]) == (0, 3, 0)
+  assert (e["min"], e["max"], e["default"]) == (0, 5, 0)  # 4 C1 / 5 C1+ since 2026-10-27
   assert e["options"]["ko"][3] == "3 v13 원본" and e["options"]["en"][3] == "3 v13 original" and e["options"]["zh"][3] == "3 v13原版"
 
 
