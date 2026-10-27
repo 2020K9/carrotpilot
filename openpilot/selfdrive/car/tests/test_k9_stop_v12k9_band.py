@@ -159,7 +159,7 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 6, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 4 -> 6 on 2026-10-27 (4 C1, 5 C1+)
+@pytest.mark.parametrize("mode", [None, 0, 1, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28: 3 = v14 original, 4 still acts as 0
 def test_menus_other_than_2_can_identical_to_frozen(monkeypatch, frozen_cc, mode, fingerprint):
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=frozen_cc, **_kw(mode)))

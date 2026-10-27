@@ -2,7 +2,7 @@
 (2026-10-24 evening, the driver's report 19:12 "거리 미리 확보 못해서 쎄게 잡을 때 놨다 잡았다 하는 거 같은데 이때 드드득거리기도
 하고 좀 일정하게 잡게 못함?"). Log analysis and simulator only, NOT verified on the vehicle.
 
-KIA_K9 (CAN, camera SCC, openpilot longitudinal), every K9StopMode value (0-5); a shared hard-braking path before the
+KIA_K9 (CAN, camera SCC, openpilot longitudinal), every K9StopMode value (0-3); a shared hard-braking path before the
 K9StopMode stop logic (k9_creep.py). It never changes the sent aReq, StopReq or JerkLowerLimit; it only lowers the SCC14
 JerkUpperLimit (the ESC's allowed rate of releasing) to its floor HB_JERK_U (0.5 m/s^3) on the frames where:
 - active: longControlState pid, longActive, no override/gas/brake, valid CAN, vEgo above HB_MIN_SPEED (3.0 m/s), a lead

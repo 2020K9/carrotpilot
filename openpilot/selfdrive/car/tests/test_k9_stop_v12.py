@@ -5,6 +5,9 @@ Model-only harness with synthetic inputs: source logic and SCC12/SCC14 encoding,
 2026-10-26 (보노보노 23:14 "v12그냥놓아두고 v13추가하는걸로"): 3 is now the v13 original (test_k9_stop_v13.py). Menu-set pins only:
 MODES (1, 2, 3), settings max 3, 3 left the "other values act as 0" list (4, 7, 99, -1 stay), and the diff-vs-b6696b37
 check also accepts the v13 page lines (their own pin is in test_k9_stop_v13.py).
+2026-10-28 (보노보노 01:06 "원본 그대로 푸쉬해라 v14"): 3 = v14 original instead of v13 (test_k9_stop_v13.py deleted, pin in
+test_k9_stop_v14.py); 4 C1 / 5 C1+ (2026-10-27) gone. Menu-set pins only: the diff check accepts the v14 page lines instead of
+the v13 ones, the stored-value migration pins for K9StopModeVer 4 (3 / 4 / 5 / 6 of the K9StopModeVer 3 menu -> 0).
 Pin updated 2026-10-25 evening (brake_v12k9_live_fix): test_v12k9_jerk_and_band expects the menu 2 ComfortBand (original band at
 or below 2.5 m/s, linear to 0 at 3.0 m/s, 0 above) instead of 0 everywhere.
 """
@@ -22,7 +25,7 @@ from opendbc.car.hyundai.k9_creep import K9Creep, V9, V12K9
 from opendbc.car.hyundai.values import CAR
 from openpilot.selfdrive.car import k9_stop_mode_migration as mig
 from openpilot.selfdrive.car.tests.k9_rig import LCS, ROOT, CC_REL, Rig, edge_sequence, gentle_sequence, load_frozen_cc, make_cp, mixed_sequence
-from openpilot.selfdrive.car.tests.test_k9_stop_v13 import V13_BLOCK_1, V13_BLOCK_2
+from openpilot.selfdrive.car.tests.test_k9_stop_v14 import V14_BLOCK_1, V14_BLOCK_2
 
 PREV = "b6696b37"  # carrot-wip before this change: K9StopMode 0 base, 1 v10, 2 v10 + light shudder fix, 3 v11 (kind 7)
 PREV_V11 = 7
@@ -90,9 +93,8 @@ def prev_cc(tmp_path_factory):
 
 # --- menu ------------------------------------------------------------------------------------------------------------
 def test_menu():
-  # 3 = v13 original since 2026-10-26; 2026-10-27: 4 C1 (kind 9), 5 C1+ (kind 10)
-  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9, 4: kc.V12K9_C1, 5: kc.V12K9_C1P} and kc.MODES == (1, 2, 3, 4, 5)
-  assert kc.KINDS == (V9, V12K9, kc.V12K9_C1, kc.V12K9_C1P) == (1, 8, 9, 10) and carcontroller.K9_CREEP_MENU is kc.MENU
+  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9} and kc.MODES == (1, 2, 3)  # 3 = v13 original 2026-10-26, v14 original since 2026-10-28
+  assert kc.KINDS == (V9, V12K9) == (1, 8) and carcontroller.K9_CREEP_MENU is kc.MENU
   assert carcontroller.V12_ORIG_MENU == 1
   for gone in ("V10", "V10_LIGHT", "V11", "LIGHT_MIN_DECEL", "V10_FEATHER_V", "V11_FEATHER_V"):
     assert not hasattr(kc, gone), gone
@@ -122,20 +124,20 @@ def test_carcontroller_diff_is_the_page_code_plus_menu_wiring():
   """Every line added to carcontroller.py since PREV is a page line or one of the listed menu-wiring lines."""
   d = subprocess.run(["git", "diff", "-U0", PREV, "--", CC_REL], cwd=ROOT, capture_output=True, text=True, check=True).stdout
   page = {"  " + l for l in (PAGE_BLOCK_1 + PAGE_BLOCK_2).splitlines() if l}
-  v13 = {"  " + l for l in (V13_BLOCK_1 + V13_BLOCK_2).splitlines() if l}  # 2026-10-26 menu 3 (pinned in test_k9_stop_v13.py)
+  v14 = {"  " + l for l in (V14_BLOCK_1 + V14_BLOCK_2).splitlines() if l}  # 2026-10-28 menu 3 (pinned in test_k9_stop_v14.py)
   added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-  other = [l for l in added if l.strip() and l not in page and l not in v13]
+  other = [l for l in added if l.strip() and l not in page and l not in v14]
   assert len(added) - len(other) >= len(page)
   for l in other:  # wiring only: comments, the menu switch, the call arguments
     s = l.strip()
-    assert (s.startswith("#") or "v12_orig" in s or "v13_orig" in s or "V13_ORIG_MENU" in s or "V12_ORIG_MENU" in s or "K9_CREEP_MENU" in s or "standstill_count" in s
+    assert (s.startswith("#") or "v12_orig" in s or "v14_orig" in s or "V14_ORIG_MENU" in s or "V12_ORIG_MENU" in s or "K9_CREEP_MENU" in s or "standstill_count" in s
             or "accel_feather_last" in s or "cb_prev" in s or "jerk_u_cap" in s or "creep_obj" in s
             or "whl_standstill_count" in s), l
 
 
 # --- 0 / other values: unchanged -------------------------------------------------------------------------------------
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 6, 7, 99, -1])  # 3 left 2026-10-26 (v13 original, test_k9_stop_v13.py); 4 -> 6 on 2026-10-27 (4 = C1)
+@pytest.mark.parametrize("mode", [None, 0, 4, 7, 99, -1])  # 3 left 2026-10-26 (v13 original, test_k9_stop_v13.py)
 def test_base_and_other_values_identical_to_prev_0(monkeypatch, prev_cc, mode, fingerprint):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, K9StopMode=0))
@@ -297,26 +299,28 @@ class FakeParams:
 
 
 def test_migration_tables():
-  assert mig.STOP_MODE_VER == 3
+  assert mig.STOP_MODE_VER == 4  # 3 until 2026-10-28 (v14: K9StopModeVer 3 -> 4, test_k9_stop_v14.py)
+  assert mig.MENU_MIGRATION_V4 == {0: 0, 1: 1, 2: 2, 3: 0, 4: 0, 5: 0, 6: 0}
   assert mig.MENU_MIGRATION_V3 == {0: 0, 1: 2, 2: 2, 3: 2}
   assert mig.MENU_MIGRATION_FROM_V1 == {0: 0, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2}
   assert set(mig.MENU_MIGRATION_V3.values()) | set(mig.MENU_MIGRATION_FROM_V1.values()) <= {0, *kc.MENU}  # never menu 1
+  assert set(mig.MENU_MIGRATION_V4.values()) <= {0, 1, 2}  # never the new 3 (v14 original is picked by hand)
 
 
-@pytest.mark.parametrize("ver", [2, None, 1, 5])
+@pytest.mark.parametrize("ver", [3, 2, None, 1, 5])  # 3 added 2026-10-28 (K9StopModeVer 4)
 @pytest.mark.parametrize("old", [None, 0, 1, 2, 3, 4, 5, 6, 7, 99, -1, "x"])
 def test_migration(ver, old):
-  table = mig.MENU_MIGRATION_V3 if ver == 2 else mig.MENU_MIGRATION_FROM_V1
+  table = mig.MENU_MIGRATION_V4 if ver == 3 else (mig.MENU_MIGRATION_V3 if ver == 2 else mig.MENU_MIGRATION_FROM_V1)
   p = FakeParams(**({} if old is None else {"K9StopMode": old}), **({} if ver is None else {"K9StopModeVer": ver}))
   changed = mig.migrate_k9_stop_mode(p)
   want = table.get(old, old) if isinstance(old, int) else old
-  assert p.v.get("K9StopMode") == want and p.v["K9StopModeVer"] == 3 and changed == (want != old)
+  assert p.v.get("K9StopMode") == want and p.v["K9StopModeVer"] == 4 and changed == (want != old)  # marker 3 until 2026-10-28
   assert mig.migrate_k9_stop_mode(p) is False and p.v.get("K9StopMode") == want  # once only
 
 
-def test_migration_after_ver3_never_touches():
+def test_migration_after_ver3_never_touches():  # marker 4 since 2026-10-28 (a marker 3 device migrates once more)
   for v in (0, 1, 2, 3, 9):
-    p = FakeParams(K9StopMode=v, K9StopModeVer=3)
+    p = FakeParams(K9StopMode=v, K9StopModeVer=4)
     assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == v
 
 
@@ -332,4 +336,4 @@ def test_settings_entry():
   ents = [e for e in d["params"] if e.get("name") == "K9StopMode"]
   assert len(ents) == 1
   e = ents[0]
-  assert e["min"] == 0 and e["max"] == 5 and e["default"] == 0  # 3 v13 original since 2026-10-26; 4 C1 / 5 C1+ since 2026-10-27
+  assert e["min"] == 0 and e["max"] == 3 and e["default"] == 0  # 3 v13 original 2026-10-26, v14 original since 2026-10-28
