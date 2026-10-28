@@ -615,9 +615,11 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   # '4 or more' acts as 0 in the manual)
   # 2026-10-28 (보노보노 01:06 "원본 그대로 푸쉬해라 v14"; 4 C1 / 5 C1+ of 2026-10-27 removed): 3 = v14 original instead of v13
   # (labels only; max 3, 4 labels, '3' allowed only as the v14 label)
-  assert stop["options"] == {"ko": ["0 기본 제동", "1 v12 원본", "2 v12k9", "3 v14 원본"],
-                             "en": ["0 Base braking", "1 v12 original", "2 v12k9", "3 v14 original"],
-                             "zh": ["0 基本制动", "1 v12原版", "2 v12k9", "3 v14原版"]}
+  # 2026-10-29 (보노보노 00:50 "이름에2붙여서 올려봐", 01:39 "이름 안햇깔리게 똑바로 써놔라"): label 2 = bono1739 원본2
+  # (d5b7b048b behaviour; labels / web text only, max 3, 4 labels as before)
+  assert stop["options"] == {"ko": ["0 기본 제동", "1 v12 원본", "2 bono1739 원본2", "3 v14 원본"],
+                             "en": ["0 Base braking", "1 v12 original", "2 bono1739 original2", "3 v14 original"],
+                             "zh": ["0 基本制动", "1 v12原版", "2 bono1739原版2", "3 v14原版"]}
   for key in ("descr", "edescr", "cdescr"):
     assert "K9StopTaper" not in stop[key] and "K9CreepMode" not in stop[key]
     rest = stop[key].replace("3 v14", "")
@@ -626,11 +628,11 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
     for jargon in ("ComfortBand", "StopReq", "aReq", "m/s", "jerk", "Kalman", "래치", "latch"):
       assert jargon not in stop[key], (key, jargon)
   assert len(stop["descr"]) <= 300 and len(stop["cdescr"]) <= 300 and len(stop["edescr"]) <= 600
-  for label in ("0 기본", "1 v12 원본", "2 v12k9", "3 v14 원본"):
+  for label in ("0 기본", "1 v12 원본", "2 bono1739 원본2", "3 v14 원본"):
     assert label in stop["descr"], label
-  for label in ("0 Base", "1 v12 original", "2 v12k9", "3 v14 original"):
+  for label in ("0 Base", "1 v12 original", "2 bono1739 original2", "3 v14 original"):
     assert label in stop["edescr"], label
-  for label in ("0 基本", "1 v12原版", "2 v12k9", "3 v14原版"):
+  for label in ("0 基本", "1 v12原版", "2 bono1739原版2", "3 v14原版"):
     assert label in stop["cdescr"], label
   assert "K9 롱컨 전용" in stop["descr"] and "K9 openpilot long only" in stop["edescr"]
   assert "페달을 밟으면 바로 원래대로" in stop["descr"] and "Pressing a pedal returns to normal at once" in stop["edescr"]
@@ -640,8 +642,8 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   doc_en = (SETTINGS_PATH.parents[2] / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf-8")
   row_ko = next(line for line in doc_ko.splitlines() if "| `K9StopMode` |" in line)
   row_en = next(line for line in doc_en.splitlines() if "| `K9StopMode` |" in line)
-  assert "0: 기본 제동" in row_ko and "1: v12 원본" in row_ko and "2: v12k9" in row_ko and "3: v14 원본" in row_ko
-  assert "0: base braking" in row_en and "1: v12 original" in row_en and "2: v12k9" in row_en and "3: v14 original" in row_en
+  assert "0: 기본 제동" in row_ko and "1: v12 원본" in row_ko and "2: bono1739 원본2" in row_ko and "바탕 v12k9" in row_ko and "3: v14 원본" in row_ko
+  assert "0: base braking" in row_en and "1: v12 original" in row_en and "2: bono1739 original2" in row_en and "Base v12k9" in row_en and "3: v14 original" in row_en
   for gone in ("3: v13 원본", "4: C1", "5: C1+"):  # removed 2026-10-27 evening / 2026-10-28
     assert gone not in row_ko, gone
   for gone in ("3: v13 original", "4: C1", "5: C1+"):
@@ -658,7 +660,7 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   assert "0에서 시작" in row_ko and "starts at 0" in row_en
   assert "changelog.html" in row_ko and "changelog.html" in row_en
   zh = (SETTINGS_PATH.parents[2] / "docs" / "k9_menus_zh.md").read_text(encoding="utf-8")
-  assert "1：v12原版" in zh and "2：v12k9" in zh and "3：v14原版" in zh and "尚未经实车确认" in zh and "原1·2·3→2（v12k9）" in zh
+  assert "1：v12原版" in zh and "2：bono1739原版2" in zh and "基础v12k9" in zh and "3：v14原版" in zh and "尚未经实车确认" in zh and "原1·2·3→2（v12k9）" in zh
   assert "3：v13原版" not in zh and "4：C1" not in zh and "5：C1+" not in zh  # removed 2026-10-28
   assert "2：v10+轻度抖动修正" not in zh and "3：v11" not in zh and "4：v10+抖动修正" not in zh and "6：v11" not in zh
   menu = json.dumps(settings["menu"])
