@@ -186,8 +186,10 @@ class CarInterface(CarInterfaceBase):
 
     # Common lateral control setup
 
-    ctf = params.get_int("K9CenterToFront")  # x0.01 of the wheelbase, 40 = original 0.4 (실험중 메뉴; start value, live updates in selfdrive/controls/lib/k9_ctf.py)
-    if ctf != 40 and 30 <= ctf <= 80:
+    ctf = params.get_int("K9CenterToFront")  # x0.001 of the wheelbase, 400 = original 0.4, 405 = 0.405 (실험중 메뉴; start value, live updates in selfdrive/controls/lib/k9_ctf.py)
+    if ctf != 400 and 300 <= ctf <= 800:
+      ret.centerToFront = ret.wheelbase * (ctf / 1000.0)
+    elif ctf != 40 and 30 <= ctf <= 80:  # old x0.01 value (653441e2), manager_init moves it to x0.001
       ret.centerToFront = ret.wheelbase * (ctf / 100.0)
     else:
       ret.centerToFront = ret.wheelbase * 0.4

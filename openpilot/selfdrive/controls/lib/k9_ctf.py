@@ -1,6 +1,9 @@
 """K9CenterToFront live update (실험중 메뉴, 2026-10-28, 대감님 21:20 "바꾸는데로 바로적용되게").
 
-centerToFront = wheelbase * value/100 (value 30..80, 40 = the original Hyundai `wheelbase * 0.4`; anything else -> 0.4).
+centerToFront = wheelbase * value/1000 (value 300..800, 400 = the original Hyundai `wheelbase * 0.4`, 405 = 0.405;
+anything else -> 0.4). 대감님 23:45 "기본값이 40이면 내가 셋팅할때 400쓰게 ... 405라고하면 40.5되게".
+Old x0.01 values (30..80, the 653441e2 build) still read the same (45 -> 0.45) and manager_init rewrites them
+once to the new unit (45 -> 450, migrate_k9_ctf); the two ranges do not overlap.
 The car interface reads it once at start (CarParams). This keeps controlsd's VehicleModel and the lateral planner's
 factors in step with later changes, read at most once per poll (controlsd 1 Hz, planner every 10 model frames).
 
@@ -11,8 +14,10 @@ Hyundai/Kia only (CP.brand == "hyundai"). Not tested in the car.
 from opendbc.car import scale_tire_stiffness
 
 K9_CTF_PARAM = "K9CenterToFront"
-K9_CTF_DEFAULT = 40
-K9_CTF_MIN, K9_CTF_MAX = 30, 80
+K9_CTF_DEFAULT = 400  # x0.001 of the wheelbase
+K9_CTF_MIN, K9_CTF_MAX = 300, 800
+K9_CTF_OLD_DEFAULT = 40  # old x0.01 unit (653441e2)
+K9_CTF_OLD_MIN, K9_CTF_OLD_MAX = 30, 80
 
 
 def ctf_ratio(raw) -> float:
@@ -22,8 +27,26 @@ def ctf_ratio(raw) -> float:
   except (TypeError, ValueError):
     return 0.4
   if v != K9_CTF_DEFAULT and K9_CTF_MIN <= v <= K9_CTF_MAX:
-    return v / 100.0
+    return v / 1000.0
+  if v != K9_CTF_OLD_DEFAULT and K9_CTF_OLD_MIN <= v <= K9_CTF_OLD_MAX:
+    return v / 100.0  # old unit, same double as (v * 10) / 1000.0
   return 0.4
+
+
+def migrate_k9_ctf(params) -> bool:
+  """manager_init, before card/controlsd start: old x0.01 value 30..80 -> x0.001 (40 -> 400, 45 -> 450), so the web
+  shows the new unit. Same ratio before and after. Idempotent (300..800 is never touched). Never raises."""
+  try:
+    v = params.get_int(K9_CTF_PARAM)
+  except Exception:
+    return False
+  if isinstance(v, bool) or not isinstance(v, int) or not (K9_CTF_OLD_MIN <= v <= K9_CTF_OLD_MAX):
+    return False
+  try:
+    params.put_int(K9_CTF_PARAM, v * 10)
+    return True
+  except Exception:
+    return False
 
 
 def read_raw(params):

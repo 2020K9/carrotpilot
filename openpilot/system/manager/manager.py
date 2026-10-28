@@ -22,6 +22,7 @@ from openpilot.selfdrive.monitoring.config import configure_monitoring
 from openpilot.selfdrive.carrot.traffic_stop import migrate_model_stop_prediction
 from openpilot.selfdrive.car.k9_stop_mode_migration import migrate_k9_stop_mode
 from openpilot.selfdrive.controls.lib.k9_lane import migrate_k9_lane
+from openpilot.selfdrive.controls.lib.k9_ctf import migrate_k9_ctf
 from openpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
@@ -89,6 +90,7 @@ def manager_init() -> UpdateStatus:
   migrate_model_stop_prediction(params)
   migrate_k9_stop_mode(params)  # before card starts (it reads K9StopMode live); 2026-10-24 menu trim
   migrate_k9_lane(params)  # before modeld / controlsd start; 2026-10-25 lane menu merge (old 4 switches -> K9LaneAssist)
+  migrate_k9_ctf(params)  # before card / controlsd start; 2026-10-28 K9CenterToFront x0.01 -> x0.001 (40 -> 400)
 
   # set unset params to their default value
   for k in params.all_keys():

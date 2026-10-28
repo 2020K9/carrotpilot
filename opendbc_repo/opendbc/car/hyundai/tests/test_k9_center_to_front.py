@@ -63,3 +63,30 @@ def test_k9_numbers(monkeypatch):
   assert base.wheelbase == pytest.approx(3.105)
   assert base.centerToFront == pytest.approx(1.242)
   assert six.centerToFront == pytest.approx(1.863)
+
+
+# 2026-10-28 23:45 x0.001 unit: 400 = original, 405 = 0.405; old x0.01 values still read the same
+@pytest.mark.parametrize("car", [CAR.KIA_K9, CAR.HYUNDAI_SONATA])
+@pytest.mark.parametrize("vals", [{"K9CenterToFront": 400}, {"K9CenterToFront": 299}, {"K9CenterToFront": 801},
+                                  {"K9CenterToFront": 4000}])
+def test_new_unit_default_and_out_of_range_are_original(monkeypatch, car, vals):
+  cp = _cp(monkeypatch, car, vals)
+  assert cp.centerToFront == _f32(cp.wheelbase * 0.4)
+
+
+@pytest.mark.parametrize("v", [300, 405, 450, 455, 600, 800])
+def test_new_unit_scales_wheelbase(monkeypatch, v):
+  cp = _cp(monkeypatch, CAR.KIA_K9, {"K9CenterToFront": v})
+  assert cp.centerToFront == _f32(cp.wheelbase * (v / 1000.0))
+
+
+@pytest.mark.parametrize("old", [30, 41, 45, 60, 80])
+def test_old_unit_equals_new_unit(monkeypatch, old):
+  a = _cp(monkeypatch, CAR.KIA_K9, {"K9CenterToFront": old})
+  b = _cp(monkeypatch, CAR.KIA_K9, {"K9CenterToFront": old * 10})
+  assert a.centerToFront == b.centerToFront
+
+
+def test_k9_405(monkeypatch):
+  cp = _cp(monkeypatch, CAR.KIA_K9, {"K9CenterToFront": 405})
+  assert cp.centerToFront == pytest.approx(3.105 * 0.405)

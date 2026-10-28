@@ -173,7 +173,10 @@ def load_frozen_cc(commit, tmp_dir, tag):
                           text=True).stdout.splitlines()
     body = [ln[1:].strip() for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
     ok = ("ret.centerToFront = ret.wheelbase * 0.4", "ret.centerToFront = ret.wheelbase * (ctf / 100.0)",
-          "if ctf != 40 and 30 <= ctf <= 80:", "else:")
+          "if ctf != 40 and 30 <= ctf <= 80:", "else:",
+          # 2026-10-28 23:45 x0.001 unit (400 = 0.4, 405 = 0.405; old x0.01 30..80 still read the same)
+          "if ctf != 400 and 300 <= ctf <= 800:", "ret.centerToFront = ret.wheelbase * (ctf / 1000.0)",
+          "elif ctf != 40 and 30 <= ctf <= 80:  # old x0.01 value (653441e2), manager_init moves it to x0.001")
     assert body and all(ln in ok or ln.startswith('ctf = params.get_int("K9CenterToFront")') for ln in body), iface
     changed.remove(iface)
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
