@@ -52,7 +52,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
-from opendbc.car.hyundai.k9_creep import K9Creep, V9, V12K9
+from opendbc.car.hyundai.k9_creep import K9Creep, V9, V12K9, V12K9O
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.car.tests import k9_rig
 from openpilot.selfdrive.car.tests.k9_rig import (CC_REL, LCS, ROOT, Rig, edge_sequence, gentle_sequence, load_frozen_cc,
@@ -143,7 +143,8 @@ def test_constants_match_source_and_mode2():
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
   assert kc.MODES == (1, 2, 3) and (V9, V12K9) == (1, 8) and kc.V12_ORIG_MENU == 1 and kc.V14_ORIG_MENU == 3  # V13_ORIG_MENU until 2026-10-28
   assert not hasattr(kc, "V13_ORIG_MENU")
-  assert kc.MENU == {2: V12K9} and kc.KINDS == ALL_KINDS + (V12K9,)
+  # 2026-10-29 bono1739 원본: menu 2 = kind 13 (kind 8 + the driver's own 17:39:14 stop table); kind 8 stays a kind (its own pins)
+  assert kc.MENU == {2: V12K9O} and kc.KINDS == ALL_KINDS + (V12K9, V12K9O)
   assert not any(hasattr(K9Creep(m), "shudder_fix") for m in kc.KINDS)
   for bad in (0, 2, 3, 4, 5, 6, 7, 9, -1):
     with pytest.raises(AssertionError):
@@ -282,7 +283,7 @@ def test_new_1_2_identical_can_to_1d0961da_2_3(monkeypatch, prev_cc, mode, finge
 def test_controller_never_writes_the_menu_value(monkeypatch):
   # rewritten 2026-10-24 evening (was test_stored_values_are_not_migrated): the CarController maps the stored value through
   # MENU and never writes it; the one-time stored-value migration runs in manager_init (test_k9_stop_menu_trim.py).
-  for stored, kind in ((1, None), (2, V12K9)):
+  for stored, kind in ((1, None), (2, V12K9O)):  # 2 -> kind 13 since 2026-10-29 (bono1739; kind 8 before)
     r = rig(monkeypatch, stored)
     r.step(-0.5, LCS.pid, 3.0)
     assert r.cc.k9_creep_mode == stored and (r.cc.k9_creep is None if kind is None else r.cc.k9_creep.mode == kind)
@@ -396,7 +397,7 @@ def test_live_mode_switch_within_half_second(monkeypatch):
   seen = None
   for i in range(80):
     acc, _ = r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-    if seen is None and r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9:
+    if seen is None and r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9O:  # menu 2 = kind 13 since 2026-10-29
       seen = i
   assert seen is not None and seen <= 50 and not r.cc.k9_v12_orig  # read every 0.5 s
   # pin updated 2026-10-25 brake_v12k9_live_fix: menu 2 now sends the original ComfortBand below 2.5 m/s (was 0)
@@ -419,7 +420,7 @@ def test_live_mode_change_resets(monkeypatch):
     r.step(-1.0, LCS.pid, 3.0)
   for i in range(60):
     r.step(-1.2, LCS.stopping, max(0.5 - 0.005 * i, 0.1))
-  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9 and r.cc.k9_creep.last is not None
+  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9O and r.cc.k9_creep.last is not None  # kind 13 since 2026-10-29
   r.params.values["K9StopMode"] = 1
   for _ in range(60):
     r.step(-1.2, LCS.stopping, 0.1)

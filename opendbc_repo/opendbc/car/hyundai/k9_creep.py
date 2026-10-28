@@ -6,7 +6,8 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
 - 1 = v12 original: the creep_fix v12 page code for the Kia Niro EV, unchanged. It is NOT in this module: it is the page
   code itself, pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v12_orig:` / `if v12_orig:`
   (V12_ORIG_MENU below; test_k9_stop_v12.py pins it line by line against the page);
-- 2 = v12k9: the same page v12 fitted to the K9 the way v11 was (kind V12K9 below);
+- 2 = v12k9: the same page v12 fitted to the K9 the way v11 was (kind V12K9 below); since 2026-10-29 kind 13 V12K9O
+  "bono1739 원본 (10/27 17:39 대감님 직접 정차 그대로)": kind 8 with the stop end replaced by the driver's own stop table (B17O_*);
 - 3 = v14 original (2026-10-28, the driver's order 01:06 "원본 그대로 푸쉬해라 v14"): the creep_fix v14 page code, unchanged,
   pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v14_orig:` / `if v14_orig:` (V14_ORIG_MENU below;
   test_k9_stop_v14.py pins it line by line against the page). Not a K9Creep kind. It replaced 3 v13 original (2026-10-26);
@@ -124,12 +125,14 @@ import numpy as np
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
-KINDS = (V9, V12K9)
+V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본 (10/27 17:39 대감님 직접 정차 그대로)": kind 8 + the B17O_* stop end; menu 2
+KINDS = (V9, V12K9, V12K9O)
 V12_ORIG_MENU = 1  # K9StopMode 1: the creep_fix v12 page code unchanged, in carcontroller.py (no K9Creep)
 V14_ORIG_MENU = 3  # K9StopMode 3 (2026-10-28): the creep_fix v14 page code unchanged, in carcontroller.py (no K9Creep)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (V12_ORIG_MENU, not a kind), 2 v12k9;
-# 2026-10-26: 3 v13 original; 2026-10-28: 3 v14 original instead (V14_ORIG_MENU, not a kind))
-MENU = {2: V12K9}
+# 2026-10-26: 3 v13 original; 2026-10-28: 3 v14 original instead (V14_ORIG_MENU, not a kind);
+# 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*), kind 8 itself unchanged)
+MENU = {2: V12K9O}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted((V12_ORIG_MENU, V14_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
 
@@ -241,6 +244,25 @@ V12K9_END_LEAD_KB, V12K9_END_LEAD_BAND = 3.0, (1.5, 3.5)  # -, m
 # TRIM_LEARN_SPEED, clipped to -TRIM_MAX .. 0 (only ever more braking); it decays 0.95 per frame while off
 V12K9_TRIM_KI, V12K9_TRIM_ALPHA, V12K9_TRIM_MAX = 2.0, 0.1, 0.4  # 1/s, per frame, m/s^2
 V12K9_TRIM_SPEED, V12K9_TRIM_LEARN_SPEED = 3.0, 0.3  # m/s
+# kind 13 "bono1739 원본 (10/27 17:39 대감님 직접 정차 그대로)" (menu 2 since 2026-10-29; the driver's orders 10/28 23:21 "내가 밟은거
+# 실차값 시간 알려준거 그거 그대로 만들어서 푸시해봐", 10/29 00:22 "내꺼 원본 이름이 뭐니? 수정하지 말라니깐?"): kind 8, except in the
+# stopping state that began below B17O_SPEED (before any latch): the request is the real decel of the driver's own stop
+# 2026-10-27 17:39:14.52 (cruise off, his brake; segments 000001d6--9ce5dfb65b--18..21, bono1739_1028/res/bono1739_profile.json
+# speed_bins, column dec_la = -ESP12 LONG_ACCEL: closest to his foot, CYL_PRES correlation 0.992 at lag 0) over vEgo, the numbers
+# as logged, linear between the bin centres, flat outside. No feedback, no prediction, no floor, no rate limit, no band
+# compensation / trim / zone clamp. The one safety: when the plan asks for more (aTarget below the table), aTarget.
+# After the stop (standstill as kind 8: ESP, vEgoRaw or vEgo < 0.05) the logged pressure after his stop (B17O_POST_*) for
+# B17O_HOLD_T (log: up to 10 bar at +1.6 .. +1.8 s), then the kind 8 standstill latch (StopReq, hold ramp to -0.50).
+# Leaving the stopping state ends it.
+B17O_TAB_BP = [0.10, 0.20, 0.275, 0.35, 0.45, 0.575, 0.725, 0.90, 1.25, 1.75, 2.50]  # m/s: centres of the logged speed bins
+B17O_TAB_V = [0.080, 0.063, 0.148, 0.294, 0.464, 0.766, 0.933, 1.001, 0.971, 1.314, 1.371]  # m/s^2 decel (dec_la per bin)
+B17O_SPEED, B17O_HOLD_T = 3.0, 1.6  # m/s (top of the logged table), s
+# after the stop, as logged: his brake pressure (ESP12 CYL_PRES, bar, 0.05 s from the stop) times B17O_BAR (dec_la per bar over
+# this stop below 3 m/s, least squares through 0, lag 0) until B17O_HOLD_T, where he pressed to 10 bar (here: the latch)
+B17O_POST_T = [round(0.05 * i, 2) for i in range(32)]  # s since the stop: 0.00 .. 1.55
+B17O_POST_BAR = [0.26, 0.30, 0.30, 0.25, 0.30, 0.34, 0.36, 0.44, 0.42, 0.40, 0.46, 0.52, 0.50, 0.56, 0.60, 0.60,
+                 0.65, 1.20, 1.36, 1.60, 1.60, 1.70, 1.73, 1.86, 1.68, 1.77, 1.74, 1.80, 1.83, 1.90, 1.90, 2.00]  # bar
+B17O_BAR = 0.2415  # m/s^2 per bar
 
 
 def k9_creep_applies(CP) -> bool:
@@ -326,7 +348,8 @@ class K9Creep:
   def __init__(self, mode: int = V9):
     assert mode in KINDS, mode
     self.mode = mode
-    self.v12 = mode == V12K9  # kind 8: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
+    self.v12 = mode in (V12K9, V12K9O)  # kind 8 / 13: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
+    self.b17o = mode == V12K9O  # kind 13: kind 8 + the driver's own stop table (B17O_*)
     self.ref = _V12K9Ref() if self.v12 else None  # kind 8: reference for the zone clamp
     self.reset()
 
@@ -363,6 +386,9 @@ class K9Creep:
     self.trim = 0.0  # kind 8: brake-only slow trim
     self.trim_lp = None  # kind 8: low-passed eff_ac for the trim
     self.off_lp = None  # kind 8: low-passed eff_ac for the band compensation share outside the zone (V12K9_OFF_ALPHA)
+    self.b17o_on = False  # kind 13: the table runs in this stop
+    self.b17o_k = -1  # kind 13: frames since the stop (-1: not stood yet)
+    self.b17o_plan = False  # kind 13: on the last frame the plan asked for more than the table (the safety, aTarget sent)
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
@@ -383,6 +409,10 @@ class K9Creep:
     if self.v12:
       self.eff_f = eff_ac if self.eff_f is None else self.eff_f + V12K9_STALL_ALPHA * (eff_ac - self.eff_f)
       stopping_in = stopping
+      o = self._b17o(a_target, stopping_in, v_ego, v_ego_raw, esp_standstill) if self.b17o else None
+      if o is not None:  # kind 13: the driver's stop table (kind 8 not run on this frame)
+        self._last, self.end_out = o, o
+        return o, False
       accel, stopping = self._update_v12k9(accel, a_target, stopping, pid, v_ego, v_ego_raw, a_ego, eff_ac, esp_standstill,
                                            lead_visible, lead_distance)
       if (stopping_in and not self.latched and (lead_visible or lead_distance != 0.0) and 0.0 < lead_distance <= V12K9_MX_GAP
@@ -510,6 +540,32 @@ class K9Creep:
         accel = float(min(accel, max(a_need, prev - DOWN_STEP)))
     self._last = accel
     return accel, False
+
+  def _b17o(self, a_target, stopping_in, v_ego, v_ego_raw, esp_standstill):
+    """Kind 13 (menu 2): the accel to send from the driver's stop table, or None (kind 8 as before)."""
+    if not stopping_in:
+      self.b17o_on, self.b17o_k, self.b17o_plan = False, -1, False
+      return None
+    if self.latched:
+      self.b17o_on, self.b17o_plan = False, False
+      return None
+    if not self.b17o_on:
+      if v_ego >= B17O_SPEED or self.b17o_k >= 0:
+        return None
+      self.b17o_on = True
+    if self.b17o_k < 0 and (esp_standstill or v_ego_raw < STANDSTILL_SPEED or v_ego < STANDSTILL_SPEED):
+      self.b17o_k = 0
+    if self.b17o_k >= 0:
+      self.b17o_k += 1
+      if self.b17o_k > B17O_HOLD_T * 100.0:  # held as in the log: the kind 8 standstill latch from this frame
+        self.latched, self.b17o_on, self.b17o_plan = True, False, False
+        return None
+    if self.b17o_k >= 0:  # stood: his pressure after the stop
+      tab = -B17O_BAR * float(np.interp((self.b17o_k - 1) * 0.01, B17O_POST_T, B17O_POST_BAR))
+    else:
+      tab = -float(np.interp(v_ego, B17O_TAB_BP, B17O_TAB_V))
+    self.b17o_plan = a_target < tab
+    return float(max(min(tab, a_target), -3.5))
 
   def _end_profile(self, accel, a_target, stopping_in, stopping, v_ego, a_ego, esp_standstill, lead_visible, lead_distance):
     """Kind 8 stop end profile (brake_0241): the accel to send instead of accel (the feather / rate-limit output), or None."""

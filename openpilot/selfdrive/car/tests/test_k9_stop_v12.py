@@ -93,8 +93,9 @@ def prev_cc(tmp_path_factory):
 
 # --- menu ------------------------------------------------------------------------------------------------------------
 def test_menu():
-  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: V12K9} and kc.MODES == (1, 2, 3)  # 3 = v13 original 2026-10-26, v14 original since 2026-10-28
-  assert kc.KINDS == (V9, V12K9) == (1, 8) and carcontroller.K9_CREEP_MENU is kc.MENU
+  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: kc.V12K9O} and kc.MODES == (1, 2, 3)  # 2 = kind 13 since 2026-10-29 (bono1739)
+   # 3 = v13 original 2026-10-26, v14 original since 2026-10-28
+  assert kc.KINDS == (V9, V12K9, kc.V12K9O) == (1, 8, 13) and carcontroller.K9_CREEP_MENU is kc.MENU
   assert carcontroller.V12_ORIG_MENU == 1
   for gone in ("V10", "V10_LIGHT", "V11", "LIGHT_MIN_DECEL", "V10_FEATHER_V", "V11_FEATHER_V"):
     assert not hasattr(kc, gone), gone

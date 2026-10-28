@@ -172,7 +172,7 @@ def test_page_sha_pinned():
 def test_menu():
   assert kc.V14_ORIG_MENU == 3 and kc.V12_ORIG_MENU == 1 and kc.MODES == (1, 2, 3) and 3 not in kc.MENU
   assert carcontroller.V14_ORIG_MENU == 3 and carcontroller.V12_ORIG_MENU == 1
-  assert kc.MENU == {2: kc.V12K9} and kc.KINDS == (kc.V9, kc.V12K9)  # C1 / C1+ (kinds 9 / 10) gone
+  assert kc.MENU == {2: kc.V12K9O} and kc.KINDS == (kc.V9, kc.V12K9, kc.V12K9O)  # C1 / C1+ (kinds 9 / 10) gone; 2 = kind 13 since 2026-10-29
   for gone in ("V13_ORIG_MENU", "V12K9_C1", "V12K9_C1P"):
     assert not hasattr(kc, gone) and not hasattr(carcontroller, gone), gone
 
@@ -220,6 +220,11 @@ def test_other_values_identical_to_prev(monkeypatch, prev_cc, mode, fingerprint)
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, **_kw(mode)))
     monkeypatch.undo()
+    if mode == 2 and fingerprint == CAR.KIA_K9:
+      # 2026-10-29 bono1739 원본 (pin narrowed): K9 menu 2 is kind 13 = kind 8 + the driver's stop table (stopping state below
+      # B17O_SPEED; test_k9_stop_v12k9o.py). With the table switched off it must still be byte-identical
+      # to d76f7ecc menu 2; menus None / 0 / 1 / other values and other cars stay pinned as before.
+      monkeypatch.setattr(kc, "B17O_SPEED", 0.0)
     new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), **_kw(mode)))
     monkeypatch.undo()
     assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
