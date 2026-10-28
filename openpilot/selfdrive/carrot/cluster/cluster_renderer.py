@@ -382,10 +382,15 @@ HUD_LINE_STEP = 20.0
 LAT_VALUES_LINE_Y = tuple(LAT_VALUES_CENTER_Y - HUD_LINE_STEP * (2 - i) for i in range(3))     # lines 1..3
 LANE_VALUES_GAP_X = 8.0
 LANE_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X - TPMS_STATUS_ICON_W * 0.5 - LANE_VALUES_GAP_X
-LANE_VALUES_LINE_Y = (TPMS_STATUS_CAR_CENTER_Y - HUD_LINE_STEP * 0.5,
-                      TPMS_STATUS_CAR_CENTER_Y + HUD_LINE_STEP * 0.5)                          # lines 4, 5
+# 2026-10-29 07:08 (보노보노 "차선좌우 글씨작던데 더키워"): lines 4 / 5 only, 17.0 -> 22.0 (+29 %), with their own line step
+# so the bigger text cannot touch. 22.0 is the ceiling here: line 5 is right-anchored LANE_VALUES_GAP_X left of the TPMS car and
+# the nearest thing on its left is the lane-probability % badge (LANE_CONFIDENCE_*, ~206 px of clear room); 23.0 already runs the
+# '좌' glyph under that badge in both panel layouts (out/font_sweep.json). Lines 1..3 keep LAT_VALUES_FONT_SIZE / HUD_LINE_STEP.
+LANE_VALUES_FONT_SIZE = 22.0
+LANE_VALUES_LINE_STEP = LANE_VALUES_FONT_SIZE + 4.0
+LANE_VALUES_LINE_Y = (TPMS_STATUS_CAR_CENTER_Y - LANE_VALUES_LINE_STEP * 0.5,
+                      TPMS_STATUS_CAR_CENTER_Y + LANE_VALUES_LINE_STEP * 0.5)                  # lines 4, 5
 LANE_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y
-LANE_VALUES_FONT_SIZE = LAT_VALUES_FONT_SIZE
 LANE_OFFSET_COLOR = (255, 214, 92, 255)      # 치우침 (mock out/hud_ld_lt/mock_preview.png)
 LANE_GAP_COLOR = (120, 220, 255, 255)        # 좌 / 우 차선
 NAVI_LIVE_ICON_X = NAVI_LIVE_PANEL_X + 72
