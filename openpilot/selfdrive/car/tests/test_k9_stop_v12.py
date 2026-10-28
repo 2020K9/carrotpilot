@@ -93,10 +93,11 @@ def prev_cc(tmp_path_factory):
 
 # --- menu ------------------------------------------------------------------------------------------------------------
 def test_menu():
-  assert kc.V12_ORIG_MENU == 1 and kc.MENU == {2: kc.V12K9O} and kc.MODES == (1, 2, 3)  # 2 = kind 13 since 2026-10-29 (bono1739)
+  assert kc.V12_ORIG_MENU == 2 and kc.MENU == {1: kc.V12K9O} and kc.MODES == (1, 2, 3)  # 2026-10-29 04:48 slot swap:
+  # kind 13 (bono1739, his own stop table) is menu 1, the v12 original is menu 2
    # 3 = v13 original 2026-10-26, v14 original since 2026-10-28
   assert kc.KINDS == (V9, V12K9, kc.V12K9O) == (1, 8, 13) and carcontroller.K9_CREEP_MENU is kc.MENU
-  assert carcontroller.V12_ORIG_MENU == 1
+  assert carcontroller.V12_ORIG_MENU == 2  # 1 until the 2026-10-29 04:48 slot swap
   for gone in ("V10", "V10_LIGHT", "V11", "LIGHT_MIN_DECEL", "V10_FEATHER_V", "V11_FEATHER_V"):
     assert not hasattr(kc, gone), gone
 
@@ -244,9 +245,9 @@ def test_v12k9_jerk_and_band():
   assert K9Creep(V9).jerk_l_floor(0.7, 0.8) == 0.7
 
 
-# --- 1 v12 original through the real CarController -------------------------------------------------------------------
+# --- 2 v12 original through the real CarController (menu 1 until the 2026-10-29 04:48 slot swap) -------------------------------------------------------------------
 def test_v12_orig_runs_and_waits_12_frames(monkeypatch):
-  r = Rig(monkeypatch, K9StopMode=1)
+  r = Rig(monkeypatch, K9StopMode=2)
   for i in range(200):
     r.step(-0.8, LCS.pid, max(3.0 - 0.015 * i, 0.3), a_target=-0.6, a_ego=-0.6)
   assert r.cc.k9_v12_orig is True and r.cc.k9_creep is None
@@ -260,7 +261,7 @@ def test_v12_orig_runs_and_waits_12_frames(monkeypatch):
 
 
 def test_v12_orig_jerk_page_values(monkeypatch):
-  r = Rig(monkeypatch, K9StopMode=1)
+  r = Rig(monkeypatch, K9StopMode=2)
   for i in range(150):
     r.step(-0.4, LCS.pid, 0.9, a_target=-0.4, a_ego=-0.4)
   _, _, scc14 = r.scc14[-1]
@@ -274,7 +275,7 @@ def test_v12_orig_jerk_page_values(monkeypatch):
 def test_menu_sequences_run(monkeypatch, seq, mode):
   r = seq(Rig(monkeypatch, K9StopMode=mode))
   assert len(r.can) > 400
-  assert (r.cc.k9_v12_orig, r.cc.k9_creep is not None) == ((True, False) if mode == 1 else (False, True))
+  assert (r.cc.k9_v12_orig, r.cc.k9_creep is not None) == ((True, False) if mode == 2 else (False, True))  # swap 04:48
 
 
 def test_live_switch_resets(monkeypatch):
@@ -284,7 +285,7 @@ def test_live_switch_resets(monkeypatch):
     for i in range(80):
       r.step(-0.6, LCS.pid, max(2.0 - 0.02 * i, 0.4), a_target=-0.4, a_ego=-0.3)
     assert r.cc.k9_creep_mode == value
-    assert r.cc.k9_v12_orig is (value == 1) and (r.cc.k9_creep is not None) is (value == 2)
+    assert r.cc.k9_v12_orig is (value == 2) and (r.cc.k9_creep is not None) is (value == 1)  # slot swap 2026-10-29 04:48
 
 
 # --- stored-value migration ------------------------------------------------------------------------------------------
@@ -300,29 +301,55 @@ class FakeParams:
 
 
 def test_migration_tables():
-  assert mig.STOP_MODE_VER == 4  # 3 until 2026-10-28 (v14: K9StopModeVer 3 -> 4, test_k9_stop_v14.py)
+  assert mig.STOP_MODE_VER == 5  # 4 until the 2026-10-29 04:48 slot swap, 3 until 2026-10-28 (test_k9_stop_v14.py)
   assert mig.MENU_MIGRATION_V4 == {0: 0, 1: 1, 2: 2, 3: 0, 4: 0, 5: 0, 6: 0}
   assert mig.MENU_MIGRATION_V3 == {0: 0, 1: 2, 2: 2, 3: 2}
   assert mig.MENU_MIGRATION_FROM_V1 == {0: 0, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2}
-  assert set(mig.MENU_MIGRATION_V3.values()) | set(mig.MENU_MIGRATION_FROM_V1.values()) <= {0, *kc.MENU}  # never menu 1
+  assert mig.SWAP_V5 == {0: 0, 1: 2, 2: 1, 3: 3} and mig.SWAP_PENDING_BASE == 50  # 2026-10-29 04:48: 1 <-> 2
+  old_menu = set(mig.MENU_MIGRATION_V3.values()) | set(mig.MENU_MIGRATION_FROM_V1.values())
+  assert old_menu <= {0, 2}  # the tables above are in K9StopModeVer 4 numbering, before the swap
+  assert {mig.SWAP_V5[v] for v in old_menu} <= {0, *kc.MENU}  # never the v12 original (menu 2 since 2026-10-29 04:48)
   assert set(mig.MENU_MIGRATION_V4.values()) <= {0, 1, 2}  # never the new 3 (v14 original is picked by hand)
+  assert mig.SWAP_V5[kc.V14_ORIG_MENU] == kc.V14_ORIG_MENU  # the v14 original keeps its number
+  for t in (mig.MENU_MIGRATION_V4, mig.MENU_MIGRATION_V3, mig.MENU_MIGRATION_FROM_V1):
+    assert all(t.get(v, v) == v for v in t.values())  # repeating an older table changes nothing (power loss before the swap)
 
 
-@pytest.mark.parametrize("ver", [3, 2, None, 1, 5])  # 3 added 2026-10-28 (K9StopModeVer 4)
+@pytest.mark.parametrize("ver", [4, 3, 2, None, 1, 6])  # 4 added 2026-10-29 (only the slot swap); 6 = unknown marker
 @pytest.mark.parametrize("old", [None, 0, 1, 2, 3, 4, 5, 6, 7, 99, -1, "x"])
 def test_migration(ver, old):
-  table = mig.MENU_MIGRATION_V4 if ver == 3 else (mig.MENU_MIGRATION_V3 if ver == 2 else mig.MENU_MIGRATION_FROM_V1)
+  table = {} if ver == 4 else (mig.MENU_MIGRATION_V4 if ver == 3 else (mig.MENU_MIGRATION_V3 if ver == 2 else mig.MENU_MIGRATION_FROM_V1))
   p = FakeParams(**({} if old is None else {"K9StopMode": old}), **({} if ver is None else {"K9StopModeVer": ver}))
   changed = mig.migrate_k9_stop_mode(p)
-  want = table.get(old, old) if isinstance(old, int) else old
-  assert p.v.get("K9StopMode") == want and p.v["K9StopModeVer"] == 4 and changed == (want != old)  # marker 3 until 2026-10-28
+  if isinstance(old, int):
+    mid = table.get(old, old)  # the older menu first, then the 2026-10-29 04:48 slot swap
+    want = mig.SWAP_V5.get(mid, mid)
+  else:
+    mid = want = old
+  wrote = isinstance(old, int) and (mid != old or want != mid)  # the chain can write twice and land back on old
+  assert p.v.get("K9StopMode") == want and p.v["K9StopModeVer"] == mig.STOP_MODE_VER and changed == wrote
   assert mig.migrate_k9_stop_mode(p) is False and p.v.get("K9StopMode") == want  # once only
 
 
-def test_migration_after_ver3_never_touches():  # marker 4 since 2026-10-28 (a marker 3 device migrates once more)
+def test_migration_after_ver5_never_touches():  # marker 5 since 2026-10-29 04:48 (a marker 4 device swaps once more)
   for v in (0, 1, 2, 3, 9):
-    p = FakeParams(K9StopMode=v, K9StopModeVer=4)
+    p = FakeParams(K9StopMode=v, K9StopModeVer=mig.STOP_MODE_VER)
     assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == v
+
+
+def test_migration_swap_1_2_is_crash_safe():
+  """2026-10-29 04:48 (the driver: his own stop table must be menu 1): a marker-4 device swaps 1 <-> 2 once. The swap
+  undoes itself if it runs twice, so the pre-swap value is written into the marker first (SWAP_PENDING_BASE + value):
+  a power loss before or after the value write ends with the same value on the next start."""
+  for old, want in ((0, 0), (1, 2), (2, 1), (3, 3)):
+    p = FakeParams(K9StopMode=old, K9StopModeVer=4)
+    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v["K9StopMode"] == want and p.v["K9StopModeVer"] == 5
+    assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == want  # once only
+    q = FakeParams(K9StopMode=old, K9StopModeVer=mig.SWAP_PENDING_BASE + old)  # power loss before the value was rewritten
+    assert mig.migrate_k9_stop_mode(q) is (want != old) and q.v["K9StopMode"] == want and q.v["K9StopModeVer"] == 5
+    r = FakeParams(K9StopMode=want, K9StopModeVer=mig.SWAP_PENDING_BASE + old)  # power loss after the value was rewritten
+    mig.migrate_k9_stop_mode(r)
+    assert r.v["K9StopMode"] == want and r.v["K9StopModeVer"] == 5
 
 
 def test_migration_in_manager_init():

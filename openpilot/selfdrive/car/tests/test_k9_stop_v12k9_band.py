@@ -99,7 +99,7 @@ def test_latched_band_ramps_to_zero():
 
 
 def test_through_carcontroller_band_on_then_ramp_at_standstill_latch(monkeypatch):
-  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=2)
+  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1)  # menu 1 since the 04:48 swap
   for i in range(120):
     r.step(-0.5, LCS.pid, max(2.0 - 0.012 * i, 0.4), a_target=-0.4, a_ego=-0.4)
   for i in range(60):
@@ -159,8 +159,9 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28: 3 = v14 original, 4 still acts as 0
-def test_menus_other_than_2_can_identical_to_frozen(monkeypatch, frozen_cc, mode, fingerprint):
+@pytest.mark.parametrize("mode", [None, 0, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
+# 3 = v14 original, 4 still acts as 0; 2026-10-29 04:48: 1 and 2 swapped methods, so both are pinned across numbers below
+def test_menus_other_than_the_k9_menu_can_identical_to_frozen(monkeypatch, frozen_cc, mode, fingerprint):
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=frozen_cc, **_kw(mode)))
     monkeypatch.undo()
@@ -169,11 +170,23 @@ def test_menus_other_than_2_can_identical_to_frozen(monkeypatch, frozen_cc, mode
     assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
 
 
-def test_menu2_other_cars_can_identical_to_frozen(monkeypatch, frozen_cc):
+def test_v12_original_moved_to_menu_2_is_identical_to_frozen_menu_1(monkeypatch, frozen_cc):
+  """2026-10-29 04:48 (the driver: his own stop table must be menu 1): the v12 original itself did not change, it only moved
+  from menu 1 to menu 2, so the tree's menu 2 must be byte-identical to the frozen controller's menu 1."""
+  for fp in (CAR.KIA_K9, CAR.KIA_K7):
+    for seq in SEQS:
+      ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fp), module=frozen_cc, K9StopMode=1))
+      monkeypatch.undo()
+      new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fp), K9StopMode=2))
+      monkeypatch.undo()
+      assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
+
+
+def test_menu1_other_cars_can_identical_to_frozen(monkeypatch, frozen_cc):
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), module=frozen_cc, K9StopMode=2))
     monkeypatch.undo()
-    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=2))
+    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=1))  # same method, menu 1 since 04:48
     monkeypatch.undo()
     assert ref.can == new.can
 
@@ -184,7 +197,7 @@ def _zone(inp):
   return state == LCS.stopping and v < kc.V12K9_ZONE_SPEED and not lead_in
 
 
-def test_menu2_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
+def test_menu1_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
   """K9 menu 2 against the frozen menu 2 (6f518e35): every message other than SCC12 / SCC14 is byte-identical; at or above
   3.0 m/s SCC12 and SCC14 are identical; below it the band is never lower, aReqValue never higher (more decel by at most
   V12K9_BAND_COMP) and StopReq never earlier-released (only earlier set, by the stall latch). Was 62eb5798's pin "only the band
@@ -192,9 +205,9 @@ def test_menu2_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
   the zone (stopping, v < kc.V12K9_ZONE_SPEED, no lead within kc.V12K9_ZONE_LEAD; _zone below)."""
   changed = 0
   for seq in SEQS:
-    ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), module=frozen_cc, K9StopMode=2))
+    ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), module=frozen_cc, K9StopMode=2))  # frozen: menu 2
     monkeypatch.undo()
-    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=2))
+    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1))  # tree: menu 1 since 04:48
     monkeypatch.undo()
     assert len(ref.can) == len(new.can) > 400
     for a, b in zip(ref.can, new.can, strict=True):
@@ -221,8 +234,8 @@ def test_menu2_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
   assert changed > 50
 
 
-def test_menu2_low_speed_band_is_the_original_band(monkeypatch):
-  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=2)
+def test_menu1_low_speed_band_is_the_original_band(monkeypatch):
+  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1)  # menu 1 since the 04:48 swap
   rows = []
   for i in range(240):
     v = max(2.4 - 0.01 * i, 0.06)

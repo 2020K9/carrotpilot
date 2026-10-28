@@ -126,14 +126,14 @@ import numpy as np
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
-V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 2
+V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 1 (menu 2 until 2026-10-29 04:48)
 KINDS = (V9, V12K9, V12K9O)
-V12_ORIG_MENU = 1  # K9StopMode 1: the creep_fix v12 page code unchanged, in carcontroller.py (no K9Creep)
+V12_ORIG_MENU = 2  # K9StopMode 2 (1 until 2026-10-29 04:48): the creep_fix v12 page code unchanged, in carcontroller.py (no K9Creep)
 V14_ORIG_MENU = 3  # K9StopMode 3 (2026-10-28): the creep_fix v14 page code unchanged, in carcontroller.py (no K9Creep)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (V12_ORIG_MENU, not a kind), 2 v12k9;
 # 2026-10-26: 3 v13 original; 2026-10-28: 3 v14 original instead (V14_ORIG_MENU, not a kind);
 # 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*), kind 8 itself unchanged; 00:50 "bono1739 원본2": B17O_HOLD_T 0)
-MENU = {2: V12K9O}
+MENU = {1: V12K9O}  # 2026-10-29 04:48 the driver: his own stop table is menu 1, the v12 original is menu 2
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted((V12_ORIG_MENU, V14_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
 

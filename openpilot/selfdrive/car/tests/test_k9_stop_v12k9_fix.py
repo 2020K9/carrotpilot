@@ -126,8 +126,9 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28: 3 = v14 original, 4 still acts as 0
-def test_menus_other_than_2_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mode, fingerprint):
+@pytest.mark.parametrize("mode", [None, 0, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
+# 3 = v14 original, 4 still acts as 0; 2026-10-29 04:48: 1 and 2 swapped methods, pinned across numbers below
+def test_menus_other_than_the_k9_menu_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mode, fingerprint):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=pushed_cc, **_kw(mode)))
     monkeypatch.undo()
@@ -136,10 +137,22 @@ def test_menus_other_than_2_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mo
     assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
 
 
-def test_menu2_other_cars_can_identical_to_f9cd0960(monkeypatch, pushed_cc):
+def test_v12_original_moved_to_menu_2_is_identical_to_f9cd0960_menu_1(monkeypatch, pushed_cc):
+  """2026-10-29 04:48 slot swap: the v12 original only moved from menu 1 to menu 2, so the tree's menu 2 must be
+  byte-identical to the pushed f9cd0960 controller's menu 1."""
+  for fp in (CAR.KIA_K9, CAR.KIA_K7):
+    for seq in (mixed_sequence, edge_sequence, gentle_sequence):
+      ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fp), module=pushed_cc, K9StopMode=1))
+      monkeypatch.undo()
+      new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fp), K9StopMode=2))
+      monkeypatch.undo()
+      assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
+
+
+def test_menu1_other_cars_can_identical_to_f9cd0960(monkeypatch, pushed_cc):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), module=pushed_cc, K9StopMode=2))
     monkeypatch.undo()
-    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=2))
+    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=1))
     monkeypatch.undo()
     assert ref.can == new.can
