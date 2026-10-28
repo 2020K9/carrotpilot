@@ -30,6 +30,16 @@ own recorded stop table is menu 1 and the v12 original is menu 2 (K9StopModeVer 
   3 v14 original unchanged;
 - an older / absent marker first runs its own table above (unchanged) to land on the K9StopModeVer 4 numbering and
   then the swap: every output of those tables is a fixed point of the same table, so repeating them changes nothing.
+2026-10-29 05:40 (the driver's order "지금 2번인 v12 원본은 메뉴에서 빼라", with 2 = his improved stop table and 4 = his
+table + the 1 s hold after the stop): the v12 original left the menu with its code, so 2 no longer means it
+(K9StopModeVer 6). Rule added:
+- K9StopModeVer 5 (the 2026-10-29 04:48 numbering): 2 (v12 original) -> 0 (base: the slot is now the improved table, which
+  is a different method and must be picked by hand); 0 base, 1 his own stop table and 3 v14 original unchanged;
+- an older / absent marker first runs its own tables above (unchanged) and the 1 <-> 2 swap to land on the
+  K9StopModeVer 5 numbering, then this table. The new menu value 4 is never produced by a migration: it is new and must be
+  picked by hand.
+DROP_V6 is idempotent (0 / 1 / 3 are fixed points and its only output 0 is one too), so unlike the swap it needs no
+pending marker: if a power loss interrupts it, the next start simply applies it again to the same stored value.
 A marker that is already STOP_MODE_VER means the value is on the new menu and is never touched again. The swap is the
 first rule that is not idempotent, so the pre-swap value is written into the marker (SWAP_PENDING_BASE + value) before
 the value itself is rewritten: whatever a power loss interrupts, the next start recomputes the same new value from the
@@ -38,9 +48,9 @@ marker instead of swapping an already swapped value.
 
 STOP_MODE_KEY = "K9StopMode"
 STOP_MODE_VER_KEY = "K9StopModeVer"
-STOP_MODE_VER = 5  # K9StopModeVer after this migration (4 = the 2026-10-28 0-3 menu before the 1 <-> 2 swap,
-# 3 = the 2026-10-25..27 menus up to 0-5, 2 = the 2026-10-24 evening 0-3
-# menu, absent = the 0-6 menu or older)
+STOP_MODE_VER = 6  # K9StopModeVer after this migration (5 = the 2026-10-29 04:48 numbering with 2 = v12 original,
+# 4 = the 2026-10-28 0-3 menu before the 1 <-> 2 swap, 3 = the 2026-10-25..27 menus up to 0-5,
+# 2 = the 2026-10-24 evening 0-3 menu, absent = the 0-6 menu or older)
 # old K9StopMode -> new (0 base, 1 v12 original, 2 v12k9, 3 v14 original). No opendbc import on purpose: manager_init must not
 # depend on the car code (test_k9_stop_v12.py / test_k9_stop_v14.py pin it against k9_creep.MENU).
 MENU_MIGRATION_V4 = {0: 0, 1: 1, 2: 2, 3: 0, 4: 0, 5: 0, 6: 0}  # from K9StopModeVer 3 (3 v13 / 4 C1 / 5 C1+ / 6 v13k9 -> 0)
@@ -50,6 +60,9 @@ MENU_MIGRATION_FROM_V1 = {0: 0, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2}  # from no m
 SWAP_V5 = {0: 0, 1: 2, 2: 1, 3: 3}  # from K9StopModeVer 4: 1 v12 original -> 2, 2 his own stop table -> 1
 SWAP_PENDING_BASE = 50  # K9StopModeVer 50 + v means "the swap is pending and the pre-swap K9StopMode value was v"
 # (0 <= v <= 3). The swap is not idempotent, so this marker is written before the value is rewritten.
+# 2026-10-29 05:40: the v12 original is off the menu, so a stored 2 becomes 0 (base). Applied after SWAP_V5. Idempotent
+# (every output is a fixed point of the table), so it needs no pending marker.
+DROP_V6 = {0: 0, 1: 1, 2: 0, 3: 3}  # from K9StopModeVer 5: 2 v12 original -> 0; 0 / 1 / 3 unchanged
 
 
 def migrate_k9_stop_mode(params) -> bool:
@@ -62,7 +75,7 @@ def migrate_k9_stop_mode(params) -> bool:
     return False
   changed = False
   pending = isinstance(ver, int) and not isinstance(ver, bool) and SWAP_PENDING_BASE <= ver <= SWAP_PENDING_BASE + 3
-  if not pending:
+  if not pending and ver != 5:  # ver 5 is already on the post-swap numbering: only DROP_V6 below is left
     if ver != 4:  # first put the stored value on the K9StopModeVer 4 numbering (those tables repeat harmlessly)
       table = MENU_MIGRATION_V4 if ver == 3 else (MENU_MIGRATION_V3 if ver == 2 else MENU_MIGRATION_FROM_V1)
       try:
@@ -90,14 +103,25 @@ def migrate_k9_stop_mode(params) -> bool:
     except Exception:
       return changed  # marker not written: the next start redoes the same steps from the stored value
     ver = SWAP_PENDING_BASE + v4
-  old = ver - SWAP_PENDING_BASE
-  new = SWAP_V5[old]
-  if new != old:
+  if ver != 5:
+    old = ver - SWAP_PENDING_BASE
+    new = SWAP_V5[old]
+    if new != old:
+      try:
+        params.put_int(STOP_MODE_KEY, new)
+        changed = True
+      except Exception:
+        return changed  # the marker still says "swap pending": the next start finishes it
+  try:  # 2026-10-29 05:40: a stored 2 (v12 original) is now base. Idempotent, so no pending marker is needed.
+    v5 = params.get(STOP_MODE_KEY)
+  except Exception:
+    v5 = None  # unreadable: left as stored (acts as 0)
+  if isinstance(v5, int) and not isinstance(v5, bool) and v5 in DROP_V6 and DROP_V6[v5] != v5:
     try:
-      params.put_int(STOP_MODE_KEY, new)
+      params.put_int(STOP_MODE_KEY, DROP_V6[v5])
       changed = True
     except Exception:
-      return changed  # the marker still says "swap pending": the next start finishes it
+      return changed  # no marker written: the next start applies the same (idempotent) table again
   try:
     params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)
   except Exception:

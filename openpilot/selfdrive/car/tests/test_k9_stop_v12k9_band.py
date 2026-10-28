@@ -159,7 +159,7 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 4, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
+@pytest.mark.parametrize("mode", [None, 0, 5, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
 # 3 = v14 original, 4 still acts as 0; 2026-10-29 04:48: 1 and 2 swapped methods, so both are pinned across numbers below
 def test_menus_other_than_the_k9_menu_can_identical_to_frozen(monkeypatch, frozen_cc, mode, fingerprint):
   for seq in SEQS:
@@ -168,18 +168,6 @@ def test_menus_other_than_the_k9_menu_can_identical_to_frozen(monkeypatch, froze
     new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), **_kw(mode)))
     monkeypatch.undo()
     assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
-
-
-def test_v12_original_moved_to_menu_2_is_identical_to_frozen_menu_1(monkeypatch, frozen_cc):
-  """2026-10-29 04:48 (the driver: his own stop table must be menu 1): the v12 original itself did not change, it only moved
-  from menu 1 to menu 2, so the tree's menu 2 must be byte-identical to the frozen controller's menu 1."""
-  for fp in (CAR.KIA_K9, CAR.KIA_K7):
-    for seq in SEQS:
-      ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fp), module=frozen_cc, K9StopMode=1))
-      monkeypatch.undo()
-      new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fp), K9StopMode=2))
-      monkeypatch.undo()
-      assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
 
 
 def test_menu1_other_cars_can_identical_to_frozen(monkeypatch, frozen_cc):

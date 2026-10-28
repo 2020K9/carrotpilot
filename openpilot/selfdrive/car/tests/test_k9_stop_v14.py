@@ -170,11 +170,12 @@ def test_page_sha_pinned():
 
 
 def test_menu():
-  assert kc.V14_ORIG_MENU == 3 and kc.V12_ORIG_MENU == 2 and kc.MODES == (1, 2, 3) and 3 not in kc.MENU
-  assert carcontroller.V14_ORIG_MENU == 3 and carcontroller.V12_ORIG_MENU == 2  # 1 until 2026-10-29 04:48
-  assert kc.MENU == {1: kc.V12K9O} and kc.KINDS == (kc.V9, kc.V12K9, kc.V12K9O)  # C1 / C1+ (kinds 9 / 10) gone;
-  # kind 13 is menu 1 since the 2026-10-29 04:48 slot swap (menu 2 before that)
-  for gone in ("V13_ORIG_MENU", "V12K9_C1", "V12K9_C1P"):
+  assert kc.V14_ORIG_MENU == 3 and kc.MODES == (1, 2, 3, 4) and 3 not in kc.MENU  # 4 = kind 15 since 2026-10-29 05:40
+  assert carcontroller.V14_ORIG_MENU == 3
+  assert kc.MENU == {1: kc.V12K9O, 2: kc.V12K9OS, 4: kc.V12K9OH} and kc.KINDS == (kc.V9, kc.V12K9, kc.V12K9O, kc.V12K9OS, kc.V12K9OH)
+  # kind 13 is menu 1 since the 2026-10-29 04:48 slot swap; 2 = kind 14 and 4 = kind 15 since 05:40, when the v12
+  # original left the menu with its code (C1 / C1+, kinds 9 / 10, had gone on 2026-10-28)
+  for gone in ("V13_ORIG_MENU", "V12K9_C1", "V12K9_C1P", "V12_ORIG_MENU"):
     assert not hasattr(kc, gone) and not hasattr(carcontroller, gone), gone
 
 
@@ -201,24 +202,32 @@ def test_menu3_is_the_page_code_unchanged(block, guard):
 def test_carcontroller_diff_is_the_page_code_plus_menu_wiring():
   d = subprocess.run(["git", "diff", "-U0", PREV, "--", CC_REL], cwd=ROOT, capture_output=True, text=True, check=True).stdout
   page = {"  " + l for l in (V14_BLOCK_1 + V14_BLOCK_2).splitlines() if l}
-  old_v13 = set(_prev_block_lines("      if self.k9_v13_orig:") + _prev_block_lines("        if v13_orig:"))
+  # 2026-10-29 05:40: the v12 original left the menu with its two page blocks, so those lines are removed here too
+  old_v13 = set(_prev_block_lines("      if self.k9_v13_orig:") + _prev_block_lines("        if v13_orig:")
+                + _prev_block_lines("      if self.k9_v12_orig:") + _prev_block_lines("        if v12_orig:"))
   added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
   removed = [l[1:] for l in d.splitlines() if l.startswith("-") and not l.startswith("---")]
   assert page <= set(added) | set(src for src in (ROOT / CC_REL).read_text(encoding="utf-8").splitlines())
   for l in [l for l in added if l.strip() and l not in page]:
     s = l.strip()
-    assert s.startswith("#") or "v14_orig" in s or "V14_ORIG_MENU" in s or "standstill_count" in s, l
+    # 2026-10-29 05:40: the v12 original left the menu, which touched the menu switch (K9_CREEP_MENU) and the two
+    # creep_obj comment lines in make_jerk; they are wiring, like the names already listed.
+    assert (s.startswith("#") or "v14_orig" in s or "V14_ORIG_MENU" in s or "standstill_count" in s
+            or "K9_CREEP_MENU" in s or "creep_obj" in s), l
   for l in [l for l in removed if l not in old_v13]:  # besides the old v13 page lines: only the touched wiring lines / comments
     s = l.strip()
-    assert (s.startswith("#") or "v13_orig" in s or "V13_ORIG_MENU" in s or "standstill_count" in s), l
-  assert len([l for l in removed if l not in old_v13]) <= 14  # 12 wiring lines on 2026-10-28
+    assert (s.startswith("#") or "v13_orig" in s or "V13_ORIG_MENU" in s or "standstill_count" in s
+            or "v12_orig" in s or "V12_ORIG_MENU" in s or "K9_CREEP_MENU" in s or "creep_obj" in s), l
+  assert len([l for l in removed if l not in old_v13]) <= 24  # 12 wiring lines 2026-10-28 + the v12 wiring 2026-10-29
 
 
 # --- every other value: byte-identical to d76f7ecc -------------------------------------------------------------------
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 2, 6, 7, 99, -1, float("nan")])
+# 2026-10-29 05:40: menu 2 is kind 14 and 4 is kind 15 (new methods, their own pins), so this "unchanged" list keeps
+# None / 0 / 1 / 3 and the values that act as 0 (6 / 7 / 99 / -1 / NaN; 5 added, it acted as 0 before as well).
+@pytest.mark.parametrize("mode", [None, 0, 1, 5, 6, 7, 99, -1, float("nan")])
 def test_other_values_identical_to_prev(monkeypatch, prev_cc, mode, fingerprint):
-  ref_mode = {1: 2, 2: 1}.get(mode, mode)  # 2026-10-29 04:48 slot swap: the same method, the other number on d76f7ecc
+  ref_mode = {1: 2, 5: 0}.get(mode, mode)  # 04:48 slot swap: the same method, the other number on d76f7ecc
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, **_kw(ref_mode)))
     monkeypatch.undo()
@@ -234,9 +243,10 @@ def test_other_values_identical_to_prev(monkeypatch, prev_cc, mode, fingerprint)
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [4, 5])
+@pytest.mark.parametrize("mode", [5, 6])
 def test_old_c1_values_act_as_0(monkeypatch, prev_cc, mode, fingerprint):
-  """4 C1 / 5 C1+ are gone: a stored 4 / 5 (only by hand: the migration maps them to 0) now acts as d76f7ecc menu 0."""
+  """4 C1 / 5 C1+ are gone: a stored value above the menu (only by hand: the migration maps them to 0) acts as
+  d76f7ecc menu 0. 2026-10-29 05:40: 4 is kind 15 (its own pins), so this pin moved to 5 / 6."""
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=prev_cc, K9StopMode=0))
     monkeypatch.undo()
@@ -271,7 +281,7 @@ def test_menu3_identical_to_the_page_patch(monkeypatch, page_cc, seq):
   monkeypatch.undo()
   new = seq(Rig(monkeypatch, K9StopMode=3))
   assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
-  assert new.cc.k9_v14_orig is True and new.cc.k9_v12_orig is False and new.cc.k9_creep is None
+  assert new.cc.k9_v14_orig is True and new.cc.k9_creep is None
 
 
 class _CS:
@@ -363,18 +373,18 @@ def test_menu3_jerk_page_values(monkeypatch):
 
 def test_live_switch_resets_v14_state(monkeypatch):
   r = Rig(monkeypatch, K9StopMode=3)
-  for value in (3, 1, 3, 0, 2, 3, 4, 5, 3):
+  for value in (3, 1, 3, 0, 2, 3, 4, 5, 3):  # 4 is kind 15 since 2026-10-29 05:40, 5 acts as 0
     r.params.values["K9StopMode"] = value
     for i in range(60):
       r.step(-0.6, LCS.pid, max(1.0 - 0.02 * i, 0.1), a_target=-0.4, a_ego=-0.3)
     for i in range(40):
       r.step(-0.6, LCS.stopping, 0.2, a_target=-0.4, a_ego=-0.3)
-    want = value if value in (1, 2, 3) else 0
+    want = value if value in (1, 2, 3, 4) else 0
     assert r.cc.k9_creep_mode == want
-    assert r.cc.k9_v14_orig is (want == 3) and r.cc.k9_v12_orig is (want == 2) and (r.cc.k9_creep is not None) is (want == 1)
+    assert r.cc.k9_v14_orig is (want == 3) and (r.cc.k9_creep is not None) is (want in (1, 2, 4))
   # a change starts the page state fresh (the v14 counters too)
   assert r.cc.low_v_crawl_count > 0 or r.cc.stop_hold_count > 0
-  r.params.values["K9StopMode"] = 2  # the v12 original since 04:48
+  r.params.values["K9StopMode"] = 1  # kind 13: any change away from 3 must clear the page state
   for _ in range(50):
     r.step(-0.6, LCS.pid, 3.0)
   assert (r.cc.whl_standstill_count, r.cc.low_v_crawl_count, r.cc.stop_hold_count, r.cc.standstill_count) == (0, 0, 0, 0)
@@ -386,9 +396,9 @@ def test_settings_entry():
   import json
   d = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   e = next(p for p in d["params"] if p.get("name") == "K9StopMode")
-  assert (e["min"], e["max"], e["default"]) == (0, 3, 0)
+  assert (e["min"], e["max"], e["default"]) == (0, 4, 0)  # max 4 since 2026-10-29 05:40
   assert e["options"]["ko"][3] == "3 v14 원본" and e["options"]["en"][3] == "3 v14 original" and e["options"]["zh"][3] == "3 v14原版"
-  assert all(len(e["options"][k]) == 4 for k in ("ko", "en", "zh"))
+  assert all(len(e["options"][k]) == 5 for k in ("ko", "en", "zh"))
   assert "v13" not in json.dumps(e, ensure_ascii=False) and "C1" not in json.dumps(e, ensure_ascii=False)
 
 
@@ -406,13 +416,15 @@ class FakeParams:
 def test_migration_old_v13_c1_values_go_to_0_never_to_v14():
   """2026-10-28: a K9StopModeVer 3 device (the 0-5 menu of d76f7ecc) with 3 v13 / 4 C1 / 5 C1+ (6 = the never-pushed v13k9)
   goes to 0 once; an old 3 v13 is NOT carried to the new 3 v14 (v14 is picked by hand). 0 / 1 / 2 stay."""
-  assert mig.STOP_MODE_VER == 5  # 4 until the 2026-10-29 04:48 slot swap
-  for old, want in ((0, 0), (1, 2), (2, 1), (3, 0), (4, 0), (5, 0), (6, 0)):  # table first, then the 1 <-> 2 swap
+  assert mig.STOP_MODE_VER == 6  # 5 until 2026-10-29 05:40, 4 until the 04:48 slot swap
+  # table first, then the 1 <-> 2 swap, then the 05:40 drop of the v12 original: a ver-3 stored 1 was the v12 original,
+  # so it ends on 0 (base) instead of the slot it used to own.
+  for old, want in ((0, 0), (1, 0), (2, 1), (3, 0), (4, 0), (5, 0), (6, 0)):
     p = FakeParams(K9StopMode=old, K9StopModeVer=3)
-    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v["K9StopMode"] == want and p.v["K9StopModeVer"] == 5
+    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v["K9StopMode"] == want and p.v["K9StopModeVer"] == 6
     assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == want  # once only
-  p = FakeParams(K9StopMode=3, K9StopModeVer=4)  # the v14 original keeps its number through the 2026-10-29 swap
-  assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == 3 and p.v["K9StopModeVer"] == 5
+  p = FakeParams(K9StopMode=3, K9StopModeVer=4)  # the v14 original keeps its number through both 2026-10-29 steps
+  assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == 3 and p.v["K9StopModeVer"] == 6
   p = FakeParams(K9StopMode=3, K9StopModeVer=5)  # picked on the new menu: v14, never touched
   assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == 3
   p = FakeParams(K9StopMode=3, K9StopModeVer=2)  # the 2026-10-24 evening menu: 3 was v11 -> 2 -> 1 after the swap, never v14
