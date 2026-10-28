@@ -15,9 +15,9 @@ def cp():
 
 def test_k9_registered_specs(cp):
   assert cp.wheelbase == pytest.approx(3.105, abs=1e-6)              # 대감님 제공 / kia.com 축거 3,105 mm
-  assert cp.mass == pytest.approx(2015 + STD_CARGO_KG, abs=1e-3)       # 공차 약 2,015 kg (대감님 제공) + opendbc 적재 136 kg
+  assert cp.mass == pytest.approx(2010 + STD_CARGO_KG, abs=1e-3)       # 3.8 AWD 19인치 공차 2,010 kg (대감님 10/28 21:34) + opendbc 적재 136 kg
   assert cp.centerToFront == pytest.approx(0.4 * 3.105, abs=1e-6)     # 0.4 비율은 opendbc 현대 공통 가정값 (실측 없음)
-  assert cp.steerRatio == pytest.approx(14.5)                          # paramsd 초기값 (그대로)
+  assert cp.steerRatio == pytest.approx(14.5)                          # 조향비 14.5 그대로 (차는 CustomSR 129, 대감님 10/28 21:48)
 
 
 def test_k9_slip_factor_scales_with_wheelbase_only(cp):

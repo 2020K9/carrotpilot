@@ -136,7 +136,7 @@ def test_settings_menu_and_keys():
         yield n
       yield from leaves(n.get("groups", []))
   exp = [g for g in leaves(cat["menu"]) if g["id"] == "EXPERIMENTAL"]
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]   # 2026-10-25 23:30: PathOffset under the lane switch
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9CenterToFront"]   # 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-28 21:1x K9CenterToFront (대감님)
   names = [p["name"] for p in cat["params"]]
   assert not set(OLD) & set(names)
   sw = next(p for p in cat["params"] if p["name"] == "K9LaneAssist")

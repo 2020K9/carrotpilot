@@ -399,7 +399,8 @@
             "K9LaneCenterGain",
             "PathOffset",
             "K9ExtHud",
-            "K9MeterSeason"
+            "K9MeterSeason",
+            "K9CenterToFront"
           ]
         }
       ]
@@ -3563,6 +3564,22 @@
           "4 冬"
         ]
       }
+    },
+    {
+      "group": "조향튜닝",
+      "name": "K9CenterToFront",
+      "title": "무게중심 위치 x0.01 (실험)",
+      "descr": "앞바퀴에서 무게중심까지 거리 = 축거 × 값/100 (centerToFront). 40 = 0.40 기본(원래 코드 그대로). 현대·기아만. 바꾸면 주행 중에도 약 1초 안에 조향 계산에 바로 적용(학습기 paramsd만 다음 시동부터). 실차 미확인.",
+      "egroup": "LAT",
+      "etitle": "Center of Mass Position x0.01 (Trial)",
+      "edescr": "Distance from the front axle to the centre of mass = wheelbase x value/100 (centerToFront). 40 = 0.40 default (original code unchanged). Hyundai/Kia only. A change applies within about 1 s, also while driving (only the paramsd learner takes it at the next start). Not tested in the car.",
+      "cgroup": "转向",
+      "ctitle": "重心位置 x0.01（试验）",
+      "cdescr": "前轴到重心的距离 = 轴距 × 数值/100（centerToFront）。40 = 0.40 默认（原代码不变）。仅现代/起亚。修改后约1秒内即时生效，行驶中也适用（仅学习器 paramsd 在下次启动时生效）。未经实车确认。",
+      "min": 30,
+      "max": 80,
+      "default": 40,
+      "unit": 1
     },
     {
       "group": "가속설정",

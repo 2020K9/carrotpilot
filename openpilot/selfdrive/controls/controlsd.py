@@ -94,6 +94,8 @@ class Controls:
 
     self.LoC = LongControl(self.CP)
     self.VM = VehicleModel(self.CP)
+    from openpilot.selfdrive.controls.lib.k9_ctf import LiveCenterToFront
+    self.k9_ctf = LiveCenterToFront.from_params(self.CP, self.params, every=100)  # K9CenterToFront live (1 Hz poll below)
     self.LaC: LatControl
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CI)
@@ -123,6 +125,11 @@ class Controls:
     sr = resolve_vehicle_model_steer_ratio(lp.steerRatio,
                                            self.params.get_float("SteerRatioRate"),
                                            self.params.get_float("CustomSR"))
+    k9_ctf = getattr(self, "k9_ctf", None)
+    if k9_ctf is not None and k9_ctf.due():  # K9CenterToFront: 1 Hz param read, no work unless it changed
+      ctf = k9_ctf.check(self.params)
+      if ctf is not None:
+        k9_ctf.apply_vehicle_model(self.VM, ctf)
     self.VM.update_params(x, sr)
 
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)

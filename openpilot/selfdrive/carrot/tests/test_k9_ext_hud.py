@@ -190,7 +190,8 @@ def test_menu_and_keys():
   exp = [g for g in _walk(data["menu"]) if g.get("id") == "EXPERIMENTAL"]
   # 11:51 K9MeterSeason is the sub-option right under K9ExtHud (registration pin updated deliberately);
   # 2026-10-25 lane menu merge: the lane switches K9OneLaneHold / K9LaneCenter are K9LaneAssist (+ K9LaneCenterGain) before it
-  assert len(exp) == 1 and exp[0]["params"][-5:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]
+  # 2026-10-28 K9CenterToFront is registered last in EXPERIMENTAL, right after K9MeterSeason (registration pin updated deliberately)
+  assert len(exp) == 1 and exp[0]["params"][-6:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9CenterToFront"]
   p = next(x for x in data["params"] if x["name"] == "K9ExtHud")
   assert (p["min"], p["max"], p["default"], p["control"]) == (-1, 1, -1, "select")
   assert all(len(p["options"][loc]) == 3 for loc in ("ko", "en", "zh"))

@@ -186,7 +186,11 @@ class CarInterface(CarInterfaceBase):
 
     # Common lateral control setup
 
-    ret.centerToFront = ret.wheelbase * 0.4
+    ctf = params.get_int("K9CenterToFront")  # x0.01 of the wheelbase, 40 = original 0.4 (실험중 메뉴; start value, live updates in selfdrive/controls/lib/k9_ctf.py)
+    if ctf != 40 and 30 <= ctf <= 80:
+      ret.centerToFront = ret.wheelbase * (ctf / 100.0)
+    else:
+      ret.centerToFront = ret.wheelbase * 0.4
     ret.steerActuatorDelay = 0.1
     ret.steerLimitTimer = 0.4
     if ret.flags & HyundaiFlags.ANGLE_CONTROL:

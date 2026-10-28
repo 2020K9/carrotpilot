@@ -51,6 +51,8 @@ class LateralPlanner:
     self.debug_mode = debug
 
     self.params = Params()
+    from openpilot.selfdrive.controls.lib.k9_ctf import LiveCenterToFront
+    self.k9_ctf = LiveCenterToFront.from_params(CP, self.params)  # K9CenterToFront live (read with the other params below)
 
     self.latDebugText = ""
     # lane_mode
@@ -86,6 +88,11 @@ class LateralPlanner:
     self.readParams -= 1
     if self.readParams <= 0:
       self.readParams = 10
+      k9_ctf = getattr(self, "k9_ctf", None)
+      if k9_ctf is not None and k9_ctf.enabled:
+        ctf = k9_ctf.check(self.params)
+        if ctf is not None:
+          self.factor1, self.factor2 = k9_ctf.planner_factors(ctf)
       self.useLaneLineSpeedApply = sm['carState'].useLaneLineSpeed
       self.pathOffset = float(self.params.get_int("PathOffset")) * 0.01
       self.lateralPathCost = self.params.get_float("LatMpcPathCost") * 0.01

@@ -165,6 +165,17 @@ def load_frozen_cc(commit, tmp_dir, tag):
     heads = [ln for ln in diff if ln.startswith("@@")]
     assert heads and all(ln.split("@@")[2].strip().startswith("def create_acc_control_scc2(") for ln in heads), canfd
     changed.remove(canfd)
+  # 2026-10-28 (K9CenterToFront, 실험중 메뉴): interface.py may change only the centerToFront assignment (lateral vehicle
+  # model; nothing in the longitudinal path under test reads CP.centerToFront). Any other changed line stops the frozen load.
+  iface = f"{HY}/interface.py"
+  if iface in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", iface], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln[1:].strip() for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    ok = ("ret.centerToFront = ret.wheelbase * 0.4", "ret.centerToFront = ret.wheelbase * (ctf / 100.0)",
+          "if ctf != 40 and 30 <= ctf <= 80:", "else:")
+    assert body and all(ln in ok or ln.startswith('ctf = params.get_int("K9CenterToFront")') for ln in body), iface
+    changed.remove(iface)
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
