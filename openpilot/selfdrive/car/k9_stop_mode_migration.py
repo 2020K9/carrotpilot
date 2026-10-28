@@ -40,19 +40,28 @@ table + the 1 s hold after the stop): the v12 original left the menu with its co
   picked by hand.
 DROP_V6 is idempotent (0 / 1 / 3 are fixed points and its only output 0 is one too), so unlike the swap it needs no
 pending marker: if a power loss interrupts it, the next start simply applies it again to the same stored value.
-A marker that is already STOP_MODE_VER means the value is on the new menu and is never touched again. The swap is the
-first rule that is not idempotent, so the pre-swap value is written into the marker (SWAP_PENDING_BASE + value) before
-the value itself is rewritten: whatever a power loss interrupts, the next start recomputes the same new value from the
-marker instead of swapping an already swapped value.
+2026-10-29 07:10 (the driver's order "3.v14제거후 4번을 3번으로"): the v14 original left the menu with its two page blocks and
+menu 4 (his table + the extra braking 1 s after the stop) moved into the free slot 3 (K9StopModeVer 7). Rule added:
+- K9StopModeVer 6 (the 2026-10-29 05:40 numbering): 4 -> 3 (the same method, the new number) and 3 (v14 original) -> 0
+  (base: that method is gone from the tree); 0 base, 1 his own stop table and 2 the improved table unchanged;
+- an older / absent marker first runs its own tables above, the 1 <-> 2 swap and the v12-original drop to land on the
+  K9StopModeVer 6 numbering, then this table.
+A marker that is already STOP_MODE_VER means the value is on the new menu and is never touched again. The swap and the
+07:10 move are the rules that are not idempotent (the move would drop the new 3 to 0 if it ran twice), so for each of
+them the pre-rule value is written into the marker (SWAP_PENDING_BASE + value, MOVE_PENDING_BASE + value) before the
+value itself is rewritten: whatever a power loss interrupts, the next start recomputes the same new value from the
+marker instead of applying the rule to an already rewritten value.
 """
 
 STOP_MODE_KEY = "K9StopMode"
 STOP_MODE_VER_KEY = "K9StopModeVer"
-STOP_MODE_VER = 6  # K9StopModeVer after this migration (5 = the 2026-10-29 04:48 numbering with 2 = v12 original,
-# 4 = the 2026-10-28 0-3 menu before the 1 <-> 2 swap, 3 = the 2026-10-25..27 menus up to 0-5,
-# 2 = the 2026-10-24 evening 0-3 menu, absent = the 0-6 menu or older)
-# old K9StopMode -> new (0 base, 1 v12 original, 2 v12k9, 3 v14 original). No opendbc import on purpose: manager_init must not
-# depend on the car code (test_k9_stop_v12.py / test_k9_stop_v14.py pin it against k9_creep.MENU).
+STOP_MODE_VER = 7  # K9StopModeVer after this migration (6 = the 2026-10-29 05:40 numbering with 3 = v14 original and
+# 4 = his table + the 1 s extra braking, 5 = the 04:48 numbering with 2 = v12 original, 4 = the 2026-10-28 0-3 menu
+# before the 1 <-> 2 swap, 3 = the 2026-10-25..27 menus up to 0-5, 2 = the 2026-10-24 evening 0-3 menu,
+# absent = the 0-6 menu or older)
+# old K9StopMode -> new (0 base, 1 v12 original, 2 v12k9, 3 v14 original - both originals have since left the menu).
+# No opendbc import on purpose: manager_init must not depend on the car code (test_k9_stop_v12.py pins it against
+# k9_creep.MENU).
 MENU_MIGRATION_V4 = {0: 0, 1: 1, 2: 2, 3: 0, 4: 0, 5: 0, 6: 0}  # from K9StopModeVer 3 (3 v13 / 4 C1 / 5 C1+ / 6 v13k9 -> 0)
 MENU_MIGRATION_V3 = {0: 0, 1: 2, 2: 2, 3: 2}  # from K9StopModeVer 2
 MENU_MIGRATION_FROM_V1 = {0: 0, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2}  # from no marker (the 0-6 menu)
@@ -63,6 +72,14 @@ SWAP_PENDING_BASE = 50  # K9StopModeVer 50 + v means "the swap is pending and th
 # 2026-10-29 05:40: the v12 original is off the menu, so a stored 2 becomes 0 (base). Applied after SWAP_V5. Idempotent
 # (every output is a fixed point of the table), so it needs no pending marker.
 DROP_V6 = {0: 0, 1: 1, 2: 0, 3: 3}  # from K9StopModeVer 5: 2 v12 original -> 0; 0 / 1 / 3 unchanged
+# 2026-10-29 07:10: the v14 original is off the menu and menu 4 moved into its slot. Applied after DROP_V6. NOT idempotent
+# (a second pass would take the new 3 to 0), so the pre-move value goes into the marker first.
+MOVE_V7 = {0: 0, 1: 1, 2: 2, 3: 0, 4: 3}  # from K9StopModeVer 6: 4 -> 3 (same method), 3 v14 original -> 0
+# 4 was a menu value on the K9StopModeVer 6 numbering only, so the 4 -> 3 entry applies to a marker-6 device alone: on any
+# older numbering a stored 4 was out of range, acted as 0 and is left exactly as stored (what the SWAP_V5 gate already does
+# for a marker 2 / 3 / 4 device). Otherwise a hand-written 4 would become a stop method nobody picked.
+MOVE_PENDING_BASE = 60  # K9StopModeVer 60 + v means "the move is pending and the pre-move K9StopMode value was v"
+# (0 <= v <= 4). Kept apart from SWAP_PENDING_BASE (50..53) so a marker always names exactly one pending rule.
 
 
 def migrate_k9_stop_mode(params) -> bool:
@@ -74,8 +91,13 @@ def migrate_k9_stop_mode(params) -> bool:
   if ver == STOP_MODE_VER:
     return False
   changed = False
-  pending = isinstance(ver, int) and not isinstance(ver, bool) and SWAP_PENDING_BASE <= ver <= SWAP_PENDING_BASE + 3
-  if not pending and ver != 5:  # ver 5 is already on the post-swap numbering: only DROP_V6 below is left
+  is_int = isinstance(ver, int) and not isinstance(ver, bool)
+  swap_pending = is_int and SWAP_PENDING_BASE <= ver <= SWAP_PENDING_BASE + 3
+  from_v6 = ver == 6  # only a marker-6 device ever had 4 as a menu value; ver is rewritten below
+  move_pending = is_int and MOVE_PENDING_BASE <= ver <= MOVE_PENDING_BASE + 4
+  if move_pending:  # only the 07:10 move is left; its pre-move value is in the marker
+    return _finish_move(params, ver, changed)
+  if not swap_pending and ver not in (5, 6):  # ver 5 / 6 are already on the post-swap numbering
     if ver != 4:  # first put the stored value on the K9StopModeVer 4 numbering (those tables repeat harmlessly)
       table = MENU_MIGRATION_V4 if ver == 3 else (MENU_MIGRATION_V3 if ver == 2 else MENU_MIGRATION_FROM_V1)
       try:
@@ -103,7 +125,7 @@ def migrate_k9_stop_mode(params) -> bool:
     except Exception:
       return changed  # marker not written: the next start redoes the same steps from the stored value
     ver = SWAP_PENDING_BASE + v4
-  if ver != 5:
+  if ver not in (5, 6):
     old = ver - SWAP_PENDING_BASE
     new = SWAP_V5[old]
     if new != old:
@@ -112,16 +134,44 @@ def migrate_k9_stop_mode(params) -> bool:
         changed = True
       except Exception:
         return changed  # the marker still says "swap pending": the next start finishes it
-  try:  # 2026-10-29 05:40: a stored 2 (v12 original) is now base. Idempotent, so no pending marker is needed.
-    v5 = params.get(STOP_MODE_KEY)
+  if ver != 6:
+    try:  # 2026-10-29 05:40: a stored 2 (v12 original) is now base. Idempotent, so no pending marker is needed.
+      v5 = params.get(STOP_MODE_KEY)
+    except Exception:
+      v5 = None  # unreadable: left as stored (acts as 0)
+    if isinstance(v5, int) and not isinstance(v5, bool) and v5 in DROP_V6 and DROP_V6[v5] != v5:
+      try:
+        params.put_int(STOP_MODE_KEY, DROP_V6[v5])
+        changed = True
+      except Exception:
+        return changed  # no marker written: the next start applies the same (idempotent) table again
+  try:  # 2026-10-29 07:10: a stored 4 becomes 3 and a stored 3 (v14 original) becomes 0
+    v6 = params.get(STOP_MODE_KEY)
   except Exception:
-    v5 = None  # unreadable: left as stored (acts as 0)
-  if isinstance(v5, int) and not isinstance(v5, bool) and v5 in DROP_V6 and DROP_V6[v5] != v5:
+    v6 = None  # unreadable: left as stored (acts as 0)
+  if not (isinstance(v6, int) and not isinstance(v6, bool) and v6 in MOVE_V7 and (from_v6 or v6 != 4)):
     try:
-      params.put_int(STOP_MODE_KEY, DROP_V6[v5])
+      params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)  # outside the table: it acted as 0 and still acts as 0
+    except Exception:
+      pass
+    return changed
+  try:
+    params.put_int(STOP_MODE_VER_KEY, MOVE_PENDING_BASE + v6)  # record the pre-move value before moving
+  except Exception:
+    return changed  # marker not written: the next start redoes the same steps from the stored value
+  return _finish_move(params, MOVE_PENDING_BASE + v6, changed)
+
+
+def _finish_move(params, ver, changed: bool) -> bool:
+  """Apply MOVE_V7 to the pre-move value recorded in the marker, then write STOP_MODE_VER. Never raises."""
+  old = ver - MOVE_PENDING_BASE
+  new = MOVE_V7[old]
+  if new != old:
+    try:
+      params.put_int(STOP_MODE_KEY, new)
       changed = True
     except Exception:
-      return changed  # no marker written: the next start applies the same (idempotent) table again
+      return changed  # the marker still says "move pending": the next start finishes it
   try:
     params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)
   except Exception:

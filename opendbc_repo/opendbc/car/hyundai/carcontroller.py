@@ -7,7 +7,7 @@ from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, common_f
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.carstate import CarState
-from opendbc.car.hyundai.k9_creep import K9Creep, MENU as K9_CREEP_MENU, V14_ORIG_MENU, k9_creep_applies, read_long_accel
+from opendbc.car.hyundai.k9_creep import K9Creep, MENU as K9_CREEP_MENU, k9_creep_applies, read_long_accel
 from opendbc.car.hyundai.k9_hard_brake import K9HardBrake
 from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
@@ -196,16 +196,15 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
-    # K9StopMode single selector, read live every 0.5 s (2026-10-25): 0 = base braking, 1 / 2 / 4 = K9Creep kinds 13 / 14 / 15
-    # (k9_creep.MENU: bono1739 원본2, 끝 구간 개선, 원본2 + 선 뒤 1초 잠금), 3 = v14 original (2026-10-28: the creep_fix v14 page
-    # code unchanged, the `if self.k9_v14_orig` / `if v14_orig` blocks; it replaced the v13 original of 2026-10-26);
-    # other values act as 0. The v12 original left the menu with its two page blocks on 2026-10-29 05:40 (the driver's order).
+    # K9StopMode single selector, read live every 0.5 s (2026-10-25): 0 = base braking, 1 / 2 / 3 = K9Creep kinds 13 / 14 / 15
+    # (k9_creep.MENU: bono1739 원본2, 끝 구간 개선, 원본2 + 선 뒤 1초 잠금); other values act as 0. The v12 original left the
+    # menu with its two page blocks on 2026-10-29 05:40 and the v14 original the same way on 07:10 (the driver's orders), so
+    # no creep_fix page code is pasted here any more and kind 15 moved from menu 4 to menu 3.
     # Stored values of older menus are migrated once at manager start (k9_stop_mode_migration.py).
     # See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
     self.k9_creep_mode = 0
     self.k9_creep = None
-    self.k9_v14_orig = False  # K9StopMode 3
     # K9 hard-brake ease-off for a closing lead (k9_hard_brake.py), every K9StopMode value: JerkUpperLimit 0.5 only
     self.k9_hard_brake = K9HardBrake() if self.k9_creep_applies else None
     self.speedCameraHapticEndFrame = 0
@@ -318,14 +317,10 @@ class CarController(CarControllerBase):
           mode = params.get_int("K9StopMode")
         except (TypeError, ValueError, OverflowError):
           mode = 0
-        mode = mode if (mode in K9_CREEP_MENU or mode == V14_ORIG_MENU) else 0  # 5+, negative, NaN, non-int: 0
+        mode = mode if mode in K9_CREEP_MENU else 0  # 4+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(K9_CREEP_MENU[mode]) if mode in K9_CREEP_MENU else None
-          self.k9_v14_orig = mode == V14_ORIG_MENU and mode not in K9_CREEP_MENU
-          self.stop_req_latched, self.standstill_count = False, 0  # K9StopMode 3 page state starts fresh too
-          self.whl_standstill_count, self.low_v_crawl_count, self.stop_hold_count = 0, 0, 0  # K9StopMode 3 (v14) only
-          self.__dict__.pop("accel_feather_last", None)
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -528,7 +523,7 @@ class CarController(CarControllerBase):
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
         lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
-      # K9StopMode 1 / 2 / 4: K9Creep kinds 13 / 14 / 15 (v12k9 based); changes accel AND StopReq timing.
+      # K9StopMode 1 / 2 / 3: K9Creep kinds 13 / 14 / 15 (v12k9 based); changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -675,69 +670,10 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_mdps12(self.packer, self.frame, CS.mdps12))
 
       casper_ev = self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV
-      if self.k9_v14_orig:  # K9StopMode 3: creep_fix v14 page code [변경 1] below, unchanged (one indent deeper)
-        if self.CP.openpilotLongitudinalControl:
-          lon_ac = float(CS.cp.vl["ESP12"]["LONG_ACCEL"]) if (CS.cp is not None and "ESP12" in CS.cp.vl and "LONG_ACCEL" in CS.cp.vl["ESP12"]) else float(CS.out.aEgo)
-          eff_ac = float(min(lon_ac, CS.out.aEgo + 0.03))
-          whl_standstill = bool(CS.cp is not None and "WHL_SPD11" in CS.cp.vl and max(CS.cp.vl["WHL_SPD11"]["WHL_SPD_FL"], CS.cp.vl["WHL_SPD11"]["WHL_SPD_FR"], CS.cp.vl["WHL_SPD11"]["WHL_SPD_RL"], CS.cp.vl["WHL_SPD11"]["WHL_SPD_RR"]) < 0.1)
-          self.whl_standstill_count = getattr(self, "whl_standstill_count", 0) + 1 if whl_standstill else 0
-          if stopping:
-            esp_standstill = bool(CS.cp is not None and "TCS13" in CS.cp.vl and CS.cp.vl["TCS13"]["StandStill"] == 1)
-            raw_standstill = bool(esp_standstill or CS.out.vEgoRaw < 0.05 or CS.out.vEgo < 0.05)
-            self.standstill_count = getattr(self, "standstill_count", 0) + 1 if raw_standstill else 0
-            real_standstill = bool(self.standstill_count >= 12 or self.whl_standstill_count >= 28)
-            if real_standstill or actuators.aTarget <= -1.0 or (CS.out.vEgo > 0.14 and eff_ac > 0.04) or CS.out.aEgo > 0.06:
-              self.stop_req_latched = True
-            if not getattr(self, "stop_req_latched", False):
-              stopping = False
-              self.stop_hold_count = 0
-              self.low_v_crawl_count = getattr(self, "low_v_crawl_count", 0) + 1 if (CS.out.vEgo < 0.28 and not raw_standstill and not whl_standstill) else 0
-              crawl_guard = float(np.clip((self.low_v_crawl_count - 120) * 0.0020, 0.0, 0.22))
-              stop_feather = float(np.interp(CS.out.vEgo, [0.05, 0.14, 0.20, 0.28, 0.42], [-0.28, -0.29, -0.34, -0.39, -0.43]) - crawl_guard)
-              min_decel = float(np.interp(CS.out.vEgo, [0.06, 0.14, 0.25, 0.42], [-0.04, -0.08, -0.14, -0.20]))
-              a_boost = float(np.interp(eff_ac - min_decel, [0.02, 0.16], [0.0, -0.10]))
-              target_accel = float(stop_feather + a_boost)
-              prev_accel = float(getattr(self, "accel_feather_last", accel))
-              down_step = 0.005 if ((CS.out.vEgo > 0.14 and eff_ac > min_decel + 0.04) or prev_accel > -0.28 or crawl_guard > 0.0) else 0.0
-              up_step = float(np.interp(eff_ac - min_decel, [-0.06, 0.04], [0.0038, 0.0015])) if CS.out.vEgo > 0.12 else 0.0035
-              accel = float(np.clip(target_accel, prev_accel - down_step, prev_accel + up_step))
-              self.accel_feather_last = float(accel)
-            else:
-              self.stop_hold_count = getattr(self, "stop_hold_count", 0) + 1
-              prev_accel = float(getattr(self, "accel_feather_last", accel))
-              hold_step = 0.0 if self.stop_hold_count <= 25 else 0.0018
-              accel = float(max(min(accel, -0.50), prev_accel - hold_step)) if actuators.aTarget > -1.0 else float(min(accel, -0.50))
-              self.accel_feather_last = float(accel)
-          else:
-            self.stop_req_latched = False
-            self.standstill_count = 0
-            self.stop_hold_count = 0
-            self.low_v_crawl_count = 0
-            if actuators.longControlState == LongCtrlState.pid and CS.out.vEgo < 1.5 and actuators.aTarget < -0.05:
-              if actuators.aTarget > -1.05 and accel < actuators.aTarget - 0.06:
-                blend = float(np.interp(CS.out.vEgo, [0.50, 1.45], [0.80, 0.0]))
-                accel = float(accel * (1.0 - blend) + (actuators.aTarget - 0.06) * blend)
-              creep_comp = float(np.interp(CS.out.vEgo, [0.14, 0.28, 0.50, 0.92, 1.45], [-0.17, -0.22, -0.22, -0.18, 0.0]))
-              fade_by_target = float(np.interp(actuators.aTarget, [-0.20, -0.05], [1.0, 0.0]))
-              fade_by_accel = float(np.interp(accel, [-0.52, -0.26], [0.0, 1.0]))
-              accel = float(np.clip(accel + creep_comp * fade_by_target * fade_by_accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
-              prev_accel = float(getattr(self, "accel_feather_last", accel))
-              if actuators.aTarget > -1.05:
-                hyd_env = float(np.interp(CS.out.vEgo, [0.14, 0.25, 0.42, 0.65, 0.92, 1.15, 1.45], [-0.29, -0.37, -0.43, -0.48, -0.53, -0.58, -0.72]))
-                min_env_ac = -0.10 if CS.out.vEgo > 0.55 else -0.15
-                env_weight = float(np.interp(CS.out.aEgo, [-0.24, -0.10], [1.0, 0.0]) * np.interp(eff_ac, [min_env_ac - 0.12, min_env_ac], [1.0, 0.0]))
-                accel = float(accel * (1.0 - env_weight) + max(accel, hyd_env) * env_weight)
-                in_handoff = bool(0.55 < CS.out.vEgo < 1.15 and CS.out.aEgo < -0.14 and prev_accel <= -0.44)
-                down_lim = 0.0 if (in_handoff or eff_ac < min(actuators.aTarget - 0.04, -0.36)) else 0.004
-                base_up_lim = float(np.interp(eff_ac - actuators.aTarget, [-0.05, 0.12], [0.0038, 0.0022])) if CS.out.vEgo > 0.52 else 0.0038
-                up_lim = max(base_up_lim, 0.0110) if (env_weight > 0.5 and prev_accel < hyd_env - 0.01) else base_up_lim
-                accel = float(np.clip(accel, prev_accel - down_lim, prev_accel + up_lim))
-            self.accel_feather_last = float(accel)
       if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:
         self.hyundai_jerk.make_jerk(self.CP, CS, accel, actuators, hud_control,
                                     creep=self.k9_creep is not None and self.k9_creep.active, creep_obj=self.k9_creep,
-                                    jerk_u_cap=None if self.k9_hard_brake is None else self.k9_hard_brake.jerk_u_cap(),
-                                    v14_orig=self.k9_v14_orig)
+                                    jerk_u_cap=None if self.k9_hard_brake is None else self.k9_hard_brake.jerk_u_cap())
         self.hyundai_jerk.check_carrot_cruise(CC, CS, hud_control, stopping, accel, actuators.aTarget)
         #jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
         use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
@@ -981,7 +917,7 @@ class HyundaiJerk:
     if self.carrot_cruise == 0:
       self.carrot_cruise_accel = CS.out.aEgo
 
-  def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None, jerk_u_cap=None, v14_orig=False):
+  def make_jerk(self, CP, CS, accel, actuators, hud_control, creep=False, creep_obj=None, jerk_u_cap=None):
     canfd = bool(CP.flags & HyundaiFlags.CANFD)
     cb_prev = self.cb_upper  # passed to K9Creep.bands() (unused there since the old light band is gone)
     cb_prev_lower = self.cb_lower  # likewise
@@ -1036,22 +972,10 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-        if v14_orig:  # K9StopMode 3: creep_fix v14 page code [변경 2] below, unchanged (one indent deeper; it replaces the jerk_l line and the band)
-          decel_boost = float(np.interp(-accel, [0.25, 0.80, 1.80, 2.80], [0.0, 0.6, 2.0, 4.0]) * np.interp(CS.out.vEgo, [1.10, 1.45], [0.0, 1.0]))
-          self.jerk_l = min(max(1.0, -self.jerk * 4.0) + decel_boost, jerk_max_l)
-          if CS.out.vEgo < 1.45:
-            self.jerk_u = max(self.jerk_u, float(np.interp(CS.out.vEgo, [0.05, 0.08, 0.14, 0.38, 0.65, 1.10, 1.45], [0.7, 0.9, 1.8, 1.8, 1.5, 1.5, 0.9])))
-            dc_active = bool(CS.cp is not None and "TCS13" in CS.cp.vl and CS.cp.vl["TCS13"]["DCEnable"] == 1)
-            if dc_active and 0.50 < CS.out.vEgo < 1.10 and actuators.aTarget > -0.95 and CS.out.aEgo < -0.10:
-              self.jerk_l = float(np.interp(CS.out.vEgo, [0.50, 0.65, 0.95, 1.10], [1.0, 0.7, 0.7, 1.0]))
-            else:
-              self.jerk_l = max(self.jerk_l, float(np.interp(CS.out.vEgo, [0.65, 0.85, 1.00, 1.15], [1.0, 1.2, 1.2, 1.0])))
-          self.cb_upper = 0.0
-          self.cb_lower = 0.0
-        if creep and creep_obj is not None:  # K9StopMode 1 / 2 / 4 (K9Creep) and applied this frame only
+        if creep and creep_obj is not None:  # K9StopMode 1 / 2 / 3 (K9Creep) and applied this frame only
           self.jerk_u, self.cb_upper, self.cb_lower = creep_obj.bands(self.jerk_u, CS.out.vEgo, self.cb_upper,
                                                                       self.cb_lower, cb_prev, cb_prev_lower)
-          self.jerk_l = creep_obj.jerk_l_floor(self.jerk_l, CS.out.vEgo)  # K9StopMode 1 / 2 / 4 only; v9 reference unchanged
+          self.jerk_l = creep_obj.jerk_l_floor(self.jerk_l, CS.out.vEgo)  # K9StopMode 1 / 2 / 3 only; v9 reference unchanged
         elif creep:  # caller without the object (tests): v9 band
           self.jerk_u, self.cb_upper, self.cb_lower = K9Creep.jerk_bands(self.jerk_u, CS.out.vEgo)
 

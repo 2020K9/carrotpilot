@@ -12,25 +12,26 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   downgrade / roll-rescue safeties (S1-S6, from 594e8fef9). An improved version, NOT his stop as recorded, so its name
   never says 원본. It took the slot of 2 v12 original, which left the menu with its code on 2026-10-29 05:40 (the driver
   "지금 2번인 v12 원본은 메뉴에서 빼라"); the v12 page code is no longer in the tree;
-- 3 = v14 original (2026-10-28, the driver's order 01:06 "원본 그대로 푸쉬해라 v14"): the creep_fix v14 page code, unchanged,
-  pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v14_orig:` / `if v14_orig:` (V14_ORIG_MENU below;
-  test_k9_stop_v14.py pins it line by line against the page). Not a K9Creep kind. It replaced 3 v13 original (2026-10-26);
-  4 C1 / 5 C1+ (2026-10-27, kinds 9 / 10) are removed with their code (the driver's orders 2026-10-27 19:48 / 19:51);
-- 4 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; 2026-10-29 05:40, the driver "4번에다가 내가 아까 말한시간로그에
+- 3 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; 2026-10-29 05:40, the driver "4번에다가 내가 아까 말한시간로그에
   완전정차후1초뒤 브레이크 좀더 세게 밟으란거잔아"): kind 13 exactly, except that after the stop the standstill hold reaches
   the first B17O_HOLD2_T (1.0 s) of standstill is kind 13 bit for bit (the latch ramp toward LATCH_ACCEL), and only after
   that second does the request go beyond LATCH_ACCEL, ramping to B17O_HOLD2_ACCEL while the car keeps standing. Never a
-  weaker request than kind 13 on any frame; rolling again resets the second, so it is back to kind 13 at once.
-Any other value (5 or more, negative, unreadable) acts as 0. The modes never stack.
+  weaker request than kind 13 on any frame; rolling again resets the second, so it is back to kind 13 at once. It was
+  menu 4 until 2026-10-29 07:10, when the v14 original (menu 3 since 2026-10-28, the creep_fix v14 page code pasted into
+  carcontroller.py; it had replaced 3 v13 original of 2026-10-26) left the menu with its two page blocks and this slot
+  moved up (the driver "3.v14제거후 4번을 3번으로"). 4 C1 / 5 C1+ (2026-10-27, kinds 9 / 10) went the same way
+  on 2026-10-28 (the driver's orders 2026-10-27 19:48 / 19:51).
+Any other value (4 or more, negative, unreadable) acts as 0. The modes never stack.
 The 2026-10-24 menu (1 v10, 2 v10 + light shudder fix, 3 v11) is deleted with its code (kinds 2 v10, 6 v10 + light shudder
 fix and 7 v11 are gone). Stored values are migrated once at manager start (openpilot/selfdrive/car/k9_stop_mode_migration.py,
-marker K9StopModeVer 6 since 2026-10-29 05:40, 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
-K9StopModeVer 3 (the 0-5 menu) 3 v13 / 4 C1 / 5 C1+ / 6 -> 0, never to the new 3 v14; from K9StopModeVer 4 the 04:48
-1 <-> 2 slot swap; from K9StopModeVer 5 a stored 2 (v12 original, now off the menu) -> 0, 0 / 1 / 3 unchanged. Earlier
-menu history is in git log.
+marker K9StopModeVer 7 since 2026-10-29 07:10, 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
+K9StopModeVer 3 (the 0-5 menu) 3 v13 / 4 C1 / 5 C1+ / 6 -> 0, never to the then-new 3 v14; from K9StopModeVer 4 the 04:48
+1 <-> 2 slot swap; from K9StopModeVer 5 a stored 2 (v12 original, off the menu) -> 0, 0 / 1 / 3 unchanged; from
+K9StopModeVer 6 a stored 4 -> 3 (kind 15 moved up) and a stored 3 (v14 original, off the menu) -> 0, 0 / 1 / 2 unchanged.
+Earlier menu history is in git log.
 Throughout this module "mode N" / "kind N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (not on the menu; kept
 only as the test reference of "never brake less than v9"), kind 8 = v12k9 (not on the menu either since 2026-10-29: it is
-the base of kinds 13 / 14 / 15, menus 1 / 2 / 4).
+the base of kinds 13 / 14 / 15, menus 1 / 2 / 3).
 
 Sources: https://leegrt.org/oppo/creep_fix/ (selectMode carcontroller.py code and changelog, written for the Kia Niro EV CAN,
 VEgoStopping 15). No license is stated on that page; kind 1 is an independent re-implementation of the v9 algorithm and its
@@ -139,16 +140,16 @@ from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
 V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 1 (menu 2 until 2026-10-29 04:48)
 V12K9OS = 14  # kind 14 (2026-10-29 05:40) "bono1739 끝 구간 개선": kind 13 + the S1-S6 safeties / end window (594e8fef9); menu 2
-V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp; menu 4
+V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp; menu 3 (menu 4 until 07:10)
 KINDS = (V9, V12K9, V12K9O, V12K9OS, V12K9OH)
-V14_ORIG_MENU = 3  # K9StopMode 3 (2026-10-28): the creep_fix v14 page code unchanged, in carcontroller.py (no K9Creep)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (not a kind), 2 v12k9; 2026-10-26: 3 v13 original;
-# 2026-10-28: 3 v14 original instead (V14_ORIG_MENU, not a kind); 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*),
+# 2026-10-28: 3 v14 original instead (not a kind); 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*),
 # kind 8 itself unchanged; 00:50 "bono1739 원본2": B17O_HOLD_T 0; 04:48 the 1 <-> 2 slot swap; 05:40 the v12 original left
-# the menu, 2 = kind 14 (his table improved) and 4 = kind 15 (kind 13 + the 1 s hold ramp))
-MENU = {1: V12K9O, 2: V12K9OS, 4: V12K9OH}
+# the menu, 2 = kind 14 (his table improved) and 4 = kind 15 (kind 13 + the 1 s hold ramp); 07:10 the v14 original left the
+# menu with its page code and kind 15 moved 4 -> 3, so every menu value is a K9Creep kind now)
+MENU = {1: V12K9O, 2: V12K9OS, 3: V12K9OH}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
-MODES = tuple(sorted((V14_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
+MODES = tuple(sorted(MENU))  # K9StopMode values that change braking; anything else acts as 0
 
 # v9 profile (creep_fix source constants)
 FEATHER_BP, FEATHER_V = [0.05, 0.14, 0.25, 0.42], [-0.31, -0.35, -0.42, -0.52]

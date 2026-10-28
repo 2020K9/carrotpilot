@@ -66,8 +66,9 @@ PREV_MENU = "1d0961da"  # K9StopMode 0 base, 1 v9, 2 v10, 3 v9 + shudder fix
 PREV_OF_NEW = {None: None, 0: 0}  # 1d0961da K9StopMode of the new menu value (new 1 / 2 are new)
 ALL = (V9,)
 ALL_KINDS = (V9,)
-INVALID = (5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))  # 3 = v14 original since 2026-10-28;
-# 2026-10-29 05:40: 4 is a menu value (kind 15, 원본2 + the 1 s hold), so it left this list
+INVALID = (4, 5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))  # 3 = v14 original since 2026-10-28;
+# 2026-10-29 05:40: 4 is a menu value (kind 15, 원본2 + the 1 s hold), so it left this list; 07:10: the v14 original
+# left the menu with its code and kind 15 moved to 3, so 4 is back here
 
 
 def upd(c, **kw):
@@ -142,11 +143,12 @@ def test_constants_match_source_and_mode2():
   assert (kc.CREEP_BP, kc.CREEP_V) == ([0.25, 0.55, 1.0, 1.6], [-0.26, -0.26, -0.20, 0.0])
   assert kc.DOWN_EFF_AC == -0.02
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
-  # 2026-10-29 05:40: the v12 original left the menu with its code, so V12_ORIG_MENU is gone and 4 is a menu value
-  assert kc.MODES == (1, 2, 3, 4) and (V9, V12K9) == (1, 8) and not hasattr(kc, "V12_ORIG_MENU") and kc.V14_ORIG_MENU == 3
-  assert not hasattr(kc, "V13_ORIG_MENU")
+  # 2026-10-29 05:40: the v12 original left the menu with its code, so V12_ORIG_MENU is gone and 4 is a menu value;
+  # 07:10 the v14 original left the same way, so V14_ORIG_MENU is gone too and kind 15 moved from menu 4 to menu 3
+  assert kc.MODES == (1, 2, 3) and (V9, V12K9) == (1, 8) and not hasattr(kc, "V12_ORIG_MENU")
+  assert not hasattr(kc, "V13_ORIG_MENU") and not hasattr(kc, "V14_ORIG_MENU")
   # 2026-10-29 bono1739 원본: menu 2 = kind 13 (kind 8 + the driver's own 17:39:14 stop table); kind 8 stays a kind (its own pins)
-  assert kc.MENU == {1: V12K9O, 2: kc.V12K9OS, 4: kc.V12K9OH}  # 1 원본2 (04:48), 2 끝 구간 개선 / 4 선 뒤 1초 잠금 (05:40)
+  assert kc.MENU == {1: V12K9O, 2: kc.V12K9OS, 3: kc.V12K9OH}  # 1 원본2 (04:48), 2 끝 구간 개선 (05:40) / 3 선 뒤 1초 잠금 (07:10)
   assert kc.KINDS == ALL_KINDS + (V12K9, V12K9O, kc.V12K9OS, kc.V12K9OH) and (kc.V12K9OS, kc.V12K9OH) == (14, 15)
   assert not any(hasattr(K9Creep(m), "shudder_fix") for m in kc.KINDS)
   for bad in (0, 2, 3, 4, 5, 6, 7, 9, 12, 16, -1):  # kinds 14 / 15 are real since 2026-10-29 05:40
@@ -286,8 +288,9 @@ def test_new_1_2_identical_can_to_1d0961da_2_3(monkeypatch, prev_cc, mode, finge
 def test_controller_never_writes_the_menu_value(monkeypatch):
   # rewritten 2026-10-24 evening (was test_stored_values_are_not_migrated): the CarController maps the stored value through
   # MENU and never writes it; the one-time stored-value migration runs in manager_init (test_k9_stop_menu_trim.py).
-  # 2026-10-29 05:40: 1 = kind 13 (bono1739 원본2), 2 = kind 14 (끝 구간 개선), 3 = v14 original (no K9Creep), 4 = kind 15
-  for stored, kind in ((1, V12K9O), (2, kc.V12K9OS), (4, kc.V12K9OH), (3, None)):
+  # 2026-10-29 07:10: 1 = kind 13 (bono1739 원본2), 2 = kind 14 (끝 구간 개선), 3 = kind 15 (원본2 + the 1 s hold); the v14
+  # original, the last menu value without a K9Creep object, left the menu with its page code
+  for stored, kind in ((1, V12K9O), (2, kc.V12K9OS), (3, kc.V12K9OH)):
     r = rig(monkeypatch, stored)
     r.step(-0.5, LCS.pid, 3.0)
     assert r.cc.k9_creep_mode == stored and (r.cc.k9_creep is None if kind is None else r.cc.k9_creep.mode == kind)
@@ -389,22 +392,24 @@ def test_live_mode_switch_within_half_second(monkeypatch):
   # rewritten 2026-10-25: the light-band ramp this pinned belonged to the deleted menu 2; now 2 (v12 original) <-> 1
   # (his own stop table, kind 13) after the 2026-10-29 04:48 slot swap; since 05:40 the page-code menu is 3 (v14
   # original), the v12 original having left the menu, so the "no K9Creep, band 0" side of the switch is menu 3
-  r = rig(monkeypatch, 3)
+  # 2026-10-29 07:10: the v14 original left the menu with its page code as well, so no menu value runs pasted page code
+  # any more and the "no K9Creep" side of the switch is menu 0 (base braking). The band-0 half of the pin went with it.
+  r = rig(monkeypatch, 0)
   for _ in range(60):
     r.step(-0.5, LCS.pid, 3.5, a_target=-0.5)
   for _ in range(60):
     r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-  assert r.cc.k9_v14_orig and r.cc.k9_creep is None and r.cc.hyundai_jerk.cb_upper == 0.0
+  assert r.cc.k9_creep is None
   r.params.values["K9StopMode"] = 1
   seen = None
   for i in range(80):
     acc, _ = r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
     if seen is None and r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9O:  # menu 1 = kind 13 since 2026-10-29 04:48
       seen = i
-  assert seen is not None and seen <= 50 and not r.cc.k9_v14_orig  # read every 0.5 s
+  assert seen is not None and seen <= 50  # read every 0.5 s
   # pin updated 2026-10-25 brake_v12k9_live_fix: menu 2 now sends the original ComfortBand below 2.5 m/s (was 0)
   assert r.cc.hyundai_jerk.cb_upper == pytest.approx(float(np.clip(0.9 + 0.2 * acc, 0, 1.2)))
-  for value in (5, 7, 8, float("nan"), -1):  # 4 is a menu value since 2026-10-29 05:40 (kind 15)
+  for value in (4, 5, 7, 8, float("nan"), -1):  # 4 is back off the menu since 2026-10-29 07:10 (kind 15 moved to 3)
     for back in (1, 2):
       r.params.values["K9StopMode"] = back
       for _ in range(51):
@@ -413,7 +418,7 @@ def test_live_mode_switch_within_half_second(monkeypatch):
       r.params.values["K9StopMode"] = value
       for _ in range(51):
         r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
-      assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0 and not r.cc.k9_v14_orig
+      assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
 
 
 def test_live_mode_change_resets(monkeypatch):
@@ -423,23 +428,26 @@ def test_live_mode_change_resets(monkeypatch):
   for i in range(60):
     r.step(-1.2, LCS.stopping, max(0.5 - 0.005 * i, 0.1))
   assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == V12K9O and r.cc.k9_creep.last is not None  # kind 13 since 2026-10-29
-  r.params.values["K9StopMode"] = 3  # the v14 original: the page-code menu left after the v12 original (2026-10-29 05:40)
+  # 2026-10-29 07:10: the v14 original left the menu with its page code, so the mid-step of this pin is menu 3 (kind 15)
+  # and the controller page state it used to check (accel_feather_last / stop_req_latched) no longer exists. A mode change
+  # still has to build a fresh K9Creep object, which is what is checked instead.
+  first = r.cc.k9_creep
+  r.params.values["K9StopMode"] = 3  # kind 15 (원본2 + the 1 s hold): menu 3 since 07:10, menu 4 before
   for _ in range(60):
     r.step(-1.2, LCS.stopping, 0.1)
-  assert r.cc.k9_creep is None and r.cc.k9_v14_orig and hasattr(r.cc, "accel_feather_last")
+  assert r.cc.k9_creep is not None and r.cc.k9_creep.mode == kc.V12K9OH and r.cc.k9_creep is not first
   r.params.values["K9StopMode"] = 0
   out = [r.step(-1.2, LCS.stopping, 0.1) for _ in range(60)]
-  assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0 and not r.cc.k9_v14_orig
-  assert not hasattr(r.cc, "accel_feather_last") and r.cc.stop_req_latched is False  # the page state starts fresh
+  assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
   sent = [o for o in out[-10:] if o[1] is not None]
   assert sent and all(o[1]["StopReq"] == 1 and o[0] == pytest.approx(-1.2) for o in sent)
 
 
-# --- 4 = menu 1 + the extra braking 1 s after the stop (kind 15) ------------------------------------------------------
+# --- 3 = menu 1 + the extra braking 1 s after the stop (kind 15; menu 4 until 2026-10-29 07:10) ------------------------------------------------------
 def _stop_and_stand(monkeypatch, mode, frames=400):
   """Roll to a stop in the stopping state and keep standing; returns the sent accel of every standing frame."""
   r = rig(monkeypatch, mode)
-  for i in range(120):  # approach below B17O_SPEED so the driver's table runs, as in menus 1 / 4
+  for i in range(120):  # approach below B17O_SPEED so the driver's table runs, as in menus 1 / 3
     r.step(-0.5, LCS.stopping, max(2.5 - 0.025 * i, 0.06), a_target=-0.4, a_ego=-0.4)
   out = []
   for _ in range(frames):
@@ -448,37 +456,37 @@ def _stop_and_stand(monkeypatch, mode, frames=400):
   return r, out
 
 
-def test_menu4_is_menu1_for_one_second_then_presses_harder(monkeypatch):
+def test_menu3_is_menu1_for_one_second_then_presses_harder(monkeypatch):
   assert (kc.B17O_HOLD2_T, kc.B17O_HOLD2_ACCEL, kc.B17O_HOLD2_STEP) == (1.0, -1.00, 0.0060)
   _, one = _stop_and_stand(monkeypatch, 1)
   monkeypatch.undo()
-  _, four = _stop_and_stand(monkeypatch, 4)
+  _, three = _stop_and_stand(monkeypatch, 3)
   monkeypatch.undo()
   n = int(kc.B17O_HOLD2_T * 100.0)
-  assert one[:n] == four[:n]  # the first second after the stop is menu 1 bit for bit
-  assert all(b <= a + 1e-9 for a, b in zip(one, four))  # never weaker than menu 1 on any frame
+  assert one[:n] == three[:n]  # the first second after the stop is menu 1 bit for bit
+  assert all(b <= a + 1e-9 for a, b in zip(one, three))  # never weaker than menu 1 on any frame
   extra = abs(kc.B17O_HOLD2_ACCEL - kc.LATCH_ACCEL)
-  gain = one[-1] - four[-1]
+  gain = one[-1] - three[-1]
   # The realized extra can be less than |B17O_HOLD2_ACCEL - LATCH_ACCEL|: the existing zone clamp against the kind 8
   # reference (V12K9_ZONE_PRESS) limits how far past that reference any request may go, whatever asks for it. In this
   # sequence it settles 0.40 of the 0.50 asked for. The clamp is not touched here.
   assert 0.3 <= gain <= extra + 1e-6
-  reach = next(i for i, (a, b) in enumerate(zip(one, four)) if a - b >= gain - 1e-6)
+  reach = next(i for i, (a, b) in enumerate(zip(one, three)) if a - b >= gain - 1e-6)
   assert n < reach <= n + int(extra / kc.B17O_HOLD2_STEP) + 3  # and gets there on the B17O_HOLD2_STEP ramp
 
 
-def test_menu4_difference_is_exactly_the_one_constant(monkeypatch):
-  """B17O_HOLD2_ACCEL is the single number to turn: set it to the standstill hold and menu 4 is menu 1 again."""
+def test_menu3_difference_is_exactly_the_one_constant(monkeypatch):
+  """B17O_HOLD2_ACCEL is the single number to turn: set it to the standstill hold and menu 3 is menu 1 again."""
   _, one = _stop_and_stand(monkeypatch, 1)
   monkeypatch.undo()
   monkeypatch.setattr(kc, "B17O_HOLD2_ACCEL", kc.LATCH_ACCEL)
-  _, four = _stop_and_stand(monkeypatch, 4)
+  _, three = _stop_and_stand(monkeypatch, 3)
   monkeypatch.undo()
-  assert one == four
+  assert one == three
 
 
-def test_menu4_rolling_again_clears_the_second(monkeypatch):
-  r = rig(monkeypatch, 4)
+def test_menu3_rolling_again_clears_the_second(monkeypatch):
+  r = rig(monkeypatch, 3)
   for i in range(120):
     r.step(-0.5, LCS.stopping, max(2.5 - 0.025 * i, 0.06), a_target=-0.4, a_ego=-0.4)
   for _ in range(160):  # past B17O_HOLD2_T: the stronger hold is running
@@ -492,8 +500,8 @@ def test_menu4_rolling_again_clears_the_second(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", [1, 2])
-def test_menu4_extra_hold_runs_in_menu_4_only(monkeypatch, mode):
-  """Turning B17O_HOLD2_ACCEL changes nothing in menus 1 and 2: the extra hold is kind 15 only."""
+def test_menu3_extra_hold_runs_in_menu_3_only(monkeypatch, mode):
+  """Turning B17O_HOLD2_ACCEL changes nothing in menus 1 and 2: the extra hold is kind 15 (menu 3) only."""
   _, ref = _stop_and_stand(monkeypatch, mode, frames=300)
   monkeypatch.undo()
   monkeypatch.setattr(kc, "B17O_HOLD2_ACCEL", -2.5)
@@ -506,8 +514,8 @@ def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 4, 0, 1)  # max 4 since 2026-10-29 05:40 (kind 15)
-  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [5, 5, 5]
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 3, 0, 1)  # max 3 since 2026-10-29 07:10 (kind 15 = 3)
+  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [4, 4, 4]
   assert not any(p["name"] in ("K9CreepMode", "K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopMode", {PERSISTENT, INT, "0"}},' in keys and '{"K9StopModeVer", {PERSISTENT, INT}},' in keys

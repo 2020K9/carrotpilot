@@ -24,7 +24,9 @@ MENUS = (None, 0, 1, 2, 3, 4, 5)
 # 2026-10-28: 3 = v14 original instead (a stop method, this tree, cap off); 4 C1 / 5 C1+ of 2026-10-27 gone, 4 acts as 0.
 # 2026-10-29 05:40: 4 = kind 15 (a stop method, this tree, cap off) now that the v12 original left the menu, so 5 is the
 # value that stands for "other values act as 0".
-BASE_MENU = {None: None, 0: 0, 5: 0}
+# 2026-10-29 07:10: the v14 original left the menu with its code and kind 15 moved to 3, so 1 / 2 / 3 are the stop methods
+# (this tree, cap off) and both 4 and 5 stand for "other values act as 0" (badf1ea7 menu 0).
+BASE_MENU = {None: None, 0: 0, 4: 0, 5: 0}
 
 
 def base_and_new(monkeypatch, tmp_path, menu, tag):
