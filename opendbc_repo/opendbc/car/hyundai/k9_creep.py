@@ -7,7 +7,8 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   code itself, pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v12_orig:` / `if v12_orig:`
   (V12_ORIG_MENU below; test_k9_stop_v12.py pins it line by line against the page);
 - 2 = v12k9: the same page v12 fitted to the K9 the way v11 was (kind V12K9 below); since 2026-10-29 kind 13 V12K9O
-  "bono1739 원본 (10/27 17:39 대감님 직접 정차 그대로)": kind 8 with the stop end replaced by the driver's own stop table (B17O_*);
+  "bono1739 원본2" (2026-10-29 00:50; 원본 a59530057 = 10/27 17:39 대감님 직접 정차 그대로): kind 8 with the stop end replaced by
+  the driver's own stop table (B17O_*) up to the stop, then the kind 8 standstill latch at once (원본2: no 1.6 s logged pressure);
 - 3 = v14 original (2026-10-28, the driver's order 01:06 "원본 그대로 푸쉬해라 v14"): the creep_fix v14 page code, unchanged,
   pasted into carcontroller.py / HyundaiJerk.make_jerk behind `if self.k9_v14_orig:` / `if v14_orig:` (V14_ORIG_MENU below;
   test_k9_stop_v14.py pins it line by line against the page). Not a K9Creep kind. It replaced 3 v13 original (2026-10-26);
@@ -125,13 +126,13 @@ import numpy as np
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
-V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본 (10/27 17:39 대감님 직접 정차 그대로)": kind 8 + the B17O_* stop end; menu 2
+V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 2
 KINDS = (V9, V12K9, V12K9O)
 V12_ORIG_MENU = 1  # K9StopMode 1: the creep_fix v12 page code unchanged, in carcontroller.py (no K9Creep)
 V14_ORIG_MENU = 3  # K9StopMode 3 (2026-10-28): the creep_fix v14 page code unchanged, in carcontroller.py (no K9Creep)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (V12_ORIG_MENU, not a kind), 2 v12k9;
 # 2026-10-26: 3 v13 original; 2026-10-28: 3 v14 original instead (V14_ORIG_MENU, not a kind);
-# 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*), kind 8 itself unchanged)
+# 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*), kind 8 itself unchanged; 00:50 "bono1739 원본2": B17O_HOLD_T 0)
 MENU = {2: V12K9O}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted((V12_ORIG_MENU, V14_ORIG_MENU, *MENU)))  # K9StopMode values that change braking; anything else acts as 0
@@ -256,7 +257,11 @@ V12K9_TRIM_SPEED, V12K9_TRIM_LEARN_SPEED = 3.0, 0.3  # m/s
 # Leaving the stopping state ends it.
 B17O_TAB_BP = [0.10, 0.20, 0.275, 0.35, 0.45, 0.575, 0.725, 0.90, 1.25, 1.75, 2.50]  # m/s: centres of the logged speed bins
 B17O_TAB_V = [0.080, 0.063, 0.148, 0.294, 0.464, 0.766, 0.933, 1.001, 0.971, 1.314, 1.371]  # m/s^2 decel (dec_la per bin)
-B17O_SPEED, B17O_HOLD_T = 3.0, 1.6  # m/s (top of the logged table), s
+# 원본2 (2026-10-29 00:50, the driver's order "이름에2붙여서 올려봐" after 원본 a59530057 rolled again 0.18 .. 0.37 m/s in the mock
+# during the 1.6 s logged pressure: his foot set the pressure, we only send a decel request): B17O_HOLD_T 0 = the kind 8
+# standstill latch (StopReq, hold ramp) on the first standstill frame; the B17O_POST_* table is kept but not reached.
+# Before the stop the table is 원본, unchanged.
+B17O_SPEED, B17O_HOLD_T = 3.0, 0.0  # m/s (top of the logged table), s (원본 a59530057: 1.6)
 # after the stop, as logged: his brake pressure (ESP12 CYL_PRES, bar, 0.05 s from the stop) times B17O_BAR (dec_la per bar over
 # this stop below 3 m/s, least squares through 0, lag 0) until B17O_HOLD_T, where he pressed to 10 bar (here: the latch)
 B17O_POST_T = [round(0.05 * i, 2) for i in range(32)]  # s since the stop: 0.00 .. 1.55
@@ -409,7 +414,7 @@ class K9Creep:
     if self.v12:
       self.eff_f = eff_ac if self.eff_f is None else self.eff_f + V12K9_STALL_ALPHA * (eff_ac - self.eff_f)
       stopping_in = stopping
-      o = self._b17o(a_target, stopping_in, v_ego, v_ego_raw, esp_standstill) if self.b17o else None
+      o = self._b17o(a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance) if self.b17o else None
       if o is not None:  # kind 13: the driver's stop table (kind 8 not run on this frame)
         self._last, self.end_out = o, o
         return o, False
@@ -541,12 +546,17 @@ class K9Creep:
     self._last = accel
     return accel, False
 
-  def _b17o(self, a_target, stopping_in, v_ego, v_ego_raw, esp_standstill):
+  def _b17o(self, a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance):
     """Kind 13 (menu 2): the accel to send from the driver's stop table, or None (kind 8 as before)."""
     if not stopping_in:
       self.b17o_on, self.b17o_k, self.b17o_plan = False, -1, False
       return None
     if self.latched:
+      self.b17o_on, self.b17o_plan = False, False
+      return None
+    # 원본2 (2026-10-29 00:50): kind 8's own rolling StopReq reasons are kept: an urgent plan or a lead at or within
+    # V12K9_LEAD_HARD_GAP hands the frame to kind 8 (which latches StopReq), as without the table
+    if a_target <= URGENT_TARGET or ((lead_visible or lead_distance != 0.0) and lead_distance <= V12K9_LEAD_HARD_GAP):
       self.b17o_on, self.b17o_plan = False, False
       return None
     if not self.b17o_on:
