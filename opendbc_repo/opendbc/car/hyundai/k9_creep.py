@@ -771,7 +771,7 @@ class K9Creep:
     self.end_n += 1 if v_ego < V12K9_END_TMAX_SPEED else 0
     self.end_fb = self.end_fb + 1 if (v_ego < V12K9_END_CRAWL_SPEED and self.end_ae > V12K9_END_CRAWL_AEGO) else 0
     soft = self.b17s and not self.b17o_k8 and not lead_seen  # kind 14 S7 / S8: no lead in this stop
-    go_v = B17O_SOFT_GO_V if (soft and self.b17o_soft) else V12K9_END_GO_SPEED  # S8
+    go_v = B17O_SOFT_GO_V if soft else V12K9_END_GO_SPEED  # S8 (kuk4: every kind 14 stop with no lead)
     if (self.end_fb >= V12K9_END_CRAWL_FRAMES or (self.end_n > V12K9_END_TMAX * 100.0 and v_ego > 0.02)
         or (a_target > V12K9_END_GO_TARGET and v_ego < go_v)):
       self.latched = True  # StopReq from the next frame (the band ramps out as on any latch)
