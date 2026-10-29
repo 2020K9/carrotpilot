@@ -499,6 +499,43 @@ def test_menu3_rolling_again_clears_the_second(monkeypatch):
   assert acc >= kc.LATCH_ACCEL - 1e-9  # back to the menu 1 hold at once
 
 
+def _stop_go_stop(monkeypatch, mode, gas, frames=400):
+  """Stop and stand 3 s, start again (the plan alone = an openpilot start with no pedal, so no interlock reset(); `gas`: the
+  driver's pedal for the first 0.2 s), drive at 3 m/s and stop again as _stop_and_stand. Returns the sent accel of the last
+  standing frame of the first stop and of every standing frame of the second stop."""
+  r = rig(monkeypatch, mode)
+  for i in range(120):
+    r.step(-0.5, LCS.stopping, max(2.5 - 0.025 * i, 0.06), a_target=-0.4, a_ego=-0.4)
+  for _ in range(300):
+    held, _ = r.step(-0.3, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0)
+  for i in range(300):  # the start: pid up to 3 m/s
+    r.step(0.5, LCS.pid, min(0.01 * i, 3.0), standstill=i == 0, a_target=0.5, a_ego=0.5, gas=gas and i < 20)
+  for _ in range(100):
+    r.step(0.0, LCS.pid, 3.0, a_target=0.0, a_ego=0.0)
+  for i in range(140):
+    r.step(-0.5, LCS.stopping, max(3.0 - 0.025 * i, 0.06), a_target=-0.4, a_ego=-0.4)
+  out = []
+  for _ in range(frames):
+    acc, _ = r.step(-0.3, LCS.stopping, 0.0, standstill=True, a_target=-0.3, a_ego=0.0)
+    out.append(acc)
+  return held, out
+
+
+@pytest.mark.parametrize("gas", [False, True])
+def test_menu3_next_stop_after_a_start_counts_its_second_again(monkeypatch, gas):
+  """2026-10-30 (m3hold2fix_1030): stop, 3 s standing, a start with no pedal (or with the gas pedal), 3 m/s, stop again: the
+  second stop is menu 1 bit for bit for its first B17O_HOLD2_T and only then presses harder, like the first one."""
+  held1, one = _stop_go_stop(monkeypatch, 1, gas)
+  monkeypatch.undo()
+  held3, three = _stop_go_stop(monkeypatch, 3, gas)
+  monkeypatch.undo()
+  assert held3 < held1 - 0.3  # the stronger hold of the first stop ran up to the start
+  n = int(kc.B17O_HOLD2_T * 100.0)
+  assert one[:n] == three[:n]  # the first second of the second stop is menu 1 bit for bit
+  assert all(b <= a + 1e-9 for a, b in zip(one, three, strict=True))  # never weaker than menu 1 on any frame
+  assert one[-1] - three[-1] >= 0.3  # then the stronger hold again
+
+
 @pytest.mark.parametrize("mode", [1, 2])
 def test_menu3_extra_hold_runs_in_menu_3_only(monkeypatch, mode):
   """Turning B17O_HOLD2_ACCEL changes nothing in menus 1 and 2: the extra hold is kind 15 (menu 3) only."""

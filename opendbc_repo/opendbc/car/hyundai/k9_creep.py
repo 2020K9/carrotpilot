@@ -640,6 +640,8 @@ class K9Creep:
     if not stopping:
       self.latched = False
       self.ss_count = 0
+      # kind 15: the stop is over (also a start with no pedal, which never reset()), so the next stop counts B17O_HOLD2_T from 0
+      self.hold2_k = 0
       if pid and v_ego < CREEP_BP[-1] and a_target < FADE_TARGET_BP[-1]:  # the K9 creep compensation
         comp = np.interp(v_ego, CREEP_BP, CREEP_V) * np.interp(a_target, FADE_TARGET_BP, FADE_TARGET_V)
         comp *= np.interp(accel, FADE_ACCEL_BP, FADE_ACCEL_V)
