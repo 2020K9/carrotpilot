@@ -282,9 +282,9 @@ SPEED_GEAR_W = 45.0
 SPEED_GEAR_H = 58.0
 SPEED_GEAR_CENTER_Y = SPEED_PANEL_Y + SPEED_PANEL_H - SPEED_GEAR_H * 0.5
 SPEED_GEAR_FONT_SIZE = 48.0
-# Model lane-line confidence (not accuracy) is centered under each turn arrow at one
-# shared height, below the gear badge the shifted left arrow sits over. A small opaque
-# box sized from the measured text keeps it readable over lane lines.
+# Model lane-line confidence (not accuracy) hugs the centre ego car, one label against each of its
+# sides at the car's own height. A small opaque box sized from the measured text keeps it readable
+# over the lane lines that run past the car there.
 # Default HUD only: briefly keep an inner detected lane line drawn through a short
 # confidence dip (below the parser's 0.4 visibility threshold) while its current
 # geometry stays valid and inside the road edges. Expires by monotonic render
@@ -294,10 +294,19 @@ LANE_CONFIDENCE_HOLD_PROBABILITY_MIN = 0.4
 LANE_CONFIDENCE_FONT_SIZE = 28.0
 LANE_CONFIDENCE_BOX_PAD_X = 4.0
 LANE_CONFIDENCE_BOX_H = LANE_CONFIDENCE_FONT_SIZE + 4.0
-LANE_CONFIDENCE_GAP_Y = 3.0
-LANE_CONFIDENCE_CENTER_Y = (
-    SPEED_GEAR_CENTER_Y + SPEED_GEAR_H * 0.5 + LANE_CONFIDENCE_GAP_Y + LANE_CONFIDENCE_BOX_H * 0.5
-)
+# 2026-10-29 18:12 (보노보노 "외부hud 차선% 가운대 내차 옆에 딱붙여서 나오게만들어"): the two labels left the turn-signal
+# arrows (x 760 / 1160, below the gear badge) and now sit against the centre ego-car sprite, left % on the car's left,
+# right % on its right. The sprite is 3D-projected, but the chase camera holds it still: measured x 495..628 (133 px
+# wide), y 318..452 in the unshifted design frame, unmoved by lane offset or steering angle (out/anchor_base.json,
+# 11 render cases, within 0.5 px). Only the panel / driving-view shift moves it, so the draw call passes the sprite's
+# current centre x (_ego_car_center_design_x) instead of the arrow offset it used before.
+# 18:18 ("차모양 양옆으로 차선확률 더 바짝 붙이라고") the gap went 6.0 -> 2.0 px, measured against the sprite's outline with a
+# faint-edge threshold: its drawn pixels end at x 495 / 628, and the badge box edge lands on 492 / 631 with 0 overlap for the
+# narrowest and widest text in both panel layouts (out/gap_sweep.json). 1.0 and 0.0 still measure 0 overlap at 1:1, so 2.0 is a
+# chosen floor, not a collision: what the box would touch first is the car's own outline pixel, 2 px further in.
+LANE_CONFIDENCE_EGO_CAR_HALF_W = 67.0
+LANE_CONFIDENCE_EGO_CAR_GAP_X = 2.0
+LANE_CONFIDENCE_CENTER_Y = 385.0
 LANE_CONFIDENCE_BOX_COLOR = (8, 10, 12, 255)
 LANE_CONFIDENCE_UNKNOWN_COLOR = (170, 180, 188, 255)
 # A compact EV telltale fits between three-digit vehicle and cruise-set speeds.
@@ -383,11 +392,15 @@ HUD_LINE_STEP = 20.0
 LAT_VALUES_LINE_Y = tuple(LAT_VALUES_CENTER_Y - HUD_LINE_STEP * (2 - i) for i in range(3))     # lines 1..3
 LANE_VALUES_GAP_X = 8.0
 LANE_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X - TPMS_STATUS_ICON_W * 0.5 - LANE_VALUES_GAP_X
-# 2026-10-29 07:08 (보노보노 "차선좌우 글씨작던데 더키워"): lines 4 / 5 only, 17.0 -> 22.0 (+29 %), with their own line step
-# so the bigger text cannot touch. 22.0 is the ceiling here: line 5 is right-anchored LANE_VALUES_GAP_X left of the TPMS car and
-# the nearest thing on its left is the lane-probability % badge (LANE_CONFIDENCE_*, ~206 px of clear room); 23.0 already runs the
-# '좌' glyph under that badge in both panel layouts (out/font_sweep.json). Lines 1..3 keep LAT_VALUES_FONT_SIZE / HUD_LINE_STEP.
-LANE_VALUES_FONT_SIZE = 22.0
+# 2026-10-29 07:08 (보노보노 "차선좌우 글씨작던데 더키워") 17.0 -> 22.0, then 18:12 ("차선치우침 / 좌.우 글씨크기 더크게만들어")
+# 22.0 -> 32.0 (+45 %, near double the original 17.0): the lane-probability % badges that used to cap this at 22.0 moved onto
+# the centre ego car, which freed the room to their right. 32.0 is the new ceiling, set by the dark background these two lines
+# need rather than by a collision: at 33.0 the widest line reaches the right lane line's pixels and
+# test_k9_ext_hud_lane.py::test_lane_line_in_its_own_box_above_sr_sad fails its "nothing bright under the line" budget.
+# At 32.0, measured in render pixels with the widest "100%" badges in both panel layouts (out/sweep3_wt.json,
+# out/overlap_wt.json): 0 overlap with lines 1..3 / the % badges / the TPMS car, 10 px of air to lines 1..3 and 17 px to the
+# screen bottom. Lines 1..3 keep LAT_VALUES_FONT_SIZE / HUD_LINE_STEP.
+LANE_VALUES_FONT_SIZE = 32.0
 LANE_VALUES_LINE_STEP = LANE_VALUES_FONT_SIZE + 4.0
 LANE_VALUES_LINE_Y = (TPMS_STATUS_CAR_CENTER_Y - LANE_VALUES_LINE_STEP * 0.5,
                       TPMS_STATUS_CAR_CENTER_Y + LANE_VALUES_LINE_STEP * 0.5)                  # lines 4, 5
@@ -3403,6 +3416,18 @@ class ClusterUiRenderer:
             return 0.0
         return self._world_view_shift_x(state) * DESIGN_WIDTH / self.width
 
+    def _ego_car_center_design_x(self, state: ClusterUiState) -> float:
+        """Design x of the centre ego-car sprite: its fixed projected centre plus the 3D viewport shift.
+
+        Same expression _draw_scene translates the scene viewport by (driving-panel offset less the
+        world-view shift); the camera keeps the sprite centred in that viewport.
+        """
+        view_shift_x = self._world_view_shift_design_x(state)
+        scene_offset_x = (
+            self._driving_panel_offset_design_x() - view_shift_x if abs(view_shift_x) > 0.001 else 0.0
+        )
+        return DESIGN_WIDTH * 0.5 + scene_offset_x
+
     def _turn_signal_center_x_offset(self, state: ClusterUiState, side: str) -> float:
         signal_center_x = (
             LANE_TURN_SIGNAL_LEFT_CENTER_X if side == "left" else LANE_TURN_SIGNAL_RIGHT_CENTER_X
@@ -4430,11 +4455,12 @@ class ClusterUiRenderer:
             self._profile_add("hud.turn_signal_right", profile_stage)
             if self._lane_confidence_label_visible(state):
                 profile_stage = self._profile_start()
+                ego_car_center_x = self._ego_car_center_design_x(state) - offset_x
                 self._draw_lane_confidence(
-                    "left", getattr(state, "left_lane_line_confidence", None), left_center_x_offset,
+                    "left", getattr(state, "left_lane_line_confidence", None), ego_car_center_x,
                 )
                 self._draw_lane_confidence(
-                    "right", getattr(state, "right_lane_line_confidence", None), right_center_x_offset,
+                    "right", getattr(state, "right_lane_line_confidence", None), ego_car_center_x,
                 )
                 self._profile_add("hud.lane_confidence", profile_stage)
             profile_stage = self._profile_start()
@@ -7783,21 +7809,29 @@ class ClusterUiRenderer:
         return f"{int(round(confidence * 100.0))}%"
 
     @staticmethod
-    def _lane_confidence_anchor(side: str, center_x_offset: float = 0.0) -> tuple[float, float]:
-        """Center of a side's label: its arrow's center x, shared label height."""
-        center_x = LANE_TURN_SIGNAL_LEFT_CENTER_X if side == "left" else LANE_TURN_SIGNAL_RIGHT_CENTER_X
-        return center_x + center_x_offset, LANE_CONFIDENCE_CENTER_Y
+    def _lane_confidence_anchor(side: str, ego_car_center_x: float, text_width: float = 0.0) -> tuple[float, float]:
+        """Center of a side's label: against that side of the centre ego car, at the car's height.
+
+        Shifted out by the measured text width so the opaque box edge - not the text - is what keeps
+        LANE_CONFIDENCE_EGO_CAR_GAP_X from the car, whatever the text width is.
+        """
+        half_slot = text_width * 0.5 + LANE_CONFIDENCE_BOX_PAD_X + LANE_CONFIDENCE_EGO_CAR_GAP_X
+        direction = -1.0 if side == "left" else 1.0
+        return (
+            ego_car_center_x + direction * (LANE_CONFIDENCE_EGO_CAR_HALF_W + half_slot),
+            LANE_CONFIDENCE_CENTER_Y,
+        )
 
     @staticmethod
     def _lane_confidence_box(center_x: float, center_y: float, text_width: float) -> tuple[float, float, float, float]:
         box_w = text_width + LANE_CONFIDENCE_BOX_PAD_X * 2.0
         return center_x - box_w * 0.5, center_y - LANE_CONFIDENCE_BOX_H * 0.5, box_w, LANE_CONFIDENCE_BOX_H
 
-    def _draw_lane_confidence(self, side: str, confidence: float | None, center_x_offset: float = 0.0) -> None:
+    def _draw_lane_confidence(self, side: str, confidence: float | None, ego_car_center_x: float) -> None:
         text = self._lane_confidence_text(confidence)
-        x, y = self._lane_confidence_anchor(side, center_x_offset)
         size = LANE_CONFIDENCE_FONT_SIZE
         text_width, _text_height = self._measure_text(text, size, max(1.0, size * 0.02), self._font_for_text(text))
+        x, y = self._lane_confidence_anchor(side, ego_car_center_x, text_width)
         rl.draw_rectangle_rounded(
             rl.Rectangle(*self._lane_confidence_box(x, y, text_width)), 0.3, 6, rl_color(LANE_CONFIDENCE_BOX_COLOR),
         )

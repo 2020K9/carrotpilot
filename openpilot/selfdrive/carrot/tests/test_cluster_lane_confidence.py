@@ -25,12 +25,15 @@ from cluster_config import (
   CLUSTER_SCREEN_MODE_FULLSCREEN_3D,
   CLUSTER_SCREEN_MODE_TRIP_REPORT,
   DESIGN_HEIGHT,
+  DESIGN_WIDTH,
 )
 from cluster_live import LANE_LINE_CONFIDENCE_MAX_AGE_S, OpenpilotLiveSource, standby_state
 from cluster_renderer import (
   LANE_CONFIDENCE_BOX_H,
   LANE_CONFIDENCE_BOX_PAD_X,
   LANE_CONFIDENCE_CENTER_Y,
+  LANE_CONFIDENCE_EGO_CAR_GAP_X,
+  LANE_CONFIDENCE_EGO_CAR_HALF_W,
   LANE_CONFIDENCE_FONT_SIZE,
   LANE_TURN_SIGNAL_CENTER_Y,
   LANE_TURN_SIGNAL_LEFT_CENTER_X,
@@ -209,6 +212,22 @@ def _renderer(monkeypatch, screen_mode=CLUSTER_SCREEN_MODE_DEFAULT):
   return renderer, draws
 
 
+# Measured ego-car sprite in design px (out/ego_base.json, 2026-10-29, 11 render cases): 133 x 134,
+# centred in the 3D viewport - x 960 unshifted, 562 once a panel shifts the driving view.
+EGO_CAR_H = 134.0
+
+
+def _expected_label_x(side, text, ego_car_center_x=DESIGN_WIDTH * 0.5):
+  """Where a label's centre must land: against that side of the car, outside its own box."""
+  # Same width stand-in the _renderer patch gives _measure_text.
+  text_width = len(text) * LANE_CONFIDENCE_FONT_SIZE * 0.55
+  reach = (
+    LANE_CONFIDENCE_EGO_CAR_HALF_W + LANE_CONFIDENCE_EGO_CAR_GAP_X
+    + LANE_CONFIDENCE_BOX_PAD_X + text_width * 0.5
+  )
+  return ego_car_center_x + (-reach if side == "left" else reach)
+
+
 def _hud_state(**overrides):
   fields = {
     "gear_text": "D",
@@ -244,12 +263,10 @@ def test_labels_shown_regardless_of_blinker_and_blinkers_unchanged(
   right_offset = renderer._turn_signal_center_x_offset(state, "right")
   assert [offset for *_rest, offset in draws["signals"]] == [left_offset, right_offset]
 
-  # Each label is centered on its own arrow's center x, both at one shared height.
+  # 보노보노 2026-10-29 18:12: each label hugs its own side of the centre ego car, at the car's height.
   assert draws["texts"] == [
-    ("91%", LANE_TURN_SIGNAL_LEFT_CENTER_X + left_offset,
-     LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
-    ("--%", LANE_TURN_SIGNAL_RIGHT_CENTER_X + right_offset,
-     LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
+    ("91%", _expected_label_x("left", "91%"), LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
+    ("--%", _expected_label_x("right", "--%"), LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
   ]
 
 
@@ -263,15 +280,16 @@ def test_left_and_right_values_are_independent_in_display(monkeypatch):
   assert left_x < right_x
 
 
-def test_labels_follow_navigation_panel_shift_with_their_arrows(monkeypatch):
+def test_labels_follow_navigation_panel_shift_with_the_car(monkeypatch):
   renderer, draws = _renderer(monkeypatch)
   state = _hud_state(external_nav_active=False, navi_dashboard=None)
   renderer._draw_driving_hud_content(state, CLUSTER_SCREEN_MODE_TRIP_REPORT, False, False)
-  # Automatic trip-report panel shifts the world view; labels move with arrows.
+  # Automatic trip-report panel shifts the world view; the car moves with it and the labels stay on the car.
   left_offset = renderer._turn_signal_center_x_offset(state, "left")
   assert left_offset == -NAVI_WORLD_VIEW_SHIFT_X
-  assert draws["texts"][0][1] == LANE_TURN_SIGNAL_LEFT_CENTER_X + left_offset
-  assert draws["texts"][1][1] == LANE_TURN_SIGNAL_RIGHT_CENTER_X - NAVI_WORLD_VIEW_SHIFT_X
+  ego_car_center_x = DESIGN_WIDTH * 0.5 - NAVI_WORLD_VIEW_SHIFT_X
+  assert draws["texts"][0][1] == _expected_label_x("left", "91%", ego_car_center_x)
+  assert draws["texts"][1][1] == _expected_label_x("right", "--%", ego_car_center_x)
 
 
 @pytest.mark.parametrize("center_x_offset_case", ("shifted", "unshifted"))
@@ -325,27 +343,41 @@ def test_nondefault_requested_screen_modes_show_labels_too(monkeypatch, screen_m
   renderer, draws = _renderer(monkeypatch, screen_mode=screen_mode)
   state = _hud_state()
   renderer._draw_driving_hud_content(state, screen_mode, False, True)
-  left_offset = renderer._turn_signal_center_x_offset(state, "left")
-  right_offset = renderer._turn_signal_center_x_offset(state, "right")
+  # Fullscreen 3D leaves the driving view unshifted; the debug / trip panels shift it, car and labels together.
+  ego_car_center_x = DESIGN_WIDTH * 0.5 + (
+    0.0 if screen_mode == CLUSTER_SCREEN_MODE_FULLSCREEN_3D else -NAVI_WORLD_VIEW_SHIFT_X
+  )
   assert draws["texts"] == [
-    ("91%", LANE_TURN_SIGNAL_LEFT_CENTER_X + left_offset, LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
-    ("--%", LANE_TURN_SIGNAL_RIGHT_CENTER_X + right_offset, LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_FONT_SIZE, "center"),
+    ("91%", _expected_label_x("left", "91%", ego_car_center_x), LANE_CONFIDENCE_CENTER_Y,
+     LANE_CONFIDENCE_FONT_SIZE, "center"),
+    ("--%", _expected_label_x("right", "--%", ego_car_center_x), LANE_CONFIDENCE_CENTER_Y,
+     LANE_CONFIDENCE_FONT_SIZE, "center"),
   ]
   assert [(side, lit) for side, lit, *_rest in draws["signals"]] == [("left", False), ("right", True)]
   assert not renderer._lane_confidence_visible(state)
 
 
-def _label_rect(side, center_x_offset):
+def _label_rect(side, ego_car_center_x):
   # Centered box sized for the widest text "100%": measured 79.125 px with the real HUD
   # font at this size (Xvfb, 2026-10-21); +3 px margin. Fonts aren't loaded in unit tests.
-  x, y = ClusterUiRenderer._lane_confidence_anchor(side, center_x_offset)
+  x, y = ClusterUiRenderer._lane_confidence_anchor(side, ego_car_center_x, 82.0)
   bx, by, bw, bh = ClusterUiRenderer._lane_confidence_box(x, y, 82.0)
   return bx, by, bx + bw, by + bh
 
 
-def _arrow_rect(side, center_x_offset):
+def _arrow_rects(side, center_x_offset):
+  """The drawn arrow, not one bounding box: a 48 px tail (half height 16) then the head out to 60 px
+  at TURN_SIGNAL_HEAD_HALF_HEIGHT (_draw_turn_signal). One box would also claim the room beside the
+  tail, where the % labels now sit."""
   cx = (LANE_TURN_SIGNAL_LEFT_CENTER_X if side == "left" else LANE_TURN_SIGNAL_RIGHT_CENTER_X) + center_x_offset
-  return cx - 60, LANE_TURN_SIGNAL_CENTER_Y - TURN_SIGNAL_HEAD_HALF_HEIGHT, cx + 60, LANE_TURN_SIGNAL_CENTER_Y + TURN_SIGNAL_HEAD_HALF_HEIGHT
+  direction = -1 if side == "left" else 1
+  tail = sorted((cx + direction * -36, cx + direction * 12))
+  head = sorted((cx + direction * 12, cx + direction * 60))
+  return (
+    (tail[0], LANE_TURN_SIGNAL_CENTER_Y - 16, tail[1], LANE_TURN_SIGNAL_CENTER_Y + 16),
+    (head[0], LANE_TURN_SIGNAL_CENTER_Y - TURN_SIGNAL_HEAD_HALF_HEIGHT,
+     head[1], LANE_TURN_SIGNAL_CENTER_Y + TURN_SIGNAL_HEAD_HALF_HEIGHT),
+  )
 
 
 def _overlaps(a, b):
@@ -371,18 +403,30 @@ FIXED_WIDGETS = {
 }
 
 
-@pytest.mark.parametrize("center_x_offset", (0.0, -NAVI_WORLD_VIEW_SHIFT_X))
-def test_labels_sit_near_but_do_not_overlap_arrows_or_fixed_widgets(center_x_offset):
-  rects = {side: _label_rect(side, center_x_offset) for side in ("left", "right")}
+@pytest.mark.parametrize(
+  ("ego_car_center_x", "center_x_offset"),
+  ((DESIGN_WIDTH * 0.5, 0.0), (DESIGN_WIDTH * 0.5 - NAVI_WORLD_VIEW_SHIFT_X, -NAVI_WORLD_VIEW_SHIFT_X)),
+)
+def test_labels_hug_the_car_without_overlapping_it_arrows_or_fixed_widgets(ego_car_center_x, center_x_offset):
+  car = _center_rect(ego_car_center_x, LANE_CONFIDENCE_CENTER_Y, LANE_CONFIDENCE_EGO_CAR_HALF_W * 2.0, EGO_CAR_H)
+  rects = {side: _label_rect(side, ego_car_center_x) for side in ("left", "right")}
   for side, label in rects.items():
-    arrow = _arrow_rect(side, center_x_offset)
-    assert not _overlaps(label, arrow)
-    # Below its own arrow; moved down just enough to clear the gear badge.
-    assert 0.0 < label[1] - arrow[3] <= 30.0
-    assert (label[0] + label[2]) * 0.5 == pytest.approx((arrow[0] + arrow[2]) * 0.5)  # centered on it
+    assert not _overlaps(label, car)
+    # Against the car's own side, the configured gap away, within the car's height.
+    inner_edge = label[2] if side == "left" else label[0]
+    assert abs(inner_edge - ego_car_center_x) == pytest.approx(
+      LANE_CONFIDENCE_EGO_CAR_HALF_W + LANE_CONFIDENCE_EGO_CAR_GAP_X
+    )
+    assert car[1] <= label[1] and label[3] <= car[3]
     assert label[3] <= DESIGN_HEIGHT
     for name, widget in FIXED_WIDGETS.items():
+      # Widgets already stacked over the centre car itself (unshifted full-width driving view) are
+      # pre-existing crowding, not something a label hugging the car can avoid.
+      if _overlaps(widget, car):
+        continue
       assert not _overlaps(label, widget), name
-    assert not _overlaps(label, _arrow_rect("right" if side == "left" else "left", center_x_offset))
+    for arrow_side in ("left", "right"):
+      for arrow in _arrow_rects(arrow_side, center_x_offset):
+        assert not _overlaps(label, arrow)
   assert not _overlaps(rects["left"], rects["right"])
   assert rects["left"][1] == rects["right"][1] and rects["left"][3] == rects["right"][3]  # same height
