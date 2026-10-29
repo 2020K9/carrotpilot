@@ -378,14 +378,22 @@ TPMS_STATUS_FONT_SIZE = 21.0
 # SR / SAD line above the TPMS car (보노보노 2026-10-24): right edge = car icon right edge,
 # so it never crosses into the right panel; baseline just above the front wheel badges.
 LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
-LAT_VALUES_CENTER_Y = TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 13.0
-LAT_VALUES_FONT_SIZE = 17.0
+# 2026-10-30 05:07 (보노보노 "외부uhd 치우침 위에잇는3줄도 글씨크기키워") 17.0 -> 25.0 (+47 %), line step 20.0 -> 28.0 (the same
+# 3 px between lines). The widest line 3 ('토크학습 100%  횡가속 8.88  마찰 8.88') grows left past the right lane-probability
+# badge (widest '100%' box x 631..717, y 369..400), so line 3's bottom moved up from 4.5 px above the TPMS icon box to 2 px
+# above that badge's top (render px 385 -> 366: 2 px over the badge, 26 px over the TPMS car, 29 px over line 4) and the
+# three lines grow upward from there. Left on the TPMS car the ceiling was 22.0 (the badge: 8 px of air at 22.0, overlap
+# from 23.0). Up here 25.0 is the ceiling, set by the right lane line: measured in render pixels in both panel layouts
+# (out/sweep_lat_lift19*.json) line 3's left end stays 6 px right of the lane line's pixels at 25.0 and runs onto them at
+# 25.5 (4 px) / 26.0 (70 px).
+LAT_VALUES_FONT_SIZE = 25.0
+LAT_VALUES_CENTER_Y = LANE_CONFIDENCE_CENTER_Y - LANE_CONFIDENCE_BOX_H * 0.5 - 2.0 - LAT_VALUES_FONT_SIZE * 0.5
 LAT_VALUES_COLOR = (214, 224, 231, 255)
 # 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines (since 18:04 lines 1..3 above the TPMS car,
 # line 3 where SR / SAD was (4a44e564), lines 4 / 5 left of the car, see below):
 #   1 '조향비 12.90  지연설정 0.20초'  2 '지연학습 63%  0.24초'  3 '토크학습 61%  횡가속 3.16  마찰 0.09'   (_draw_lat_values)
 #   4 '치우침 → 12cm'  5 '좌 1.87m   우 1.63m'                                          (_draw_lane_values)
-HUD_LINE_STEP = 20.0
+HUD_LINE_STEP = LAT_VALUES_FONT_SIZE + 3.0
 # 2026-10-26 18:04 (보노보노 "외부hud에 차선치우침.현재차선좌우간격 아래 tpms보여주는 차모양 왼쪽으로 옮겨놔"): lines 4 / 5 moved
 # to the left of the TPMS car (right edge LANE_VALUES_GAP_X left of the icon incl. the left pressure badges, the two lines
 # centred on the car's height); lines 1..3 moved down so that line 3 sits right above the car (where line 5 was).
