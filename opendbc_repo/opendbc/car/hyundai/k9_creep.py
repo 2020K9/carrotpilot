@@ -343,7 +343,11 @@ B17O_SOFT_PM = 0.0  # m/s^2: the planner must ask less braking than the target b
 # Below B17O_SOFT_VL the bound does not apply at all. There the brake is only holding the road load, and with the
 # 0.30 s ESC delay anything released that late arrives after the car has stopped, so the window where it helps is
 # entirely above this speed.
-B17O_SOFT_VL = 0.15  # m/s (= V12K9_END_GO_SPEED, where kind 8 counts the stop as a crawl)
+B17O_SOFT_VL = 0.15  # m/s (kuk4: raised from 0.15 = V12K9_END_GO_SPEED; see patch_me2.py)
+# Engagement threshold (kuk4): the request has to be this far past the profile's own target before the bound takes
+# over, and once it has it clamps to B17O_SOFT_M as before. Mildly over-braked stops are left as kind 8 had them,
+# so their stop moment does not move at all.
+B17O_SOFT_ME = 1.2  # m/s^2, >= B17O_SOFT_M
 # S8: with S7 the request near the stop is close to the profile's own target, and kind 8's end-profile GO latch
 # (aTarget > 0 below V12K9_END_GO_SPEED 0.15 m/s) would then put StopReq out while the car still rolls 0.14 m/s; the
 # ESC stop hold (0.85 m/s^2, 2 m/s^3) lands on that nearly released brake and makes the very 꾹 S7 removed (the car
@@ -780,7 +784,7 @@ class K9Creep:
       self.end_off = off0
     cmd = float(cmd + self.end_off)
     if (soft and v_ego > B17O_SOFT_VL and self.end_ae <= -d and a_target > -d + B17O_SOFT_PM
-        and cmd < -d - B17O_SOFT_M):  # kind 14 S7
+        and cmd < -d - (B17O_SOFT_M if self.b17o_soft else B17O_SOFT_ME)):  # kind 14 S7 (kuk4: engage far, hold near)
       cmd = float(-d - B17O_SOFT_M)
       self.b17o_soft, self.b17o_soft_n = True, self.b17o_soft_n + 1
     if self.end_out is not None and cmd > self.end_out + V12K9_END_REL:  # release rate limit, integral held
