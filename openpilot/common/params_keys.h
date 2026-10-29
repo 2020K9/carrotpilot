@@ -271,7 +271,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9LRView", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9ExtHud", {PERSISTENT, INT, "-1"}},
     {"K9MeterSeason", {PERSISTENT, INT, "0"}},
-    {"K9CenterToFront", {PERSISTENT, INT, "400"}},  // Hyundai/Kia centerToFront = wheelbase * value/1000 (400 = original 0.4, 405 = 0.405), car start + live (controls/lib/k9_ctf.py)
     {"K9MeterCmd", {CLEAR_ON_MANAGER_START, STRING}},    // K9ExtHud=1 meter button press "<token>:<start|pause|settle>" (memory)
     {"K9MeterState", {CLEAR_ON_MANAGER_START, STRING}},  // K9ExtHud=1 meter state for the buttons (memory)
     {"K9OneLaneHold", {PERSISTENT, INT, "0"}},  // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
