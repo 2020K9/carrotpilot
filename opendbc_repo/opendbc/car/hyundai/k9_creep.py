@@ -317,6 +317,53 @@ B17O_RESC_SR_V = 0.08  # m/s: a rescue at or below it latches StopReq at once (t
 #    table buys nothing there.
 # The table itself is untouched; only the condition for using it changes.
 B17O_PLAN_M = 0.05  # m/s^2
+# S7 "과제동 제한" (kind 14 only, 2026-10-29 kuk3). Why 꾹 is made in the mock, frame by frame (tools/tr6.py,
+# H3k0.5|base|5.0|100): the mock car cuts its speed to 0 below 0.04 m/s, so whatever deceleration is left at that
+# moment is a step, and jmax is about 9 x |decel at the stop|. Over the 1000-run list that is the whole story: |decel
+# at the stop| at or above 0.40 m/s^2 -> 꾹 in 437 of 437 runs, at or below 0.05 -> 0 of 2, and menu 2's median today
+# is 0.53. Where the 0.53 comes from: the stopping state is entered at 0.52 m/s with the measured decel still 0.10, so
+# the end profile's offset integral winds up through the 0.30 s ESC delay and the request falls -0.30 -> -1.00 in half
+# a second, about twice its own target (-d = -0.52). The brake arrives (0.61) and the car decelerates 0.46, but the
+# request only releases 0.002 .. 0.008 per frame, so the car reaches standstill still holding 0.46 m/s^2.
+# S7 holds the request within B17O_SOFT_M of the profile's own target, but only on a frame where
+#  - the planner itself asks for less braking than that target (aTarget > -d), and
+#  - the car already decelerates at or past the target (end_ae <= -d), and
+#  - the car is still above B17O_SOFT_VL.
+# The integral is NOT touched. That is the whole point: on the first frame one of those is no longer true (downhill,
+# closing on the stop line, the car speeding up again) the full integral is sent again on that same frame, with no
+# rate limit on the press. Clipping the integral instead was tried first and is wrong, because the offset the plant
+# needs is the road load (creep + gravity) / gain - 0.19 on the flat, 0.30 on a 1.5 % and 0.56 on a 3 % downhill - and
+# a clipped integral has to wind back at 0.006 per frame: on a 1.5 % downhill the car crawled back up from 0.098 to
+# 0.153 m/s and the latch then arrived while it rolled 0.142 m/s (H3k0.35|dn1.5%|2.0|100 of the 1000 list, jmax 3.377).
+# The target -d itself (its speed prediction, virtual stop line and lead terms) and the lead min() after it are
+# untouched, so nothing that brakes for a reason is given back, and the release when the bound first bites is the
+# existing V12K9_END_REL ramp (2 m/s^3).
+B17O_SOFT_M = 0.35  # m/s^2: the most the request may ask past the profile's own target
+B17O_SOFT_PM = 0.0  # m/s^2: the planner must ask less braking than the target by at least this
+# Below B17O_SOFT_VL the bound does not apply at all. There the brake is only holding the road load, and with the
+# 0.30 s ESC delay anything released that late arrives after the car has stopped, so the window where it helps is
+# entirely above this speed.
+B17O_SOFT_VL = 0.15  # m/s (kuk4: raised from 0.15 = V12K9_END_GO_SPEED; see patch_me2.py)
+# Engagement threshold (kuk4): the request has to be this far past the profile's own target before the bound takes
+# over, and once it has it clamps to B17O_SOFT_M as before. Mildly over-braked stops are left as kind 8 had them,
+# so their stop moment does not move at all.
+B17O_SOFT_ME = 1.2  # m/s^2, >= B17O_SOFT_M
+# S8: with S7 the request near the stop is close to the profile's own target, and kind 8's end-profile GO latch
+# (aTarget > 0 below V12K9_END_GO_SPEED 0.15 m/s) would then put StopReq out while the car still rolls 0.14 m/s; the
+# ESC stop hold (0.85 m/s^2, 2 m/s^3) lands on that nearly released brake and makes the very 꾹 S7 removed (the car
+# stops 0.8 s later, time enough for the hold to arrive). So on kind 14 stops with no lead where S7 held, and only
+# there, the GO latch waits for B17O_SOFT_GO_V, where the standstill latch takes over anyway. 대감님's own logs show
+# the same split (an observation, not a proof): first StopReq at or above 0.12 m/s -> jmax 7.6 .. 12.0 in all 20
+# stops, 0.05 .. 0.11 m/s -> 1.7 .. 5.0. Every other latch reason is untouched (TMAX 3 s below 0.4 m/s, crawl 0.6 s
+# below 0.15 m/s, urgent plan, lead at or within 1.5 m, MX, standstill, S1 rescue).
+B17O_SOFT_GO_V = 0.05  # m/s (= STANDSTILL_SPEED)
+# S9 "최소 제동 유지" (kind 14 only, 대감님 2026-10-29 19:02 "밟았다 뗐다 하면 떨림이 더 생기니 떼는 시점을 제일 약한
+# 값의 제동으로 해라 - 브레이크 패드가 안 떨어지게"): while a stop is being made (the stopping state, before the latch)
+# the request never rises above -B17O_MIN_BRK, so the pads stay in contact and a release-then-press cycle cannot start.
+# The mock car has no pad play or re-contact, so no gain from this can be shown there; what the mock does show is that
+# nothing gets worse and that the request never reaches 0 in a stop (REPORT). 0.03 m/s^2 is far below the mock creep
+# (0.15), so it can neither hold nor stop the car by itself.
+B17O_MIN_BRK = 0.03  # m/s^2: weakest braking request kept through a stop
 
 
 def k9_creep_applies(CP) -> bool:
@@ -452,6 +499,8 @@ class K9Creep:
     self.b17o_vn = 0
     self.b17o_tab = 0.0  # kind 14: the table value of the last frame, before the min with the plan (S4)
     self.b17o_out = None  # kind 14: the request the table path sent on the last frame (S6), None: kind 8 was sent
+    self.b17o_soft = False  # kind 14 S7: the bound held at least one frame in this stop
+    self.b17o_soft_n = 0  # kind 14 S7: frames in this stop where it held (analysis)
     self.hold2_k = 0  # kind 15: consecutive standstill frames in the latch (B17O_HOLD2_T), 0: not standing
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
@@ -517,6 +566,8 @@ class K9Creep:
         else:
           accel = float(max(accel, ref_c - float(np.interp(v_ego, V12K9_ZONE_PRESS_BP, V12K9_ZONE_PRESS_V))))
       self.end_out = accel
+      if self.b17s and stopping_in and not self.latched and o is None:  # kind 14 S9
+        accel = float(min(accel, -B17O_MIN_BRK))
       if self.b17s and o is not None and not stopping:  # kind 14: the driver's table in the end window only (S5), kind 8 above it
         if self.b17o_vn > 0 and (v_ego >= B17O_ROLL_V or a_ego > 0.0):  # S1 roll rescue: back above B17O_ROLL_V or speeding up
           self.b17o_resc = True
@@ -525,7 +576,9 @@ class K9Creep:
             self._last = accel
             return float(min(accel, LATCH_ACCEL)), True
         if v_ego < B17O_ROLL_V and not self.b17o_resc:
-          if self.b17o_vn == 0 and not (self.b17o_tab - B17O_PLAN_M <= a_target <= V12K9_END_GO_TARGET):  # S4
+          if self.b17o_vn == 0 and not (self.b17o_tab - B17O_PLAN_M <= a_target <= V12K9_END_GO_TARGET
+                                       and self.eff_f is not None
+                                       and self.eff_f >= self.b17o_tab - B17O_PLAN_M):  # S4 (+ kuk3: measured decel)
             self.b17o_resc = True
           else:
             n = len(self.b17o_vb); i = self.b17o_vn % n
@@ -546,7 +599,7 @@ class K9Creep:
         # kept exactly there and nowhere else. The table itself is untouched.
         self.b17o_floor = True
         self.b17o_out = None
-        return accel, False
+        return float(min(accel, -B17O_MIN_BRK)), False  # kind 14 S9
       return accel, stopping
 
     if not stopping:
@@ -656,6 +709,7 @@ class K9Creep:
     if not stopping_in:
       self.b17o_on, self.b17o_k, self.b17o_plan, self.b17o_k8 = False, -1, False, 0
       self.b17o_resc, self.b17o_vn, self.b17o_out = False, 0, None
+      self.b17o_soft, self.b17o_soft_n = False, 0
       return None
     if self.latched:
       self.b17o_on, self.b17o_plan = False, False
@@ -716,8 +770,10 @@ class K9Creep:
     self.end_k += 1
     self.end_n += 1 if v_ego < V12K9_END_TMAX_SPEED else 0
     self.end_fb = self.end_fb + 1 if (v_ego < V12K9_END_CRAWL_SPEED and self.end_ae > V12K9_END_CRAWL_AEGO) else 0
+    soft = self.b17s and not self.b17o_k8 and not lead_seen  # kind 14 S7 / S8: no lead in this stop
+    go_v = B17O_SOFT_GO_V if soft else V12K9_END_GO_SPEED  # S8 (kuk4: every kind 14 stop with no lead)
     if (self.end_fb >= V12K9_END_CRAWL_FRAMES or (self.end_n > V12K9_END_TMAX * 100.0 and v_ego > 0.02)
-        or (a_target > V12K9_END_GO_TARGET and v_ego < V12K9_END_GO_SPEED)):
+        or (a_target > V12K9_END_GO_TARGET and v_ego < go_v)):
       self.latched = True  # StopReq from the next frame (the band ramps out as on any latch)
     self.end_s += v_ego * 0.01
     d = max(d, min(V12K9_END_LINE_K * v_ego ** 2 / (2.0 * max(self.end_sref - self.end_s, V12K9_END_LINE_SMIN)), V12K9_END_LINE_CAP))
@@ -727,6 +783,10 @@ class K9Creep:
     if self.end_k <= V12K9_END_HOLD_T * 100.0 and self.end_off > off0:  # no release right after the start
       self.end_off = off0
     cmd = float(cmd + self.end_off)
+    if (soft and v_ego > B17O_SOFT_VL and self.end_ae <= -d and a_target > -d + B17O_SOFT_PM
+        and cmd < -d - (B17O_SOFT_M if self.b17o_soft else B17O_SOFT_ME)):  # kind 14 S7 (kuk4: engage far, hold near)
+      cmd = float(-d - B17O_SOFT_M)
+      self.b17o_soft, self.b17o_soft_n = True, self.b17o_soft_n + 1
     if self.end_out is not None and cmd > self.end_out + V12K9_END_REL:  # release rate limit, integral held
       cmd, self.end_off = float(self.end_out + V12K9_END_REL), off0
     cmd = float(cmd + 0.0)
