@@ -85,8 +85,13 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
       catalog_commit=COMMIT,
       generated_at=STAMP,
     )
-    self.assertEqual(len(result.generated_settings), 200)  # 2026-10-26 upstream merge (+OnnxBsdEnabled): 199 -> 200; 2026-10-28 +K9CenterToFront: 200 -> 201; 2026-10-29 -K9CenterToFront: 201 -> 200
+    self.assertEqual(len(result.generated_settings), 206)  # 2026-10-26 upstream merge (+OnnxBsdEnabled): 199 -> 200; 2026-10-28 +K9CenterToFront: 200 -> 201; 2026-10-29 -K9CenterToFront: 201 -> 200; 2026-10-29 upstream merge (+CenterToFrontRatio, ATC/blinker/Tesla 6 keys): 200 -> 206
+    self.assertIn("TeslaAutoTurnSignals", result.index["settings"])
     self.assertIn("NNFF", result.index["settings"])
+    self.assertIn("AutoBlinkerControl", result.index["settings"])
+    self.assertIn("AutoTurnControlRightLaneChange", result.index["settings"])
+    self.assertNotIn("CenterToFrontRatioEnabled", result.index["settings"])
+    self.assertIn("CenterToFrontRatio", result.index["settings"])
     self.assertNotIn("SteerHandoverMode", result.index["settings"])
     self.assertIn("ModelStopPrediction", result.index["settings"])
     self.assertIn("CruiseCoastingPercent", result.index["settings"])
@@ -99,15 +104,15 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
                     "CarrotYouTubeLive", "CarrotYouTubeQuality", "CarrotYouTubeTimestamp",
                     "SignalAssistMode", "LeadBrakeLights", "TrafficLightDetectMode"):
       self.assertNotIn(retired, result.index["settings"])
-    self.assertEqual(result.index["review"], {"current": 0, "needs_review": 200})
+    self.assertEqual(result.index["review"], {"current": 0, "needs_review": 206})
     self.assertEqual(result.index["locales"], ["ko", "en", "zh"])
-    self.assertEqual(len(result.pages), (200 * 3) + 2)
+    self.assertEqual(len(result.pages), (206 * 3) + 2)
     setting_pages = {
       name: text
       for name, text in result.pages.items()
       if GENERATOR.GENERATED_PAGE_RE.fullmatch(name)
     }
-    self.assertEqual(len(setting_pages), 200 * 3)
+    self.assertEqual(len(setting_pages), 206 * 3)
     self.assertTrue(all(text.count("<!-- CARROT:SETTING:BEGIN ") == 1 for text in setting_pages.values()))
     for name, text in result.pages.items():
       if name.endswith(".md"):

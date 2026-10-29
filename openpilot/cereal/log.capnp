@@ -825,6 +825,10 @@ struct SelfdriveState {
   personality @11 :LongitudinalPersonality;
   distanceTraveled @13 :Float32;
 
+  # Latched cue from the audioTurn event, not the priority-selected alert sound.
+  atcTurnStartMonoTime @14 :UInt64;
+  atcTurnDirection @15 :LaneChangeDirection;
+
   enum OpenpilotState @0xdbe58b96d2d1ac61 {
     disabled @0;
     preEnabled @1;
@@ -1104,6 +1108,11 @@ struct ModelDataV2 {
     laneChangeAvailableRight @19 :Bool;
     laneChangeBlinkerHold @20 :LaneChangeDirection;  # carrot: hold this turn signal while a lever-requested change waits or is queued
     leverTurn @21 :Bool;  # carrot: the turn desire comes from a latched lever (BlinkerLatchedTurn)
+    autoTurnSignal @22 :LaneChangeDirection;  # ATC-originated maneuver only; no steering request
+    autoTurnSignalLaneChange @23 :Bool;
+    autoTurnSignalDirection @24 :LaneChangeDirection;
+    autoTurnSignalRequestId @25 :UInt64;
+
 
     deprecated :group {
       brakeDisengageProb @2 :Float32;
@@ -2353,6 +2362,7 @@ struct LiveParametersData {
   angleOffsetAverageValid @18 :Bool = true;
   steerRatioValid @19 :Bool = true;
   stiffnessFactorValid @20 :Bool = true;
+  centerToFrontRatio @21 :Float32;  # Applied geometry; 0 in legacy messages.
 
 
   struct FilterState {
@@ -2548,6 +2558,7 @@ struct NavInstruction {
 
 struct NavRoute {
   coordinates @0 :List(Coordinate);
+  carrotRouteId @1 :UInt64;  # stable across route heartbeats; changes on source/geometry replacement
 
   struct Coordinate {
     latitude @0 :Float32;

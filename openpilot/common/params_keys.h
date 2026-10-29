@@ -156,7 +156,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CarrotVisionActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL} },
 
     {"ApiCache_NavDestinations", {PERSISTENT, STRING}},
-    {"NavDestination", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, STRING}},
+    {"NavDestination", {PERSISTENT, STRING}},
     {"NavDestinationWaypoints", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, STRING}},
     {"NavPastDestinations", {PERSISTENT, STRING}},
     {"NavSettingLeftSide", {PERSISTENT, BOOL}},
@@ -232,6 +232,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoCurveSpeedFactor", {PERSISTENT, INT, "120"}},
 
     {"AutoTurnControl", {PERSISTENT, INT, "0"}},
+    {"AutoTurnControlRightLaneChange", {PERSISTENT, BOOL, "0"}},
     {"AutoTurnControlSpeedTurn", {PERSISTENT, INT, "20"}},
     {"AutoTurnControlTurnEnd", {PERSISTENT, INT, "6"}},
     {"AutoTurnMapChange", {PERSISTENT, INT, "0"}},
@@ -301,6 +302,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TrafficLightDetectMode", {PERSISTENT, INT}},  // retired; read only for one-time ModelStopPrediction migration
 
     {"SteerActuatorDelay", {PERSISTENT, INT, "0"}},
+    {"CenterToFrontRatioEnabled", {PERSISTENT, BOOL}},  // Retired: migration only
+    {"CenterToFrontRatio", {PERSISTENT, INT, "0"}},
     {"LatSmoothSec", {PERSISTENT, INT, "13"}},
     {"LatSuspendAngleDeg", {PERSISTENT, INT, "300"}},
     {"CruiseOnDist", {PERSISTENT, INT, "400"}},
@@ -336,6 +339,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"FingerPrints", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING}},
     {"IsLdwsCar", {PERSISTENT, INT, "0"}},
     {"CanfdHDA2", {PERSISTENT, INT, "0"}},
+    {"CanfdBlinkerControl", {PERSISTENT, BOOL, "0"}},
+    {"CanfdBlinkerTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdDebug", {PERSISTENT, INT, "0"}},
 
     {"SoundVolumeAdjust", {PERSISTENT, INT, "100"}},
@@ -368,6 +373,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneChangeDelay", {PERSISTENT, INT, "0"}},
     {"LaneChangeBsd", {PERSISTENT, INT, "0"}},
     {"LaneLineCheck", {PERSISTENT, INT, "0"}},
+    {"AutoBlinkerControl", {PERSISTENT, INT, "0"}},
     {"BlinkerLatchedTurn", {PERSISTENT, INT, "0"}},
     {"LaneChangeLeverWait", {PERSISTENT, BOOL, "0"}},
     {"MaxAngleFrames", {PERSISTENT, INT, "89"}},
@@ -399,6 +405,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SpeedFromPCM", {PERSISTENT, INT, "2"}},
     {"MaxTimeOffroadMin", {PERSISTENT, INT, "60"}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "1"}},
+    {"TeslaAutoTurnSignals", {PERSISTENT, BOOL, "0"}},
 
     {"DisableDM", {PERSISTENT, INT, "0"}},  // retired; read only for one-time streaming migration
     {"DriverMonitoringEnabled", {PERSISTENT, BOOL, "1"}},
