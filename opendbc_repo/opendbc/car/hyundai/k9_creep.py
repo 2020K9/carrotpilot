@@ -292,6 +292,18 @@ B17O_BAR = 0.2415  # m/s^2 per bar
 B17O_HOLD2_T = 1.0  # s of continuous standstill before the extra braking starts
 B17O_HOLD2_ACCEL = -1.00  # m/s^2: the hold after B17O_HOLD2_T (LATCH_ACCEL -0.50 until then)
 B17O_HOLD2_STEP = 0.0060  # per frame from LATCH_ACCEL to B17O_HOLD2_ACCEL (0.83 s)
+# kind 15 ramp (menu 3, 2026-10-30, the driver 05:20 "1.5키로때부터 점점 올리면?", 06:07 "해봐"): at 05:02:53.9 the car entered
+# the stop at 0.41 m/s and the table there (-0.28 .. -0.38, about the creep) left it rolling at 0.34 .. 0.38 m/s for 1.5 s.
+# So in the stopping state before the stop, at or below B17O_RAMP_V and while the car slows by less than the table asks (aEgo
+# above the table value), the request goes B17O_RAMP_STEP per frame further past the table, at most B17O_RAMP_MAX; the offset
+# stays for the rest of the stop. min() against the table output keeps it from ever being weaker than kind 13. From the stop
+# the request never gets weaker than the last ramp request (or anything stronger sent since) until the latch request itself,
+# without the band compensation, passes it, so the hand-over to the latch never weakens (the band compensation of the first
+# latch frame decays in 0.4 s). A frame out of the stopping state clears both (the 00:53 hold2_k lesson). StopReq, the latch
+# and B17O_HOLD2_* are as before.
+B17O_RAMP_V = 0.4167  # m/s (1.5 km/h)
+B17O_RAMP_STEP = 0.004  # m/s^2 per frame (0.4 m/s^2 per second)
+B17O_RAMP_MAX = 0.60  # m/s^2 past the table at most
 # kind 14 (menu 2, 2026-10-29 05:40) = the S1-S6 of 594e8fef9, moved here from kind 13 unchanged so that menu 1 stays his
 # recorded stop. The table above stays as is; the safeties only ever brake more:
 # - S2 lead (B17O_K8_LEAD): a lead at or within V12K9_END_LEAD_MAX (12 m, where the kind 8 end profile starts to use the lead) in
@@ -502,6 +514,8 @@ class K9Creep:
     self.b17o_soft = False  # kind 14 S7: the bound held at least one frame in this stop
     self.b17o_soft_n = 0  # kind 14 S7: frames in this stop where it held (analysis)
     self.hold2_k = 0  # kind 15: consecutive standstill frames in the latch (B17O_HOLD2_T), 0: not standing
+    self.b17o_ramp = 0.0  # kind 15: the ramp offset past the table in this stop (B17O_RAMP_*), <= 0
+    self.b17o_hold = None  # kind 15: the floor from the stop until the latch request passes it (B17O_RAMP_*), None: none
 
   def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
@@ -523,6 +537,8 @@ class K9Creep:
       self.eff_f = eff_ac if self.eff_f is None else self.eff_f + V12K9_STALL_ALPHA * (eff_ac - self.eff_f)
       stopping_in = stopping
       o = self._b17o(a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance) if self.b17o else None
+      if self.b17h:  # kind 15: the ramp below B17O_RAMP_V
+        o = self._ramp(o, stopping_in, v_ego, a_ego)
       if o is not None and not self.b17s:  # kinds 13 / 15: the driver's stop table (kind 8 not run on this frame)
         self._last, self.end_out = o, o
         return o, False
@@ -565,6 +581,9 @@ class K9Creep:
             accel = float(min(max(accel, ref - V12K9_BAND_COMP), ref))
         else:
           accel = float(max(accel, ref_c - float(np.interp(v_ego, V12K9_ZONE_PRESS_BP, V12K9_ZONE_PRESS_V))))
+      if self.b17h and self.b17o_hold is not None:  # kind 15: no weaker than the floor until the latch request passes it
+        accel = float(min(accel, self.b17o_hold))
+        self.b17o_hold = None if self._last <= accel else accel  # self._last: the latch request, no band compensation
       self.end_out = accel
       if self.b17s and stopping_in and not self.latched and o is None:  # kind 14 S9
         accel = float(min(accel, -B17O_MIN_BRK))
@@ -705,6 +724,21 @@ class K9Creep:
     if self.hold2_k <= B17O_HOLD2_T * 100.0:
       return accel  # the first second after the stop is menu 1, bit for bit
     return float(min(accel, max(B17O_HOLD2_ACCEL, prev - B17O_HOLD2_STEP)))
+
+  def _ramp(self, o, stopping_in, v_ego, a_ego):
+    """Kind 15 (menu 3) only: the table output o (None: not a table frame) with the ramp of B17O_RAMP_*. The min() means
+    no frame is ever weaker than kind 13, and a frame out of the stopping state clears the ramp and its floor."""
+    if not stopping_in:
+      self.b17o_ramp, self.b17o_hold = 0.0, None
+      return o
+    if o is None:
+      return o
+    if v_ego <= B17O_RAMP_V and a_ego > self.b17o_tab:
+      self.b17o_ramp = max(self.b17o_ramp - B17O_RAMP_STEP, -B17O_RAMP_MAX)
+    if self.b17o_ramp < 0.0:
+      o = float(min(o, self.b17o_tab + self.b17o_ramp))
+      self.b17o_hold = o
+    return o
 
   def _b17o(self, a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance):
     """Kinds 13 / 14 / 15 (menus 1 / 2 / 4): the accel to send from the driver's stop table, or None (kind 8 as before)."""

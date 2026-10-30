@@ -547,6 +547,110 @@ def test_menu3_extra_hold_runs_in_menu_3_only(monkeypatch, mode):
   assert ref == out
 
 
+# --- 3: below 1.5 km/h in the stopping state the request presses harder frame by frame (kind 15 only; m3ramp_1030) ---------
+def _slow_entry(monkeypatch, mode, stand=250, hover=200):
+  """2026-10-30 (m3ramp_1030, the 05:02:53.9 menu 3 stop): pid down to 0.43 m/s, then the stopping state from 0.43 m/s with the
+  plan's decel fading from -0.35 to 0 while the car hovers `hover` frames down from 0.43 m/s (0.33 m/s for 200) with almost no
+  decel (aEgo -0.05), the roll to the stop and `stand` standing frames. Returns the rig and (v, standstill, sent accel, StopReq)
+  of every frame."""
+  r = rig(monkeypatch, mode)
+  out = []
+
+  def step(state, v, a_target, a_ego, standstill=False):
+    acc, sent = r.step(a_target, state, v, standstill=standstill, a_target=a_target, a_ego=a_ego)
+    out.append((v, standstill, acc, None if sent is None else sent["StopReq"]))
+
+  for i in range(100):  # pid 1.2 -> 0.43 m/s
+    step(LCS.pid, 1.2 - 0.0077 * i, -0.4, -0.4)
+  for i in range(hover):  # the stopping state from 0.43 m/s: 27 frames above 1.5 km/h, then the hover
+    step(LCS.stopping, 0.43 - 0.0005 * i, -0.35 * max(1.0 - i / 150.0, 0.0), -0.05)
+  v0 = round(0.43 - 0.0005 * hover, 4)
+  for i in range(round(v0 / 0.01) + 1):  # the roll to the stop
+    step(LCS.stopping, max(v0 - 0.01 * i, 0.0), 0.0, -0.3)
+  for _ in range(stand):
+    step(LCS.stopping, 0.0, 0.0, 0.0, standstill=True)
+  return r, out
+
+
+def test_menu3_presses_harder_below_1_5_kmh_never_weaker_than_menu1(monkeypatch):
+  """Above B17O_RAMP_V menu 3 is menu 1 bit for bit (CAN too). At or below it, in the stopping state before the stop, the
+  request goes past menu 1's table value by B17O_RAMP_STEP per frame while aEgo brakes less than that value, up to
+  B17O_RAMP_MAX. StopReq is menu 1's on every frame and no frame is weaker than menu 1."""
+  assert (kc.B17O_RAMP_V, kc.B17O_RAMP_STEP, kc.B17O_RAMP_MAX) == (0.4167, 0.004, 0.60)
+  r1, one = _slow_entry(monkeypatch, 1)
+  monkeypatch.undo()
+  r3, three = _slow_entry(monkeypatch, 3)
+  monkeypatch.undo()
+  n = next(i for i, o in enumerate(one) if o[0] <= kc.B17O_RAMP_V)
+  assert n == 127 and all(o[0] > kc.B17O_RAMP_V for o in one[:n])
+  assert three[:n] == one[:n] and r3.can[:n] == r1.can[:n]  # above 1.5 km/h: menu 1 bit for bit
+  assert [o[3] for o in three] == [o[3] for o in one]  # StopReq: menu 1's on every frame
+  gap = [a[2] - b[2] for a, b in zip(one, three, strict=True)]
+  assert min(gap) >= -1e-9  # never weaker than menu 1 on any frame
+  low = [i for i in range(n, len(one)) if one[i][0] >= kc.STANDSTILL_SPEED]  # the table frames at or below 1.5 km/h (latch below)
+  assert gap[low[0]] == pytest.approx(kc.B17O_RAMP_STEP, abs=1e-6)  # from the table value, one step per frame (float32 sent)
+  assert all(-1e-6 <= gap[i] - gap[i - 1] <= kc.B17O_RAMP_STEP + 1e-6 for i in low[1:])  # step by step, never back
+  assert max(gap[i] for i in low) == pytest.approx(kc.B17O_RAMP_MAX, abs=1e-6)  # up to B17O_RAMP_MAX past the table
+
+
+@pytest.mark.parametrize("hover, lo, hi", [(200, 0.60, 0.60), (60, 0.10, 0.30)])
+def test_menu3_ramp_hands_over_at_the_stop_without_weakening(monkeypatch, hover, lo, hi):
+  """At the stop the brake does not drop back from the ramped request at the hand-over to the latch path, also while the band
+  compensation of the first latch frames (-0.20 at the full band, 0.4 s) decays: the floor is the strongest request sent since
+  the last ramp frame until the latch request without the band compensation passes it. Fully ramped (hover 200) the latch
+  request starts weaker than the ramp; part ramped (hover 60) it starts just past it. After that the standing hold is menu 3's
+  as before (B17O_HOLD2_* unchanged)."""
+  _, one = _slow_entry(monkeypatch, 1, hover=hover)
+  monkeypatch.undo()
+  _, three = _slow_entry(monkeypatch, 3, hover=hover)
+  monkeypatch.undo()
+  monkeypatch.setattr(kc, "B17O_RAMP_MAX", 0.0)  # no ramp: menu 3 as before it
+  _, before = _slow_entry(monkeypatch, 3, hover=hover)
+  monkeypatch.undo()
+  h = next(i for i, o in enumerate(three) if o[0] < kc.STANDSTILL_SPEED) - 1  # the last table frame (the latch from the next)
+  acc = [o[2] for o in three]
+  assert lo - 1e-6 <= one[h][2] - acc[h] <= hi + 1e-6  # how far past the table it comes to the stop
+  assert max(b - a for a, b in zip(acc[h:], acc[h + 1:])) <= 1e-6  # from the last table frame on: no frame weaker than the one before it
+  assert all(b[2] <= a[2] + 1e-9 for a, b in zip(one, three, strict=True))  # never weaker than menu 1
+  assert all(b[2] <= a[2] + 1e-9 for a, b in zip(before, three, strict=True))  # never weaker than menu 3 before the ramp
+  assert three[-1][2] == before[-1][2] < one[-1][2] - 0.3  # then the extra hold of menu 3 as before
+
+
+def test_menu3_ramp_restarts_after_leaving_the_stopping_state(monkeypatch):
+  """Leaving the stopping state clears the ramp and its floor (the 2026-10-30 00:53 hold2_k lesson): entering it again starts
+  from the table value."""
+  def run(mode):
+    r = rig(monkeypatch, mode)
+    out = [r.step(-0.35, LCS.stopping, 0.41 - 0.0005 * i, a_target=-0.35, a_ego=-0.05)[0] for i in range(100)]
+    st = (r.cc.k9_creep.b17o_ramp, r.cc.k9_creep.b17o_hold)
+    out.append(r.step(0.3, LCS.pid, 0.36, a_target=0.3, a_ego=0.0)[0])  # the plan lets go for one frame
+    st += (r.cc.k9_creep.b17o_ramp, r.cc.k9_creep.b17o_hold)
+    out += [r.step(0.0, LCS.stopping, 0.36, a_target=0.0, a_ego=-0.05)[0] for _ in range(20)]  # stops again, plan 0: the table
+    return out, st
+  one, _ = run(1)
+  monkeypatch.undo()
+  three, st = run(3)
+  monkeypatch.undo()
+  assert st[0] == pytest.approx(-100 * kc.B17O_RAMP_STEP) and st[1] == pytest.approx(three[99], abs=1e-6)  # the ramp and its stop floor are armed
+  assert st[2] == 0.0 and st[3] is None  # cleared by the pid frame
+  gap = [a - b for a, b in zip(one, three, strict=True)]
+  assert gap[100] == 0.0  # the pid frame is menu 1's
+  assert gap[101] == pytest.approx(kc.B17O_RAMP_STEP, abs=1e-6)  # the next stop starts from the table value again
+  assert gap[120] == pytest.approx(20 * kc.B17O_RAMP_STEP, abs=1e-6)
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+def test_menu3_ramp_runs_in_menu_3_only(monkeypatch, mode):
+  """Turning the B17O_RAMP_* constants changes nothing in menus 1 and 2: the ramp is kind 15 (menu 3) only."""
+  _, ref = _slow_entry(monkeypatch, mode)
+  monkeypatch.undo()
+  monkeypatch.setattr(kc, "B17O_RAMP_STEP", 0.05)
+  monkeypatch.setattr(kc, "B17O_RAMP_MAX", 2.0)
+  _, out = _slow_entry(monkeypatch, mode)
+  monkeypatch.undo()
+  assert ref == out
+
+
 def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
