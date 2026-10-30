@@ -574,9 +574,10 @@ def _slow_entry(monkeypatch, mode, stand=250, hover=200):
 
 def test_menu3_presses_harder_below_1_5_kmh_never_weaker_than_menu1(monkeypatch):
   """Above B17O_RAMP_V menu 3 is menu 1 bit for bit (CAN too). At or below it, in the stopping state before the stop, the
-  request goes past menu 1's table value by B17O_RAMP_STEP per frame while aEgo brakes less than that value, up to
-  B17O_RAMP_MAX. StopReq is menu 1's on every frame and no frame is weaker than menu 1."""
-  assert (kc.B17O_RAMP_V, kc.B17O_RAMP_STEP, kc.B17O_RAMP_MAX) == (0.4167, 0.004, 0.60)
+  request goes past menu 1's table value while aEgo brakes less than that value: by B17O_RAMP_STEP per frame up to
+  B17O_RAMP_KNEE, then by B17O_RAMP_STEP2 per frame up to B17O_RAMP_MAX. StopReq is menu 1's on every frame and no frame is
+  weaker than menu 1."""
+  assert (kc.B17O_RAMP_V, kc.B17O_RAMP_STEP, kc.B17O_RAMP_KNEE, kc.B17O_RAMP_STEP2, kc.B17O_RAMP_MAX) == (0.4167, 0.015, 0.45, 0.002, 0.60)
   r1, one = _slow_entry(monkeypatch, 1)
   monkeypatch.undo()
   r3, three = _slow_entry(monkeypatch, 3)
@@ -593,13 +594,13 @@ def test_menu3_presses_harder_below_1_5_kmh_never_weaker_than_menu1(monkeypatch)
   assert max(gap[i] for i in low) == pytest.approx(kc.B17O_RAMP_MAX, abs=1e-6)  # up to B17O_RAMP_MAX past the table
 
 
-@pytest.mark.parametrize("hover, lo, hi", [(200, 0.60, 0.60), (60, 0.10, 0.30)])
+@pytest.mark.parametrize("hover, lo, hi", [(200, 0.60, 0.60), (60, 0.45, 0.50)])
 def test_menu3_ramp_hands_over_at_the_stop_without_weakening(monkeypatch, hover, lo, hi):
   """At the stop the brake does not drop back from the ramped request at the hand-over to the latch path, also while the band
   compensation of the first latch frames (-0.20 at the full band, 0.4 s) decays: the floor is the strongest request sent since
-  the last ramp frame until the latch request without the band compensation passes it. Fully ramped (hover 200) the latch
-  request starts weaker than the ramp; part ramped (hover 60) it starts just past it. After that the standing hold is menu 3's
-  as before (B17O_HOLD2_* unchanged)."""
+  the last ramp frame until the latch request without the band compensation passes it. Fully ramped (hover 200) and past
+  B17O_RAMP_KNEE (hover 60) the latch request starts weaker than the ramp. After that the standing hold is menu 3's as before
+  (B17O_HOLD2_* unchanged)."""
   _, one = _slow_entry(monkeypatch, 1, hover=hover)
   monkeypatch.undo()
   _, three = _slow_entry(monkeypatch, 3, hover=hover)
@@ -631,7 +632,7 @@ def test_menu3_ramp_restarts_after_leaving_the_stopping_state(monkeypatch):
   monkeypatch.undo()
   three, st = run(3)
   monkeypatch.undo()
-  assert st[0] == pytest.approx(-100 * kc.B17O_RAMP_STEP) and st[1] == pytest.approx(three[99], abs=1e-6)  # the ramp and its stop floor are armed
+  assert st[0] == pytest.approx(-(kc.B17O_RAMP_KNEE + 70 * kc.B17O_RAMP_STEP2)) and st[1] == pytest.approx(three[99], abs=1e-6)  # the ramp and its stop floor are armed
   assert st[2] == 0.0 and st[3] is None  # cleared by the pid frame
   gap = [a - b for a, b in zip(one, three, strict=True)]
   assert gap[100] == 0.0  # the pid frame is menu 1's

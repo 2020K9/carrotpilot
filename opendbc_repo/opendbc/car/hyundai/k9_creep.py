@@ -295,14 +295,19 @@ B17O_HOLD2_STEP = 0.0060  # per frame from LATCH_ACCEL to B17O_HOLD2_ACCEL (0.83
 # kind 15 ramp (menu 3, 2026-10-30, the driver 05:20 "1.5키로때부터 점점 올리면?", 06:07 "해봐"): at 05:02:53.9 the car entered
 # the stop at 0.41 m/s and the table there (-0.28 .. -0.38, about the creep) left it rolling at 0.34 .. 0.38 m/s for 1.5 s.
 # So in the stopping state before the stop, at or below B17O_RAMP_V and while the car slows by less than the table asks (aEgo
-# above the table value), the request goes B17O_RAMP_STEP per frame further past the table, at most B17O_RAMP_MAX; the offset
-# stays for the rest of the stop. min() against the table output keeps it from ever being weaker than kind 13. From the stop
+# above the table value), the request goes B17O_RAMP_STEP per frame further past the table up to B17O_RAMP_KNEE and then
+# B17O_RAMP_STEP2 per frame, at most B17O_RAMP_MAX (14:31 "왜 덜덜이 더늘어낫니...개선해"): the fast first stage ends the float
+# in 0.3 s and its lower knee keeps the decel at the stop small, the slow second keeps a car that still slows less than asked
+# (downhill, load) from crawling past the stop as the table fades below 0.2 m/s. The offset never shrinks for the rest of the
+# stop. min() against the table output keeps it from ever being weaker than kind 13. From the stop
 # the request never gets weaker than the last ramp request (or anything stronger sent since) until the latch request itself,
 # without the band compensation, passes it, so the hand-over to the latch never weakens (the band compensation of the first
 # latch frame decays in 0.4 s). A frame out of the stopping state clears both (the 00:53 hold2_k lesson). StopReq, the latch
 # and B17O_HOLD2_* are as before.
 B17O_RAMP_V = 0.4167  # m/s (1.5 km/h)
-B17O_RAMP_STEP = 0.004  # m/s^2 per frame (0.4 m/s^2 per second)
+B17O_RAMP_STEP = 0.015  # m/s^2 per frame (1.5 m/s^2 per second) up to B17O_RAMP_KNEE
+B17O_RAMP_KNEE = 0.45  # m/s^2 past the table where the first stage ends
+B17O_RAMP_STEP2 = 0.002  # m/s^2 per frame (0.2 m/s^2 per second) from there
 B17O_RAMP_MAX = 0.60  # m/s^2 past the table at most
 # kind 14 (menu 2, 2026-10-29 05:40) = the S1-S6 of 594e8fef9, moved here from kind 13 unchanged so that menu 1 stays his
 # recorded stop. The table above stays as is; the safeties only ever brake more:
@@ -734,7 +739,11 @@ class K9Creep:
     if o is None:
       return o
     if v_ego <= B17O_RAMP_V and a_ego > self.b17o_tab:
-      self.b17o_ramp = max(self.b17o_ramp - B17O_RAMP_STEP, -B17O_RAMP_MAX)
+      if self.b17o_ramp > -B17O_RAMP_KNEE:
+        r = max(self.b17o_ramp - B17O_RAMP_STEP, -B17O_RAMP_KNEE)
+      else:
+        r = self.b17o_ramp - B17O_RAMP_STEP2
+      self.b17o_ramp = max(r, -B17O_RAMP_MAX)
     if self.b17o_ramp < 0.0:
       o = float(min(o, self.b17o_tab + self.b17o_ramp))
       self.b17o_hold = o
