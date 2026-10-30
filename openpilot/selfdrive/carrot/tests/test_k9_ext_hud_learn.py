@@ -10,7 +10,8 @@ CLUSTER = Path(__file__).resolve().parents[1] / "cluster"
 sys.path.insert(0, str(CLUSTER))
 
 from cluster_lat_values import (  # noqa: E402
-  applied_torque, delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, learned_delay, torque_learn_text,
+  applied_torque, delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, learned_delay, torque_applied_text,
+  torque_learn_text, torque_learned_text,
 )
 
 
@@ -52,8 +53,9 @@ def test_texts():
   assert lat_values_text(12.9, 0.20) == "조향비 12.90  지연설정 0.20초"
   assert delay_learn_text(63, 0.2418) == "지연학습 63%  0.24초"
   assert delay_learn_text(None, None) == "지연학습 -  -"
-  assert torque_learn_text(61, 2.5, 0.131) == "토크학습 61%  횡가속 2.50  마찰 0.13"
-  assert torque_learn_text(0, None, None) == "토크학습 0%  횡가속 -  마찰 -"
+  # 2026-10-30 18:10 / 18:24 / 18:27: the line became 학습 / 적용 lines in web menu units + the % line
+  assert torque_learn_text(61) == "토크학습 61%" and torque_applied_text(2.5, 0.131) == "적용 횡가속 2500  마찰 131"
+  assert torque_learn_text(0) == "토크학습 0%" and torque_applied_text(None, None) == "적용 횡가속 -  마찰 -"
   assert lane_offset_text(0.123) == "치우침 → 12cm" and lane_offset_text(-0.08) == "치우침 ← 8cm"
   assert lane_offset_text(0.01) == "치우침 가운데" and lane_offset_text(None) == "치우침 --"
 
@@ -64,8 +66,11 @@ def test_lane_offset_arrows_are_in_the_hud_font_atlas():
   body = src.split("def _navi_font_codepoints", 1)[1].split("def ", 1)[0]
   assert "0x2190" in body and "0x2192" in body
   assert lane_gap_text(1.87, 1.63) == "좌 1.87m   우 1.63m"
-  for t in (lat_values_text(12.9, 0.2), delay_learn_text(63, 0.24), torque_learn_text(61, 2.5, 0.131)):
+  for t in (lat_values_text(12.9, 0.2), delay_learn_text(63, 0.24), torque_learned_text(2.745, 0.1046), torque_learn_text(61)):
     assert "적용" not in t and not any(w in t for w in ("SR", "SAD", "LD", "LT", "AF"))
+  # 보노보노 2026-10-30 18:27 "학습값과 적용되고잇는값 위아래로 띄워": only the applied-values line says 적용, as its first word
+  t = torque_applied_text(2.5, 0.131)
+  assert t.split()[0] == "적용" and t.count("적용") == 1 and not any(w in t for w in ("SR", "SAD", "LD", "LT", "AF"))
 
 
 def test_state_fields_default_unknown():

@@ -103,7 +103,8 @@ from cluster_scene import (
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
-from cluster_lat_values import delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_learn_text
+from cluster_lat_values import (delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
+                                torque_learn_text, torque_learned_text)
 from cluster_utils import blink_visible, clamp
 
 
@@ -386,8 +387,16 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 # from 23.0). Up here 25.0 is the ceiling, set by the right lane line: measured in render pixels in both panel layouts
 # (out/sweep_lat_lift19*.json) line 3's left end stays 6 px right of the lane line's pixels at 25.0 and runs onto them at
 # 25.5 (4 px) / 26.0 (70 px).
-LAT_VALUES_FONT_SIZE = 25.0
-LAT_VALUES_CENTER_Y = LANE_CONFIDENCE_CENTER_Y - LANE_CONFIDENCE_BOX_H * 0.5 - 2.0 - LAT_VALUES_FONT_SIZE * 0.5
+# 2026-10-30 (보노보노 18:10 / 18:24 / 18:27): the torque line became three, '학습 횡가속 2745  마찰 105' / '적용 횡가속 2500
+# 마찰 130' / '토크학습 61%' (the last one only while calPerc < 100), so five lines share the room the three had: from the
+# top limit of test_k9_ext_hud_sr_sad.py (TPMS car centre - 150) down to the TPMS car icon top, 111 px. Five lines at 25.0
+# need about 132 px, and keeping lines 1 / 2 at 25.0 leaves about 15 px a line for the other three, so all five are
+# LAT_VALUES_FONT_SIZE with an HUD_LINE_STEP step in fixed slots (the % slot just stays empty at 100 %, nothing moves); the
+# bottom slot ends 2 px above the TPMS car icon top. 19.0 / 22 px: at 20.0 / 22 the outline of the % line (습 is the tallest
+# glyph) touched line 4 by a row (test_k9_ext_hud_torque_lines.py); at 19.0 every line keeps an empty row.
+# The new lines are narrower than the old line 3, so lines 4 / 5 sit
+# beside the right lane-probability badge, far to its right, instead of above it (render px in the commit report).
+LAT_VALUES_FONT_SIZE = 19.0
 LAT_VALUES_COLOR = (214, 224, 231, 255)
 # 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines (since 18:04 lines 1..3 above the TPMS car,
 # line 3 where SR / SAD was (4a44e564), lines 4 / 5 left of the car, see below):
@@ -397,7 +406,11 @@ HUD_LINE_STEP = LAT_VALUES_FONT_SIZE + 3.0
 # 2026-10-26 18:04 (보노보노 "외부hud에 차선치우침.현재차선좌우간격 아래 tpms보여주는 차모양 왼쪽으로 옮겨놔"): lines 4 / 5 moved
 # to the left of the TPMS car (right edge LANE_VALUES_GAP_X left of the icon incl. the left pressure badges, the two lines
 # centred on the car's height); lines 1..3 moved down so that line 3 sits right above the car (where line 5 was).
-LAT_VALUES_LINE_Y = tuple(LAT_VALUES_CENTER_Y - HUD_LINE_STEP * (2 - i) for i in range(3))     # lines 1..3
+LAT_VALUES_SLOT_Y = tuple(TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 2.0 - LAT_VALUES_FONT_SIZE * 0.5
+                          - HUD_LINE_STEP * (4 - i) for i in range(5))
+LAT_VALUES_LINE_Y = LAT_VALUES_SLOT_Y[:3]       # lines 1..3: 조향비 / 지연학습 / 학습
+LAT_VALUES_CENTER_Y = LAT_VALUES_LINE_Y[2]
+TORQUE_LINE_Y = LAT_VALUES_SLOT_Y[3:]           # 적용 / 토크학습 % (fixed slots below line 3)
 LANE_VALUES_GAP_X = 8.0
 LANE_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X - TPMS_STATUS_ICON_W * 0.5 - LANE_VALUES_GAP_X
 # 2026-10-29 07:08 (보노보노 "차선좌우 글씨작던데 더키워") 17.0 -> 22.0, then 18:12 ("차선치우침 / 좌.우 글씨크기 더크게만들어")
@@ -3488,10 +3501,15 @@ class ClusterUiRenderer:
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
             delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
-            torque_learn_text(getattr(state, "torque_learn_perc", None), getattr(state, "torque_learn_lat_accel_factor", None),
-                              getattr(state, "torque_learn_friction", None)),
+            torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
+                                getattr(state, "torque_filtered_friction", None)),
+            torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
+                                getattr(state, "torque_learn_friction", None)),
+            torque_learn_text(getattr(state, "torque_learn_perc", None)),
         )
-        for text, y in zip(texts, LAT_VALUES_LINE_Y):
+        for text, y in zip(texts, LAT_VALUES_SLOT_Y):
+            if text is None:        # 토크학습 % at 100 %: its slot stays empty
+                continue
             self._draw_text_with_stroke(text, LAT_VALUES_RIGHT_X, y, LAT_VALUES_FONT_SIZE, LAT_VALUES_COLOR, (0, 0, 0), 2,
                                         anchor="right", cache=True)
 

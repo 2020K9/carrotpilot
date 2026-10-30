@@ -517,6 +517,9 @@ class ClusterUiState:
     torque_learn_perc: int | None = None
     torque_learn_lat_accel_factor: float | None = None
     torque_learn_friction: float | None = None
+    # 2026-10-30: liveTorqueParameters Filtered (what torqued learned), shown above the applied values
+    torque_filtered_lat_accel_factor: float | None = None
+    torque_filtered_friction: float | None = None
     # K9LaneAssist line above SR / SAD (cluster_lat_values.lane_values_text): lane-centre offset [m]
     # (+ right, None = '--'), controlsState.k9LaneState (None = unknown) and k9LaneAccel [m/s^2].
     k9_lane_offset_m: float | None = None

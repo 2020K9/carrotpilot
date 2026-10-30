@@ -24,7 +24,7 @@ from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
 from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_gaps_m, lane_offset_m, live_parameters_usable
-from cluster_lat_values import applied_torque, learned_delay
+from cluster_lat_values import applied_torque, learned_delay, learned_torque_filtered
 try:
     from openpilot.selfdrive.controls.lib.k9_torque_learn import TorqueLearnSwitch
 except Exception:  # pragma: no cover - standalone HUD tools without the openpilot tree
@@ -590,6 +590,10 @@ class OpenpilotLiveSource:
         except Exception:
             (d_perc, d_s), (t_perc, t_af, t_fr) = (None, None), (None, None, None)
         try:
+            t_af_learned, t_fr_learned = self._live_torque_learned()
+        except Exception:
+            t_af_learned, t_fr_learned = None, None
+        try:
             k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = self._live_lane_values(now)
         except Exception:
             k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = None, None, None, None, None
@@ -624,6 +628,8 @@ class OpenpilotLiveSource:
             torque_learn_perc=t_perc,
             torque_learn_lat_accel_factor=t_af,
             torque_learn_friction=t_fr,
+            torque_filtered_lat_accel_factor=t_af_learned,
+            torque_filtered_friction=t_fr_learned,
             k9_lane_offset_m=k9_lane_offset,
             k9_lane_state=k9_lane_state,
             k9_lane_accel=k9_lane_accel,
@@ -675,6 +681,11 @@ class OpenpilotLiveSource:
         live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
         switch = self._torque_learn_switch(live_torque, now)
         return learned_delay(live_delay), applied_torque(live_torque, custom, custom_laf, custom_fr, switch)
+
+    def _live_torque_learned(self) -> tuple[float | None, float | None]:
+        """학습 line: liveTorqueParameters Filtered as torqued publishes it, whatever LateralTorqueCustom is (display only)."""
+        live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
+        return learned_torque_filtered(live_torque)
 
     def _torque_learn_switch(self, live_torque: Any | None, now: float) -> Any | None:
         """The HUD's copy of latcontrol_torque's menu -> learned cross-fade (k9_torque_learn), fed like controlsd does."""

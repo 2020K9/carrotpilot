@@ -48,6 +48,13 @@ labels in Korean, no 적용 / 미적용 text, no 보정 state:
     The % stays liveTorqueParameters.calPerc.
   - (보노보노 17:29 "토크학습100%차면 현재학습값으로 변하게만들어") with LateralTorqueCustom 1 latcontrol_torque now cross-fades
     from the menu values to Filtered once torqued is valid (controls/lib/k9_torque_learn.py); the HUD runs the same rule.
+
+2026-10-30 (보노보노 18:10 "마찰학습값이 0.11이면 웹에서설정하는것처럼 110", 18:24 "헌재 학습값 띄우게하고 100%안찻으면 아래에
+퍼센트 띄워", 18:27 "학습값과 적용되고잇는값 위아래로 띄워"): line 3 becomes three lines, numbers in the web menu units of
+LateralTorqueAccelFactor / LateralTorqueFriction (x 1000, round half up: 0.1105 -> 111, 2.4495 -> 2450):
+  '학습 횡가속 2745  마찰 105'  liveTorqueParameters Filtered = what torqued publishes now, whatever LateralTorqueCustom is
+  '적용 횡가속 2500  마찰 130'  applied_torque above (unchanged)
+  '토크학습 61%'                calPerc, only while < 100 ('토크학습 -' when unknown), not drawn at 100
 """
 from __future__ import annotations
 
@@ -193,15 +200,45 @@ def applied_torque(live_torque: Any | None, custom: Any = None, custom_laf: Any 
     return perc, af if af is not None and af > 0.0 else None, fr if fr is not None and fr >= 0.0 else None
 
 
+def learned_torque_filtered(live_torque: Any | None) -> tuple[float | None, float | None]:
+    """(latAccelFactor, friction) torqued publishes now = liveTorqueParameters Filtered, whatever LateralTorqueCustom is;
+    None ('-') without a message or for a non-finite / impossible value (latAccelFactor <= 0, friction < 0)."""
+    if live_torque is None:
+        return None, None
+    try:
+        af, fr = _finite(live_torque.latAccelFactorFiltered), _finite(live_torque.frictionCoefficientFiltered)
+    except Exception:
+        return None, None
+    return af if af is not None and af > 0.0 else None, fr if fr is not None and fr >= 0.0 else None
+
+
+def _web_units(value: Any) -> str:
+    """Web menu units of LateralTorqueAccelFactor / LateralTorqueFriction: x 1000, round half up (0.1105 -> 111), '-' unknown."""
+    v = _finite(value)
+    return "-" if v is None else str(int(math.floor(v * 1000.0 + 0.5)))
+
+
 def delay_learn_text(perc: int | None, delay_s: float | None) -> str:
     """HUD line 2: '지연학습 63%  0.24초'."""
     return f"지연학습 {'-' if perc is None else f'{perc}%'}  {_fmt(delay_s, '.2f', '초')}"
 
 
-def torque_learn_text(perc: int | None, lat_accel_factor: float | None, friction: float | None) -> str:
-    """HUD line 3: '토크학습 61%  횡가속 2.50  마찰 0.13'."""
-    return (f"토크학습 {'-' if perc is None else f'{perc}%'}  횡가속 {_fmt(lat_accel_factor, '.2f')}  "
-            f"마찰 {_fmt(friction, '.2f')}")
+def torque_learned_text(lat_accel_factor: float | None, friction: float | None) -> str:
+    """HUD line 3: '학습 횡가속 2745  마찰 105' (learned_torque_filtered in web menu units)."""
+    return f"학습 횡가속 {_web_units(lat_accel_factor)}  마찰 {_web_units(friction)}"
+
+
+def torque_applied_text(lat_accel_factor: float | None, friction: float | None) -> str:
+    """HUD line 4: '적용 횡가속 2500  마찰 130' (applied_torque in web menu units)."""
+    return f"적용 횡가속 {_web_units(lat_accel_factor)}  마찰 {_web_units(friction)}"
+
+
+def torque_learn_text(perc: int | None) -> str | None:
+    """HUD line 5: '토크학습 61%' while torqued is still learning (calPerc < 100), '토크학습 -' when unknown, None (not drawn)
+    at 100."""
+    if perc is None:
+        return "토크학습 -"
+    return None if perc >= 100 else f"토크학습 {perc}%"
 
 
 LANE_P_MIN = 0.6
