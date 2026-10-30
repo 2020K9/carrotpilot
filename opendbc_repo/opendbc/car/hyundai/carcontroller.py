@@ -196,10 +196,13 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
-    # K9StopMode single selector, read live every 0.5 s (2026-10-25): 0 = base braking, 1 / 2 / 3 = K9Creep kinds 13 / 14 / 15
-    # (k9_creep.MENU: bono1739 원본2, 끝 구간 개선, 원본2 + 선 뒤 1초 잠금); other values act as 0. The v12 original left the
-    # menu with its two page blocks on 2026-10-29 05:40 and the v14 original the same way on 07:10 (the driver's orders), so
-    # no creep_fix page code is pasted here any more and kind 15 moved from menu 4 to menu 3.
+    # K9StopMode single selector, read live every 0.5 s (2026-10-25): 0 = base braking, 1 / 2 / 3 / 4 / 5 = K9Creep kinds
+    # 13 / 16 / 15 / 14 / 17 (k9_creep.MENU: bono1739 원본2, 격차수정, 원본2 + 선 뒤 1초 잠금, 끝 구간 개선,
+    # 격차수정 + 1 km/h 아래 서서히); other values act as 0.
+    # The v12 original left the menu with its two page blocks on 2026-10-29 05:40 and the v14 original the same way on 07:10
+    # (the driver's orders), so no creep_fix page code is pasted here any more and kind 15 moved from menu 4 to menu 3;
+    # 2026-10-30 (the driver 17:29 "이전에하던개선은 4번 / 2번은 격차만큼조정한거", 17:31 "...그걸 5번"): menu 2 is kind 16,
+    # menu 4 kind 14 (moved from 2) and menu 5 kind 17; kind 16 was menu 4 from 15:43 to 17:29.
     # Stored values of older menus are migrated once at manager start (k9_stop_mode_migration.py).
     # See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
@@ -317,6 +320,7 @@ class CarController(CarControllerBase):
           mode = params.get_int("K9StopMode")
         except (TypeError, ValueError, OverflowError):
           mode = 0
+        # 6+ as well (menu 0-5 since 2026-10-30; the next line's "4+" is the 0-3 menu note, kept as in b6696b37)
         mode = mode if mode in K9_CREEP_MENU else 0  # 4+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
@@ -523,7 +527,7 @@ class CarController(CarControllerBase):
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
         lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
-      # K9StopMode 1 / 2 / 3: K9Creep kinds 13 / 14 / 15 (v12k9 based); changes accel AND StopReq timing.
+      # K9StopMode 1 / 2 / 3 / 4 / 5: K9Creep kinds 13 / 16 / 15 / 14 / 17 (v12k9 based); changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -972,10 +976,10 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-        if creep and creep_obj is not None:  # K9StopMode 1 / 2 / 3 (K9Creep) and applied this frame only
+        if creep and creep_obj is not None:  # K9StopMode 1 / 2 / 3 / 4 (K9Creep) and applied this frame only
           self.jerk_u, self.cb_upper, self.cb_lower = creep_obj.bands(self.jerk_u, CS.out.vEgo, self.cb_upper,
                                                                       self.cb_lower, cb_prev, cb_prev_lower)
-          self.jerk_l = creep_obj.jerk_l_floor(self.jerk_l, CS.out.vEgo)  # K9StopMode 1 / 2 / 3 only; v9 reference unchanged
+          self.jerk_l = creep_obj.jerk_l_floor(self.jerk_l, CS.out.vEgo)  # K9StopMode 1 / 2 / 3 / 4 only; v9 reference unchanged
         elif creep:  # caller without the object (tests): v9 band
           self.jerk_u, self.cb_upper, self.cb_lower = K9Creep.jerk_bands(self.jerk_u, CS.out.vEgo)
 

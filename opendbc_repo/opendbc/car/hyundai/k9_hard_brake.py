@@ -2,7 +2,7 @@
 (2026-10-24 evening, the driver's report 19:12 "거리 미리 확보 못해서 쎄게 잡을 때 놨다 잡았다 하는 거 같은데 이때 드드득거리기도
 하고 좀 일정하게 잡게 못함?"). Log analysis and simulator only, NOT verified on the vehicle.
 
-KIA_K9 (CAN, camera SCC, openpilot longitudinal), every K9StopMode value (0-3); a shared hard-braking path before the
+KIA_K9 (CAN, camera SCC, openpilot longitudinal), every K9StopMode value (0-5); a shared hard-braking path before the
 K9StopMode stop logic (k9_creep.py). It never changes the sent aReq, StopReq or JerkLowerLimit; it only lowers the SCC14
 JerkUpperLimit (the ESC's allowed rate of releasing) to its floor HB_JERK_U (0.5 m/s^3) on the frames where:
 - active: longControlState pid, longActive, no override/gas/brake, valid CAN, vEgo above HB_MIN_SPEED (3.0 m/s), a lead
@@ -14,7 +14,7 @@ JerkUpperLimit (the ESC's allowed rate of releasing) to its floor HB_JERK_U (0.5
   end of a hard brake is released as before.
 
 Reason (K9 rlog, hard-brake clusters aReq or aEgo < -1.5 m/s^2, 2026-10-10..10-24, worker brake_hard_pulse; estimate, 추정):
-the release-then-regrab cycles of the sent aReq were 0.87 per 10 s of hard braking with ComfortBand 0 (K9StopMode 1-3 send
+the release-then-regrab cycles of the sent aReq were 0.87 per 10 s of hard braking with ComfortBand 0 (K9StopMode 1-5 send
 band 0 at every speed) against 0.23 with the base band, of the measured decel 1.20 against 0.39; the ESC followed aReq with
 ~0.04-0.06 s lag (0.22 s with the band) and overshot the command peak (1.18-1.23 x, 1.04 x with the band). The planner eased
 off at 0.1-0.8 m/s^3 while the lead still closed (11 of 14 releases), and each such release came back as a measured release

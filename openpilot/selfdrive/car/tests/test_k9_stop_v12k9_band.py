@@ -159,9 +159,10 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 4, 5, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
+@pytest.mark.parametrize("mode", [None, 0, 6, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
 # 3 = v14 original, 4 still acts as 0; 2026-10-29 04:48: 1 and 2 swapped methods, so both are pinned across numbers below;
 # 2026-10-29 07:10: the v14 original left the menu and kind 15 moved 4 -> 3, so 4 acts as 0 again and is back in this list
+# 2026-10-30: 4 (kind 14) and 5 (kind 17) are menu values again, so 6 stands for "acts as 0"
 def test_menus_other_than_the_k9_menu_can_identical_to_frozen(monkeypatch, frozen_cc, mode, fingerprint):
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=frozen_cc, **_kw(mode)))

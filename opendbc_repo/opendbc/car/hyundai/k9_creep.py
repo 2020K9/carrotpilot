@@ -7,11 +7,12 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   넣으라햇잔니"; 원본 a59530057 = 10/27 17:39 대감님 직접 정차 그대로, 원본2 2026-10-29 00:50): kind 8 with the stop end
   replaced by the driver's own stop table (B17O_*) up to the stop, then the kind 8 standstill latch at once (원본2: no 1.6 s
   logged pressure). This is the one slot that is his recorded stop, so it is never tuned;
-- 2 = "bono1739 끝 구간 개선" (kind 14 V12K9OS below; 2026-10-29 05:40, the driver "2번이 내가직접밟은로그 너가개선한거"): the
-  same table, not one number changed, but used only in the end window below B17O_ROLL_V, with the kind 8 floor / lead /
-  downgrade / roll-rescue safeties (S1-S6, from 594e8fef9). An improved version, NOT his stop as recorded, so its name
-  never says 원본. It took the slot of 2 v12 original, which left the menu with its code on 2026-10-29 05:40 (the driver
-  "지금 2번인 v12 원본은 메뉴에서 빼라"); the v12 page code is no longer in the tree;
+- 2 = "격차수정" (kind 16 V12K9OG below; 2026-10-30, the driver 15:33 "1번메뉴만들때 내차에서 따온 거하고 1번메뉴와 비교해서
+  차이가 얼마나 나는지 보고 격차난만큼 조절해", 17:14 "오차난만큼 실차로그와맞게 보정한거 2번에넣어봐 당장" / 17:29 "2번은
+  격차만큼조정한거"; menu 4 from 15:43 to 17:29): kind 13 exactly, except that before the stop the
+  table request is made stronger by the measured gap (B17O_GAP_*: his 17:39 decel minus the decel made on the kind 13
+  request, per speed bin), min(kind 13 request, -(table + gap)), so it is never a weaker request than kind 13 on any frame.
+  StopReq, the latch and the standstill hold are kind 13's;
 - 3 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; 2026-10-29 05:40, the driver "4번에다가 내가 아까 말한시간로그에
   완전정차후1초뒤 브레이크 좀더 세게 밟으란거잔아"): kind 13 exactly, except that after the stop the standstill hold reaches
   the first B17O_HOLD2_T (1.0 s) of standstill is kind 13 bit for bit (the latch ramp toward LATCH_ACCEL), and only after
@@ -20,18 +21,33 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   menu 4 until 2026-10-29 07:10, when the v14 original (menu 3 since 2026-10-28, the creep_fix v14 page code pasted into
   carcontroller.py; it had replaced 3 v13 original of 2026-10-26) left the menu with its two page blocks and this slot
   moved up (the driver "3.v14제거후 4번을 3번으로"). 4 C1 / 5 C1+ (2026-10-27, kinds 9 / 10) went the same way
-  on 2026-10-28 (the driver's orders 2026-10-27 19:48 / 19:51).
-Any other value (4 or more, negative, unreadable) acts as 0. The modes never stack.
+  on 2026-10-28 (the driver's orders 2026-10-27 19:48 / 19:51);
+- 4 = "bono1739 끝 구간 개선" (kind 14 V12K9OS below; 2026-10-29 05:40, the driver "2번이 내가직접밟은로그 너가개선한거"; menu 2
+  until 2026-10-30 17:29, the driver "이전에하던개선은 4번", code unchanged): the
+  same table, not one number changed, but used only in the end window below B17O_ROLL_V, with the kind 8 floor / lead /
+  downgrade / roll-rescue safeties (S1-S6, from 594e8fef9). An improved version, NOT his stop as recorded, so its name
+  never says 원본. On 2026-10-29 it took the slot of 2 v12 original, which left the menu with its code on 2026-10-29 05:40 (the driver
+  "지금 2번인 v12 원본은 메뉴에서 빼라"); the v12 page code is no longer in the tree;
+- 5 = "격차수정 + 1 km/h 아래 서서히 더 잡기" (kind 17 V12K9OGR below; 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하
+  서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번"): kind 16 exactly, except that in the stopping state before the stop, at
+  or below B17O_RAMP5_V (1 km/h), the kind 15 ramp (B17O_RAMP_STEP / _KNEE / _STEP2 / _MAX) goes on top of the kind 16
+  table request while the car slows by less than that request, and from the stop the request is held no weaker than the
+  last ramp request until the latch request passes it or the stopping state ends (no B17O_HOLD2_*: the 1 s harder hold
+  is menu 3 only). Never a weaker request than kind 16 or kind 13 on any frame. Not simulated (17:31 "테스트하지말고 바로바로
+  푸시해라").
+Any other value (6 or more, negative, unreadable) acts as 0. The modes never stack.
 The 2026-10-24 menu (1 v10, 2 v10 + light shudder fix, 3 v11) is deleted with its code (kinds 2 v10, 6 v10 + light shudder
 fix and 7 v11 are gone). Stored values are migrated once at manager start (openpilot/selfdrive/car/k9_stop_mode_migration.py,
-marker K9StopModeVer 7 since 2026-10-29 07:10, 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
+marker K9StopModeVer 8 since 2026-10-30, 7 / 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
 K9StopModeVer 3 (the 0-5 menu) 3 v13 / 4 C1 / 5 C1+ / 6 -> 0, never to the then-new 3 v14; from K9StopModeVer 4 the 04:48
 1 <-> 2 slot swap; from K9StopModeVer 5 a stored 2 (v12 original, off the menu) -> 0, 0 / 1 / 3 unchanged; from
-K9StopModeVer 6 a stored 4 -> 3 (kind 15 moved up) and a stored 3 (v14 original, off the menu) -> 0, 0 / 1 / 2 unchanged.
+K9StopModeVer 6 a stored 4 -> 3 (kind 15 moved up) and a stored 3 (v14 original, off the menu) -> 0, 0 / 1 / 2 unchanged;
+from K9StopModeVer 7 (2026-10-30) a stored 2 (kind 14) -> 4 (the same kind, the new number) and a stored 4 / 5 (it acted as
+0 on the 0-3 menu) -> 0, 0 / 1 / 3 unchanged, so no stored value runs a different kind after the update.
 Earlier menu history is in git log.
 Throughout this module "mode N" / "kind N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (not on the menu; kept
 only as the test reference of "never brake less than v9"), kind 8 = v12k9 (not on the menu either since 2026-10-29: it is
-the base of kinds 13 / 14 / 15, menus 1 / 2 / 3).
+the base of kinds 13 / 14 / 15 / 16 / 17, menus 1 / 4 / 3 / 2 / 5).
 
 Sources: https://leegrt.org/oppo/creep_fix/ (selectMode carcontroller.py code and changelog, written for the Kia Niro EV CAN,
 VEgoStopping 15). No license is stated on that page; kind 1 is an independent re-implementation of the v9 algorithm and its
@@ -139,15 +155,19 @@ from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
 V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 1 (menu 2 until 2026-10-29 04:48)
-V12K9OS = 14  # kind 14 (2026-10-29 05:40) "bono1739 끝 구간 개선": kind 13 + the S1-S6 safeties / end window (594e8fef9); menu 2
+V12K9OS = 14  # kind 14 (2026-10-29 05:40) "bono1739 끝 구간 개선": kind 13 + the S1-S6 safeties / end window (594e8fef9); menu 4 (menu 2 until 10-30 17:29)
 V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp; menu 3 (menu 4 until 07:10)
-KINDS = (V9, V12K9, V12K9O, V12K9OS, V12K9OH)
+V12K9OG = 16  # kind 16 (2026-10-30) "격차수정": kind 13 + the measured gap (B17O_GAP_*) before the stop; menu 2 (menu 4 15:43 .. 17:29)
+V12K9OGR = 17  # kind 17 (2026-10-30 17:31) "격차수정 + 1 km/h 아래 서서히 더 잡기": kind 16 + the ramp from B17O_RAMP5_V down; menu 5
+KINDS = (V9, V12K9, V12K9O, V12K9OS, V12K9OH, V12K9OG, V12K9OGR)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (not a kind), 2 v12k9; 2026-10-26: 3 v13 original;
 # 2026-10-28: 3 v14 original instead (not a kind); 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*),
 # kind 8 itself unchanged; 00:50 "bono1739 원본2": B17O_HOLD_T 0; 04:48 the 1 <-> 2 slot swap; 05:40 the v12 original left
 # the menu, 2 = kind 14 (his table improved) and 4 = kind 15 (kind 13 + the 1 s hold ramp); 07:10 the v14 original left the
-# menu with its page code and kind 15 moved 4 -> 3, so every menu value is a K9Creep kind now)
-MENU = {1: V12K9O, 2: V12K9OS, 3: V12K9OH}
+# menu with its page code and kind 15 moved 4 -> 3, so every menu value is a K9Creep kind now; 2026-10-30: 4 = kind 16
+# "격차수정", the driver 15:43 "4번격차수정으로 넣어라"; 17:29 kind 16 -> 2 and kind 14 -> 4, "이전에하던개선은 4번 / 2번은
+# 격차만큼조정한거"; 17:31 5 = kind 17, "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번")
+MENU = {1: V12K9O, 2: V12K9OG, 3: V12K9OH, 4: V12K9OS, 5: V12K9OGR}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted(MENU))  # K9StopMode values that change braking; anything else acts as 0
 
@@ -287,7 +307,7 @@ B17O_BAR = 0.2415  # m/s^2 per bar
 # bit for bit (the kind 8 latch ramp toward LATCH_ACCEL -0.50) and only after it does the request go past LATCH_ACCEL,
 # ramping at B17O_HOLD2_STEP to B17O_HOLD2_ACCEL and holding there while the car stands. min() against the kind 13 command
 # keeps it from ever being weaker, and a frame that is not standstill clears the second (back to kind 13 at once).
-# Kinds 1 / 8 / 13 / 14 never run this, so menus 1 and 2 are untouched. B17O_HOLD2_ACCEL is the one number to turn if the
+# Kinds 1 / 8 / 13 / 14 / 16 / 17 never run this, so menus 1, 2, 4 and 5 are untouched. B17O_HOLD2_ACCEL is the one number to turn if the
 # driver wants it stronger or weaker.
 B17O_HOLD2_T = 1.0  # s of continuous standstill before the extra braking starts
 B17O_HOLD2_ACCEL = -1.00  # m/s^2: the hold after B17O_HOLD2_T (LATCH_ACCEL -0.50 until then)
@@ -309,7 +329,35 @@ B17O_RAMP_STEP = 0.015  # m/s^2 per frame (1.5 m/s^2 per second) up to B17O_RAMP
 B17O_RAMP_KNEE = 0.45  # m/s^2 past the table where the first stage ends
 B17O_RAMP_STEP2 = 0.002  # m/s^2 per frame (0.2 m/s^2 per second) from there
 B17O_RAMP_MAX = 0.60  # m/s^2 past the table at most
-# kind 14 (menu 2, 2026-10-29 05:40) = the S1-S6 of 594e8fef9, moved here from kind 13 unchanged so that menu 1 stays his
+# kind 17 (menu 5, 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번"): the
+# ramp above on the kind 16 request (table + gap, b17g_tab) from B17O_RAMP5_V down, with the same steps, knee and cap, the
+# same "only while the car slows by less than asked (aEgo above b17g_tab)", never shrinking in the stop, and the same floor
+# from the stop. Kind 17 has no B17O_HOLD2_*, so the floor holds until the latch request passes it or the stopping state
+# ends (departure); without it the kind 8 latch would go from the last ramp request to LATCH_ACCEL in one frame. Not
+# simulated (17:31 "테스트하지말고 바로바로 푸시해라").
+B17O_RAMP5_V = 1.0 / 3.6  # m/s (1 km/h): kind 17 ramp start
+# kind 16 "격차수정" (menu 2 since 2026-10-30 17:29 "2번은 격차만큼조정한거", menu 4 from 15:43; the driver 15:33
+# "1번메뉴만들때 내차에서 따온 거하고 1번메뉴와 비교해서 차이가 얼마나 나는지
+# 보고 격차난만큼 조절해" / 15:43 "4번격차수정으로 넣어라"): the kind 13 table asks for his decel, but the car made less on it
+# (2026-10-30 05:02:53.9 .. 55.4, the one kind 13 stop in the logs: 0.316 asked at 0.34 .. 0.41 m/s, dec_la -0.110 made, the
+# car floated 1.5 s). So before the stop the table request is made stronger by that gap: min(kind 13 request, -(table +
+# gap)), gap = np.interp(vEgo, B17O_GAP_BP, B17O_GAP_A) >= 0 (m/s^2 decel, dec_la = -ESP12 LONG_ACCEL as the table). Per bin
+# the gap is his 17:39 decel minus the decel the car made on the kind 13 request: 0.35 / 0.45 m/s from that stop as measured
+# (1x); below 0.3 m/s, where the car floats on the creep, refitted in the mock until the table beat the creep (the remaining
+# gap went down); 0.575 / 0.725 m/s the mock kind 13 gap at 0.25 / 0.50 of it; 0.9 m/s and up 0 (no sample, car or mock).
+# m4gap_1030 REPORT.md: sources and ratios per bin.
+# The gap is a function of vEgo only (no aEgo / measured-decel switch, nothing that presses and releases); it comes in at
+# B17O_GAP_STEP of its value per frame from the first table frame, only up, and leaving the stopping state clears it. It is
+# added on the table frames before the stop only; a kind 8 latch after them ramps from the stronger request sent.
+# Kind 13 itself runs beside kind 16 on the same inputs with its own band (K9Creep.sh) and the stronger request is sent: the
+# gap narrows the band sent, and after a hand-over to the kind 8 latch the smaller band compensation was weaker than kind 13
+# for up to 0.17 s (m4gap_1030 check 1, 0000018a--30924b38e0_140).
+# StopReq, the latch, the standstill hold and b17o_plan / b17o_tab are kind 13's. Kind 17 runs it as kind 16 does; kinds
+# 1 / 8 / 13 / 14 / 15 never run it.
+B17O_GAP_BP = [0.10, 0.20, 0.275, 0.35, 0.45, 0.575, 0.725, 0.90, 1.25, 1.75, 2.50]  # m/s: the B17O_TAB_BP bins
+B17O_GAP_A = [0.55, 0.55, 0.55, 0.404, 0.237, 0.165, 0.33, 0.0, 0.0, 0.0, 0.0]  # m/s^2 decel added per bin
+B17O_GAP_STEP = 1.0  # share of the gap per frame from the first table frame of a stop (1.0: all of it at once)
+# kind 14 (menu 4 since 2026-10-30 17:29, menu 2 from 2026-10-29 05:40) = the S1-S6 of 594e8fef9, moved here from kind 13 unchanged so that menu 1 stays his
 # recorded stop. The table above stays as is; the safeties only ever brake more:
 # - S2 lead (B17O_K8_LEAD): a lead at or within V12K9_END_LEAD_MAX (12 m, where the kind 8 end profile starts to use the lead) in
 #   the stopping state before the stop: no table for the rest of this stop, kind 8 exactly (the old menu 2 way).
@@ -466,11 +514,17 @@ class K9Creep:
   def __init__(self, mode: int = V9):
     assert mode in KINDS, mode
     self.mode = mode
-    self.v12 = mode in (V12K9, V12K9O, V12K9OS, V12K9OH)  # kind 8 / 13 / 14 / 15: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
-    self.b17o = mode in (V12K9O, V12K9OS, V12K9OH)  # kinds 13 / 14 / 15: kind 8 + the driver's own stop table (B17O_*)
+    # kind 8 / 13 / 14 / 15 / 16 / 17: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
+    self.v12 = mode in (V12K9, V12K9O, V12K9OS, V12K9OH, V12K9OG, V12K9OGR)
+    self.b17o = mode in (V12K9O, V12K9OS, V12K9OH, V12K9OG, V12K9OGR)  # kinds 13 / 14 / 15 / 16 / 17: kind 8 + the driver's own stop table (B17O_*)
     self.b17s = mode == V12K9OS  # kind 14 only: the S1-S6 end window / safeties on top of kind 13
     self.b17h = mode == V12K9OH  # kind 15 only: the extra braking 1 s after the stop (B17O_HOLD2_*) on top of kind 13
+    self.b17g = mode in (V12K9OG, V12K9OGR)  # kinds 16 / 17: the measured gap on top of the kind 13 table before the stop (B17O_GAP_*)
+    self.b17r = mode in (V12K9OH, V12K9OGR)  # kinds 15 / 17: the ramp before the stop and its floor from the stop (B17O_RAMP_*)
     self.ref = _V12K9Ref() if self.v12 else None  # kind 8: reference for the zone clamp
+    self.sh = K9Creep(V12K9O) if mode in (V12K9OG, V12K9OGR) else None  # kinds 16 / 17: kind 13 itself on the same inputs (update() / bands())
+    self.sh_out = None  # kinds 16 / 17: the kind 13 request of this frame
+    self.sh_cb, self.sh_n = None, 0  # kinds 16 / 17: the band kind 13 sent on its last bands() call, update() calls since then
     self.reset()
 
   @property
@@ -485,6 +539,8 @@ class K9Creep:
     self._last = value
     if self.ref is not None:
       self.ref.last = value
+    if self.sh is not None:
+      self.sh.last = value
 
   def reset(self):
     if self.ref is not None:
@@ -519,10 +575,22 @@ class K9Creep:
     self.b17o_soft = False  # kind 14 S7: the bound held at least one frame in this stop
     self.b17o_soft_n = 0  # kind 14 S7: frames in this stop where it held (analysis)
     self.hold2_k = 0  # kind 15: consecutive standstill frames in the latch (B17O_HOLD2_T), 0: not standing
-    self.b17o_ramp = 0.0  # kind 15: the ramp offset past the table in this stop (B17O_RAMP_*), <= 0
-    self.b17o_hold = None  # kind 15: the floor from the stop until the latch request passes it (B17O_RAMP_*), None: none
+    self.b17o_ramp = 0.0  # kinds 15 / 17: the ramp offset past the table in this stop (B17O_RAMP_*), <= 0
+    self.b17o_hold = None  # kinds 15 / 17: the floor from the stop until the latch request passes it (B17O_RAMP_*), None: none
+    self.b17g_f = 0.0  # kinds 16 / 17: share of the gap entered in this stop (0 .. 1, only up; B17O_GAP_STEP)
+    self.b17g_tab = 0.0  # kind 17: the kind 16 table request (table + gap) of the last table frame, the ramp base
 
-  def update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
+  def update(self, **kw):
+    """Returns (accel, stopping) to send (keywords: _update). Kinds 16 / 17: the stronger of its own request and kind 13's (self.sh,
+    same inputs), so no frame is weaker than kind 13; StopReq is its own (kind 13's logic on the same inputs)."""
+    if self.sh is None:
+      return self._update(**kw)
+    self.sh_out = self.sh.update(**kw)[0]
+    self.sh_n += 1
+    accel, stopping = self._update(**kw)
+    return float(min(accel, self.sh_out)), stopping
+
+  def _update(self, *, accel: float, a_target: float, stopping: bool, pid: bool, v_ego: float, v_ego_raw: float,
              a_ego: float, long_accel, esp_standstill: bool, long_active: bool, override: bool, gas: bool,
              brake: bool, can_valid: bool, lead_visible: bool, lead_distance: float):
     """Returns (accel, stopping) to send."""
@@ -542,9 +610,9 @@ class K9Creep:
       self.eff_f = eff_ac if self.eff_f is None else self.eff_f + V12K9_STALL_ALPHA * (eff_ac - self.eff_f)
       stopping_in = stopping
       o = self._b17o(a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance) if self.b17o else None
-      if self.b17h:  # kind 15: the ramp below B17O_RAMP_V
+      if self.b17r:  # kinds 15 / 17: the ramp below B17O_RAMP_V (kind 17: B17O_RAMP5_V)
         o = self._ramp(o, stopping_in, v_ego, a_ego)
-      if o is not None and not self.b17s:  # kinds 13 / 15: the driver's stop table (kind 8 not run on this frame)
+      if o is not None and not self.b17s:  # kinds 13 / 15 / 16 / 17: the driver's stop table (kind 8 not run on this frame)
         self._last, self.end_out = o, o
         return o, False
       if self.b17s:  # kind 14: kind 8 below runs on every frame with its own state (S3), the table only lowers its request
@@ -586,7 +654,7 @@ class K9Creep:
             accel = float(min(max(accel, ref - V12K9_BAND_COMP), ref))
         else:
           accel = float(max(accel, ref_c - float(np.interp(v_ego, V12K9_ZONE_PRESS_BP, V12K9_ZONE_PRESS_V))))
-      if self.b17h and self.b17o_hold is not None:  # kind 15: no weaker than the floor until the latch request passes it
+      if self.b17r and self.b17o_hold is not None:  # kinds 15 / 17: no weaker than the floor until the latch request passes it
         accel = float(min(accel, self.b17o_hold))
         self.b17o_hold = None if self._last <= accel else accel  # self._last: the latch request, no band compensation
       self.end_out = accel
@@ -695,7 +763,7 @@ class K9Creep:
         accel = float(max(min(accel, LATCH_ACCEL), prev - V12K9_HOLD_STEP))
       else:
         accel = float(min(accel, LATCH_ACCEL))
-      if self.b17h:  # kind 15 only (menu 4): press harder from B17O_HOLD2_T after the stop
+      if self.b17h:  # kind 15 only (menu 3): press harder from B17O_HOLD2_T after the stop
         accel = self._hold2(accel, prev, raw_standstill)
       self._last = accel
       return accel, True
@@ -719,7 +787,7 @@ class K9Creep:
     return accel, False
 
   def _hold2(self, accel, prev, standstill):
-    """Kind 15 (menu 4) only: the request to send while the standstill latch holds. Until B17O_HOLD2_T of continuous
+    """Kind 15 (menu 3) only: the request to send while the standstill latch holds. Until B17O_HOLD2_T of continuous
     standstill it is the kind 13 command unchanged; after that it ramps past LATCH_ACCEL to B17O_HOLD2_ACCEL. The min()
     means no frame is ever weaker than kind 13, and a non-standstill frame clears the counter."""
     if not standstill:
@@ -731,30 +799,34 @@ class K9Creep:
     return float(min(accel, max(B17O_HOLD2_ACCEL, prev - B17O_HOLD2_STEP)))
 
   def _ramp(self, o, stopping_in, v_ego, a_ego):
-    """Kind 15 (menu 3) only: the table output o (None: not a table frame) with the ramp of B17O_RAMP_*. The min() means
-    no frame is ever weaker than kind 13, and a frame out of the stopping state clears the ramp and its floor."""
+    """Kinds 15 / 17 (menus 3 / 5): the table output o (None: not a table frame) with the ramp of B17O_RAMP_* (kind 15: from
+    B17O_RAMP_V on the kind 13 table value; kind 17: from B17O_RAMP5_V on the kind 16 table request). The min() means no
+    frame is ever weaker than kind 13 / 16, and a frame out of the stopping state clears the ramp and its floor."""
     if not stopping_in:
       self.b17o_ramp, self.b17o_hold = 0.0, None
       return o
     if o is None:
       return o
-    if v_ego <= B17O_RAMP_V and a_ego > self.b17o_tab:
+    rv, base = (B17O_RAMP5_V, self.b17g_tab) if self.b17g else (B17O_RAMP_V, self.b17o_tab)
+    if v_ego <= rv and a_ego > base:
       if self.b17o_ramp > -B17O_RAMP_KNEE:
         r = max(self.b17o_ramp - B17O_RAMP_STEP, -B17O_RAMP_KNEE)
       else:
         r = self.b17o_ramp - B17O_RAMP_STEP2
       self.b17o_ramp = max(r, -B17O_RAMP_MAX)
     if self.b17o_ramp < 0.0:
-      o = float(min(o, self.b17o_tab + self.b17o_ramp))
+      o = float(min(o, base + self.b17o_ramp))
       self.b17o_hold = o
     return o
 
   def _b17o(self, a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance):
-    """Kinds 13 / 14 / 15 (menus 1 / 2 / 4): the accel to send from the driver's stop table, or None (kind 8 as before)."""
+    """Kinds 13 / 14 / 15 / 16 / 17 (menus 1 / 4 / 3 / 2 / 5): the accel to send from the driver's stop table, or None (kind 8 as
+    before)."""
     if not stopping_in:
       self.b17o_on, self.b17o_k, self.b17o_plan, self.b17o_k8 = False, -1, False, 0
       self.b17o_resc, self.b17o_vn, self.b17o_out = False, 0, None
       self.b17o_soft, self.b17o_soft_n = False, 0
+      self.b17g_f = 0.0
       return None
     if self.latched:
       self.b17o_on, self.b17o_plan = False, False
@@ -789,6 +861,10 @@ class K9Creep:
       tab = -float(np.interp(v_ego, B17O_TAB_BP, B17O_TAB_V))
     self.b17o_plan = a_target < tab
     self.b17o_tab = float(tab)
+    if self.b17g and self.b17o_k < 0:  # kinds 16 / 17: the gap on top of the table before the stop (b17o_plan / b17o_tab: kind 13's)
+      self.b17g_f = min(1.0, self.b17g_f + B17O_GAP_STEP)
+      tab = tab - self.b17g_f * max(float(np.interp(v_ego, B17O_GAP_BP, B17O_GAP_A)), 0.0)
+    self.b17g_tab = float(tab)  # kind 17: the ramp base (kind 16's table request)
     return float(max(min(tab, a_target), -3.5))
 
   def _end_profile(self, accel, a_target, stopping_in, stopping, v_ego, a_ego, esp_standstill, lead_visible, lead_distance):
@@ -858,6 +934,11 @@ class K9Creep:
     """Applied non-CAN-FD, non-off frames: (jerk_u, cb_upper, cb_lower) to send. cb_upper/lower are the original band of
     this frame, cb_prev / cb_prev_lower the band sent on the previous make_jerk call (kind 8: the latch ramp; cb_prev_lower
     None = cb_prev - 0.1)."""
+    if self.sh is not None and self.sh_out is not None:  # kinds 16 / 17: kind 13 gets the band make_jerk makes from its own request
+      a = self.sh_out  # (non-CAN-FD original band) and its own band of the last call when that was the previous make_jerk call
+      pu, pl = self.sh_cb if self.sh_cb is not None and self.sh_n <= 2 else (cb_prev, cb_prev_lower)
+      self.sh_cb = self.sh.bands(jerk_u, v_ego, np.clip(0.9 + a * 0.2, 0, 1.2), np.clip(0.8 + a * 0.2, 0, 1.2), pu, pl)[1:]
+      self.sh_n = 0
     if self.v12:  # kind 8: page v12 jerk_u profile below 1.15 m/s; jerk_l: jerk_l_floor()
       if v_ego < V12_JERK_U_SPEED:
         jerk_u = max(jerk_u, float(np.interp(v_ego, V12_JERK_U_BP, V12_JERK_U_V)))
