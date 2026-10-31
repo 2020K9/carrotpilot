@@ -1916,8 +1916,11 @@ class MeterButtonLink:
   """K9ExtHud=1 meter remote <-> HUD (meter_improve 20:46 / 21:20: the 시작·일시정지·정산 app, carrot k9_meter_link.py).
   poll(now) reads the memory param K9MeterCmd at most every POLL_S: a queue "token:cmd;token:cmd;..." of the last few
   presses (one "token:cmd" also works); it returns the commands of tokens not seen before, in order. What is already
-  there when the HUD starts is not a press, so a restart never repeats an old one. publish(status) writes K9MeterState
-  (JSON: state, fare, km, sec, night, ts) when it changes, at most every PUBLISH_S, and at least every HEARTBEAT_S."""
+  there when the HUD starts is not a press, so a restart never repeats an old one - except the presses after the last
+  token the previous HUD took (K9MeterState "tok"): the HUD exits offroad, and a 시작 pressed meanwhile (e.g. on the
+  정산 screen) is applied when it comes back instead of being lost (meter_reset 2026-10-31 23:04 "정산하고 시작 누르면
+  초기화 안 된다"). publish(status) writes K9MeterState (JSON: state, fare, km, sec, night, tok, ts) when it changes,
+  at most every PUBLISH_S, and at least every HEARTBEAT_S."""
   POLL_S = 0.2
   PUBLISH_S = 0.5
   HEARTBEAT_S = 2.0
@@ -1931,10 +1934,11 @@ class MeterButtonLink:
     self._next = 0.0
     self._last: dict | None = None
     self._last_t = -1e9
+    self._tok: str | None = None   # last token taken (published as "tok")
 
-  def _read(self) -> str:
+  def _read(self, key: str = METER_CMD_PARAM) -> str:
     try:
-      v = self._params.get(METER_CMD_PARAM)
+      v = self._params.get(key)
     except Exception:
       return ""
     if isinstance(v, bytes):
@@ -1952,13 +1956,22 @@ class MeterButtonLink:
         entries.append((tok, cmd.strip()))
     if not self._primed:
       self._primed = True
-      self._seen = [t for t, _ in entries][-self.SEEN_MAX:]
-      return []
+      toks = [t for t, _ in entries]
+      try:
+        prev = json.loads(self._read(METER_STATE_PARAM)).get("tok")
+      except (ValueError, AttributeError):
+        prev = None
+      if prev not in toks:
+        self._seen = toks[-self.SEEN_MAX:]
+        return []
+      self._seen = toks[:toks.index(prev) + 1][-self.SEEN_MAX:]
+      self._tok = prev
     out = []
     for tok, cmd in entries:
       if tok in self._seen:
         continue
       self._seen = (self._seen + [tok])[-self.SEEN_MAX:]
+      self._tok = tok
       if cmd in METER_COMMANDS:
         out.append(cmd)
     return out
@@ -1968,9 +1981,12 @@ class MeterButtonLink:
       return
     if isinstance(status, str):
       status = {"state": status}
+    if self._tok is not None:
+      status = {**status, "tok": self._tok}
     now = time.monotonic() if now is None else now
     changed = status != self._last
-    urgent = self._last is None or status.get("state") != self._last.get("state") or status.get("fare") != self._last.get("fare")
+    urgent = self._last is None or status.get("state") != self._last.get("state") or status.get("fare") != self._last.get("fare") \
+      or status.get("tok") != self._last.get("tok")
     if not ((changed and (urgent or now - self._last_t >= self.PUBLISH_S)) or now - self._last_t >= self.HEARTBEAT_S):
       return
     try:
