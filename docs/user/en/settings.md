@@ -176,7 +176,7 @@ Manual steering ratio and learned-ratio scaling also apply to VW MEB, including 
 
 Previously ignored ID.4 values now take effect. For example, with `CustomSR=0`, a saved rate of `30%` applies `0.3 times` the learned ratio. Set the rate to `100%` to use the learned value unchanged.
 
-`LateralTorqueCustom` and `CustomSteer*` are advanced settings that can affect the vehicle tune and safety limits. Do not alter them without a vehicle-specific validated baseline and a recovery path. `LateralTorqueCustom` 1 uses `LateralTorqueAccelFactor` / `LateralTorqueFriction` until torque learning (liveTorqueParameters) reaches 100%, then fades to the learned values (with the learning progress, at least 30 s), and back to these values over 30 s if it drops below 100%.
+`LateralTorqueCustom` and `CustomSteer*` are advanced settings that can affect the vehicle tune and safety limits. Do not alter them without a vehicle-specific validated baseline and a recovery path.
 
 #### NNFF torque control
 

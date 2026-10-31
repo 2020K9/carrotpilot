@@ -170,9 +170,8 @@ def _custom_on(custom: Any) -> bool | None:
 def applied_torque(live_torque: Any | None, custom: Any = None, custom_laf: Any = None,
                    custom_fr: Any = None, switch: Any = None) -> tuple[int | None, float | None, float | None]:
     """(calPerc %, latAccelFactor, friction) for HUD line 3 = the values latcontrol_torque applies:
-    LateralTorqueCustom > 0 -> LateralTorqueAccelFactor / LateralTorqueFriction x 0.001 (menu values), cross-faded to the
-    learned Filtered values once torqued is valid (switch = the HUD's own controls/lib/k9_torque_learn.TorqueLearnSwitch fed
-    with the same liveTorqueParameters, same rule as latcontrol_torque, own clock),
+    LateralTorqueCustom > 0 -> LateralTorqueAccelFactor / LateralTorqueFriction x 0.001 (menu values, fixed: latcontrol_torque
+    ignores liveTorqueParameters then, 보노보노 10-31 16:48 "돌려놔"),
     LateralTorqueCustom 0 -> liveTorqueParameters Filtered (controlsd update_live_torque_params; the CarParams values until
     torqued has learned). Raw is never shown. Values None ('-') when unknown (menu not read yet, no message)."""
     perc = None

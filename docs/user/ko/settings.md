@@ -176,7 +176,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 
 이전에 ID.4에서 무시되던 저장값도 이제 적용됩니다. 예를 들어 `CustomSR=0`에서 저장된 비율이 `30%`이면 학습값의 `0.3배`가 사용되므로, 학습값 그대로 사용하려면 비율을 `100%`로 설정하세요.
 
-`LateralTorqueCustom`과 `CustomSteer*` 계열은 차량의 기본 조향 튜닝과 안전 제한에 영향을 줄 수 있는 고급 항목입니다. 차종별 검증값과 복구 방법이 없으면 변경하지 마세요. `LateralTorqueCustom` 1은 토크학습(liveTorqueParameters)이 100%가 될 때까지 `LateralTorqueAccelFactor`·`LateralTorqueFriction` 값을 그대로 쓰고, 100%가 되면 학습값으로 서서히(학습 진행에 맞춰, 최소 30초) 넘어가며, 100% 아래로 떨어지면 30초에 걸쳐 이 값으로 돌아옵니다.
+`LateralTorqueCustom`과 `CustomSteer*` 계열은 차량의 기본 조향 튜닝과 안전 제한에 영향을 줄 수 있는 고급 항목입니다. 차종별 검증값과 복구 방법이 없으면 변경하지 마세요.
 
 #### NNFF 토크 제어
 

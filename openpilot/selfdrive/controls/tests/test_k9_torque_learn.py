@@ -95,63 +95,29 @@ def test_switch_unit_rules():
     assert s2.w == 0.0, bad
 
 
-def test_menu_values_bit_identical_until_valid(monkeypatch):
-  new, vm, _ = _lac(monkeypatch)
-  old, vm2, _ = _lac(monkeypatch)
-  old.update_live_torque_params = lambda *a, **kw: None     # = before: Custom 1 ignores liveTorqueParameters
-  for i in range(3000):
-    for lac in (new, old):
-      lac.update_live_torque_params(2.30, 0.0, 0.10, live_valid=False, decay=50.0)
-    a = _step(new, vm, active=True, curv=1e-3 * math.sin(i * 0.01))
-    b = _step(old, vm2, active=True, curv=1e-3 * math.sin(i * 0.01))
-    assert a[0] == b[0] and _tp(new) == _tp(old)
-  assert _tp(new) == pytest.approx((2.5, 0.131))
-  assert new.k9_torque_learn.w == 0.0
-
-
-def test_fade_in_to_learned_no_step_and_back(monkeypatch):
+def test_custom_on_menu_values_even_when_learned_100(monkeypatch):
+  # 보노보노 2026-10-31 16:48 "돌려놔": Custom on = web values fixed, never replaced by the learned values
   lac, vm, _ = _lac(monkeypatch)
-  _step(lac, vm, 20)
-  assert _tp(lac) == pytest.approx((2.5, 0.131))
-  hist = []
-  for _ in range(int(40 / DT_CTRL)):                       # 1c9: restored valid cache, decay 250, Filtered 2.708 / 0.102
-    lac.update_live_torque_params(2.708, -0.036, 0.102, live_valid=True, decay=250.0)
+  lp = log.LiveTorqueParametersData.new_message()
+  lp.useParams, lp.liveValid, lp.calPerc, lp.decay = True, True, 100, float(torqued.MAX_FILTER_DECAY)
+  lp.latAccelFactorFiltered, lp.latAccelOffsetFiltered, lp.frictionCoefficientFiltered = 2.708, -0.036, 0.102
+  for _ in range(int(60 / DT_CTRL)):
+    lac.update_live_torque_params(lp.latAccelFactorFiltered, lp.latAccelOffsetFiltered, lp.frictionCoefficientFiltered)
     _step(lac, vm)
-    hist.append(_tp(lac))
-  laf = [h[0] for h in hist]
-  assert laf[-1] == pytest.approx(2.708, abs=1e-6) and hist[-1][1] == pytest.approx(0.102, abs=1e-6)
-  steps = [abs(b - a) for a, b in zip(laf, laf[1:])]
-  assert max(steps) <= (2.708 - 2.5) * K.RATE_PER_S * DT_CTRL * 1.01 + 1e-6   # no step: <= gap / 30 s per frame
-  t_full = next(i for i, x in enumerate(laf) if abs(x - 2.708) < 1e-6) * DT_CTRL
-  assert 29.0 <= t_full <= 31.0
-  assert float(lac.torque_params.latAccelOffset) == pytest.approx(0.0)      # offset stays CarParams default
-  # liveValid drops (torqued reset) -> back to the menu values over 30 s, ends exactly there
-  hist = []
-  for _ in range(int(35 / DT_CTRL)):
-    lac.update_live_torque_params(2.30, 0.0, 0.10, live_valid=False, decay=50.0)
-    _step(lac, vm)
-    hist.append(_tp(lac))
-  laf = [h[0] for h in hist]
-  assert max(abs(b - a) for a, b in zip(laf, laf[1:])) <= (2.708 - 2.5) * K.RATE_PER_S * DT_CTRL * 1.01 + 1e-6
-  assert hist[-1] == pytest.approx((2.5, 0.131), abs=1e-7) and lac.k9_torque_learn.w == 0.0
-
-
-def test_stale_message_goes_back_to_menu(monkeypatch):
-  lac, vm, _ = _lac(monkeypatch)
-  for _ in range(int(40 / DT_CTRL)):
-    lac.update_live_torque_params(2.708, 0.0, 0.102, live_valid=True, decay=250.0)
-    _step(lac, vm)
-  assert lac.k9_torque_learn.w == 1.0
-  _step(lac, vm, int(0.9 / DT_CTRL))                       # controlsd stops calling (checks fail): held for STALE_S
-  assert lac.k9_torque_learn.w == 1.0
-  _step(lac, vm, int(32 / DT_CTRL))
-  assert lac.k9_torque_learn.w == 0.0 and _tp(lac) == pytest.approx((2.5, 0.131), abs=1e-7)
+    assert _tp(lac) == pytest.approx((2.5, 0.131)) or lac.frame < 10
+  assert _tp(lac) == pytest.approx((2.5, 0.131)) and float(lac.torque_params.latAccelOffset) == pytest.approx(0.0)
 
 
 def test_custom_off_is_upstream(monkeypatch):
   vals = dict(MENU, LateralTorqueCustom=0)
   lac, vm, _ = _lac(monkeypatch, vals)
-  lac.update_live_torque_params(2.708, -0.036, 0.102, live_valid=False, decay=50.0)
+  lac.update_live_torque_params(2.708, -0.036, 0.102)
   _step(lac, vm, 50)
   assert _tp(lac) == pytest.approx((2.708, 0.102)) and float(lac.torque_params.latAccelOffset) == pytest.approx(-0.036)
-  assert lac.k9_torque_learn.w == 0.0
+
+
+def test_controlsd_feeds_only_filtered():
+  import inspect
+  from openpilot.selfdrive.controls import controlsd
+  src = inspect.getsource(controlsd)
+  assert "live_valid=" not in src and "decay=torque_params" not in src
