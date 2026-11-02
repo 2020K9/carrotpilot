@@ -203,6 +203,8 @@ class CarController(CarControllerBase):
     # (the driver's orders), so no creep_fix page code is pasted here any more and kind 15 moved from menu 4 to menu 3;
     # 2026-10-30 (the driver 17:29 "이전에하던개선은 4번 / 2번은 격차만큼조정한거", 17:31 "...그걸 5번"): menu 2 is kind 16,
     # menu 4 kind 14 (moved from 2) and menu 5 kind 17; kind 16 was menu 4 from 15:43 to 17:29.
+    # 2026-11-03 (the driver 06:08): menus 2 (kind 16) and 4 (kind 14) left the menu, 3 -> 2 and 5 -> 3, so the menu is
+    # 0-3 again: 1 / 2 / 3 = kinds 13 / 15 / 17 (원본2, 원본2 + 선 뒤 1초 잠금, 격차수정 + 1 km/h 아래 서서히).
     # Stored values of older menus are migrated once at manager start (k9_stop_mode_migration.py).
     # See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)

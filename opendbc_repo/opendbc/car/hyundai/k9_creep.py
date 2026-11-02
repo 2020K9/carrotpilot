@@ -7,13 +7,8 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   넣으라햇잔니"; 원본 a59530057 = 10/27 17:39 대감님 직접 정차 그대로, 원본2 2026-10-29 00:50): kind 8 with the stop end
   replaced by the driver's own stop table (B17O_*) up to the stop, then the kind 8 standstill latch at once (원본2: no 1.6 s
   logged pressure). This is the one slot that is his recorded stop, so it is never tuned;
-- 2 = "격차수정" (kind 16 V12K9OG below; 2026-10-30, the driver 15:33 "1번메뉴만들때 내차에서 따온 거하고 1번메뉴와 비교해서
-  차이가 얼마나 나는지 보고 격차난만큼 조절해", 17:14 "오차난만큼 실차로그와맞게 보정한거 2번에넣어봐 당장" / 17:29 "2번은
-  격차만큼조정한거"; menu 4 from 15:43 to 17:29): kind 13 exactly, except that before the stop the
-  table request is made stronger by the measured gap (B17O_GAP_*: his 17:39 decel minus the decel made on the kind 13
-  request, per speed bin), min(kind 13 request, -(table + gap)), so it is never a weaker request than kind 13 on any frame.
-  StopReq, the latch and the standstill hold are kind 13's;
-- 3 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; 2026-10-29 05:40, the driver "4번에다가 내가 아까 말한시간로그에
+- 2 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; menu 2 since 2026-11-03, 3 before;
+  2026-10-29 05:40, the driver "4번에다가 내가 아까 말한시간로그에
   완전정차후1초뒤 브레이크 좀더 세게 밟으란거잔아"): kind 13 exactly, except that after the stop the standstill hold reaches
   the first B17O_HOLD2_T (1.0 s) of standstill is kind 13 bit for bit (the latch ramp toward LATCH_ACCEL), and only after
   that second does the request go beyond LATCH_ACCEL, ramping to B17O_HOLD2_ACCEL while the car keeps standing. Never a
@@ -22,32 +17,33 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   carcontroller.py; it had replaced 3 v13 original of 2026-10-26) left the menu with its two page blocks and this slot
   moved up (the driver "3.v14제거후 4번을 3번으로"). 4 C1 / 5 C1+ (2026-10-27, kinds 9 / 10) went the same way
   on 2026-10-28 (the driver's orders 2026-10-27 19:48 / 19:51);
-- 4 = "bono1739 끝 구간 개선" (kind 14 V12K9OS below; 2026-10-29 05:40, the driver "2번이 내가직접밟은로그 너가개선한거"; menu 2
-  until 2026-10-30 17:29, the driver "이전에하던개선은 4번", code unchanged): the
-  same table, not one number changed, but used only in the end window below B17O_ROLL_V, with the kind 8 floor / lead /
-  downgrade / roll-rescue safeties (S1-S6, from 594e8fef9). An improved version, NOT his stop as recorded, so its name
-  never says 원본. On 2026-10-29 it took the slot of 2 v12 original, which left the menu with its code on 2026-10-29 05:40 (the driver
-  "지금 2번인 v12 원본은 메뉴에서 빼라"); the v12 page code is no longer in the tree;
-- 5 = "격차수정 + 1 km/h 아래 서서히 더 잡기" (kind 17 V12K9OGR below; 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하
+- 3 = "격차수정 + 1 km/h 아래 서서히 더 잡기" (kind 17 V12K9OGR below; menu 3 since 2026-11-03, 5 before; 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하
   서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번"): kind 16 exactly, except that in the stopping state before the stop, at
   or below B17O_RAMP5_V (1 km/h), the kind 15 ramp (B17O_RAMP_STEP / _KNEE / _STEP2 / _MAX) goes on top of the kind 16
-  table request while the car slows by less than that request, and from the stop the request is held no weaker than the
+  table request (kind 16 "격차수정" = kind 13 with the table request made stronger before the stop by the measured gap
+  B17O_GAP_*; menu 2 from 2026-10-30 17:29 until it left the menu on 2026-11-03, its code kept as the base of kind 17)
+  while the car slows by less than that request, and from the stop the request is held no weaker than the
   last ramp request until the latch request passes it or the stopping state ends (no B17O_HOLD2_*: the 1 s harder hold
-  is menu 3 only). Never a weaker request than kind 16 or kind 13 on any frame. Not simulated (17:31 "테스트하지말고 바로바로
+  is menu 2 only). Never a weaker request than kind 16 or kind 13 on any frame. Not simulated (17:31 "테스트하지말고 바로바로
   푸시해라").
-Any other value (6 or more, negative, unreadable) acts as 0. The modes never stack.
+2026-11-03 (the driver 06:08): 2 격차수정 (kind 16) and 4 끝 구간 개선 (kind 14) left the menu; kind 14 left with its code
+(S1-S9), and the old 3 / 5 moved to 2 / 3.
+Any other value (4 or more, negative, unreadable) acts as 0. The modes never stack.
 The 2026-10-24 menu (1 v10, 2 v10 + light shudder fix, 3 v11) is deleted with its code (kinds 2 v10, 6 v10 + light shudder
 fix and 7 v11 are gone). Stored values are migrated once at manager start (openpilot/selfdrive/car/k9_stop_mode_migration.py,
-marker K9StopModeVer 8 since 2026-10-30, 7 / 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
+marker K9StopModeVer 9 since 2026-11-03, 8 / 7 / 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
 K9StopModeVer 3 (the 0-5 menu) 3 v13 / 4 C1 / 5 C1+ / 6 -> 0, never to the then-new 3 v14; from K9StopModeVer 4 the 04:48
 1 <-> 2 slot swap; from K9StopModeVer 5 a stored 2 (v12 original, off the menu) -> 0, 0 / 1 / 3 unchanged; from
 K9StopModeVer 6 a stored 4 -> 3 (kind 15 moved up) and a stored 3 (v14 original, off the menu) -> 0, 0 / 1 / 2 unchanged;
 from K9StopModeVer 7 (2026-10-30) a stored 2 (kind 14) -> 4 (the same kind, the new number) and a stored 4 / 5 (it acted as
-0 on the 0-3 menu) -> 0, 0 / 1 / 3 unchanged, so no stored value runs a different kind after the update.
+0 on the 0-3 menu) -> 0, 0 / 1 / 3 unchanged; from K9StopModeVer 8 (2026-11-03) a stored 2 / 4 (kinds 16 / 14, off the menu)
+-> 0, 3 -> 2 and 5 -> 3 (the same kinds, the new numbers), 0 / 1 unchanged, so no stored value runs a different kind after
+the update unless its kind left the menu.
 Earlier menu history is in git log.
 Throughout this module "mode N" / "kind N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (not on the menu; kept
 only as the test reference of "never brake less than v9"), kind 8 = v12k9 (not on the menu either since 2026-10-29: it is
-the base of kinds 13 / 14 / 15 / 16 / 17, menus 1 / 4 / 3 / 2 / 5).
+the base of kinds 13 / 15 / 16 / 17, menus 1 / 2 / - / 3; kind 16 is not on the menu since 2026-11-03, it is the base of
+kind 17).
 
 Sources: https://leegrt.org/oppo/creep_fix/ (selectMode carcontroller.py code and changelog, written for the Kia Niro EV CAN,
 VEgoStopping 15). No license is stated on that page; kind 1 is an independent re-implementation of the v9 algorithm and its
@@ -155,19 +151,19 @@ from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
 V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 1 (menu 2 until 2026-10-29 04:48)
-V12K9OS = 14  # kind 14 (2026-10-29 05:40) "bono1739 끝 구간 개선": kind 13 + the S1-S6 safeties / end window (594e8fef9); menu 4 (menu 2 until 10-30 17:29)
-V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp; menu 3 (menu 4 until 07:10)
-V12K9OG = 16  # kind 16 (2026-10-30) "격차수정": kind 13 + the measured gap (B17O_GAP_*) before the stop; menu 2 (menu 4 15:43 .. 17:29)
-V12K9OGR = 17  # kind 17 (2026-10-30 17:31) "격차수정 + 1 km/h 아래 서서히 더 잡기": kind 16 + the ramp from B17O_RAMP5_V down; menu 5
-KINDS = (V9, V12K9, V12K9O, V12K9OS, V12K9OH, V12K9OG, V12K9OGR)
+V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp; menu 2 (3 until 11-03, 4 until 10-29)
+V12K9OG = 16  # kind 16 (2026-10-30) "격차수정": kind 13 + the measured gap (B17O_GAP_*) before the stop; off the menu since 11-03, base of kind 17
+V12K9OGR = 17  # kind 17 (2026-10-30 17:31) "격차수정 + 1 km/h 아래 서서히 더 잡기": kind 16 + the ramp from B17O_RAMP5_V down; menu 3 (menu 5 until 2026-11-03)
+KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (not a kind), 2 v12k9; 2026-10-26: 3 v13 original;
 # 2026-10-28: 3 v14 original instead (not a kind); 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*),
 # kind 8 itself unchanged; 00:50 "bono1739 원본2": B17O_HOLD_T 0; 04:48 the 1 <-> 2 slot swap; 05:40 the v12 original left
 # the menu, 2 = kind 14 (his table improved) and 4 = kind 15 (kind 13 + the 1 s hold ramp); 07:10 the v14 original left the
 # menu with its page code and kind 15 moved 4 -> 3, so every menu value is a K9Creep kind now; 2026-10-30: 4 = kind 16
 # "격차수정", the driver 15:43 "4번격차수정으로 넣어라"; 17:29 kind 16 -> 2 and kind 14 -> 4, "이전에하던개선은 4번 / 2번은
-# 격차만큼조정한거"; 17:31 5 = kind 17, "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번")
-MENU = {1: V12K9O, 2: V12K9OG, 3: V12K9OH, 4: V12K9OS, 5: V12K9OGR}
+# 격차만큼조정한거"; 17:31 5 = kind 17, "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번";
+# 2026-11-03 06:08 menus 2 (kind 16) and 4 (kind 14, with its code) left the menu, 3 -> 2 and 5 -> 3)
+MENU = {1: V12K9O, 2: V12K9OH, 3: V12K9OGR}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted(MENU))  # K9StopMode values that change braking; anything else acts as 0
 
@@ -302,7 +298,8 @@ B17O_POST_T = [round(0.05 * i, 2) for i in range(32)]  # s since the stop: 0.00 
 B17O_POST_BAR = [0.26, 0.30, 0.30, 0.25, 0.30, 0.34, 0.36, 0.44, 0.42, 0.40, 0.46, 0.52, 0.50, 0.56, 0.60, 0.60,
                  0.65, 1.20, 1.36, 1.60, 1.60, 1.70, 1.73, 1.86, 1.68, 1.77, 1.74, 1.80, 1.83, 1.90, 1.90, 2.00]  # bar
 B17O_BAR = 0.2415  # m/s^2 per bar
-# kind 15 (menu 4, 2026-10-29 05:40, the driver "4번에다가 ... 완전정차후1초뒤 브레이크 좀더 세게 밟으란거잔아"): one second
+# kind 15 (menu 2 since 11-03, 4 before 10-29 07:10; 2026-10-29 05:40, the driver "4번에다가 ...
+# 완전정차후1초뒤 브레이크 좀더 세게 밟으란거잔아"): one second
 # after the car is fully stopped, press harder than the standstill hold. So the first B17O_HOLD2_T of standstill is kind 13
 # bit for bit (the kind 8 latch ramp toward LATCH_ACCEL -0.50) and only after it does the request go past LATCH_ACCEL,
 # ramping at B17O_HOLD2_STEP to B17O_HOLD2_ACCEL and holding there while the car stands. min() against the kind 13 command
@@ -312,7 +309,7 @@ B17O_BAR = 0.2415  # m/s^2 per bar
 B17O_HOLD2_T = 1.0  # s of continuous standstill before the extra braking starts
 B17O_HOLD2_ACCEL = -1.00  # m/s^2: the hold after B17O_HOLD2_T (LATCH_ACCEL -0.50 until then)
 B17O_HOLD2_STEP = 0.0060  # per frame from LATCH_ACCEL to B17O_HOLD2_ACCEL (0.83 s)
-# kind 15 ramp (menu 3, 2026-10-30, the driver 05:20 "1.5키로때부터 점점 올리면?", 06:07 "해봐"): at 05:02:53.9 the car entered
+# kind 15 ramp (menu 2 since 2026-11-03, 3 before; 2026-10-30, the driver 05:20 "1.5키로때부터 점점 올리면?", 06:07 "해봐"): at 05:02:53.9 the car entered
 # the stop at 0.41 m/s and the table there (-0.28 .. -0.38, about the creep) left it rolling at 0.34 .. 0.38 m/s for 1.5 s.
 # So in the stopping state before the stop, at or below B17O_RAMP_V and while the car slows by less than the table asks (aEgo
 # above the table value), the request goes B17O_RAMP_STEP per frame further past the table up to B17O_RAMP_KNEE and then
@@ -329,14 +326,15 @@ B17O_RAMP_STEP = 0.015  # m/s^2 per frame (1.5 m/s^2 per second) up to B17O_RAMP
 B17O_RAMP_KNEE = 0.45  # m/s^2 past the table where the first stage ends
 B17O_RAMP_STEP2 = 0.002  # m/s^2 per frame (0.2 m/s^2 per second) from there
 B17O_RAMP_MAX = 0.60  # m/s^2 past the table at most
-# kind 17 (menu 5, 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번"): the
+# kind 17 (menu 3 since 2026-11-03, 5 before; 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번"): the
 # ramp above on the kind 16 request (table + gap, b17g_tab) from B17O_RAMP5_V down, with the same steps, knee and cap, the
 # same "only while the car slows by less than asked (aEgo above b17g_tab)", never shrinking in the stop, and the same floor
 # from the stop. Kind 17 has no B17O_HOLD2_*, so the floor holds until the latch request passes it or the stopping state
 # ends (departure); without it the kind 8 latch would go from the last ramp request to LATCH_ACCEL in one frame. Not
 # simulated (17:31 "테스트하지말고 바로바로 푸시해라").
 B17O_RAMP5_V = 1.0 / 3.6  # m/s (1 km/h): kind 17 ramp start
-# kind 16 "격차수정" (menu 2 since 2026-10-30 17:29 "2번은 격차만큼조정한거", menu 4 from 15:43; the driver 15:33
+# kind 16 "격차수정" (off the menu since 2026-11-03, the base of kind 17; menu 2 from 2026-10-30 17:29
+# "2번은 격차만큼조정한거", menu 4 from 15:43; the driver 15:33
 # "1번메뉴만들때 내차에서 따온 거하고 1번메뉴와 비교해서 차이가 얼마나 나는지
 # 보고 격차난만큼 조절해" / 15:43 "4번격차수정으로 넣어라"): the kind 13 table asks for his decel, but the car made less on it
 # (2026-10-30 05:02:53.9 .. 55.4, the one kind 13 stop in the logs: 0.316 asked at 0.34 .. 0.41 m/s, dec_la -0.110 made, the
@@ -353,82 +351,10 @@ B17O_RAMP5_V = 1.0 / 3.6  # m/s (1 km/h): kind 17 ramp start
 # gap narrows the band sent, and after a hand-over to the kind 8 latch the smaller band compensation was weaker than kind 13
 # for up to 0.17 s (m4gap_1030 check 1, 0000018a--30924b38e0_140).
 # StopReq, the latch, the standstill hold and b17o_plan / b17o_tab are kind 13's. Kind 17 runs it as kind 16 does; kinds
-# 1 / 8 / 13 / 14 / 15 never run it.
+# 1 / 8 / 13 / 15 never run it.
 B17O_GAP_BP = [0.10, 0.20, 0.275, 0.35, 0.45, 0.575, 0.725, 0.90, 1.25, 1.75, 2.50]  # m/s: the B17O_TAB_BP bins
 B17O_GAP_A = [0.55, 0.55, 0.55, 0.404, 0.237, 0.165, 0.33, 0.0, 0.0, 0.0, 0.0]  # m/s^2 decel added per bin
 B17O_GAP_STEP = 1.0  # share of the gap per frame from the first table frame of a stop (1.0: all of it at once)
-# kind 14 (menu 4 since 2026-10-30 17:29, menu 2 from 2026-10-29 05:40) = the S1-S6 of 594e8fef9, moved here from kind 13 unchanged so that menu 1 stays his
-# recorded stop. The table above stays as is; the safeties only ever brake more:
-# - S2 lead (B17O_K8_LEAD): a lead at or within V12K9_END_LEAD_MAX (12 m, where the kind 8 end profile starts to use the lead) in
-#   the stopping state before the stop: no table for the rest of this stop, kind 8 exactly (the old menu 2 way).
-# - S3 kind 8 floor: kind 8 runs on every frame with its own state, as if the table were not there; while the table runs the
-#   request is min(table output, kind 8 request), and when kind 8 latches StopReq that is sent as kind 8 sends it, so StopReq
-#   comes only on the old menu 2 conditions. (Handing over only after the table failed came too late downhill in the mock: the
-#   plan turned urgent and StopReq came while rolling 0.4 .. 0.5 m/s.)
-B17O_K8_LEAD = 2
-B17O_ROLL_V, B17O_FALL_T = 0.25, 0.5  # m/s, s (his final roll; S1 roll rescue window)
-B17O_RESC_SR_V = 0.08  # m/s: a rescue at or below it latches StopReq at once (the 0.1 m/s rolling line of the checks minus the speed
-# measurement noise: mock vEgo noise 0.005 m/s x 4)
-# S4: the end window goes to the driver's table only while the plan asks for about the decel the table asks for. Two ways it
-# does not, both read at the hand-over frame, both leaving the stop with kind 8 (S3 / S5):
-#  - the plan wants more than the table by more than B17O_PLAN_M: a downgrade. His table was recorded on a flat road (10/27
-#    17:39) and below B17O_ROLL_V asks 0.06 .. 0.15 m/s^2 only, less than gravity plus the creep, so the car stops slowing near
-#    0.08 m/s with the brake released and needs ~0.5 m to recover, which it does not have (it then rolls past the stop point and
-#    the urgent plan makes kind 8 latch StopReq at 0.32 m/s: H3k0.35|dn3%|12.0|101).
-#  - the plan has turned to approach (above V12K9_END_GO_TARGET): the car is more than a metre short of the stop point, so kind 8's
-#    end-profile GO latch will put StopReq out below V12K9_END_GO_SPEED and the ESC hold arrives on a nearly released brake - a
-#    bigger step than if kind 8 had kept braking, i.e. the 꾹 we are trying to remove (H3k0.2|up1.5%|2.0|100 jmax 2.751 vs k2
-#    2.401). Of the 100-run list 48 of the 55 table windows are in this state and all 48 have 꾹 in both k2 and this판, so the
-#    table buys nothing there.
-# The table itself is untouched; only the condition for using it changes.
-B17O_PLAN_M = 0.05  # m/s^2
-# S7 "과제동 제한" (kind 14 only, 2026-10-29 kuk3). Why 꾹 is made in the mock, frame by frame (tools/tr6.py,
-# H3k0.5|base|5.0|100): the mock car cuts its speed to 0 below 0.04 m/s, so whatever deceleration is left at that
-# moment is a step, and jmax is about 9 x |decel at the stop|. Over the 1000-run list that is the whole story: |decel
-# at the stop| at or above 0.40 m/s^2 -> 꾹 in 437 of 437 runs, at or below 0.05 -> 0 of 2, and menu 2's median today
-# is 0.53. Where the 0.53 comes from: the stopping state is entered at 0.52 m/s with the measured decel still 0.10, so
-# the end profile's offset integral winds up through the 0.30 s ESC delay and the request falls -0.30 -> -1.00 in half
-# a second, about twice its own target (-d = -0.52). The brake arrives (0.61) and the car decelerates 0.46, but the
-# request only releases 0.002 .. 0.008 per frame, so the car reaches standstill still holding 0.46 m/s^2.
-# S7 holds the request within B17O_SOFT_M of the profile's own target, but only on a frame where
-#  - the planner itself asks for less braking than that target (aTarget > -d), and
-#  - the car already decelerates at or past the target (end_ae <= -d), and
-#  - the car is still above B17O_SOFT_VL.
-# The integral is NOT touched. That is the whole point: on the first frame one of those is no longer true (downhill,
-# closing on the stop line, the car speeding up again) the full integral is sent again on that same frame, with no
-# rate limit on the press. Clipping the integral instead was tried first and is wrong, because the offset the plant
-# needs is the road load (creep + gravity) / gain - 0.19 on the flat, 0.30 on a 1.5 % and 0.56 on a 3 % downhill - and
-# a clipped integral has to wind back at 0.006 per frame: on a 1.5 % downhill the car crawled back up from 0.098 to
-# 0.153 m/s and the latch then arrived while it rolled 0.142 m/s (H3k0.35|dn1.5%|2.0|100 of the 1000 list, jmax 3.377).
-# The target -d itself (its speed prediction, virtual stop line and lead terms) and the lead min() after it are
-# untouched, so nothing that brakes for a reason is given back, and the release when the bound first bites is the
-# existing V12K9_END_REL ramp (2 m/s^3).
-B17O_SOFT_M = 0.35  # m/s^2: the most the request may ask past the profile's own target
-B17O_SOFT_PM = 0.0  # m/s^2: the planner must ask less braking than the target by at least this
-# Below B17O_SOFT_VL the bound does not apply at all. There the brake is only holding the road load, and with the
-# 0.30 s ESC delay anything released that late arrives after the car has stopped, so the window where it helps is
-# entirely above this speed.
-B17O_SOFT_VL = 0.15  # m/s (kuk4: raised from 0.15 = V12K9_END_GO_SPEED; see patch_me2.py)
-# Engagement threshold (kuk4): the request has to be this far past the profile's own target before the bound takes
-# over, and once it has it clamps to B17O_SOFT_M as before. Mildly over-braked stops are left as kind 8 had them,
-# so their stop moment does not move at all.
-B17O_SOFT_ME = 1.2  # m/s^2, >= B17O_SOFT_M
-# S8: with S7 the request near the stop is close to the profile's own target, and kind 8's end-profile GO latch
-# (aTarget > 0 below V12K9_END_GO_SPEED 0.15 m/s) would then put StopReq out while the car still rolls 0.14 m/s; the
-# ESC stop hold (0.85 m/s^2, 2 m/s^3) lands on that nearly released brake and makes the very 꾹 S7 removed (the car
-# stops 0.8 s later, time enough for the hold to arrive). So on kind 14 stops with no lead where S7 held, and only
-# there, the GO latch waits for B17O_SOFT_GO_V, where the standstill latch takes over anyway. 대감님's own logs show
-# the same split (an observation, not a proof): first StopReq at or above 0.12 m/s -> jmax 7.6 .. 12.0 in all 20
-# stops, 0.05 .. 0.11 m/s -> 1.7 .. 5.0. Every other latch reason is untouched (TMAX 3 s below 0.4 m/s, crawl 0.6 s
-# below 0.15 m/s, urgent plan, lead at or within 1.5 m, MX, standstill, S1 rescue).
-B17O_SOFT_GO_V = 0.05  # m/s (= STANDSTILL_SPEED)
-# S9 "최소 제동 유지" (kind 14 only, 대감님 2026-10-29 19:02 "밟았다 뗐다 하면 떨림이 더 생기니 떼는 시점을 제일 약한
-# 값의 제동으로 해라 - 브레이크 패드가 안 떨어지게"): while a stop is being made (the stopping state, before the latch)
-# the request never rises above -B17O_MIN_BRK, so the pads stay in contact and a release-then-press cycle cannot start.
-# The mock car has no pad play or re-contact, so no gain from this can be shown there; what the mock does show is that
-# nothing gets worse and that the request never reaches 0 in a stop (REPORT). 0.03 m/s^2 is far below the mock creep
-# (0.15), so it can neither hold nor stop the car by itself.
-B17O_MIN_BRK = 0.03  # m/s^2: weakest braking request kept through a stop
 
 
 def k9_creep_applies(CP) -> bool:
@@ -514,10 +440,9 @@ class K9Creep:
   def __init__(self, mode: int = V9):
     assert mode in KINDS, mode
     self.mode = mode
-    # kind 8 / 13 / 14 / 15 / 16 / 17: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
-    self.v12 = mode in (V12K9, V12K9O, V12K9OS, V12K9OH, V12K9OG, V12K9OGR)
-    self.b17o = mode in (V12K9O, V12K9OS, V12K9OH, V12K9OG, V12K9OGR)  # kinds 13 / 14 / 15 / 16 / 17: kind 8 + the driver's own stop table (B17O_*)
-    self.b17s = mode == V12K9OS  # kind 14 only: the S1-S6 end window / safeties on top of kind 13
+    # kind 8 / 13 / 15 / 16 / 17: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
+    self.v12 = mode in (V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
+    self.b17o = mode in (V12K9O, V12K9OH, V12K9OG, V12K9OGR)  # kinds 13 / 15 / 16 / 17: kind 8 + the driver's own stop table (B17O_*)
     self.b17h = mode == V12K9OH  # kind 15 only: the extra braking 1 s after the stop (B17O_HOLD2_*) on top of kind 13
     self.b17g = mode in (V12K9OG, V12K9OGR)  # kinds 16 / 17: the measured gap on top of the kind 13 table before the stop (B17O_GAP_*)
     self.b17r = mode in (V12K9OH, V12K9OGR)  # kinds 15 / 17: the ramp before the stop and its floor from the stop (B17O_RAMP_*)
@@ -565,15 +490,7 @@ class K9Creep:
     self.b17o_on = False  # kind 13: the table runs in this stop
     self.b17o_k = -1  # kind 13: frames since the stop (-1: not stood yet)
     self.b17o_plan = False  # kind 13: on the last frame the plan asked for more than the table (the safety, aTarget sent)
-    self.b17o_k8 = 0  # kind 14: S2 handed this stop to kind 8 (B17O_K8_LEAD), 0: none
-    self.b17o_floor = False  # kind 14 S3: on the last frame kind 8 asked for more than the table and was sent
-    self.b17o_resc = False  # kind 14 S1: the roll did not slow, kind 8 floor for the rest of this stop
-    self.b17o_vb = [0.0] * int(round(B17O_FALL_T * 100.0))
-    self.b17o_vn = 0
-    self.b17o_tab = 0.0  # kind 14: the table value of the last frame, before the min with the plan (S4)
-    self.b17o_out = None  # kind 14: the request the table path sent on the last frame (S6), None: kind 8 was sent
-    self.b17o_soft = False  # kind 14 S7: the bound held at least one frame in this stop
-    self.b17o_soft_n = 0  # kind 14 S7: frames in this stop where it held (analysis)
+    self.b17o_tab = 0.0  # kind 15: the table value of the last frame, before the min with the plan (the ramp base)
     self.hold2_k = 0  # kind 15: consecutive standstill frames in the latch (B17O_HOLD2_T), 0: not standing
     self.b17o_ramp = 0.0  # kinds 15 / 17: the ramp offset past the table in this stop (B17O_RAMP_*), <= 0
     self.b17o_hold = None  # kinds 15 / 17: the floor from the stop until the latch request passes it (B17O_RAMP_*), None: none
@@ -612,11 +529,9 @@ class K9Creep:
       o = self._b17o(a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance) if self.b17o else None
       if self.b17r:  # kinds 15 / 17: the ramp below B17O_RAMP_V (kind 17: B17O_RAMP5_V)
         o = self._ramp(o, stopping_in, v_ego, a_ego)
-      if o is not None and not self.b17s:  # kinds 13 / 15 / 16 / 17: the driver's stop table (kind 8 not run on this frame)
+      if o is not None:  # kinds 13 / 15 / 16 / 17: the driver's stop table (kind 8 not run on this frame)
         self._last, self.end_out = o, o
         return o, False
-      if self.b17s:  # kind 14: kind 8 below runs on every frame with its own state (S3), the table only lowers its request
-        self.b17o_floor = False
       accel, stopping = self._update_v12k9(accel, a_target, stopping, pid, v_ego, v_ego_raw, a_ego, eff_ac, esp_standstill,
                                            lead_visible, lead_distance)
       if (stopping_in and not self.latched and (lead_visible or lead_distance != 0.0) and 0.0 < lead_distance <= V12K9_MX_GAP
@@ -658,40 +573,6 @@ class K9Creep:
         accel = float(min(accel, self.b17o_hold))
         self.b17o_hold = None if self._last <= accel else accel  # self._last: the latch request, no band compensation
       self.end_out = accel
-      if self.b17s and stopping_in and not self.latched and o is None:  # kind 14 S9
-        accel = float(min(accel, -B17O_MIN_BRK))
-      if self.b17s and o is not None and not stopping:  # kind 14: the driver's table in the end window only (S5), kind 8 above it
-        if self.b17o_vn > 0 and (v_ego >= B17O_ROLL_V or a_ego > 0.0):  # S1 roll rescue: back above B17O_ROLL_V or speeding up
-          self.b17o_resc = True
-          if v_ego <= B17O_RESC_SR_V:  # slow enough: StopReq on this frame (then the kind 8 latch path, hold ramp)
-            self.latched = True
-            self._last = accel
-            return float(min(accel, LATCH_ACCEL)), True
-        if v_ego < B17O_ROLL_V and not self.b17o_resc:
-          if self.b17o_vn == 0 and not (self.b17o_tab - B17O_PLAN_M <= a_target <= V12K9_END_GO_TARGET
-                                       and self.eff_f is not None
-                                       and self.eff_f >= self.b17o_tab - B17O_PLAN_M):  # S4 (+ kuk3: measured decel)
-            self.b17o_resc = True
-          else:
-            n = len(self.b17o_vb); i = self.b17o_vn % n
-            if self.b17o_vn >= n and v_ego >= self.b17o_vb[i]:
-              self.b17o_resc = True
-            else:
-              self.b17o_vb[i] = float(v_ego); self.b17o_vn += 1
-              self.b17o_floor = False
-              self.b17o_out = float(o)
-              if self.latched:  # S6: a latch was decided on this frame (MX / end profile crawl, TMAX, GO) while the table
-                self._last = float(o)  # was driving: the hold ramp of the next frame starts here, no step
-              return o, False
-        # S5: above B17O_ROLL_V (and for the rest of a stop after a rescue) kind 8 runs alone, as menu 2 did in the car
-        # before 05:40. His table asks 0.47 .. 0.77 m/s^2 at 0.4 .. 0.6 m/s, more than kind 8 there, so sending it
-        # stopped the car about 1 m short of the stop point; the plan then turned to approach (aTarget > 0) and kind 8's end
-        # profile GO latch (aTarget > 0 below V12K9_END_GO_SPEED) put StopReq out while still rolling at 0.138 m/s
-        # (H3k0.5|creep0.5|5.0|102, the 414th run of the 1000 list). 꾹 and 덜덜 are made in the last 0.25 m/s, so the table is
-        # kept exactly there and nowhere else. The table itself is untouched.
-        self.b17o_floor = True
-        self.b17o_out = None
-        return float(min(accel, -B17O_MIN_BRK)), False  # kind 14 S9
       return accel, stopping
 
     if not stopping:
@@ -763,7 +644,7 @@ class K9Creep:
         accel = float(max(min(accel, LATCH_ACCEL), prev - V12K9_HOLD_STEP))
       else:
         accel = float(min(accel, LATCH_ACCEL))
-      if self.b17h:  # kind 15 only (menu 3): press harder from B17O_HOLD2_T after the stop
+      if self.b17h:  # kind 15 only (menu 2): press harder from B17O_HOLD2_T after the stop
         accel = self._hold2(accel, prev, raw_standstill)
       self._last = accel
       return accel, True
@@ -787,7 +668,7 @@ class K9Creep:
     return accel, False
 
   def _hold2(self, accel, prev, standstill):
-    """Kind 15 (menu 3) only: the request to send while the standstill latch holds. Until B17O_HOLD2_T of continuous
+    """Kind 15 (menu 2) only: the request to send while the standstill latch holds. Until B17O_HOLD2_T of continuous
     standstill it is the kind 13 command unchanged; after that it ramps past LATCH_ACCEL to B17O_HOLD2_ACCEL. The min()
     means no frame is ever weaker than kind 13, and a non-standstill frame clears the counter."""
     if not standstill:
@@ -799,7 +680,7 @@ class K9Creep:
     return float(min(accel, max(B17O_HOLD2_ACCEL, prev - B17O_HOLD2_STEP)))
 
   def _ramp(self, o, stopping_in, v_ego, a_ego):
-    """Kinds 15 / 17 (menus 3 / 5): the table output o (None: not a table frame) with the ramp of B17O_RAMP_* (kind 15: from
+    """Kinds 15 / 17 (menus 2 / 3): the table output o (None: not a table frame) with the ramp of B17O_RAMP_* (kind 15: from
     B17O_RAMP_V on the kind 13 table value; kind 17: from B17O_RAMP5_V on the kind 16 table request). The min() means no
     frame is ever weaker than kind 13 / 16, and a frame out of the stopping state clears the ramp and its floor."""
     if not stopping_in:
@@ -820,21 +701,13 @@ class K9Creep:
     return o
 
   def _b17o(self, a_target, stopping_in, v_ego, v_ego_raw, esp_standstill, lead_visible, lead_distance):
-    """Kinds 13 / 14 / 15 / 16 / 17 (menus 1 / 4 / 3 / 2 / 5): the accel to send from the driver's stop table, or None (kind 8 as
+    """Kinds 13 / 15 / 16 / 17 (menus 1 / 2 / - / 3): the accel to send from the driver's stop table, or None (kind 8 as
     before)."""
     if not stopping_in:
-      self.b17o_on, self.b17o_k, self.b17o_plan, self.b17o_k8 = False, -1, False, 0
-      self.b17o_resc, self.b17o_vn, self.b17o_out = False, 0, None
-      self.b17o_soft, self.b17o_soft_n = False, 0
+      self.b17o_on, self.b17o_k, self.b17o_plan = False, -1, False
       self.b17g_f = 0.0
       return None
     if self.latched:
-      self.b17o_on, self.b17o_plan = False, False
-      return None
-    if (self.b17s and self.b17o_k8 == 0 and self.b17o_k < 0 and (lead_visible or lead_distance != 0.0)
-        and lead_distance <= V12K9_END_LEAD_MAX):  # kind 14 S2 lead: kind 8 for the rest of this stop
-      self.b17o_k8 = B17O_K8_LEAD
-    if self.b17o_k8:
       self.b17o_on, self.b17o_plan = False, False
       return None
     # 원본2 (2026-10-29 00:50): kind 8's own rolling StopReq reasons are kept: an urgent plan or a lead at or within
@@ -851,8 +724,6 @@ class K9Creep:
     if self.b17o_k >= 0:
       self.b17o_k += 1
       if self.b17o_k > B17O_HOLD_T * 100.0:  # held as in the log: the kind 8 standstill latch from this frame
-        if self.b17o_out is not None:  # kind 14 S6: the hold ramp starts at the request the table sent, no step
-          self._last = self.b17o_out
         self.latched, self.b17o_on, self.b17o_plan = True, False, False
         return None
     if self.b17o_k >= 0:  # stood: his pressure after the stop
@@ -891,10 +762,8 @@ class K9Creep:
     self.end_k += 1
     self.end_n += 1 if v_ego < V12K9_END_TMAX_SPEED else 0
     self.end_fb = self.end_fb + 1 if (v_ego < V12K9_END_CRAWL_SPEED and self.end_ae > V12K9_END_CRAWL_AEGO) else 0
-    soft = self.b17s and not self.b17o_k8 and not lead_seen  # kind 14 S7 / S8: no lead in this stop
-    go_v = B17O_SOFT_GO_V if soft else V12K9_END_GO_SPEED  # S8 (kuk4: every kind 14 stop with no lead)
     if (self.end_fb >= V12K9_END_CRAWL_FRAMES or (self.end_n > V12K9_END_TMAX * 100.0 and v_ego > 0.02)
-        or (a_target > V12K9_END_GO_TARGET and v_ego < go_v)):
+        or (a_target > V12K9_END_GO_TARGET and v_ego < V12K9_END_GO_SPEED)):
       self.latched = True  # StopReq from the next frame (the band ramps out as on any latch)
     self.end_s += v_ego * 0.01
     d = max(d, min(V12K9_END_LINE_K * v_ego ** 2 / (2.0 * max(self.end_sref - self.end_s, V12K9_END_LINE_SMIN)), V12K9_END_LINE_CAP))
@@ -904,10 +773,6 @@ class K9Creep:
     if self.end_k <= V12K9_END_HOLD_T * 100.0 and self.end_off > off0:  # no release right after the start
       self.end_off = off0
     cmd = float(cmd + self.end_off)
-    if (soft and v_ego > B17O_SOFT_VL and self.end_ae <= -d and a_target > -d + B17O_SOFT_PM
-        and cmd < -d - (B17O_SOFT_M if self.b17o_soft else B17O_SOFT_ME)):  # kind 14 S7 (kuk4: engage far, hold near)
-      cmd = float(-d - B17O_SOFT_M)
-      self.b17o_soft, self.b17o_soft_n = True, self.b17o_soft_n + 1
     if self.end_out is not None and cmd > self.end_out + V12K9_END_REL:  # release rate limit, integral held
       cmd, self.end_off = float(self.end_out + V12K9_END_REL), off0
     cmd = float(cmd + 0.0)
