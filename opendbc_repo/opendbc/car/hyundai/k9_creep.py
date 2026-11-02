@@ -324,7 +324,7 @@ B17O_HOLD2_STEP = 0.0060  # per frame from LATCH_ACCEL to B17O_HOLD2_ACCEL (0.83
 # without the band compensation, passes it, so the hand-over to the latch never weakens (the band compensation of the first
 # latch frame decays in 0.4 s). A frame out of the stopping state clears both (the 00:53 hold2_k lesson). StopReq, the latch
 # and B17O_HOLD2_* are as before.
-B17O_RAMP_V = 2.0 / 3.6  # m/s (2 km/h; 2026-11-02 "2km로 늘려봐", 1.5 km/h 0.4167 before)
+B17O_RAMP_V = 1.0 / 3.6  # m/s (1 km/h; 2026-11-02 "속도 1키로로 낮춰", 2 km/h 06:48 "2km로 늘려봐", 1.5 km/h 0.4167 before)
 B17O_RAMP_STEP = 0.015  # m/s^2 per frame (1.5 m/s^2 per second) up to B17O_RAMP_KNEE
 B17O_RAMP_KNEE = 0.45  # m/s^2 past the table where the first stage ends
 B17O_RAMP_STEP2 = 0.002  # m/s^2 per frame (0.2 m/s^2 per second) from there
