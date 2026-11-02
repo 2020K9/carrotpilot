@@ -89,6 +89,7 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
     self.assertIn("TeslaAutoTurnSignals", result.index["settings"])
     self.assertIn("NNFF", result.index["settings"])
     self.assertIn("AutoBlinkerControl", result.index["settings"])
+    self.assertIn("ManualLaneChangeIndicator", result.index["settings"])
     self.assertIn("AutoTurnControlRightLaneChange", result.index["settings"])
     self.assertNotIn("CenterToFrontRatioEnabled", result.index["settings"])
     self.assertIn("CenterToFrontRatio", result.index["settings"])

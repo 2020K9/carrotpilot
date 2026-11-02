@@ -156,7 +156,7 @@ Volkswagen's separate `SET` button sets current speed and `RES` restores the pre
 | ONNX Lane and BSD | `ShareData`, `OnnxBsdEnabled`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | Lane-type detection plus separately controlled camera BSD and tuning |
 | Centering | `CameraYawTrimDeg` | Camera-yaw trim (`PathOffset` lane deviation left/right correction is under Lane assist in [Experimental](#experimental) since 2026-10-25) |
 | Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | Timing, smoothing, suspension angle, and steering ratio |
-| [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlRightLaneChange`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
+| [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlRightLaneChange`, `ManualLaneChangeIndicator`, `ModelDesireIndicator`, `ModelPathIndicator`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
 | Advanced torque | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
 | Advanced torque, search only | `NNFF` | Neural-network feedforward for torque steering |
@@ -429,13 +429,15 @@ See the Wiki [Tuning introduction](https://github.com/ajouatom/openpilot/wiki/Gu
 
 Open **Tools ? Nav Map / ?? ??** in Carrot Web to view the map, search/select a destination, or clear it. Register a Public key under **Settings ? Network ? Mapbox** first; this feature does not need a Secret key. Destinations survive restart. A connected external navigator owns both TBT and route; a missing external route is never replaced with saved Mapbox geometry.
 
-The map is generated onroad with usable position and guidance. USB screen mode `ClusterHudScreenMode=7` displays the same image beside the driving view, on the right. N16 Nav uses navigation inputs on both eGPU and Jetson. Flip Flop does not support NOO; the internal CD210 and driver-monitoring model are independent. Mapbox search, directions and tiles require network access and a suitable account/key. Search requests use Permanent Geocoding so selected destinations can be saved. See [design and validation limits](../../nav_model_integration_20261012.md).
+The map is generated onroad with usable position and guidance. USB screen mode `ClusterHudScreenMode=7` displays the same image beside the driving view, on the right. N16 Nav uses navigation inputs on both eGPU and Jetson. Flip Flop and Light speed do not support NOO; the internal CD210 and driver-monitoring model are independent. Mapbox search, directions and tiles require network access and a suitable account/key. Search requests use Permanent Geocoding so selected destinations can be saved. See [design and validation limits](../../nav_model_integration_20261012.md).
 
 ## Automatic turn signals (supported vehicles)
 
 `AutoBlinkerControl` — Settings > Driving > Steering > Lane Change (Auto Turn). Default: 0. Currently limited to the Ioniq 5 PE, Jetson and PEAK USB-CAN/B1 profile on carrot-wip.
 
-An acknowledged ATC turn is not completed by an approach bend while navigation still places the same turn ahead. With the original hold still valid and no driver cancellation or communication failure, both lamps remaining off for 1.5 seconds allows one recovery attempt for that turn. Unconfirmed initial starts, manual/Bluetooth cancellation, opposite indicators and navigation cancellation do not trigger recovery. Physical lamp recovery still needs vehicle acceptance.
+ATC indication starts at audioTurn and persists through stops. A fresh cue can start at a full stop in Drive when lateral permission remains valid and steering is fault-free. After the receiver confirms send completion, both lamps staying off for 1.5 seconds permits one recovery attempt per turn, including an initially unlit request. Driver cancellation, communication failure or an unconfirmed send forbids retry. A fresh opposite-turn cue waits at most three seconds for physical completion of the preceding turn.
+
+When a usable TBT point and raw vehicle GPS are available, passage evidence supplements physical turn completion. Continuing straight sufficiently beyond a closely passed point cancels the indication without replaying the same audioTurn. Accuracy, continuity and direction checks disable this location-based cancellation for poor GPS, missing points or curved approaches. Fresh navigation status reporting guidance ended or off-route also releases automatic indication. Physical lamps and road behavior still need validation.
 
 ### Behavior
 
@@ -459,4 +461,14 @@ USB-CAN requests the initial blink; the existing vehicle indicator-hold function
 
 A hold-start request without confirmed lamp activation expires after four seconds, allowing the next button press to start a new request.
 
-ATC mode 4 optionally triggers the physical right indicator before a TBT right turn, at an eligible lane-change speed and within 250 m, until turning starts. It requires the supported USB2CAN indicator setup, right lane, BSD and fresh rear-gap checks; existing manual/Bluetooth lane-change behavior is unchanged. See [lane changes](lane-change.md).
+`AutoTurnControlRightLaneChange` under ATC details adds to modes 1 and 2 and triggers the physical right indicator before a TBT right turn or right fork, at 10km/h or above and within 250 m, until turning starts. It requires the supported USB2CAN indicator setup, a right lane, fresh OEM BSD and right-front gaps of at least 5 m both now and after three seconds; existing manual/Bluetooth lane-change behavior is unchanged. See [lane changes](lane-change.md).
+
+`AutoTurnControlRightLaneChange` remains the separate 250m ATC add-on. `ManualLaneChangeIndicator` independently retains recent intent for up to 1.5s. The left side excludes centre lines using fresh white-line classification; the right requires at least 2.5m from the target boundary to the road edge. Outer-line probability is not required. It never requests automatic steering. See [lane changes](lane-change.md).
+
+The manual lane-change indicator can request again after at least three seconds, one continuous second of lamp extinction and fresh steering/approach conditions. Automatic-steering feedback isolation remains at least 12 seconds.
+
+An ATC recovery attempt has a new four-second activation deadline. It does not extend the five-minute maximum measured from the original request.
+
+`ModelDesireIndicator` and `ModelPathIndicator` are separate default-off indication-only options. See [lane changes](lane-change.md) for TBT distance holding and each feature’s start/end conditions.
+
+Manual indication projects 0.3s of measured boundary approach, advancing the centre-to-boundary threshold by at most 0.3m. Existing speed, centre-line and road-edge gates remain.
