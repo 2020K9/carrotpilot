@@ -36,7 +36,7 @@ from openpilot.selfdrive.controls.lib.k9_lane import K9_LANE_PARAM, k9_lane_gain
 
 K9_LANE_CENTER_PARAM = K9_LANE_PARAM   # was "K9LaneCenter" (migrated by k9_lane.migrate_k9_lane)
 DT = 0.01                    # controlsd tick
-P_ON, P_OFF, STD_MAX = 0.7, 0.6, 0.2
+P_ON, P_OFF, STD_MAX = 0.7, 0.6, 0.3
 W_MIN, W_MAX = 2.6, 4.2      # plausible lane width [m]; 2.6 admits confident narrow urban lanes (same as k9_one_lane_hold)
 W_JUMP, W_AHEAD = 0.3, 0.4   # width step vs filtered / width change 0 -> X_FAR m (merge, split)
 W_RATE = 0.15                # filtered |d width / dt| above = a line is moving (merge, split, branch) [m/s]

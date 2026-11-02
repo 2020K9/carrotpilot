@@ -194,3 +194,11 @@ def test_random_input_caps_and_no_runaway(seed):
   for _ in range(400):
     k_prev = h.update(md, 20.0, False, False, False, 0.0)
   assert k_prev == 0.0
+
+
+def test_std_max_boundary_is_0_3():
+  assert H.STD_MAX == 0.3
+  out, _ = run(H.LaneCenter(), world(std=0.3), 4.0, y0=0.3)    # std 0.3: lines still reliable -> pushes
+  assert np.max(np.abs(out)) > 1e-5
+  out, _ = run(H.LaneCenter(), world(std=0.31), 4.0, y0=0.3)   # just above 0.3: nothing
+  assert np.max(np.abs(out)) < 1e-12
