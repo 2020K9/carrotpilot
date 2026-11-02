@@ -659,6 +659,40 @@ def test_menu3_ramp_runs_in_menu_3_only(monkeypatch, mode):
   assert ref == out
 
 
+
+# --- 2026-11-03 06:02 "브레이크3번 1.5km이하 5번처럼 서서히더잡기넣어": menu 3 ramps from 1.5 km/h with menu 5's steps -----------
+def test_menu3_ramp_starts_at_1_5_kmh_with_menu5_steps():
+  """Menu 3 ramps from 1.5 km/h (B17O_RAMP_V), menu 5 keeps 1 km/h (B17O_RAMP5_V); both use the one ramp (B17O_RAMP_STEP /
+  _KNEE / _STEP2 / _MAX)."""
+  assert kc.B17O_RAMP_V == 0.4167 and kc.B17O_RAMP5_V == 1.0 / 3.6
+  assert (kc.B17O_RAMP_STEP, kc.B17O_RAMP_KNEE, kc.B17O_RAMP_STEP2, kc.B17O_RAMP_MAX) == (0.015, 0.45, 0.002, 0.60)
+
+
+def test_menu3_ramps_between_1_and_1_5_kmh(monkeypatch):
+  """Above 1.5 km/h no extra braking; between 1.5 and 1 km/h (where the 11-02 1 km/h start had none) menu 3 already presses
+  harder than menu 1, step by step."""
+  _, one = _slow_entry(monkeypatch, 1)
+  monkeypatch.undo()
+  _, three = _slow_entry(monkeypatch, 3)
+  monkeypatch.undo()
+  gap = [a[2] - b[2] for a, b in zip(one, three, strict=True)]
+  hi = [i for i, o in enumerate(one) if o[0] > kc.B17O_RAMP_V]
+  mid = [i for i, o in enumerate(one) if 1.0 / 3.6 < o[0] <= kc.B17O_RAMP_V and not o[1]]
+  assert all(gap[i] == 0.0 for i in hi)
+  assert len(mid) > 20 and gap[mid[0]] == pytest.approx(kc.B17O_RAMP_STEP, abs=1e-6)
+  assert gap[mid[-1]] > gap[mid[0]] and all(gap[i] >= gap[i - 1] - 1e-6 for i in mid[1:])
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2, 4, 5])
+def test_menu3_ramp_start_changes_no_other_menu(monkeypatch, mode):
+  """Turning B17O_RAMP_V changes nothing in menus 0 / 1 / 2 / 4 / 5 (menu 5 has its own B17O_RAMP5_V)."""
+  _, ref = _slow_entry(monkeypatch, mode)
+  monkeypatch.undo()
+  monkeypatch.setattr(kc, "B17O_RAMP_V", 2.0)
+  _, out = _slow_entry(monkeypatch, mode)
+  monkeypatch.undo()
+  assert ref == out
+
 def test_setting_registered_single_selector_old_keys_deleted():
   import json
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
