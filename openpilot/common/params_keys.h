@@ -301,8 +301,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"PaddleMode", {PERSISTENT, INT, "0"}},
     {"MyDrivingMode", {PERSISTENT, INT, "3"}},
     {"MyDrivingModeAuto", {PERSISTENT, INT, "0"}},
-    {"ModelStopPrediction", {PERSISTENT, INT, "1"}},
-    {"TrafficLightDetectMode", {PERSISTENT, INT}},  // retired; read only for one-time ModelStopPrediction migration
+    {"TrafficLightDetectMode", {PERSISTENT, INT, "1"}},
 
     {"SteerActuatorDelay", {PERSISTENT, INT, "0"}},
     {"CenterToFrontRatioEnabled", {PERSISTENT, BOOL}},  // Retired: migration only
