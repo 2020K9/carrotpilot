@@ -154,6 +154,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CarrotNaviWebBootstrapRequest", {CLEAR_ON_MANAGER_START, STRING} },
     {"CarrotNaviHudMapProfile", {CLEAR_ON_MANAGER_START, INT} },
     {"CarrotVisionActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL} },
+    {"TrafficLight", {CLEAR_ON_MANAGER_START, STRING} },
 
     {"ApiCache_NavDestinations", {PERSISTENT, STRING}},
     {"NavDestination", {PERSISTENT, STRING}},
@@ -301,7 +302,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"PaddleMode", {PERSISTENT, INT, "0"}},
     {"MyDrivingMode", {PERSISTENT, INT, "3"}},
     {"MyDrivingModeAuto", {PERSISTENT, INT, "0"}},
-    {"TrafficLightDetectMode", {PERSISTENT, INT, "1"}},
+    {"TrafficLightDetectMode", {PERSISTENT, INT, "2"}},
+    {"SignalAssistMode", {PERSISTENT, INT, "0"}},
+    {"LeadBrakeLights", {PERSISTENT, BOOL, "0"}},
 
     {"SteerActuatorDelay", {PERSISTENT, INT, "0"}},
     {"CenterToFrontRatioEnabled", {PERSISTENT, BOOL}},  // Retired: migration only

@@ -33,6 +33,7 @@ from openpilot.selfdrive.modeld.camera_sync import FrameMeta
 from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
+from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
 from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
                                                 refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
                                                 usbgpu_pcie_not_ready, usbgpu_present, wait_for_usbgpu_present)
@@ -130,7 +131,7 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
 class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
-  def __init__(self, cam_w: int, cam_h: int, usbgpu: bool, pkl_path=None):
+  def __init__(self, cam_w: int, cam_h: int, usbgpu: bool, pkl_path=None, *, enable_shadow=True):
     input_devices = get_tg_input_devices(PROCESS_NAME, usbgpu)
     self.WARP_DEV, self.QUEUE_DEV = input_devices['WARP_DEV'], input_devices['QUEUE_DEV']
     jits = load_oob(open_file_chunked(pkl_path or modeld_pkl_path(usbgpu)))
@@ -150,6 +151,7 @@ class ModelState:
     self.frame_buf_params = {k: get_nv12_info(cam_w, cam_h) for k in ('img', 'big_img')}
     self.run_policy = jits['run_policy']
     self.warp = jits[(cam_w,cam_h)]
+    self.signal_shadow = ShadowClient.optional(modeld_pkl_path(False).parent / 'driving_supercombo.onnx') if enable_shadow and not usbgpu else None
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
@@ -221,6 +223,7 @@ class ModelState:
     sync_start = time.perf_counter()
     model_output = outs.numpy()[0]
     self.last_gpu_sync_wait_ms = (time.perf_counter() - sync_start) * 1000
+    shadow_payload = self.signal_shadow.capture(model_output, self.npy) if self.signal_shadow is not None else None
     if self.usbgpu and not np.all(np.isfinite(model_output)):
       raise RuntimeError("eGPU model output is not finite")
     outputs_dict = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
@@ -228,6 +231,8 @@ class ModelState:
 
     if SEND_RAW_PRED:
       outputs_dict['raw_pred'] = model_output.copy()
+    if shadow_payload is not None:
+      outputs_dict['_signal_shadow'] = shadow_payload
     return outputs_dict
 
 
@@ -342,7 +347,11 @@ def main(demo=False):
   # Keep the internal-GPU model ready so a USB disconnect or runtime error does
   # not take modeld down while driving.
   phase_start = time.monotonic()
-  small_model = ModelState(vipc_client_main.width, vipc_client_main.height, False) if model is None or USBGPU else None
+  # A standby model must not spawn a separate experimental ONNX observer that
+  # receives no live samples. Keep standby inference/warmup and fallback intact;
+  # optional comparison remains available when internal inference starts active.
+  small_model = ModelState(vipc_client_main.width, vipc_client_main.height, False,
+                           enable_shadow=not usbgpu_model_loaded) if model is None or USBGPU else None
   if usbgpu_model_loaded:
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
     warm_internal_model_from_camera(small_model, vipc_client_main)
@@ -558,6 +567,10 @@ def main(demo=False):
 
     if model_output is not None:
       model_output = k9_lr_view.apply(model_output, engaged=bool(sm['carControl'].latActive))
+      shadow_payload = model_output.pop('_signal_shadow', None)
+      if shadow_payload is not None:
+        shadow_client, shadow_sample = shadow_payload
+        shadow_client.submit(shadow_sample, meta_main.frame_id, meta_extra.frame_id, meta_main.timestamp_eof)
       modelv2_send = messaging.new_message('modelV2')
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')

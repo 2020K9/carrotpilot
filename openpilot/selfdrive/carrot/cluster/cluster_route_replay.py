@@ -534,6 +534,7 @@ class RouteReplayFrame:
     ev_mode_valid: bool = False
     ev_mode_active: bool = False
     display_speed_kph: float | None = None
+    traffic_state: int = 0
     driving_mode: int | None = None
     planned_speed_kph: float | None = None
     planned_accel_mps2: float | None = None
@@ -1577,6 +1578,7 @@ class RouteLogParser:
         self.longitudinal_plan_should_stop = False
         self.longitudinal_plan_allow_throttle: bool | None = None
         self.longitudinal_plan_allow_brake: bool | None = None
+        self.traffic_state = 0
         self.driving_mode: int | None = None
         self.longitudinal_t_follow_s: float | None = None
         self.longitudinal_desired_distance_m: float | None = None
@@ -1829,6 +1831,7 @@ class RouteLogParser:
             ev_mode_valid=ev_mode_valid,
             ev_mode_active=ev_mode_active,
             display_speed_kph=display_speed_kph,
+            traffic_state=self.traffic_state,
             driving_mode=self.driving_mode,
             planned_speed_kph=self.planned_speed_kph,
             planned_accel_mps2=self.planned_accel_mps2,
@@ -2072,6 +2075,9 @@ class RouteLogParser:
         self.longitudinal_plan_allow_brake = bool(
             safe_get(longitudinal_plan, "allowBrake", self.longitudinal_plan_allow_brake)
         )
+        traffic_state = safe_optional_int(longitudinal_plan, "trafficState")
+        if traffic_state in (0, 1, 2):
+            self.traffic_state = traffic_state
         driving_mode = safe_optional_int(longitudinal_plan, "myDrivingMode")
         self.driving_mode = driving_mode if valid and driving_mode in (1, 2, 3, 4) else None
         t_follow = safe_optional_float(longitudinal_plan, "tFollow")
@@ -3912,6 +3918,7 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         lateral_plan_curvatures=frame.lateral_plan_curvatures,
         lateral_plan_curvature_rates=frame.lateral_plan_curvature_rates,
         display_speed_kph=frame.display_speed_kph,
+        traffic_state=frame.traffic_state,
         driving_mode=frame.driving_mode,
         trip_report=frame.trip_report,
         cpu_usage_percent=frame.cpu_usage_percent,
@@ -4022,6 +4029,7 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
         cruise_display_state=discrete.cruise_display_state,
         gear_text=discrete.gear_text,
         cruise_gap=discrete.cruise_gap,
+        traffic_state=discrete.traffic_state,
         driving_mode=discrete.driving_mode,
         lfa_active=discrete.lfa_active,
         active_lane_line=discrete.active_lane_line,

@@ -142,8 +142,8 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     audioTurn @122;
     radarCutin @123;
     radarStationaryLead @124;
-    trafficSignGreen @100; # DEPRECATED 2026-10-20: never emitted
-    trafficSignChanged @101; # DEPRECATED 2026-10-20: never emitted
+    trafficSignGreen @100;
+    trafficSignChanged @101;
     turningLeft @102;
     turningRight @103;
     audio1 @104;
@@ -1243,7 +1243,7 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   allowBrake @39: Bool;
 
   xState @40: Int32;
-  trafficState @41: Int32; # model-native stop prediction only (1 stop, 2 go); not a traffic light
+  trafficState @41: Int32;
   events @42:List(OnroadEvent);
   vTargetNow @43: Float32;
   cruiseTarget @44: Float32;
@@ -1275,9 +1275,9 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   # Optional overspeed brake relief. Zero target/percent preserves legacy control.
   cruiseCoastingTarget @62 :Float32;  # fixed physical m/s reference; 0 when ineligible
   cruiseCoastingPercent @63 :UInt8;
-  signalDetectionSuspended @64 :Bool; # DEPRECATED 2026-10-20: traffic-light removal, never populated
-  signalObservationColor @65 :UInt8; # DEPRECATED 2026-10-20: traffic-light removal, never populated
-  signalAssistAction @66 :UInt8; # DEPRECATED 2026-10-20: traffic-light removal, never populated
+  signalDetectionSuspended @64 :Bool; # fresh vNavi motorway/urban expressway classification
+  signalObservationColor @65 :UInt8; # helper current evidence: 0 unknown, 1 red, 2 green, 3 mixed
+  signalAssistAction @66 :UInt8; # actual helper action: 0 none, 1 departure veto, 2 preparation, 3 confirmed green transition
 
   solverExecutionTime @35 :Float32;
 
