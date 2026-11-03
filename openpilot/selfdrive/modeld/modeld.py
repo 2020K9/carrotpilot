@@ -26,7 +26,7 @@ from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.desire_lib.boundary_observer import BoundaryObserver
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, smooth_value, get_curvature_from_plan
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
-from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, POLICY_INPUTS
+from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, policy_input_keys
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
 from openpilot.common.file_chunker import open_file_chunked
 from openpilot.selfdrive.modeld.camera_sync import FrameMeta
@@ -163,7 +163,7 @@ class ModelState:
     for array in self.npy.values():
       array[:] = 0
     for name, tensor in self.input_queues.items():
-      if name.endswith('_q'):
+      if name.endswith('_q') or name.startswith('state_'):
         tensor._buffer().copyin(memoryview(bytearray(tensor.numel() * tensor.dtype.itemsize)))
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
@@ -215,8 +215,8 @@ class ModelState:
       return None
 
     outs, = self.run_policy(
-      **{k: self.input_queues[k] for k in POLICY_INPUTS if k in self.input_queues}, warped=warped
-    )
+      **{k: self.input_queues[k] for k in policy_input_keys(self.input_shapes) if k in self.input_queues}, warped=warped
+    )[:1]
     # gpu_sync_wait: run_policy only enqueues GPU work, so .numpy() blocks until the
     # queued warp+policy kernels finish, then copies the output to host. This is the
     # wall time spent waiting for the GPU plus copy-out (diagnostics only).
@@ -227,7 +227,8 @@ class ModelState:
     if self.usbgpu and not np.all(np.isfinite(model_output)):
       raise RuntimeError("eGPU model output is not finite")
     outputs_dict = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
-    self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]
+    if 'prev_feat' in self.npy:
+      self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]
 
     if SEND_RAW_PRED:
       outputs_dict['raw_pred'] = model_output.copy()
