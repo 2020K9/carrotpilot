@@ -64,13 +64,23 @@ def get_tg_input_devices(process_name: str, usbgpu: bool):
 
 LIGHTSPEED_C4_ONNX = MODELS_DIR / 'lightspeed_c4.onnx'
 LIGHTSPEED_C4_PKL = MODELS_DIR / 'lightspeed_c4_driving_tinygrad.pkl'
+LIGHTSPEED_STUDENT_ONNX = MODELS_DIR / 'lightspeed_student_b.onnx'
+LIGHTSPEED_STUDENT_PKL = MODELS_DIR / 'lightspeed_student_driving_tinygrad.pkl'
+
+
+def make_internal_model(model_cls, cam_w: int, cam_h: int, use_student: bool, **kwargs):
+  # read once at modeld start; a student load failure rebuilds the stock model with a fresh state
+  if use_student:
+    try:
+      return model_cls(cam_w, cam_h, False, LIGHTSPEED_STUDENT_PKL, **kwargs)
+    except Exception:
+      from openpilot.common.swaglog import cloudlog
+      cloudlog.exception("lightspeed student model failed to load; using stock model")
+  return model_cls(cam_w, cam_h, False, **kwargs)
 
 
 def modeld_pkl_path(usbgpu: bool, model_sha256: str | None = None):
   if not usbgpu:
-    # exists only after lightspeed_c4_fetch.py and a BUILD_LIGHTSPEED_C4=1 build; otherwise the stock model
-    if os.path.isfile(f'{LIGHTSPEED_C4_PKL}.chunkmanifest') or LIGHTSPEED_C4_PKL.is_file():
-      return LIGHTSPEED_C4_PKL
     return MODELS_DIR / 'driving_tinygrad.pkl'
   if model_sha256 is None:
     model = selected_manifest()

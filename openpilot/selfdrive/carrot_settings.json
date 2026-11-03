@@ -629,6 +629,15 @@
           ]
         },
         {
+          "id": "SYS_MODEL",
+          "ko": "주행 모델",
+          "en": "Driving Model",
+          "zh": "驾驶模型",
+          "params": [
+            "LightspeedStudentModel"
+          ]
+        },
+        {
           "id": "SYS_NET",
           "ko": "네트워크·지도",
           "en": "Network & Map",
@@ -2105,6 +2114,24 @@
       "min": 0,
       "max": 1,
       "default": 1,
+      "unit": 1,
+      "control": "toggle",
+      "risk": "high"
+    },
+    {
+      "group": "시스템",
+      "name": "LightspeedStudentModel",
+      "title": "라이트스피드 학생 모델 사용(시험)",
+      "descr": "기본값은 꺼짐입니다. 켜면 modeld가 기본 C4 모델 대신 라이트스피드 학생 모델(b)을 씁니다. 실차·C4 실측 미검증. 학생 모델을 못 읽으면 기본 모델로 돌아갑니다. 변경 후 기기를 재부팅하세요.",
+      "egroup": "SYSTEM",
+      "etitle": "Use Lightspeed Student Model (experimental)",
+      "edescr": "Off by default. When on, modeld uses the Lightspeed student model (b) instead of the stock C4 model. Not verified on the car or C4. Falls back to the stock model if the student fails to load. Reboot the device after changing.",
+      "cgroup": "系统",
+      "ctitle": "使用 Lightspeed 学生模型（实验）",
+      "cdescr": "默认关闭。开启后 modeld 使用 Lightspeed 学生模型(b) 代替默认 C4 模型。未在实车或 C4 上验证。学生模型加载失败时回到默认模型。更改后请重启设备。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
       "unit": 1,
       "control": "toggle",
       "risk": "high"

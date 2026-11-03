@@ -8,7 +8,8 @@ from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
 from openpilot.common.transformations.model import MEDMODEL_INPUT_SIZE, DM_INPUT_SIZE
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.modeld.big_model import active_manifest, active_model_path
-from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, LIGHTSPEED_C4_ONNX, LIGHTSPEED_C4_PKL, MODELS_DIR, modeld_pkl_path
+from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, LIGHTSPEED_C4_ONNX, LIGHTSPEED_C4_PKL, MODELS_DIR, modeld_pkl_path, \
+  LIGHTSPEED_STUDENT_ONNX, LIGHTSPEED_STUDENT_PKL
 
 
 CAMERA_CONFIGS = [
@@ -99,6 +100,10 @@ model_builds.append((False, MODELS_DIR / 'driving_tinygrad.pkl', get_existing_ch
 # opt-in only: the built-in light speed needs lightspeed_c4_fetch.py first and a lot of build memory
 if os.getenv('BUILD_LIGHTSPEED_C4') == '1' and LIGHTSPEED_C4_ONNX.is_file():
   model_builds.append((False, LIGHTSPEED_C4_PKL, [str(LIGHTSPEED_C4_ONNX)], str(LIGHTSPEED_C4_ONNX), tg_flags))
+
+# student model, used only when the LightspeedStudentModel param is on at modeld start
+if LIGHTSPEED_STUDENT_ONNX.is_file():
+  model_builds.append((False, LIGHTSPEED_STUDENT_PKL, [str(LIGHTSPEED_STUDENT_ONNX)], str(LIGHTSPEED_STUDENT_ONNX), tg_flags))
 
 if USBGPU:
   big_manifest = active_manifest()
