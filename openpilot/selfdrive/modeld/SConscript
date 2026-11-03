@@ -126,7 +126,9 @@ for usbgpu, pkl_path, driving_onnx_deps, driving_onnx, cmd_flags in model_builds
   # the student load fails at modeld start and it falls back to the stock model
   optional = pkl_path == LIGHTSPEED_STUDENT_PKL
   if optional:
-    cmd = f'{cmd} || echo "  [LIGHTSPEED STUDENT] compile failed; stock model unaffected"'
+    # drop any stale/partial pkl so a failed compile always leaves the empty manifest
+    cmd = (f'rm -f {target_pkl_path}; {cmd} || (rm -f {target_pkl_path}; '
+           f'echo "  [LIGHTSPEED STUDENT] compile failed; stock model unaffected")')
   onnx_sizes_sum = sum(os.path.getsize(f) for f in driving_onnx_deps)
   chunk_targets = get_chunk_targets(target_pkl_path, estimate_pickle_max_size(onnx_sizes_sum))
   def do_chunk(target, source, env, pkl=target_pkl_path, chunks=chunk_targets, optional=optional):
