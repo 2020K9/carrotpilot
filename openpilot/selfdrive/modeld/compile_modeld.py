@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import atexit
+import contextlib
 import math
 import os
 import pickle
@@ -256,7 +257,10 @@ def make_stateful_run_policy(model_runner, model_metadata):
     # write the model's next state back into the persistent state buffers
     for k in names:
       states[k].assign(outs['next_' + k].cast(states[k].dtype).contiguous())
-    return outs['outputs'].cast('float32'), *(states[k] for k in names)
+    # return only the output: from a replayed (pickled) jit, returned input buffers are the captured ones
+    out = outs['outputs'].cast('float32')
+    Tensor.realize(out, *(states[k] for k in names))
+    return out,
   return run_policy
 
 
@@ -292,6 +296,21 @@ def make_run_policy(model_runner, model_metadata, frame_skip):
   return run_policy
 
 
+# NULL (e.g. NULL:IR3:a630, the C4 compile check off-device) has no copyout: ONNX Slice/Reshape
+# consts can't be read back and buffers pickle empty, so it's a compile check only
+NULL_TARGET = Device.DEFAULT.split(':', 1)[0] == 'NULL'
+
+
+def make_null_target_runner(model_path):
+  # parse on CPU and fill the runner's python const cache from one CPU run, then move it to the target
+  from tinygrad.nn.onnx import OnnxRunner
+  target = Device.DEFAULT
+  with Context(DEV='CPU:LLVM'):
+    model_runner = OnnxRunner(model_path)
+    model_runner(model_runner.get_empty_input_data(device='CPU'))
+  return model_runner.to(target)
+
+
 def compile_jit(jit, make_random_inputs, input_keys, make_queues):
   SEED = 42
   def random_inputs_run(fn, seed, test_val=None, test_buffers=None, expect_match=True):
@@ -301,6 +320,7 @@ def compile_jit(jit, make_random_inputs, input_keys, make_queues):
 
     testing = test_val is not None or test_buffers is not None
     n_runs = 1 if testing else 3
+    val = buffers = None
 
     for i in range(n_runs):
       for v in npy.values():
@@ -314,7 +334,7 @@ def compile_jit(jit, make_random_inputs, input_keys, make_queues):
       et = time.perf_counter()
       print(f"  [{i+1}/{n_runs}] enqueue {(mt-st)*1e3:6.2f} ms -- total {(et-st)*1e3:6.2f} ms")
 
-      if i == 0:
+      if i == 0 and not NULL_TARGET:
         val = [np.copy(v.numpy()) for v in outs]
         buffers = [np.copy(v.numpy().copy()) for v in input_queues.values()]
 
@@ -328,6 +348,9 @@ def compile_jit(jit, make_random_inputs, input_keys, make_queues):
 
   print('capture + replay')
   test_val, test_buffers = random_inputs_run(jit, SEED)
+  if NULL_TARGET:
+    print('NULL target: compile check only, no value checks')
+    return jit
   print('pickle round trip')
   with tempfile.TemporaryFile(dir=".") as f:
     dump_oob(jit, f)
@@ -368,8 +391,9 @@ if __name__ == "__main__":
   model_path = read_file_chunked_to_disk(args.onnx)
   model_w, model_h = args.model_size
 
-  model_runner = OnnxRunner(model_path)
-  out = {'metadata': make_metadata_dict(model_path)}
+  model_runner = make_null_target_runner(model_path) if NULL_TARGET else OnnxRunner(model_path)
+  with Context(DEV='CPU:LLVM') if NULL_TARGET else contextlib.nullcontext():
+    out = {'metadata': make_metadata_dict(model_path)}
 
   run_policy_jit = TinyJit(make_run_policy(model_runner, out['metadata'], args.frame_skip), prune=True)
 
@@ -387,6 +411,9 @@ if __name__ == "__main__":
     make_warp_queues = partial(make_warp_input_queues, out['metadata']['input_shapes'], args.frame_skip)
     out[(cam_w,cam_h)] = compile_jit(warp, make_random_warp_inputs, WARP_INPUTS, make_warp_queues)
 
+  if NULL_TARGET:
+    print(f"COMPILE_CHECK_OK on {Device.DEFAULT}; {args.output} not written (NULL buffers have no data)")
+    raise SystemExit(0)
   with open(args.output, "wb") as f:
     dump_oob(out, f)
   validate_model_file(args.output)

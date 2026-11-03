@@ -329,9 +329,11 @@ class HudRenderer(Widget):
   def _draw_egpu_badge(self, rect: rl.Rectangle) -> None:
     # Keep runtime state visible while the shared USB hub re-enumerates; a
     # transient missing sysfs sample must not hide loading or failure details.
-    if not (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
-            ui_state.usbgpu_present or ui_state.usbgpu_active or
-            ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
+    egpu_shown = (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
+                  ui_state.usbgpu_present or ui_state.usbgpu_active or
+                  ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed)
+    lightspeed = getattr(ui_state, 'lightspeed_badge', None)
+    if not (egpu_shown or lightspeed):
       return
 
     state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
@@ -345,6 +347,8 @@ class HudRenderer(Widget):
       text, state = ui_state.jetlink_badge
     if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.usbgpu_recovery_badge
+    if lightspeed and not egpu_shown:
+      text, state = lightspeed
     color = {
       "active": COLORS.GREEN_210,
       "loading": COLORS.YELLOW_210,

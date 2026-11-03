@@ -241,8 +241,19 @@ class UIState:
     self.usbgpu_recovery_badge = recovery_badge(read_egpu_recovery())
     from openpilot.common.jetlink_status import badge
     self.jetlink_badge = badge()
+    self.lightspeed_badge = lightspeed_badge(self.params.get("LightspeedModelStatus"))
 
     self._param_update_time = time.monotonic()
+
+
+
+def lightspeed_badge(status):
+  # small HUD marker of the model modeld really loaded; nothing when the student was never asked for
+  if not isinstance(status, dict) or not status.get("requested_student"):
+    return None
+  if status.get("model") == "lightspeed_student_b":
+    return "LS-B", "active"
+  return "LS>STOCK", "error"
 
 
 class Device:

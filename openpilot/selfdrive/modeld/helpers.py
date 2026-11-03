@@ -68,15 +68,25 @@ LIGHTSPEED_STUDENT_ONNX = MODELS_DIR / 'lightspeed_student_b.onnx'
 LIGHTSPEED_STUDENT_PKL = MODELS_DIR / 'lightspeed_student_driving_tinygrad.pkl'
 
 
-def make_internal_model(model_cls, cam_w: int, cam_h: int, use_student: bool, **kwargs):
-  # read once at modeld start; a student load failure rebuilds the stock model with a fresh state
+def make_internal_model(model_cls, cam_w: int, cam_h: int, use_student: bool, params=None, **kwargs):
+  # read once at modeld start; a student load failure rebuilds the stock model with a fresh state.
+  # The model that actually loaded (and why it fell back) goes to cloudlog and LightspeedModelStatus.
+  from openpilot.common.swaglog import cloudlog
+  model = fallback_reason = None
   if use_student:
     try:
-      return model_cls(cam_w, cam_h, False, LIGHTSPEED_STUDENT_PKL, **kwargs)
-    except Exception:
-      from openpilot.common.swaglog import cloudlog
+      model = model_cls(cam_w, cam_h, False, LIGHTSPEED_STUDENT_PKL, **kwargs)
+    except Exception as e:
+      fallback_reason = f"{type(e).__name__}: {e}"[:200]
       cloudlog.exception("lightspeed student model failed to load; using stock model")
-  return model_cls(cam_w, cam_h, False, **kwargs)
+  if model is None:
+    model = model_cls(cam_w, cam_h, False, **kwargs)
+  status = {"model": "lightspeed_student_b" if use_student and fallback_reason is None else "stock",
+            "requested_student": use_student, "fallback_reason": fallback_reason}
+  cloudlog.warning(f"modeld internal model: {status}")
+  if params is not None:
+    params.put("LightspeedModelStatus", status)
+  return model
 
 
 def modeld_pkl_path(usbgpu: bool, model_sha256: str | None = None):

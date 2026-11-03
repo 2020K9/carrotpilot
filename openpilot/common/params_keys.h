@@ -144,6 +144,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UsbGpuStartupFailed", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, BOOL}},
     {"UseWideCamera", {PERSISTENT, BOOL, "1"}},
     {"LightspeedStudentModel", {PERSISTENT, BOOL, "0"}},
+    {"LightspeedModelStatus", {CLEAR_ON_MANAGER_START, JSON}},
     {"Version", {PERSISTENT, STRING}},
 
     // carrot

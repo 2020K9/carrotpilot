@@ -352,7 +352,7 @@ def main(demo=False):
   # receives no live samples. Keep standby inference/warmup and fallback intact;
   # optional comparison remains available when internal inference starts active.
   small_model = make_internal_model(ModelState, vipc_client_main.width, vipc_client_main.height,
-                                    params.get_bool("LightspeedStudentModel"),
+                                    params.get_bool("LightspeedStudentModel"), params,
                                     enable_shadow=not usbgpu_model_loaded) if model is None or USBGPU else None
   if usbgpu_model_loaded:
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
