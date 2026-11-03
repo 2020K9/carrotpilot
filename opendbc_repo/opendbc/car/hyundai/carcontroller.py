@@ -205,6 +205,8 @@ class CarController(CarControllerBase):
     # menu 4 kind 14 (moved from 2) and menu 5 kind 17; kind 16 was menu 4 from 15:43 to 17:29.
     # 2026-11-03 (the driver 06:08): menus 2 (kind 16) and 4 (kind 14) left the menu, 3 -> 2 and 5 -> 3, so the menu is
     # 0-3 again: 1 / 2 / 3 = kinds 13 / 15 / 17 (원본2, 원본2 + 선 뒤 1초 잠금, 격차수정 + 1 km/h 아래 서서히).
+    # 2026-11-03 17:10 (the driver "0.3번5번만 남겨두고 삭제"): that renumbering was wrong; the menu is 0 / 3 / 5 with the
+    # 9df95178c numbers (3 = kind 15, 5 = kind 17); kind 13 left the menu (its code is the base of 15 / 16 / 17).
     # Stored values of older menus are migrated once at manager start (k9_stop_mode_migration.py).
     # See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
@@ -323,6 +325,7 @@ class CarController(CarControllerBase):
         except (TypeError, ValueError, OverflowError):
           mode = 0
         # 6+ as well (menu 0-5 since 2026-10-30; the next line's "4+" is the 0-3 menu note, kept as in b6696b37)
+        # 2026-11-03 17:10: menu 0 / 3 / 5, so 1 / 2 / 4 act as 0 as well
         mode = mode if mode in K9_CREEP_MENU else 0  # 4+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
@@ -529,7 +532,7 @@ class CarController(CarControllerBase):
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
         lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
-      # K9StopMode 1 / 2 / 3 / 4 / 5: K9Creep kinds 13 / 16 / 15 / 14 / 17 (v12k9 based); changes accel AND StopReq timing.
+      # K9StopMode 3 / 5: K9Creep kinds 15 / 17 (k9_creep.MENU, v12k9 based); changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,

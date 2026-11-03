@@ -16,6 +16,7 @@ import random
 import numpy as np
 import pytest
 
+from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai import k9_creep as kc
 from opendbc.car.hyundai.k9_creep import K9Creep, V12K9
 from opendbc.car.hyundai.values import CAR
@@ -99,7 +100,9 @@ def test_latched_band_ramps_to_zero():
 
 
 def test_through_carcontroller_band_on_then_ramp_at_standstill_latch(monkeypatch):
-  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1)  # menu 1 since the 04:48 swap
+  # kind 13 (menu 1 from the 04:48 swap to 2026-11-03 17:10, no menu value since): a test-only slot 1 runs it
+  monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {**kc.MENU, 1: kc.V12K9O})
+  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1)
   for i in range(120):
     r.step(-0.5, LCS.pid, max(2.0 - 0.012 * i, 0.4), a_target=-0.4, a_ego=-0.4)
   for i in range(60):
@@ -225,7 +228,9 @@ def test_menu1_only_band_compensation_and_stall_change(monkeypatch, frozen_cc):
 
 
 def test_menu1_low_speed_band_is_the_original_band(monkeypatch):
-  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1)  # menu 1 since the 04:48 swap
+  # kind 13 (menu 1 from the 04:48 swap to 2026-11-03 17:10, no menu value since): a test-only slot 1 runs it
+  monkeypatch.setattr(carcontroller, "K9_CREEP_MENU", {**kc.MENU, 1: kc.V12K9O})
+  r = Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K9), K9StopMode=1)
   rows = []
   for i in range(240):
     v = max(2.4 - 0.01 * i, 0.06)

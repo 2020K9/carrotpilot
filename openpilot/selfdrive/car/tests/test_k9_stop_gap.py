@@ -11,6 +11,9 @@ before the 0-5 menu: every device runs the method it ran there; a marker-7 2 mov
 the CarController pins of kind 16 run it through a test-only menu slot (KIND16_SLOT); the wiring pin checks 3 -> kind 17 and
 no menu value for 16; the settings / manual names are the new 3; the migration against e0d14a1a4 also applies MOVE_V9 (a kind 14
 device, the old 2, now runs 0: kind 14 was deleted). Deleted: the menu 2 case of test_gap_menus_never_run_outside_the_k9_camera_scc.
+2026-11-03 17:10 (대감님 "0.3번5번만 남겨두고 삭제"): menu 0 / 3 / 5 with the 9df95178c numbers (5 = kind 17), kind 13 off the
+menu: the kind-13 reference ("menu 1") runs through test_k9_creep_mode.KIND13_SLOT, the wiring / settings / manual pins name
+5, and the migration against e0d14a1a4 also applies MOVE_V10 (a kind 13 device, the old 1, now runs 0).
 Model-only harness with synthetic inputs: source logic and SCC12/SCC14 encoding, not K9 vehicle behaviour (실차 미검증).
 """
 import importlib.util
@@ -28,7 +31,7 @@ from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.car import k9_stop_mode_migration as mig
 from opendbc.car.hyundai import carcontroller
 from openpilot.selfdrive.car.tests.k9_rig import LCS, ROOT, _git_show, edge_sequence, gentle_sequence, mixed_sequence
-from openpilot.selfdrive.car.tests.test_k9_creep_mode import SEQS, rig, upd
+from openpilot.selfdrive.car.tests.test_k9_creep_mode import KIND13_SLOT, SEQS, rig, upd
 from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import K9_FLAGS, make_cp
 from openpilot.selfdrive.car.tests.test_k9_stop_v12 import FakeParams, _random_inputs
 
@@ -124,7 +127,7 @@ def test_never_weaker_than_kind13_on_a_lead_handover(lead_v, a_target):
 def test_never_weaker_than_menu1_through_the_carcontroller(monkeypatch, seq):
   """The real CarController (ComfortBand and band compensation included): menu 2's sent accel and SCC12 aReq at or below
   menu 1's on every frame, StopReq on the same frames."""
-  one, a1 = _run(monkeypatch, 1, seq)
+  one, a1 = _run(monkeypatch, KIND13_SLOT, seq)  # kind 13 (menu 1 until 2026-11-03 17:10)
   two, a2 = _run(monkeypatch, KIND16_SLOT, seq)  # kind 16 (menu 2 until 2026-11-03)
   assert one.cc.k9_creep.mode == V12K9O and two.cc.k9_creep.mode == V12K9OG and len(a1) == len(a2) > 400
   weaker = [(f, x, y) for f, (x, y) in enumerate(zip(a1, a2, strict=True)) if y > x + 1e-9]
@@ -140,7 +143,7 @@ def test_never_weaker_than_menu1_through_the_carcontroller(monkeypatch, seq):
 def test_gap_zero_is_menu1_bit_for_bit(monkeypatch):
   """B17O_GAP_A is the gap: all zeros and menu 2 is menu 1 again, CAN bit for bit."""
   for seq in RUNS:
-    one, _ = _run(monkeypatch, 1, seq)
+    one, _ = _run(monkeypatch, KIND13_SLOT, seq)  # kind 13 (menu 1 until 2026-11-03 17:10)
     monkeypatch.setattr(kc, "B17O_GAP_A", [0.0] * len(kc.B17O_GAP_BP))
     two, _ = _run(monkeypatch, KIND16_SLOT, seq)  # kind 16 (menu 2 until 2026-11-03)
     assert one.can == two.can and one.scc14 == two.scc14, seq
@@ -194,17 +197,17 @@ def test_gap_share_only_in_the_stopping_state():
 # --- (d) menu wiring -------------------------------------------------------------------------------------------------
 def test_menu2_is_kind16(monkeypatch):
   # 2026-11-03: kind 16 left the menu (no menu value), the old 5 (kind 17) is menu 3; kind 14 and its b17s are gone
-  assert kc.V12K9OG == V12K9OG == 16 and kc.V12K9OG in kc.KINDS and kc.MODES == (1, 2, 3)
+  assert kc.V12K9OG == V12K9OG == 16 and kc.V12K9OG in kc.KINDS and kc.MODES == (3, 5)  # 2026-11-03 17:10: 0 / 3 / 5
   assert V12K9OG not in kc.MENU.values()
   c = K9Creep(V12K9OG)
   assert c.v12 and c.b17o and c.b17g and not hasattr(c, "b17s") and not c.b17h and not c.b17r
   c5 = K9Creep(kc.V12K9OGR)  # menu 3 (menu 5 until 2026-11-03, 17:31 "...그걸 5번"): the same gap plus the ramp below 1 km/h
-  assert kc.MENU[3] == kc.V12K9OGR == 17 and c5.v12 and c5.b17o and c5.b17g and c5.b17r and not c5.b17h
+  assert kc.MENU[5] == kc.V12K9OGR == 17 and c5.v12 and c5.b17o and c5.b17g and c5.b17r and not c5.b17h
   assert not any(K9Creep(k).b17g for k in kc.KINDS if k not in (V12K9OG, kc.V12K9OGR))
-  r = rig(monkeypatch, 3)
+  r = rig(monkeypatch, 5)  # 2026-11-03 17:10: kind 17 is menu 5 again
   r.step(-0.5, LCS.pid, 3.0)
-  assert r.cc.k9_creep_mode == 3 and r.cc.k9_creep.mode == kc.V12K9OGR
-  assert r.params.values["K9StopMode"] == 3  # the controller never writes the menu value
+  assert r.cc.k9_creep_mode == 5 and r.cc.k9_creep.mode == kc.V12K9OGR
+  assert r.params.values["K9StopMode"] == 5  # the controller never writes the menu value
 
 
 @pytest.mark.parametrize("value", [6, -1, float("nan")])
@@ -218,7 +221,7 @@ def test_other_values_act_as_0(monkeypatch, value):
     assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
 
 
-@pytest.mark.parametrize("menu", [3])  # 2026-11-03: the old 5 is 3; the old 2 (kind 16) has no menu value
+@pytest.mark.parametrize("menu", [5])  # 2026-11-03 17:10: kind 17 is 5 again; the old 2 (kind 16) has no menu value
 @pytest.mark.parametrize("cp", ["k7", "no_camera_scc"])
 def test_gap_menus_never_run_outside_the_k9_camera_scc(monkeypatch, cp, menu):
   kw = {"fingerprint": CAR.KIA_K7} if cp == "k7" else {"flags": int(K9_FLAGS & ~HyundaiFlags.CAMERA_SCC)}
@@ -234,12 +237,12 @@ def test_gap_menus_never_run_outside_the_k9_camera_scc(monkeypatch, cp, menu):
 def test_settings_and_manual_names():
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   e = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (e["min"], e["max"], e["default"]) == (0, 3, 0)  # 2026-11-03: the gap fix is in menu 3 (kind 17) only
-  assert (e["options"]["ko"][3], e["options"]["en"][3], e["options"]["zh"][3]) == (
-    "3 격차수정 + 1 km/h 아래 서서히 더 잡기", "3 Gap fix + gradually harder below 1 km/h", "3 差距修正＋1 km/h以下逐渐加大制动")
-  assert "3 격차수정" in e["descr"] and "3 Gap fix" in e["edescr"] and "3 差距修正" in e["cdescr"]
-  for rel, item in (("docs/user/ko/settings.md", "격차수정 (3번의 바탕"), ("docs/user/en/settings.md", "Gap fix (the base of menu 3"),
-                    ("docs/k9_menus_zh.md", "差距修正（3号的基础")):
+  assert (e["min"], e["max"], e["default"]) == (0, 5, 0)  # 2026-11-03 17:10: the gap fix is in menu 5 (kind 17) only
+  assert (e["options"]["ko"][5], e["options"]["en"][5], e["options"]["zh"][5]) == (
+    "5 격차수정 + 1 km/h 아래 서서히 더 잡기", "5 Gap fix + gradually harder below 1 km/h", "5 差距修正＋1 km/h以下逐渐加大制动")
+  assert "5 격차수정" in e["descr"] and "5 Gap fix" in e["edescr"] and "5 差距修正" in e["cdescr"]
+  for rel, item in (("docs/user/ko/settings.md", "격차수정 (5번의 바탕"), ("docs/user/en/settings.md", "Gap fix (the base of menu 5"),
+                    ("docs/k9_menus_zh.md", "差距修正（5号的基础")):
     assert item in (ROOT / rel).read_text(encoding="utf-8"), rel
 
 
@@ -289,20 +292,23 @@ class _Cut(FakeParams):
 
 
 def test_migration_every_older_device_runs_what_it_ran_on_e0d14a1a4(base):
-  assert base.kc.MENU == {1: kc.V12K9O, 2: 14, 3: kc.V12K9OH} and base.mig.STOP_MODE_VER == 7 and mig.STOP_MODE_VER == 9
+  assert base.kc.MENU == {1: kc.V12K9O, 2: 14, 3: kc.V12K9OH} and base.mig.STOP_MODE_VER == 7 and mig.STOP_MODE_VER == 10
   for marker in MARKERS:
     for stored in STORED:
       old, new = FakeParams(**_start(marker, stored)), FakeParams(**_start(marker, stored))
       base.mig.migrate_k9_stop_mode(old)
       mig.migrate_k9_stop_mode(new)
       if marker == 8:  # 8: already on the 0-5 menu; since 2026-11-03 only the MOVE_V9 move
-        assert new.v == _start(mig.STOP_MODE_VER, mig.MOVE_V9.get(stored, stored)), (stored, new.v)
+        w9 = mig.MOVE_V9.get(stored, stored)
+        assert new.v == _start(mig.STOP_MODE_VER, mig.MOVE_V10.get(w9, w9)), (stored, new.v)  # 2026-11-03 17:10: then MOVE_V10
         continue
       assert new.v["K9StopModeVer"] == mig.STOP_MODE_VER and old.v["K9StopModeVer"] == base.mig.STOP_MODE_VER, (marker, stored)
       was = _kind(old.v.get("K9StopMode"), base.kc.MENU)  # 2026-11-03: kind 14 was deleted, so its devices run 0
-      assert _kind(new.v.get("K9StopMode"), kc.MENU) == (0 if was == 14 else was), (marker, stored, old.v, new.v)
+      # 2026-11-03 17:10: kind 13 left the menu too, so its devices run 0
+      assert _kind(new.v.get("K9StopMode"), kc.MENU) == (0 if was in (13, 14) else was), (marker, stored, old.v, new.v)
       want = mig.MOVE_V8.get(old.v.get("K9StopMode"), old.v.get("K9StopMode"))  # 2 -> 4 (kind 14), a 4 / 5 that acted as 0 -> 0
       want = mig.MOVE_V9.get(want, want)  # 2026-11-03: 2 / 4 -> 0, 3 -> 2, 5 -> 3
+      want = mig.MOVE_V10.get(want, want)  # 2026-11-03 17:10: 1 / 4 / 5 -> 0, 2 -> 3, 3 -> 5
       assert new.v.get("K9StopMode") == want, (marker, stored, old.v, new.v)
 
 

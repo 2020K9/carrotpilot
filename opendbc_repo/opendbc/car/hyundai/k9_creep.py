@@ -3,11 +3,13 @@
 K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대로 넣어놓기도 해보고, K9 맞춰 넣는 것도 v12k9으로
 해서 넣어봐" / "브레이크 앞전꺼는 다 별로니 지워" and 00:39 "원본 그대로 수정하지 말고 올려라"):
 - 0 = base braking (default; nothing here is called);
-- 1 = "bono1739 원본2" (kind 13 V12K9O below; menu 1 since 2026-10-29 04:48, the driver "메뉴1번에다 내가 밟은거 그대로를
+2026-11-03 17:10 (the driver "0.3번5번만 남겨두고 삭제"): the menu is 0 / 3 / 5 only (3 = kind 15, 5 = kind 17, the
+9df95178c numbers); kind 13 below is no menu value any more (the base of kinds 15 / 16 / 17), 1 / 2 / 4 act as 0.
+- (no menu value since 2026-11-03 17:10) "bono1739 원본2" (kind 13 V12K9O below; menu 1 since 2026-10-29 04:48, the driver "메뉴1번에다 내가 밟은거 그대로를
   넣으라햇잔니"; 원본 a59530057 = 10/27 17:39 대감님 직접 정차 그대로, 원본2 2026-10-29 00:50): kind 8 with the stop end
   replaced by the driver's own stop table (B17O_*) up to the stop, then the kind 8 standstill latch at once (원본2: no 1.6 s
   logged pressure). This is the one slot that is his recorded stop, so it is never tuned;
-- 2 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; menu 2 since 2026-11-03, 3 before;
+- 3 = "bono1739 원본2 + 선 뒤 1초 잠금" (kind 15 V12K9OH below; menu 3 again since 2026-11-03 17:10, 2 from 06:08 to 17:10;
   2026-10-29 05:40, the driver "4번에다가 내가 아까 말한시간로그에
   완전정차후1초뒤 브레이크 좀더 세게 밟으란거잔아"): kind 13 exactly, except that after the stop the standstill hold reaches
   the first B17O_HOLD2_T (1.0 s) of standstill is kind 13 bit for bit (the latch ramp toward LATCH_ACCEL), and only after
@@ -17,7 +19,8 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   carcontroller.py; it had replaced 3 v13 original of 2026-10-26) left the menu with its two page blocks and this slot
   moved up (the driver "3.v14제거후 4번을 3번으로"). 4 C1 / 5 C1+ (2026-10-27, kinds 9 / 10) went the same way
   on 2026-10-28 (the driver's orders 2026-10-27 19:48 / 19:51);
-- 3 = "격차수정 + 1 km/h 아래 서서히 더 잡기" (kind 17 V12K9OGR below; menu 3 since 2026-11-03, 5 before; 2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하
+- 5 = "격차수정 + 1 km/h 아래 서서히 더 잡기" (kind 17 V12K9OGR below; menu 5 again since 2026-11-03 17:10, 3 from 06:08 to 17:10;
+  2026-10-30, the driver 17:31 "2번에넣을거에 1km 이하
   서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번"): kind 16 exactly, except that in the stopping state before the stop, at
   or below B17O_RAMP5_V (1 km/h), the kind 15 ramp (B17O_RAMP_STEP / _KNEE / _STEP2 / _MAX) goes on top of the kind 16
   table request (kind 16 "격차수정" = kind 13 with the table request made stronger before the stop by the measured gap
@@ -28,21 +31,22 @@ K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대�
   푸시해라").
 2026-11-03 (the driver 06:08): 2 격차수정 (kind 16) and 4 끝 구간 개선 (kind 14) left the menu; kind 14 left with its code
 (S1-S9), and the old 3 / 5 moved to 2 / 3.
-Any other value (4 or more, negative, unreadable) acts as 0. The modes never stack.
+Any other value (1 / 2 / 4, 6 or more, negative, unreadable) acts as 0. The modes never stack.
 The 2026-10-24 menu (1 v10, 2 v10 + light shudder fix, 3 v11) is deleted with its code (kinds 2 v10, 6 v10 + light shudder
 fix and 7 v11 are gone). Stored values are migrated once at manager start (openpilot/selfdrive/car/k9_stop_mode_migration.py,
-marker K9StopModeVer 9 since 2026-11-03, 8 / 7 / 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
+marker K9StopModeVer 10 since 2026-11-03 17:10, 9 / 7 / 6 / 5 / 4 / 3 before): old 1 / 2 / 3 -> 2 (v12k9), 0 unchanged; from
 K9StopModeVer 3 (the 0-5 menu) 3 v13 / 4 C1 / 5 C1+ / 6 -> 0, never to the then-new 3 v14; from K9StopModeVer 4 the 04:48
 1 <-> 2 slot swap; from K9StopModeVer 5 a stored 2 (v12 original, off the menu) -> 0, 0 / 1 / 3 unchanged; from
 K9StopModeVer 6 a stored 4 -> 3 (kind 15 moved up) and a stored 3 (v14 original, off the menu) -> 0, 0 / 1 / 2 unchanged;
 from K9StopModeVer 7 (2026-10-30) a stored 2 (kind 14) -> 4 (the same kind, the new number) and a stored 4 / 5 (it acted as
 0 on the 0-3 menu) -> 0, 0 / 1 / 3 unchanged; from K9StopModeVer 8 (2026-11-03) a stored 2 / 4 (kinds 16 / 14, off the menu)
 -> 0, 3 -> 2 and 5 -> 3 (the same kinds, the new numbers), 0 / 1 unchanged, so no stored value runs a different kind after
-the update unless its kind left the menu.
+the update unless its kind left the menu; from K9StopModeVer 9 (2026-11-03 17:10) 1 (kind 13, off the menu) -> 0, 2 -> 3 and
+3 -> 5 (kinds 15 / 17 back on their 9df95178c numbers), 0 unchanged.
 Earlier menu history is in git log.
 Throughout this module "mode N" / "kind N" means the K9Creep kind N, NOT the menu value: kind 1 = v9 (not on the menu; kept
 only as the test reference of "never brake less than v9"), kind 8 = v12k9 (not on the menu either since 2026-10-29: it is
-the base of kinds 13 / 15 / 16 / 17, menus 1 / 2 / - / 3; kind 16 is not on the menu since 2026-11-03, it is the base of
+the base of kinds 13 / 15 / 16 / 17, menus - / 3 / - / 5 since 2026-11-03 17:10; kind 16 is not on the menu since 2026-11-03, it is the base of
 kind 17).
 
 Sources: https://leegrt.org/oppo/creep_fix/ (selectMode carcontroller.py code and changelog, written for the Kia Niro EV CAN,
@@ -150,10 +154,13 @@ import numpy as np
 from opendbc.car.hyundai.values import CAR, CarControllerParams, HyundaiFlags
 
 V9, V12K9 = 1, 8  # K9Creep kinds ("mode" here), not menu values; kinds 2-7 were removed (2026-10-24 / 2026-10-25)
-V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end; menu 1 (menu 2 until 2026-10-29 04:48)
-V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp; menu 2 (3 until 11-03, 4 until 10-29)
+V12K9O = 13  # kind 13 (2026-10-29) "bono1739 원본2" (원본 = 10/27 17:39 대감님 직접 정차): kind 8 + the B17O_* stop end
+# (kind 13: no menu value since 2026-11-03 17:10; menu 1 before, 2 until 2026-10-29 04:48)
+V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠금": kind 13 + the 1 s standstill hold ramp
+# (kind 15: menu 3; 2 from 11-03 06:08 to 17:10, 4 until 10-29)
 V12K9OG = 16  # kind 16 (2026-10-30) "격차수정": kind 13 + the measured gap (B17O_GAP_*) before the stop; off the menu since 11-03, base of kind 17
-V12K9OGR = 17  # kind 17 (2026-10-30 17:31) "격차수정 + 1 km/h 아래 서서히 더 잡기": kind 16 + the ramp from B17O_RAMP5_V down; menu 3 (menu 5 until 2026-11-03)
+V12K9OGR = 17  # kind 17 (2026-10-30 17:31) "격차수정 + 1 km/h 아래 서서히 더 잡기": kind 16 + the ramp from B17O_RAMP5_V down
+# (kind 17: menu 5; 3 from 2026-11-03 06:08 to 17:10)
 KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (not a kind), 2 v12k9; 2026-10-26: 3 v13 original;
 # 2026-10-28: 3 v14 original instead (not a kind); 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*),
@@ -163,7 +170,9 @@ KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
 # "격차수정", the driver 15:43 "4번격차수정으로 넣어라"; 17:29 kind 16 -> 2 and kind 14 -> 4, "이전에하던개선은 4번 / 2번은
 # 격차만큼조정한거"; 17:31 5 = kind 17, "2번에넣을거에 1km 이하서서히 브레이킹 강해지게 올려서 정차하게해 그걸 5번";
 # 2026-11-03 06:08 menus 2 (kind 16) and 4 (kind 14, with its code) left the menu, 3 -> 2 and 5 -> 3)
-MENU = {1: V12K9O, 2: V12K9OH, 3: V12K9OGR}
+# 2026-11-03 17:10 (the driver "0.3번5번만 남겨두고 삭제", 17:14 정정): the 06:08 renumbering was wrong; only 0 / 3 / 5 stay,
+# with their 9df95178c numbers: 3 = kind 15, 5 = kind 17. Kind 13 (menu 1) left the menu, its code stays as the base of 15 / 16 / 17.
+MENU = {3: V12K9OH, 5: V12K9OGR}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted(MENU))  # K9StopMode values that change braking; anything else acts as 0
 
