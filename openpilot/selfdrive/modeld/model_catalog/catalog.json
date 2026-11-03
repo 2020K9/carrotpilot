@@ -50,6 +50,13 @@
       "url": "https://upload.shind0.synology.me/models/comma4-big-light-speed-f22b8b34/big_driving_tinygrad.pkl"
     },
     "jetson_spec": "light-speed.json",
-    "jetson_release": "light-speed-release.json"
+    "jetson_release": "light-speed-release.json",
+    "c4_builtin": {
+      "filename": "lightspeed_c4.onnx",
+      "size": 792305602,
+      "sha256": "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21",
+      "url": "https://upload.shind0.synology.me/models/comma4-big-light-speed-f22b8b34/big_driving_supercombo.onnx",
+      "mlp_width": 4096
+    }
   }
 }

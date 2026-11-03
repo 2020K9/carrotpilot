@@ -8,7 +8,7 @@ from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
 from openpilot.common.transformations.model import MEDMODEL_INPUT_SIZE, DM_INPUT_SIZE
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.modeld.big_model import active_manifest, active_model_path
-from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, modeld_pkl_path
+from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, LIGHTSPEED_C4_ONNX, LIGHTSPEED_C4_PKL, MODELS_DIR, modeld_pkl_path
 
 
 CAMERA_CONFIGS = [
@@ -94,7 +94,11 @@ frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
 model_builds = []
 regular_prefix = 'big_' if os.getenv('BIG_INTO_SMALL') else ''
 regular_onnx = File(f"models/{regular_prefix}driving_supercombo.onnx").abspath
-model_builds.append((False, modeld_pkl_path(False), get_existing_chunks(regular_onnx), regular_onnx, tg_flags))
+model_builds.append((False, MODELS_DIR / 'driving_tinygrad.pkl', get_existing_chunks(regular_onnx), regular_onnx, tg_flags))
+
+# opt-in only: the built-in light speed needs lightspeed_c4_fetch.py first and a lot of build memory
+if os.getenv('BUILD_LIGHTSPEED_C4') == '1' and LIGHTSPEED_C4_ONNX.is_file():
+  model_builds.append((False, LIGHTSPEED_C4_PKL, [str(LIGHTSPEED_C4_ONNX)], str(LIGHTSPEED_C4_ONNX), tg_flags))
 
 if USBGPU:
   big_manifest = active_manifest()

@@ -62,8 +62,15 @@ def get_tg_input_devices(process_name: str, usbgpu: bool):
   except FileNotFoundError:
     return _default_tg_input_devices(process_name, usbgpu)
 
+LIGHTSPEED_C4_ONNX = MODELS_DIR / 'lightspeed_c4.onnx'
+LIGHTSPEED_C4_PKL = MODELS_DIR / 'lightspeed_c4_driving_tinygrad.pkl'
+
+
 def modeld_pkl_path(usbgpu: bool, model_sha256: str | None = None):
   if not usbgpu:
+    # exists only after lightspeed_c4_fetch.py and a BUILD_LIGHTSPEED_C4=1 build; otherwise the stock model
+    if os.path.isfile(f'{LIGHTSPEED_C4_PKL}.chunkmanifest') or LIGHTSPEED_C4_PKL.is_file():
+      return LIGHTSPEED_C4_PKL
     return MODELS_DIR / 'driving_tinygrad.pkl'
   if model_sha256 is None:
     model = selected_manifest()
