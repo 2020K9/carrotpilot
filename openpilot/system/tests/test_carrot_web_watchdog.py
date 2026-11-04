@@ -32,7 +32,7 @@ def _wait_for_line_count(path: Path, expected: int, timeout: float = 5.0) -> Non
 
 
 def _write_fake_command(path: Path, body: str) -> None:
-  path.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+  path.write_text(f"#!/usr/bin/bash\n{body}\n", encoding="utf-8")
   path.chmod(0o755)
 
 
@@ -56,7 +56,7 @@ def test_restart_waits_for_old_web_watchdog_before_relaunch(tmp_path: Path) -> N
   _write_fake_command(
     fake_bin / "pgrep",
     """printf 'pgrep:%s\\n' "$*" >> "$CARROT_WEB_TEST_TRACE"
-if [[ "$*" == *"carrot_web_watchdog"* ]]; then
+if [[ "$*" == *"[c]arrot_web_watchdog"* ]]; then
   count="$(cat "$CARROT_WEB_TEST_PGREP_COUNT" 2>/dev/null || printf 0)"
   count=$((count + 1))
   printf '%s\\n' "$count" > "$CARROT_WEB_TEST_PGREP_COUNT"
@@ -148,6 +148,7 @@ def test_watchdog_reenters_checkout_after_directory_replacement(tmp_path: Path) 
     except subprocess.TimeoutExpired:
       process.kill()
       process.wait(timeout=2)
+    process.stdout.close()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX shell and flock")
