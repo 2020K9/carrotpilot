@@ -338,7 +338,8 @@ def cd_step(c, f, k):
           lateralPlan=plan, liveParameters=NS(stiffnessFactor=1.0, steerRatio=15.0, angleOffsetDeg=0.0, roll=f["roll"]),
           longitudinalPlan=NS(), selfdriveState=NS(enabled=True, active=True), onroadEvents=[], radarState=NS(),
           carrotMan=NS(vTurnSpeed=f["vturn"]), liveDelay=NS(lateralDelay=0.2))
-  sm.frame = k; sm.recv_frame = {"lateralPlan": k, "longitudinalPlan": k}; sm.logMonoTime = {"modelV2": k}
+  # controlsd model-age check (939e84ab) reads selfdriveState/carState/modelV2 logMonoTime: all fresh
+  sm.frame = k; sm.recv_frame = {"lateralPlan": k, "longitudinalPlan": k}; sm.logMonoTime = {"modelV2": k, "selfdriveState": k, "carState": k}
   c.sm = sm
   try:
     c.state_control()
