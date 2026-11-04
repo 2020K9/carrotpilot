@@ -104,7 +104,9 @@ class ModelState:
     jits = load_oob(open_file_chunked(pkl_path or modeld_pkl_path()))
     metadata = jits['metadata']
     self.input_shapes = metadata['input_shapes']
-    self.vision_input_names = [k for k in self.input_shapes if 'img' in k]
+    # run() always takes the two camera frames as img/big_img (frame_buf_params, warp frame/big_frame); a stateful
+    # (light speed student) PKL lists new_img/state_img_q in input_shapes, which are model inputs, not camera buffers.
+    self.vision_input_names = ['img', 'big_img']
     self.output_slices = metadata['output_slices']
 
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
