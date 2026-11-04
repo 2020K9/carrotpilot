@@ -58,6 +58,6 @@ def test_reference_vs_current_controller_in_common_env(family, tmp_path_factory)
     _prove(commit, tmp)
   rel = f"openpilot/selfdrive/car/tests/test_k9_common_env_{family}.py"
   env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_XDIST") and k != "PYTEST_CURRENT_TEST"}
-  p = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:xdist", "-q", "--hypothesis-seed=0",
+  p = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-n", "0", "-q", "--hypothesis-seed=0",
                       f"--basetemp={tmp / 'bt'}", rel], cwd=k9_rig.ROOT, env=env, capture_output=True, text=True, timeout=1800)
-  assert p.returncode == 0, p.stdout[-3000:]
+  assert p.returncode == 0, (p.stdout + p.stderr)[-3000:]
