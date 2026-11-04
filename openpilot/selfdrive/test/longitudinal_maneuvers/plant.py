@@ -11,6 +11,27 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 from openpilot.selfdrive.controls.radar_constants import LEAD_ACCEL_TAU
 
 
+class _PlantSM(dict):
+  """SubMaster-shaped view of the plant's freshly built messages (every service fresh and valid each step)."""
+  def __init__(self, msgs, frame):
+    super().__init__(msgs)
+    fresh = dict.fromkeys(msgs, True)
+    self.updated, self.alive, self.valid, self.seen, self.freq_ok = fresh, fresh, fresh, fresh, fresh
+    self.recv_frame = dict.fromkeys(msgs, frame)
+    self.frame = frame
+    self.logMonoTime = dict.fromkeys(msgs, int(frame * 1e7))
+    self.recv_time = dict.fromkeys(msgs, frame * 0.01)
+
+  def all_checks(self, service_list=None):
+    return True
+
+  def all_alive(self, service_list=None):
+    return True
+
+  def all_valid(self, service_list=None):
+    return True
+
+
 class Plant:
   messaging_initialized = False
 
@@ -52,6 +73,16 @@ class Plant:
     from opendbc.car.honda.interface import CarInterface
 
     self.planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=self.speed)
+    # carrot fork: LongitudinalPlanner.update(sm, carrot) takes the CarrotPlanner that plannerd owns
+    # manager_init fills unset params with their defaults before plannerd starts; do the same here
+    from openpilot.common.params import Params
+    params = Params()
+    for k in params.all_keys():
+      default_value = params.get_default_value(k)
+      if default_value is not None and params.get(k) is None:
+        params.put(k, default_value)
+    from openpilot.selfdrive.carrot.carrot_functions import CarrotPlanner
+    self.carrot = CarrotPlanner()
 
   @property
   def current_time(self):
@@ -106,6 +137,9 @@ class Plant:
     # does not predict slowdown in e2e mode
     position = log.XYZTData.new_message()
     position.x = [float(x) for x in (self.speed + 0.5) * np.array(ModelConstants.T_IDXS)]
+    # modeld always fills all three axes; carrot's model-stop check reads position.y[-1]
+    position.y = [0.0] * len(ModelConstants.T_IDXS)
+    position.z = [0.0] * len(ModelConstants.T_IDXS)
     model.modelV2.position = position
     model.modelV2.action.desiredAcceleration = float(self.acceleration + 0.1)
     velocity = log.XYZTData.new_message()
@@ -127,14 +161,18 @@ class Plant:
     car_control.carControl.orientationNED = [0., float(pitch), 0.]
 
     # ******** get controlsState messages for plotting ***
-    sm = {'radarState': radar.radarState,
+    sm = _PlantSM({'radarState': radar.radarState,
           'carState': car_state.carState,
           'carControl': car_control.carControl,
           'controlsState': control.controlsState,
           'selfdriveState': ss.selfdriveState,
           'liveParameters': lp.liveParameters,
-          'modelV2': model.modelV2}
-    self.planner.update(sm)
+          'modelV2': model.modelV2,
+          'carrotMan': messaging.new_message('carrotMan').carrotMan,
+          'carrotNavi': messaging.new_message('carrotNavi').carrotNavi,
+          'livePose': messaging.new_message('livePose').livePose,
+          'liveTracks': messaging.new_message('liveTracks').liveTracks}, self.rk.frame)
+    self.planner.update(sm, self.carrot)
     self.acceleration = self.planner.output_a_target
     self.speed = self.speed + self.acceleration * self.ts
     self.should_stop = self.planner.output_should_stop
