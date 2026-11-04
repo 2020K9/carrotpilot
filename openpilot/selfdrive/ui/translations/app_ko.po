@@ -1536,3 +1536,15 @@ msgstr "Dashcam 모드로 재부팅 중"
 #: openpilot/selfdrive/ui/impact_dashcam.py
 msgid "openpilot disabled"
 msgstr "openpilot 사용 꺼짐"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "Auto Hold Active"
+msgstr "오토홀드 작동 중"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "전방 물체 주의"
+msgstr "전방 물체 주의"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "전방을 확인하고 감속을 준비하세요"
+msgstr "전방을 확인하고 감속을 준비하세요"
