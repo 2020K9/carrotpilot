@@ -29,6 +29,7 @@ import pytest
 
 from opendbc.can import CANPacker
 from opendbc.car.hyundai import hyundaicanfd
+from opendbc.car.hyundai import k9_creep as kc
 from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.selfdrive.car.tests.k9_rig import CC_REL, HY, ROOT, Rig, _git_show
 from openpilot.selfdrive.car.tests.test_k9_creep_mode import SEQS
@@ -128,6 +129,9 @@ def test_common_env_0_3_5_send_the_9df95178c_bytes(ref_env, mode, seq):
   assert len(new.can) > 400 and same
   if mode in (3, 5):
     assert new.cc.k9_creep.mode == ref_env.K9_CREEP_MENU[mode]
+    # k9cmp2235: the actual 3/5 value is also checked against this tree's menu table (as the original test does)
+    assert new.cc.k9_creep.mode == kc.MENU[mode]
+    _record("menu", mode=mode, seq=seq, actual=new.cc.k9_creep.mode, ref_menu=ref_env.K9_CREEP_MENU[mode], cur_menu=kc.MENU[mode])
 
 
 @pytest.mark.parametrize("seq", list(SEQS))
