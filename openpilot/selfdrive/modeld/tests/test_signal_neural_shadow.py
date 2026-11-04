@@ -100,3 +100,13 @@ def test_auto_cpu_is_comparison_only_and_gpu_requires_cache(monkeypatch, tmp_pat
   assert calls == [dict(comparison_override=True)]
   with pytest.raises(RuntimeError, match='requires locally validated'):
     worker.run_selected(tmp_path, 'qcom')
+
+
+@pytest.mark.parametrize("external", [False])
+@pytest.mark.parametrize("enabled,session_off,preview", [(True,False,False), (True,True,False), (False,False,False), (False,False,True), (True,True,True)])
+def test_gpu_selection_preserves_dm_and_preview(external, enabled, session_off, preview):
+  values = dict(UsbGpuActive=external, DriverMonitoringEnabled=enabled,
+                DriverMonitoringSessionDisabled=session_off, IsDriverViewEnabled=preview)
+  selected = worker.automatic_backend(SimpleNamespace(get_bool=values.__getitem__))
+  assert selected == ("qcom" if external and not ((enabled and not session_off) or preview) else "tracking_cpu")
+

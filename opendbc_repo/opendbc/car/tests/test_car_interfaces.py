@@ -46,6 +46,16 @@ def get_fuzzy_car_interface_args(draw: DrawType) -> dict:
   return params
 
 
+def get_fuzzy_car_interface(car_name: str, draw: DrawType):
+  # Restored helper (upstream opendbc API) used by openpilot/selfdrive/car/tests/test_car_interfaces.py.
+  # Builds the interface exactly like TestCarInterfaces.test_car_interfaces below (same strategy, same get_params call).
+  CarInterface = interfaces[car_name]
+  args = get_fuzzy_car_interface_args(draw)
+  car_params = CarInterface.get_params(car_name, args['fingerprints'], args['car_fw'],
+                                       alpha_long=args['alpha_long'], docs=False)
+  return CarInterface(car_params)
+
+
 class TestCarInterfaces:
   # FIXME: Due to the lists used in carParams, Phase.target is very slow and will cause
   #  many generated examples to overrun when max_examples > ~20, don't use it
