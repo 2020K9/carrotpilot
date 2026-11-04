@@ -97,3 +97,31 @@ def test_keep_warp_history_and_reset_clears():
   assert len(m.warp_history) == 0 and not m.prev_desire.any()
   ModelState.keep_warp_history(m, 0)
   assert m.warp_history is None
+
+
+class _Runnable:
+  def __init__(self):
+    self.runs, self.resets = [], 0
+    self.input_queues = {}
+
+  def run(self, bufs, transforms, inputs, prepare_only):
+    inputs['desire_pulse'][0] = 0  # ModelState.run writes into its inputs
+    self.runs.append((bufs, transforms, prepare_only))
+    return {}
+
+  def reset(self):
+    self.resets += 1
+
+
+def test_warm_runs_prepared_model_once_and_resets_it():
+  sb = StockStandby(_Runnable)
+  assert not sb.needs_warm  # nothing prepared (stock-only modeld): nothing to warm
+  m = sb.prepare()
+  assert sb.needs_warm
+  inputs = {'desire_pulse': np.ones(8, np.float32)}
+  assert sb.warm('bufs', 'tfm', inputs)
+  assert m.runs == [('bufs', 'tfm', False)] and m.resets == 1
+  assert inputs['desire_pulse'].all()  # the caller's inputs are not modified
+  assert not sb.needs_warm and not sb.warm('bufs', 'tfm', inputs)
+  assert len(m.runs) == 1
+  assert sb.take() is m

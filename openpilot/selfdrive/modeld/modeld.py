@@ -545,6 +545,12 @@ def main(demo=False):
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
+      if stock_standby.needs_warm:
+        # once, after the first published frame: the prepared stock model's first run is slow (worker: 0.68-0.74 s vs
+        # 0.16-0.24 s later); run it now on this frame and reset it, so the switch does not pay it.
+        phase_start = time.monotonic()
+        stock_standby.warm(bufs, transforms, inputs)
+        cloudlog.warning("stock standby warm run: %.3fs", time.monotonic() - phase_start)
     last_vipc_frame_id = meta_main.frame_id
     gpu_sync_wait_ms = float('nan')
     try:
