@@ -23,9 +23,14 @@ def make_event(event_types):
 
 class TestStateMachine:
   def setup_method(self):
+    # make_event() overwrites the shared EVENTS[0] (canError); keep it for the tests that run after this class
+    self._saved_event0 = EVENTS[0]
     self.events = Events()
     self.state_machine = StateMachine()
     self.state_machine.soft_disable_timer = int(SOFT_DISABLE_TIME / DT_CTRL)
+
+  def teardown_method(self):
+    EVENTS[0] = self._saved_event0
 
   def test_immediate_disable(self):
     for state in ALL_STATES:
