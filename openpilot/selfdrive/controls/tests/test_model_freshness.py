@@ -1,32 +1,45 @@
-import inspect
+import pytest
 
-from openpilot.selfdrive.controls import controlsd
-from openpilot.selfdrive.controls.lib.model_freshness import MODEL_STALE_LAT_S, lateral_model_fresh, model_age_s
-
-
-def test_fresh_model_keeps_lateral():
-  assert lateral_model_fresh(True, 1000, 1000)
-  assert lateral_model_fresh(True, 1005, 1000)  # one 20 Hz model period
-  assert lateral_model_fresh(True, 1050, 1000)  # exactly 0.5 s
+from openpilot.selfdrive.controls.tests.test_lateral_startup_control import control_fixture
 
 
-def test_stale_model_releases_lateral():
-  assert not lateral_model_fresh(True, 1051, 1000)
-  assert not lateral_model_fresh(True, 1500, 1000)
+def engaged():
+  control, step = control_fixture()
+  sm = control.sm
+  sm['selfdriveState'].enabled = sm['selfdriveState'].active = True
+  sm.seen['liveParameters'] = sm.seen['modelV2'] = True
+  sm.recv_frame['modelV2'] = sm.frame
+  cc, _ = step()
+  assert cc.latActive
+  return control, step
 
 
-def test_never_seen_model_releases_lateral():
-  assert not lateral_model_fresh(False, 0, 0)
+@pytest.mark.parametrize('age_frames, active', [(0, True), (5, True), (50, True), (51, False), (500, False)])
+def test_lateral_released_only_when_model_is_stale(age_frames, active):
+  control, step = engaged()
+  control.sm.frame = control.sm.recv_frame['modelV2'] + age_frames
+  cc, _ = step()
+  assert cc.latActive == active
+  if not active:
+    assert cc.actuators.torque == 0
+    assert abs(cc.actuators.curvature - control.curvature) < 1e-9  # no held model curvature
 
 
-def test_age_units():
-  assert abs(model_age_s(150, 100) - 0.5) < 1e-9
-  assert MODEL_STALE_LAT_S == 0.5
+def test_lateral_resumes_when_model_returns():
+  control, step = engaged()
+  sm = control.sm
+  sm.frame += 300
+  cc, _ = step()
+  assert not cc.latActive
+  sm.recv_frame['modelV2'] = sm.frame
+  cc, _ = step()
+  assert cc.latActive
 
 
-def test_controlsd_gates_lat_active_on_model_freshness():
-  src = inspect.getsource(controlsd.Controls.state_control)
-  gate = "CC.latActive = CC.latActive and lateral_model_fresh(self.sm.seen[modelV2], self.sm.frame, self.sm.recv_frame[modelV2])"
-  assert gate in src
-  # after the AlwaysLateral / readiness gates, before the actuators are computed
-  assert src.index("CC.latActive = CC.latActive and lateral_ready") < src.index(gate) < src.index("actuators = CC.actuators")
+def test_never_received_model_is_stale():
+  control, step = engaged()
+  sm = control.sm
+  sm.recv_frame['modelV2'] = 0
+  sm.frame = 1000
+  cc, _ = step()
+  assert not cc.latActive
