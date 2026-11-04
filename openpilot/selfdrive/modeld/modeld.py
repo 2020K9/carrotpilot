@@ -31,7 +31,7 @@ from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
-from openpilot.selfdrive.modeld.runtime_guard import RuntimeOutputGuard
+from openpilot.selfdrive.modeld.runtime_guard import RuntimeOutputGuard, ModelOutputError
 from openpilot.selfdrive.modeld.helpers import make_internal_model, get_tg_input_devices, load_oob, modeld_pkl_path, select_vision_streams
 
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld"
@@ -104,7 +104,9 @@ class ModelState:
     jits = load_oob(open_file_chunked(pkl_path or modeld_pkl_path()))
     metadata = jits['metadata']
     self.input_shapes = metadata['input_shapes']
-    self.vision_input_names = [k for k in self.input_shapes if 'img' in k]
+    # run() always takes the two camera frames as img/big_img (frame_buf_params, warp frame/big_frame); a stateful
+    # (light speed student) PKL lists new_img/state_img_q in input_shapes, which are model inputs, not camera buffers.
+    self.vision_input_names = ['img', 'big_img']
     self.output_slices = metadata['output_slices']
 
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
@@ -199,6 +201,18 @@ class ModelState:
     if shadow_payload is not None:
       outputs_dict['_signal_shadow'] = shadow_payload
     return outputs_dict
+
+
+def halt_after_model_failure(params, err):
+  # Stock model still non-finite after fresh rebuilds. Exiting would not surface: manager restarts a dead modeld
+  # in the same ensure_running() pass, before managerState is sent, so processNotRunning never shows and modeld
+  # crash-loops (worker: 35 starts / 240 s, each publishing ~9 frames). Stay alive and publish nothing instead:
+  # modelV2 stops -> selfdrived commIssue (not alive) until the next onroad start restarts modeld.
+  cloudlog.error(f"modeld halted, no model output: {err}")
+  params.put("LightspeedModelStatus", {"model": "stock", "requested_student": params.get_bool("LightspeedStudentModel"),
+                                       "fallback_reason": "runtime nonfinite stock failed; modeld halted"})
+  while True:
+    time.sleep(1.)
 
 
 def main(demo=False):
@@ -394,7 +408,10 @@ def main(demo=False):
     camera_age_at_run_ms = (inference_started - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
     model_output = model.run(bufs, transforms, inputs, prepare_only)
-    model, model_output = output_guard.check(model, model_output)  # NaN/Inf: never published
+    try:
+      model, model_output = output_guard.check(model, model_output)  # NaN/Inf: never published
+    except ModelOutputError as e:
+      halt_after_model_failure(params, e)
     mt2 = time.perf_counter()
     run_end_mono = time.monotonic()
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
