@@ -1,4 +1,5 @@
-"""공통환경 비교 helper, 역사적 원검사 대체 아님 (2026-11-05; used only by test_k9_hist_common_env.py, never by k9_rig.load_frozen_cc). Model-only, synthetic inputs (실차 미검증).
+"""공통환경 비교 helper, 역사적 원검사 대체 아님 (2026-11-05; used only by test_k9_hist_common_env.py, never by k9_rig.load_frozen_cc).
+Model-only, synthetic inputs (실차 미검증).
 
 k9_rig.load_frozen_cc runs a past K9 controller (the reference commit's carcontroller.py and k9_*.py) against THIS tree's common
 modules (hyundaican.py, hyundaicanfd.py, values.py, carstate.py, opendbc.can, car.capnp ...), so the reference side and the
@@ -12,8 +13,9 @@ loader as load_frozen_cc) is driven twice, in two fresh interpreters,
   (H) with the reference commit's own complete opendbc package (git archive of <commit>:opendbc_repo/opendbc, read-only), and
   (C) with this tree's opendbc package (the common environment the frozen tests use),
 
-through every k9_rig sequence for every K9 menu value, and every frame's sorted CAN sends (addr, bytes, bus) plus accel out
-must be identical. Any difference in what the K9 sends (a product change in a common file) stops the frozen load.
+through every k9_rig sequence for every K9 menu value, and every frame's CAN sends (addr, bytes, bus, as k9_rig records
+them) must be identical. CAN bytes only: accel output is not compared.
+Any difference in what the K9 sends (a product change in a common file used by the K9) fails test_k9_hist_common_env.
 
 Run as a module:  python -m openpilot.selfdrive.car.tests.k9_hist_env <opendbc parent dir> <commit> <out.json>
 """
