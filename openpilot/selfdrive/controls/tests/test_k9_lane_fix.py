@@ -472,3 +472,48 @@ def test_menu_schema():
     assert "2.5" in row and re.search(r"1\s?(초|s)", row) and re.search(r"최대 2초|up to 2 s", row) and "0.5" in row
     assert not re.search(r"최대 4초|up to 4 s|over 2 s|2초에 걸쳐", row)
   assert "실차 미검증" in ko and "not vehicle-validated" in en
+
+
+# ---------------------------------------------------------------- model-age release (939e84ab), 2026-11-05
+# cd_step gives every frame the same logMonoTime for modelV2/selfdriveState/carState (age 0), so the
+# "modelV2 older than 0.5 s -> latActive off" branch is never reached by the tests above. These runs set the
+# modelV2 age explicitly and compare against the same controls with latActive forced off by lat_suspend_control.
+MODEL_AGE_NS_BASE = 10**12
+
+
+def run_cd_aged(c, frames, ages_ns, lats):
+  """run_cd with modelV2 logMonoTime = selfdriveState/carState time - ages_ns[k] (None = modelV2 never seen = 0)."""
+  orig = c.state_control
+  out = []
+  for k, f in enumerate(frames):
+    def aged_state_control(age=ages_ns[k], k=k):
+      now = MODEL_AGE_NS_BASE + k * 10**7
+      c.sm.logMonoTime = {"modelV2": 0 if age is None else now - age, "selfdriveState": now, "carState": now}
+      return orig()
+    c.state_control = aged_state_control
+    out.append(cd_step(c, dict(f, lat=lats[k]), k))
+  return np.array(out)
+
+
+@pytest.mark.parametrize("seed", SEEDS[:2])
+@pytest.mark.parametrize("mode", [0, 1])
+def test_controls_model_age_releases_lateral(seed, mode):
+  frames = cd_frames(seed, n=1500)
+  n = len(frames)
+
+  def mk():
+    return make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneAssist=mode))
+
+  on, off = [True] * n, [False] * n
+  fresh = run_cd_aged(mk(), frames, [0] * n, on)
+  lat_off = run_cd_aged(mk(), frames, [0] * n, off)
+  assert not np.array_equal(fresh, lat_off)  # latActive really changes the command on this sequence
+  # 0.4 s old (inside the 0.5 s window): same as fresh
+  assert np.array_equal(run_cd_aged(mk(), frames, [400_000_000] * n, on), fresh)
+  # 0.6 s old or never seen: same as latActive off
+  assert np.array_equal(run_cd_aged(mk(), frames, [600_000_000] * n, on), lat_off)
+  assert np.array_equal(run_cd_aged(mk(), frames, [None] * n, on), lat_off)
+  # stale only in the middle: off there, back on after (same as lat_suspend_control doing the same)
+  ages = [0] * 500 + [600_000_000] * 500 + [0] * 500
+  lats = [True] * 500 + [False] * 500 + [True] * 500
+  assert np.array_equal(run_cd_aged(mk(), frames, ages, on), run_cd_aged(mk(), frames, [0] * n, lats))

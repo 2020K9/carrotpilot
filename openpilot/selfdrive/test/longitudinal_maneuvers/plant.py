@@ -19,8 +19,10 @@ class _PlantSM(dict):
     self.updated, self.alive, self.valid, self.seen, self.freq_ok = fresh, fresh, fresh, fresh, fresh
     self.recv_frame = dict.fromkeys(msgs, frame)
     self.frame = frame
-    self.logMonoTime = dict.fromkeys(msgs, int(frame * 1e7))
-    self.recv_time = dict.fromkeys(msgs, frame * 0.01)
+    # same clock as Plant.current_time: one plant step = DT_MDL (0.05 s), not 0.01 s
+    t = frame * DT_MDL
+    self.logMonoTime = dict.fromkeys(msgs, int(round(t * 1e9)))
+    self.recv_time = dict.fromkeys(msgs, t)
 
   def all_checks(self, service_list=None):
     return True
