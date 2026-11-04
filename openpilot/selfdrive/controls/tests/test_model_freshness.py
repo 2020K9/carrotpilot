@@ -36,7 +36,7 @@ def test_slow_control_loop_releases_on_elapsed_time_not_loop_count(loop_dt):
   t_model = mono['modelV2']
   t = t_model
   released = None
-  for i in range(200):
+  for _ in range(200):
     t += int(loop_dt * NS_)
     mono['selfdriveState'] = mono['carState'] = t
     control.sm.frame += 1
