@@ -52,13 +52,17 @@ class StockStandby:
     q = getattr(m, 'input_queues', {}).get('img_q')
     return int(q.shape[0]) if q is not None else 0
 
-  def take(self, source=None):
+  def take(self, source=None, drop_current=False):
     """Fresh stock model for a switch. Uses the prepared one if any (it never ran), else builds one now.
-    If `source` kept warp history (student/direct), its frames seed the stock image queues."""
+    If `source` kept warp history (student/direct), its frames seed the stock image queues.
+    drop_current: the newest history frame is the current camera frame, which the stock model runs on next
+    (modeld reruns the switch frame), so it is left out of the seed instead of being queued twice."""
     prepared = self.spare is not None
     model, self.spare = (self.spare, None) if prepared else (self.build(), None)
     self.seeded = 0
     hist = getattr(source, 'warp_history', None) if source is not None else None
+    if hist and drop_current:
+      hist = list(hist)[:-1]
     if hist and hasattr(model, 'seed_image_history'):
       self.seeded = model.seed_image_history(list(hist))
     if self.log:

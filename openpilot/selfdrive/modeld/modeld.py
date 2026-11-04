@@ -358,7 +358,7 @@ def main(demo=False):
     stock_standby.prepare()
     internal_model.keep_warp_history(stock_standby.history_len)
     cloudlog.warning("model startup stock standby: %.3fs", time.monotonic() - phase_start)
-  output_guard = RuntimeOutputGuard(lambda: stock_standby.take(RuntimeOutputGuard._internal(model)),
+  output_guard = RuntimeOutputGuard(lambda: stock_standby.take(RuntimeOutputGuard._internal(model), drop_current=True),
                                     params=params, log=cloudlog.error)
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
@@ -443,8 +443,14 @@ def main(demo=False):
     camera_age_at_run_ms = (inference_started - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
     model_output = model.run(bufs, transforms, inputs, prepare_only)
+    switches_before = output_guard.switches
     try:
       model, model_output = output_guard.check(model, model_output)  # NaN/Inf: never published
+      if model_output is None and output_guard.switches != switches_before:
+        # student -> stock switch: the camera frame is still here, so the stock model runs on it now instead of
+        # waiting for the next frame (the non-finite output itself is still never published).
+        model_output = model.run(bufs, transforms, inputs, False)
+        model, model_output = output_guard.check(model, model_output)
     except ModelOutputError as e:
       halt_after_model_failure(params, e)
     mt2 = time.perf_counter()
