@@ -295,7 +295,7 @@ def make_controls(path, params):
   c.lateral_startup = NS(update=lambda *a: True); c.lateral_started = True
   c.laneless_blend_weight = 0.0; c.steer_limited_by_safety = False; c.desired_curvature = 0.0
   c.cur = {"k": 0.0, "lat": False}
-  c.VM = NS(update_params=lambda *a: None, calc_curvature=lambda *a: -c.cur["k"], roll_compensation=lambda *a: 0.0)
+  c.VM = NS(update_geometry=lambda *a: None, update_params=lambda *a: None, calc_curvature=lambda *a: -c.cur["k"], roll_compensation=lambda *a: 0.0)
   c.LoC = NS(reset=lambda: None, update=lambda *a: (0.0, 0.0, 0.0), long_control_state="off")
   c.carrot_controls = NS(lat_suspend_control=lambda _cs, la: c.cur["lat"])
 
