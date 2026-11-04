@@ -312,7 +312,7 @@ def test_values_read_live_within_0_1s():
 
 # ---------------------------------------------------------------- HUD line
 def test_controls_state_fields():
-  from cereal import log
+  from openpilot.cereal import log
   m = log.ControlsState.new_message(k9LaneState=2, k9LaneAccel=-0.05)
   assert m.k9LaneState == 2 and m.k9LaneAccel == pytest.approx(-0.05)
   src = (ROOT / "selfdrive/controls/controlsd.py").read_text()
