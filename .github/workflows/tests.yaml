@@ -21,31 +21,6 @@ env:
   CI: 1
 
 jobs:
-  egpu_startup:
-    name: eGPU selected-model startup
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: python -m pip install pytest numpy scons
-      - name: Check branch changes, delivery retries and startup ordering
-        run: |
-          bash -n launch_chffrplus.sh
-          python -m pytest -c /dev/null --rootdir=. --noconftest -q \
-            openpilot/selfdrive/modeld/tests/test_big_model_startup.py \
-            openpilot/selfdrive/modeld/tests/test_big_model.py \
-            openpilot/selfdrive/modeld/tests/test_big_model_delivery.py \
-            openpilot/selfdrive/modeld/tests/test_precompiled_model.py \
-            openpilot/selfdrive/modeld/tests/test_precompiled_rejection_retry.py \
-            openpilot/selfdrive/modeld/tests/test_egpu_worker_progress.py \
-            openpilot/selfdrive/modeld/tests/test_egpu_events.py \
-            openpilot/selfdrive/modeld/tests/test_egpu_recovery.py \
-            openpilot/selfdrive/modeld/tests/test_helpers.py::test_usbgpu_compiled_path_waits_for_selected_model_instead_of_previous \
-            openpilot/system/tests/test_model_build_cache.py \
-            openpilot/system/tests/test_launch_order.py
-
   dm_cadence:
     name: DM live restart cadence
     runs-on: ubuntu-24.04
@@ -156,7 +131,6 @@ jobs:
         timeout-minutes: 4
         run: |
           python -m pytest -o addopts='' -o faulthandler_timeout=60 -vv \
-            openpilot/common/tests/test_egpu_diagnostics.py \
             openpilot/selfdrive/monitoring/test_monitoring.py \
             openpilot/selfdrive/monitoring/test_dm2.py \
             openpilot/selfdrive/monitoring/test_dm2d.py \
@@ -164,18 +138,9 @@ jobs:
             openpilot/selfdrive/monitoring/test_dm2_context.py \
             openpilot/selfdrive/monitoring/test_parked_reset.py \
             openpilot/selfdrive/monitoring/test_steering_touch.py \
-            openpilot/selfdrive/modeld/tests/test_big_model.py \
-            openpilot/selfdrive/modeld/tests/test_big_model_delivery.py \
-            openpilot/selfdrive/modeld/tests/test_big_model_startup.py \
-            openpilot/selfdrive/modeld/tests/test_precompiled_model.py \
-            openpilot/selfdrive/modeld/tests/test_precompiled_runner.py \
-            openpilot/selfdrive/modeld/tests/test_egpu_worker_progress.py \
-            openpilot/selfdrive/modeld/tests/test_egpu_startup_retry.py \
-            openpilot/selfdrive/modeld/tests/test_precompiled_validation.py \
             openpilot/system/tests/test_model_build_cache.py \
             openpilot/system/tests/test_proclog_smaps.py \
             openpilot/system/tests/test_panda_firmware_version.py \
-            openpilot/selfdrive/modeld/tests/test_generic_model_runtime.py \
             openpilot/selfdrive/modeld/tests/test_dmonitoring_artifact.py \
             openpilot/selfdrive/modeld/tests/test_camera_sync.py \
             openpilot/selfdrive/carrot/tests/test_radarcan_process.py \
@@ -199,4 +164,4 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-      - run: node --test openpilot/selfdrive/carrot/web/tests/bluetooth_mapping.test.mjs openpilot/selfdrive/carrot/web/tests/egpu_model.test.mjs openpilot/selfdrive/carrot/web/tests/viewport_keyboard.test.mjs openpilot/selfdrive/carrot/web/tests/settings_parent_navigation.test.mjs
+      - run: node --test openpilot/selfdrive/carrot/web/tests/bluetooth_mapping.test.mjs openpilot/selfdrive/carrot/web/tests/viewport_keyboard.test.mjs openpilot/selfdrive/carrot/web/tests/settings_parent_navigation.test.mjs

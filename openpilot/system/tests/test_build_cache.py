@@ -310,11 +310,6 @@ class CacheExclusionTests(unittest.TestCase):
     self.assertTrue(self.cache.exists())
     self.assertIn('Cannot remove', r.stderr)
 
-  def test_cache_pruning_is_outside_the_optional_model_build(self):
-    source = (ROOT / 'openpilot/system/manager/build.py').read_text()
-    body = source[source.index('def build_usbgpu_model'):source.index('def build(', source.index('def build_usbgpu_model'))]
-    self.assertNotIn('.unlink()', body)
-
   def test_agnos_init_has_no_unguarded_cache_removal(self):
     source = (ROOT / 'launch_chffrplus.sh').read_text()
     start = source.index('function agnos_init {')

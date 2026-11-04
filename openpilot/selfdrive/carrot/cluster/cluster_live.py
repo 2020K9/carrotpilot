@@ -255,8 +255,7 @@ class OpenpilotLiveSource:
         self._held_navi_traffic_light: NaviTrafficLightInfo | None = None
         self._held_navi_traffic_light_received_t: float | None = None
         self._show_plot_mode = 0
-        self._egpu_active = False
-        self._next_egpu_param_read_t = 0.0
+        self._next_external_compute_read_t = 0.0
         self._hud_debug_mode = 0
         self._live_debug_enabled = False
         self._debug_plot_enabled = False
@@ -451,12 +450,8 @@ class OpenpilotLiveSource:
 
     def _with_live_hud_state(self, state: ClusterUiState) -> ClusterUiState:
         now = time.monotonic()
-        if now >= getattr(self, "_next_egpu_param_read_t", 0.0):
+        if now >= getattr(self, "_next_external_compute_read_t", 0.0):
             params = getattr(self, "params", None)
-            try:
-                self._egpu_active = bool(params is not None and params.get_bool("UsbGpuActive"))
-            except Exception:
-                self._egpu_active = False
             self._external_compute_label = ''
             try:
                 if callable(getattr(params, 'external_compute_label', None)):
@@ -468,7 +463,7 @@ class OpenpilotLiveSource:
                         self._external_compute_label = device_badge[0]
             except Exception:
                 pass
-            self._next_egpu_param_read_t = now + 1.0
+            self._next_external_compute_read_t = now + 1.0
 
         device_state = self._service_data("deviceState")
         onroad = self._service_alive("deviceState") and bool(safe_get(device_state, "started", False))
@@ -601,7 +596,6 @@ class OpenpilotLiveSource:
             state,
             onroad=onroad,
             alert=self._live_cluster_alert(state.alert, onroad),
-            egpu_active=getattr(self, "_egpu_active", False),
             external_compute_label=getattr(self, '_external_compute_label', ''),
             external_nav_active=external_nav_active,
             vehicle_navi_available=vehicle_navi_available,

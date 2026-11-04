@@ -285,17 +285,11 @@ function start_carrot_web {
   fi
 }
 
-function big_model_artifact_ready {
-  python3 -c 'from openpilot.selfdrive.modeld.helpers import active_usbgpu_compiled_path; raise SystemExit(0 if active_usbgpu_compiled_path() is not None else 1)' 2>/dev/null
-}
-
 function invalidate_modeld_build_if_needed {
   local stamp_path="$DIR/openpilot/selfdrive/modeld/models/.build_stamp"
-  local big_stamp_path="$DIR/openpilot/selfdrive/modeld/models/.big_model_build_stamp"
   local tg_devices_path="$DIR/openpilot/selfdrive/modeld/models/tg_input_devices.json"
   local driving_pkl_path="$DIR/openpilot/selfdrive/modeld/models/driving_tinygrad.pkl"
   local old_stamp
-  local old_big_stamp
 
   MODEL_BUILD_STAMP_VALUE="$(git rev-parse HEAD:openpilot/selfdrive/modeld HEAD:tinygrad_repo HEAD:openpilot/common/file_chunker.py 2>/dev/null | tr '\n' ':')"
   if [ -z "$MODEL_BUILD_STAMP_VALUE" ]; then
@@ -309,65 +303,6 @@ function invalidate_modeld_build_if_needed {
     # dependencies and will rebuild only stale targets. Deleting everything
     # here caused unrelated modeld changes to trigger long full recompiles.
     FORCE_REBUILD=1
-  fi
-
-  if [ -n "$BIG_MODEL_SHA" ]; then
-    old_big_stamp="$(cat "$big_stamp_path" 2>/dev/null || true)"
-    if [ "$BIG_MODEL_SHA" != "$old_big_stamp" ] || ! big_model_artifact_ready; then
-      echo "USB eGPU big model changed or needs compilation."
-      FORCE_REBUILD=1
-    fi
-  fi
-}
-
-function prepare_big_model_if_needed {
-  BIG_MODEL_SHA=""
-  unset CARROT_BIG_MODEL_STARTUP_FAILED
-
-  # With an attached eGPU, install this checkout's selection before building or
-  # starting modeld. Offline delivery retries here instead of running an old model.
-  if ! python3 -c 'from openpilot.selfdrive.modeld.helpers import usbgpu_present; raise SystemExit(0 if usbgpu_present() else 1)' 2>/dev/null; then
-    return
-  fi
-
-  if ! flock /tmp/big_model_update.lock python3 -m openpilot.selfdrive.modeld.big_model --prepare-for-startup --retry-network; then
-    echo "Selected eGPU model preparation failed; using the internal model this boot."
-    export CARROT_BIG_MODEL_STARTUP_FAILED=1
-    return
-  fi
-  BIG_MODEL_SHA="$(python3 -m openpilot.selfdrive.modeld.big_model --active-sha 2>/dev/null || true)"
-
-  # Do not reject compilation from a one-shot 12V check here. During ignition
-  # startup the USB bridge can enumerate before switched GPU power and PCIe are
-  # ready. Mark the missing target stale and let build_usbgpu_model perform its
-  # retrying readiness check while the build screen remains visible.
-}
-
-function start_big_model_update {
-  local log_path="/tmp/big_model_update.log"
-  local lock_path="/tmp/big_model_update.lock"
-
-  if command -v pgrep >/dev/null 2>&1 && pgrep -f '[o]penpilot.selfdrive.modeld.big_model --ensure-if-egpu' >/dev/null 2>&1; then
-    return
-  fi
-
-  echo "Checking optional eGPU model in background (log: ${log_path})."
-  if command -v flock >/dev/null 2>&1; then
-    (
-      exec 9>"$lock_path"
-      flock -n 9 || exit 0
-      if command -v ionice >/dev/null 2>&1; then
-        PYTHONUNBUFFERED=1 ionice -c 3 nice -n 10 python3 -m openpilot.selfdrive.modeld.big_model --ensure-if-egpu --network-wait-seconds 60 --retry-network
-      else
-        PYTHONUNBUFFERED=1 nice -n 10 python3 -m openpilot.selfdrive.modeld.big_model --ensure-if-egpu --network-wait-seconds 60 --retry-network
-      fi
-    ) >> "$log_path" 2>&1 &
-  else
-    if command -v ionice >/dev/null 2>&1; then
-      PYTHONUNBUFFERED=1 ionice -c 3 nice -n 10 python3 -m openpilot.selfdrive.modeld.big_model --ensure-if-egpu --network-wait-seconds 60 --retry-network >> "$log_path" 2>&1 &
-    else
-      PYTHONUNBUFFERED=1 nice -n 10 python3 -m openpilot.selfdrive.modeld.big_model --ensure-if-egpu --network-wait-seconds 60 --retry-network >> "$log_path" 2>&1 &
-    fi
   fi
 }
 
@@ -670,7 +605,6 @@ function launch {
   [ "$BUILD_STATE_RESET" = "1" ] && FORCE_REBUILD=1
   # Accept the pending external model once per real boot, before either backend.
   flock /tmp/big_model_selection.lock python3 -m openpilot.common.big_model_catalog || exit 1
-  prepare_big_model_if_needed
   invalidate_modeld_build_if_needed
   invalidate_native_build_if_needed
 
@@ -689,9 +623,6 @@ function launch {
     if [ "$FORCE_REBUILD" = "1" ]; then
       mkdir -p "$DIR/openpilot/selfdrive/modeld/models"
       echo -n "$MODEL_BUILD_STAMP_VALUE" > "$DIR/openpilot/selfdrive/modeld/models/.build_stamp"
-      if [ -n "$BIG_MODEL_SHA" ] && big_model_artifact_ready; then
-        echo -n "$BIG_MODEL_SHA" > "$DIR/openpilot/selfdrive/modeld/models/.big_model_build_stamp"
-      fi
     fi
   fi
   # Never start driving services if a rebuild left the Params registry stale.
@@ -699,7 +630,6 @@ function launch {
     echo "Native Params still do not match this checkout; not starting manager."
     show_startup_failure "Native Params do not match this checkout"
   fi
-  start_big_model_update
   if ! run_startup_command start_manager; then
     show_startup_failure "Manager failed to start"
   fi

@@ -80,6 +80,8 @@ comma*.sh
 selfdrive/modeld/thneed/compile
 selfdrive/modeld/models/*.thneed
 selfdrive/modeld/models/*.pkl
+openpilot/selfdrive/modeld/models/lightspeed_c4*
+!openpilot/selfdrive/modeld/models/lightspeed_c4_direct.onnx
 
 *.bz2
 *.zst

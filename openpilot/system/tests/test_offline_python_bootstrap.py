@@ -217,41 +217,6 @@ def test_logger_xattrs_use_python_standard_library() -> None:
   assert "os.setxattr(path, attr_name, attr_value)" in source
 
 
-def test_known_egpu_prefetch_does_not_block_startup_or_force_build_without_live_device() -> None:
-  launcher = (Path(BASEDIR) / "launch_chffrplus.sh").read_text(encoding="utf-8")
-  prepare = launcher[launcher.index("function prepare_big_model_if_needed {"):]
-  prepare = prepare[:prepare.index("\n}")]
-  update = launcher[launcher.index("function start_big_model_update {"):]
-  update = update[:update.index("\n}")]
-
-  egpu_check = prepare.index("usbgpu_present")
-  active_sha = prepare.index("--active-sha")
-  assert "--ensure-if-egpu" not in prepare
-  assert egpu_check < active_sha
-  assert "return" in prepare[egpu_check:active_sha]
-  assert "check_usbgpu_power()" not in prepare
-  assert "one-shot 12V check" in prepare
-  assert "--ensure-if-egpu" in update
-  assert "/tmp/big_model_update.log" in update
-  assert ") >> \"$log_path\" 2>&1 &" in update
-
-  launch = launcher[launcher.index("function launch {"):]
-  build = launch.index("./build.py")
-  update_start = launch.index("start_big_model_update", build)
-  manager = launch.index("start_manager", update_start)
-  assert build < update_start < manager
-
-
-def test_usbgpu_history_is_persistent_and_recorded() -> None:
-  params = (Path(BASEDIR) / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
-  modeld = (Path(BASEDIR) / "openpilot/selfdrive/modeld/modeld.py").read_text(encoding="utf-8")
-
-  assert '{"UsbGpuHardwareSeen", {PERSISTENT, BOOL}}' in params
-  assert 'if _present or _compiled:' in modeld
-  assert 'params.put_bool("UsbGpuHardwareSeen", True)' in modeld
-  assert 'params.put_bool_nonblocking("UsbGpuHardwareSeen", True)' in modeld
-
-
 def test_model_revalidation_preserves_compiled_artifacts() -> None:
   launcher = (Path(BASEDIR) / "launch_chffrplus.sh").read_text(encoding="utf-8")
   invalidate = launcher[launcher.index("function invalidate_modeld_build_if_needed {"):]
@@ -262,47 +227,11 @@ def test_model_revalidation_preserves_compiled_artifacts() -> None:
   assert "FORCE_REBUILD=1" in invalidate
 
 
-def test_optional_egpu_scons_target_is_not_gated_by_second_usb_scan() -> None:
-  source = (Path(BASEDIR) / "openpilot/selfdrive/modeld/SConscript").read_text(encoding="utf-8")
-
-  assert "USBGPU = os.getenv('BUILD_USB_GPU_MODEL') == '1'" in source
-  assert "and usbgpu_present()" not in source
-
-
 def test_model_compiler_uses_isolated_agnos_core() -> None:
   source = (Path(BASEDIR) / "openpilot/selfdrive/modeld/SConscript").read_text(encoding="utf-8")
 
   assert "taskset = 'taskset -c 7 ' if arch == 'larch64' else ''" in source
   assert "{taskset}python3" in source
-
-
-def test_optional_egpu_build_retries_transient_pcie_link_startup() -> None:
-  source = (Path(BASEDIR) / "openpilot/system/manager/build.py").read_text(encoding="utf-8")
-
-  assert "check_usbgpu(timeout=USBGPU_READINESS_TIMEOUT, require_clean_link=False)" in source
-  assert "USB eGPU not ready for optional model compilation" in source
-  assert "USBGPU_BUILD_ATTEMPTS = 6" in source
-  assert "USBGPU_READINESS_ATTEMPTS = 6" in source
-  assert "USBGPU_READINESS_RETRY_INTERVAL = 3.0" in source
-  assert "USBGPU_READINESS_TIMEOUT = 30.0" in source
-  assert 'USBGPU_TRANSIENT_READINESS_ERRORS = {"12V / PCIe not ready", "USB link errors", "GPU check timed out", "GPU incompatible"}' in source
-  assert 'write_big_model_status(model_cache_dir(), "checking"' in source
-  assert "USB eGPU transient readiness error" in source
-  assert "USBGPU_ENUMERATION_WAIT_SECONDS = 20.0" in source
-  assert "waiting for eGPU USB re-enumeration" in source
-  assert "USB eGPU returned after" in source
-  assert "usbgpu_pcie_not_ready(error_text)" in source
-  assert "USB eGPU PCIe link not ready; retrying" in source
-
-  helpers = (Path(BASEDIR) / "openpilot/selfdrive/modeld/helpers.py").read_text(encoding="utf-8")
-  assert '"read(0xb450"' in helpers
-
-
-def test_optional_egpu_build_preserves_generated_pkl_artifacts() -> None:
-  source = (Path(BASEDIR) / "openpilot/system/manager/build.py").read_text(encoding="utf-8")
-  build_body = source[source.index("def build_usbgpu_model"):source.index("def build(", source.index("def build_usbgpu_model"))]
-  assert ".unlink()" not in build_body
-  assert "Never delete generated PKL artifacts here" in build_body
 
 
 def test_tinygrad_waits_for_custom_egpu_pcie_link_training() -> None:

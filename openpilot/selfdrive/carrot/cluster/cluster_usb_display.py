@@ -60,8 +60,6 @@ CMD_GET_STREAM_STATUS = 122
 CMD_STOP_STREAM = 123
 DEFAULT_H264_CHUNK_SIZE = 202752
 MAX_H264_CHUNK_SIZE = 1024 * 1024
-USBGPU_H264_MAX_CHUNK_SIZE = 32 * 1024
-USBGPU_H264_CHUNK_GAP_S = 0.002
 _LIBUSB_DLL_DIR_HANDLE = None
 _LIBUSB_BACKEND = None
 
@@ -101,35 +99,12 @@ def _set_cluster_hud_connected(connected: bool) -> None:
         print(f"Warning: failed to update ClusterHudConnected: {exc}", flush=True)
 
 
-def _usbgpu_transfer_active() -> bool:
-    """Return whether the driving model is actively using the shared USB eGPU."""
-    try:
-        from openpilot.common.params import Params
-
-        return Params().get_bool("UsbGpuActive")
-    except ModuleNotFoundError:
-        # PC replay runs may not have openpilot's compiled params extension.
-        return False
-    except Exception as exc:
-        print(f"Warning: failed to inspect eGPU state for TURZX pacing: {exc}", flush=True)
-        return False
-
-
 def _usbgpu_reset_protected() -> bool:
-    """Avoid resetting a shared USB path while the eGPU owns active transfers."""
-    try:
-        from openpilot.common.params import Params
+    """Hook for the Jetson boot display, which never resets the shared USB path.
 
-        params = Params()
-        return params.get_bool("UsbGpuLoading") or params.get_bool("UsbGpuActive")
-    except ModuleNotFoundError:
-        # PC replay runs may not have openpilot's compiled params extension.
-        return False
-    except Exception as exc:
-        print(f"Warning: failed to inspect eGPU state before USB reset: {exc}", flush=True)
-        # On-device uncertainty must fail safe: losing display recovery is less
-        # harmful than resetting an eGPU that may be running the driving model.
-        return True
+    The comma 4 has no eGPU on the USB path any more, so the HUD may reset its own panel.
+    """
+    return False
 
 
 def product_id_for_hud_mode(hud_mode: int) -> int | None:
@@ -461,15 +436,7 @@ class TuringUsbDisplay:
         if self.dev is None:
             raise RuntimeError("USB display is not open")
 
-        if _usbgpu_transfer_active():
-            self._send_optional_command(
-                10,
-                "sync",
-                no_ack_gap_s=0.0,
-                no_ack_drain_attempts=0,
-            )
-        else:
-            self._send_command(10, "sync")
+        self._send_command(10, "sync")
         time.sleep(USB_COMMAND_GAP_S)
         if self.display_fps > 0:
             self._send_frame_rate(self.display_fps)
@@ -598,7 +565,7 @@ class TuringUsbDisplay:
         if self.dev is not None:
             if _usbgpu_reset_protected():
                 print(
-                    "Skipping TURZX USB device reset while eGPU is loading or active; "
+                    "Skipping TURZX USB device reset on a protected shared USB path; "
                     "reconnecting without reset",
                     flush=True,
                 )
@@ -726,15 +693,6 @@ class TuringUsbDisplay:
 
         chunk_size = self._h264_chunk_size(requested_chunk_size)
         self._h264_chunk_gap_s = 0.0
-        if getattr(self, "uses_host_usb", True) and _usbgpu_transfer_active():
-            negotiated_chunk_size = chunk_size
-            chunk_size = min(chunk_size, USBGPU_H264_MAX_CHUNK_SIZE)
-            self._h264_chunk_gap_s = USBGPU_H264_CHUNK_GAP_S
-            print(
-                f"TURZX H264 eGPU coexistence pacing: chunk {negotiated_chunk_size}->{chunk_size} bytes, "
-                f"gap={self._h264_chunk_gap_s * 1000.0:.1f} ms",
-                flush=True,
-            )
         print(f"TURZX H264 stream chunk size: {chunk_size} bytes", flush=True)
         return chunk_size
 
@@ -1061,12 +1019,6 @@ class TuringUsbDisplay:
     def _h264_chunk_size(self, requested_chunk_size: int) -> int:
         if requested_chunk_size > 0:
             return int(clamp(requested_chunk_size, 1, MAX_H264_CHUNK_SIZE))
-
-        # The response can block a shared xHCI bus for the full command timeout.
-        # eGPU coexistence already caps the actual transfer size below this
-        # default, so negotiation has no value while the driving model is active.
-        if _usbgpu_transfer_active():
-            return DEFAULT_H264_CHUNK_SIZE
 
         try:
             response = self._send_command(
