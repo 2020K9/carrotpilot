@@ -31,6 +31,7 @@ from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
+from openpilot.selfdrive.modeld.runtime_guard import RuntimeOutputGuard
 from openpilot.selfdrive.modeld.helpers import make_internal_model, get_tg_input_devices, load_oob, modeld_pkl_path, select_vision_streams
 
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld"
@@ -308,6 +309,8 @@ def main(demo=False):
   k9_lr_view.set_mode(read_k9_lr_view(params))
   k9_lr_view.set_one_lane_hold(read_k9_olh(params))
   camera_gap = CameraGapTrace(cloudlog.event)
+  output_guard = RuntimeOutputGuard(lambda: ModelState(vipc_client_main.width, vipc_client_main.height),
+                                    params=params, log=cloudlog.error)
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
     frame += 1
@@ -391,6 +394,7 @@ def main(demo=False):
     camera_age_at_run_ms = (inference_started - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
     model_output = model.run(bufs, transforms, inputs, prepare_only)
+    model, model_output = output_guard.check(model, model_output)  # NaN/Inf: never published
     mt2 = time.perf_counter()
     run_end_mono = time.monotonic()
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000

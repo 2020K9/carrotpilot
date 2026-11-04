@@ -102,6 +102,10 @@ def make_internal_model(model_cls, cam_w: int, cam_h: int, use_student: bool, pa
     status = {"model": "lightspeed_student_b" if use_student and fallback_reason is None else "stock",
               "requested_student": use_student, "fallback_reason": fallback_reason}
   cloudlog.warning(f"modeld internal model: {status}")
+  try:
+    model.lightspeed_status = status  # read by runtime_guard (runtime NaN/Inf fallback)
+  except AttributeError:
+    pass
   if params is not None:
     params.put("LightspeedModelStatus", status)
   return model
