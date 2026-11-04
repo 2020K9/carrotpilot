@@ -6,6 +6,8 @@ Policy:
   * Student / direct model: replaced by a freshly built stock model (new ModelState: the model's
     internal state - recurrent/feature buffers, input queues - is reset). LightspeedModelStatus -> stock,
     reason "runtime nonfinite".
+    In modeld that stock model is built at modeld start (stock_standby.StockStandby, not during the switch) and its
+    image queues get the last warped camera frames of the replaced model; its feature history starts at zero.
   * Not reset: modeld's prev_action (and other main-loop state outside the model) is kept, so the
     first published actions after a switch are smoothed from the last finite action of the old model
     (desiredAcceleration / desiredVelocity, tau LONG_SMOOTH_SECONDS 0.3 s; desiredCurvature is held
