@@ -1,4 +1,4 @@
-from collections import deque
+from collections import defaultdict, deque
 import copy
 import math
 import numpy as np
@@ -305,7 +305,9 @@ class CarState(CarStateBase):
     #self.rf_lateral = 0
 
     fingerprints_str = Params().get("FingerPrints")
-    fingerprints = ast.literal_eval(fingerprints_str)
+    # FingerPrints is written by car_helpers during fingerprinting; without it (e.g. CarInterface
+    # built directly) treat every bus as having no observed messages instead of raising.
+    fingerprints = ast.literal_eval(fingerprints_str) if fingerprints_str else defaultdict(dict)
     #print("fingerprints =", fingerprints)
     ecu_disabled = False
     if self.CP.openpilotLongitudinalControl and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC):
