@@ -195,6 +195,22 @@ class JoiningModel:
       if name.endswith('_q'):
         tensor._buffer().copyin(memoryview(bytearray(tensor.numel() * tensor.dtype.itemsize)))
 
+  def drop_remote(self, reason, retry_after=30.):
+    # Same exit as a Jetlink exception in run() (FAULT -> commIssue, reset local history), for a remote output that
+    # arrived but is unusable (runtime_guard: NaN/Inf). Longer back-off so a bad remote cannot flap every 5 s.
+    from openpilot.common.swaglog import cloudlog
+    cloudlog.error('Jetlink output rejected (%s); restoring local model', reason)
+    self.error = str(reason)
+    if self.client is not None:
+      self.client.close()
+      self.client = None
+    if self.active:
+      FAULT.write_text(str(time.monotonic()))
+      self._reset_small()
+    self.active = False
+    self.next_join = time.monotonic() + retry_after
+    self.next_status = 0
+
   def run(self, bufs, transforms, inputs, prepare_only):
     from openpilot.common.swaglog import cloudlog
     if self.preparation is not None and not self.ready:

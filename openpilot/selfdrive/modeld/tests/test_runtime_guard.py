@@ -140,3 +140,44 @@ def test_load_failure_still_falls_back():
   p = FakeParams()
   m = make_internal_model(Failing, 1, 1, True, p, use_direct=False)
   assert m.lightspeed_status['model'] == 'stock' and 'bad pkl' in m.lightspeed_status['fallback_reason']
+
+
+class _FakeClient:
+  def __init__(self):
+    self.closed = False
+
+  def close(self):
+    self.closed = True
+
+
+def _active_joining(monkeypatch, tmp_path, small):
+  import openpilot.selfdrive.modeld.jetlink.model as jm
+  monkeypatch.setattr(jm, 'FAULT', tmp_path / 'fault')
+  j = jm.JoiningModel.__new__(jm.JoiningModel)  # state of an already joined remote; no device / link needed
+  j.small, j.client, j.active, j.error, j.next_join, j.next_status = small, _FakeClient(), True, '', 0., 1e18
+  resets = []
+  j._reset_small = lambda: resets.append(1)
+  return j, resets
+
+
+def test_remote_nonfinite_leaves_remote_keeps_internal(monkeypatch, tmp_path):
+  inner, g, p = build(True)
+  status = dict(inner.lightspeed_status)
+  stored = dict(p.store)
+  j, resets = _active_joining(monkeypatch, tmp_path, inner)
+  client = j.client
+  j2, res = g.check(j, {'plan': np.array([np.nan])})
+  assert res is None and j2 is j
+  assert j.small is inner and inner.lightspeed_status == status  # internal (student) model untouched
+  assert j.active is False and j.client is None and client.closed
+  assert (tmp_path / 'fault').exists() and resets == [1]
+  assert j.next_join > 0
+  assert g.stock_failures == 0 and p.store == stored
+
+
+def test_remote_nonfinite_repeated_never_raises(monkeypatch, tmp_path):
+  inner, g, _ = build(False)
+  for _ in range(g.max_stock_retries + 3):
+    j, _r = _active_joining(monkeypatch, tmp_path, inner)
+    assert g.check(j, {'plan': np.array([np.inf])})[1] is None
+  assert g.stock_failures == 0

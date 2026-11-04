@@ -5,6 +5,8 @@ Policy:
     diagnostics records published=0). The previous output is never re-sent as a new one.
   * Student / direct model: replaced by a freshly built stock model (new ModelState, so the
     old recurrent/feature buffers are dropped). LightspeedModelStatus -> stock, reason "runtime nonfinite".
+  * Remote (Jetlink active) output: dropped, the wrapper leaves the remote model (JoiningModel.drop_remote);
+    the internal model is kept and the stock-failure counter is not touched.
   * Stock model: rebuilt fresh at most MAX_STOCK_RETRIES times in a row. One more non-finite frame
     after that raises ModelOutputError, so modeld exits and the existing process-not-running /
     commIssue path reports it. A finite frame resets the counter.
@@ -67,6 +69,12 @@ class RuntimeOutputGuard:
     student = not remote and not self._is_stock(model)
     if self.log:
       self.log(f"modeld nonfinite output: {bad} values, student={student}, remote={remote}, stock_failures={self.stock_failures}")
+    if remote and hasattr(model, 'drop_remote'):
+      # Remote (Jetlink) output is bad: the internal model is not at fault. Leave the remote model the same way a
+      # Jetlink failure does (FAULT -> commIssue, local history reset, rejoin later) instead of rebuilding the
+      # internal model and counting toward the stock-failure exit.
+      model.drop_remote(f"nonfinite output ({bad} values)")
+      return model, None
     if not student:
       if self.stock_failures >= self.max_stock_retries:
         raise ModelOutputError(f"model output non-finite ({bad} values) after {self.stock_failures} fresh stock rebuilds")
