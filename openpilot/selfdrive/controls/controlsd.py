@@ -25,6 +25,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
+from openpilot.selfdrive.controls.lib.model_freshness import lateral_model_fresh
 
 
 from openpilot.common.realtime import DT_CTRL, DT_MDL
@@ -160,6 +161,8 @@ class Controls:
     CC.latActive = self.carrot_controls.lat_suspend_control(CS, CC.latActive)
     # Wait only for the first readiness confirmation, including AlwaysLateral.
     CC.latActive = CC.latActive and lateral_ready
+    # Do not keep steering on a stale modelV2 (see controls/lib/model_freshness.py).
+    CC.latActive = CC.latActive and lateral_model_fresh(self.sm.seen['modelV2'], self.sm.frame, self.sm.recv_frame['modelV2'])
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
 
     # AlwaysLateral must also stop while manager drains workers for this reboot.
