@@ -110,3 +110,45 @@ def test_gpu_selection_preserves_dm_and_preview(external, enabled, session_off, 
   selected = worker.automatic_backend(SimpleNamespace(get_bool=values.__getitem__))
   assert selected == ("qcom" if external and not ((enabled and not session_off) or preview) else "tracking_cpu")
 
+
+@pytest.mark.parametrize('selection', ['auto', 'qcom'])
+@pytest.mark.parametrize('change_dm', [False, True])
+def test_auto_switch_releases_previous_process_and_final_child(monkeypatch, tmp_path, selection, change_dm):
+  import multiprocessing
+  from openpilot.common import params
+  modes = [False, False, True, True, False]
+  position = [0]
+  children = []
+  class Child:
+    exitcode = None
+    pid = 123
+    def __init__(self, *, target, args, daemon):
+      self.args, self.alive, self.closed = args, False, False
+      assert target == worker.run_selected and daemon
+      children.append(self)
+    def start(self):
+      assert all(not c.alive for c in children if c is not self)
+      self.alive = True
+    def is_alive(self): return self.alive
+    def terminate(self): self.alive = False
+    def join(self, timeout): pass
+    def close(self): self.closed = True
+  def value(key):
+    if key == 'UsbGpuActive': return True if change_dm else modes[position[0]]
+    if key == 'DriverMonitoringEnabled': return not modes[position[0]] if change_dm else False
+    return False
+  monkeypatch.setattr(params, 'Params', lambda: SimpleNamespace(get_bool=value))
+  monkeypatch.setattr(worker, 'requested', lambda _: position[0] < len(modes))
+  monkeypatch.setattr(worker, 'neural_requested', lambda _: True)
+  monkeypatch.setattr(worker, 'backend_requested', lambda _: selection)
+  monkeypatch.setattr(worker.time, 'sleep', lambda _: position.__setitem__(0, position[0]+1))
+  monkeypatch.setattr(multiprocessing, 'get_context', lambda _: SimpleNamespace(Process=Child))
+  monkeypatch.setitem(sys.modules, 'openpilot.common.swaglog', SimpleNamespace(cloudlog=SimpleNamespace(event=lambda *a, **k: None)))
+  # integ3 removed eGPU QCOM selection (automatic_backend always returns tracking_cpu).
+  # Lifecycle-only restore: inject the base selection rule (eGPU active and DM not needed -> qcom),
+  # still driven by the mocked Params so change_dm keeps exercising the DM-triggered switch.
+  # Original order / termination / close checks below are unchanged.
+  monkeypatch.setattr(worker, 'automatic_backend', lambda p: 'qcom' if p.get_bool('UsbGpuActive') and not p.get_bool('DriverMonitoringEnabled') else 'tracking_cpu')
+  worker.run_auto(tmp_path)
+  assert [c.args[1] for c in children] == ['tracking_cpu', 'qcom', 'tracking_cpu']
+  assert all(c.closed and not c.alive for c in children)
