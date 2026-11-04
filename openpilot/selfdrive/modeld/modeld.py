@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+from collections import deque
 from tinygrad.tensor import Tensor
 import time
 import numpy as np
@@ -32,6 +33,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
 from openpilot.selfdrive.modeld.runtime_guard import RuntimeOutputGuard, ModelOutputError
+from openpilot.selfdrive.modeld.stock_standby import StockStandby
 from openpilot.selfdrive.modeld.helpers import make_internal_model, get_tg_input_devices, load_oob, modeld_pkl_path, select_vision_streams
 
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld"
@@ -120,13 +122,34 @@ class ModelState:
     self.run_policy = jits['run_policy']
     self.warp = jits[(cam_w,cam_h)]
     self.signal_shadow = ShadowClient.optional(modeld_pkl_path().parent / 'driving_supercombo.onnx') if enable_shadow else None
+    self.warp_history = None  # last warped frames, kept only by a student/direct model (stock_standby.py)
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
     return parsed_model_outputs
 
+  def keep_warp_history(self, n: int):
+    self.warp_history = deque(maxlen=n) if n > 0 else None
+
+  def seed_image_history(self, frames) -> int:
+    # Fresh (non-stateful) stock model: put the last warped camera frames (oldest first, as shift_and_sample appends)
+    # into img_q / big_img_q so the first runs do not sample a zero past frame.
+    if 'img_q' not in self.input_queues or not frames:
+      return 0
+    q = self.input_queues['img_q']
+    hist = np.stack(frames[-q.shape[0]:])  # (n, 2, 6, H, W): [:, 0] road, [:, 1] wide
+    if hist.shape[2:] != tuple(q.shape[1:]) or hist.dtype != np.dtype(q.dtype.fmt):
+      return 0
+    for name, cam in (('img_q', 0), ('big_img_q', 1)):
+      buf = np.zeros(self.input_queues[name].shape, dtype=hist.dtype)
+      buf[-hist.shape[0]:] = hist[:, cam]
+      self.input_queues[name]._buffer().copyin(memoryview(buf.reshape(-1)))
+    return int(hist.shape[0])
+
   def reset(self):
     # Returning from the Jetlink model must not reuse old local history.
+    if self.warp_history is not None:
+      self.warp_history.clear()
     self.prev_desire[:] = 0
     for array in self.npy.values():
       array[:] = 0
@@ -191,6 +214,8 @@ class ModelState:
     sync_start = time.perf_counter()
     model_output = outs.numpy()[0]
     self.last_gpu_sync_wait_ms = (time.perf_counter() - sync_start) * 1000
+    if self.warp_history is not None:  # after the sync above: no extra GPU wait; the warp buffer is reused next run
+      self.warp_history.append(warped.numpy())
     shadow_payload = self.signal_shadow.capture(model_output, self.npy) if self.signal_shadow is not None else None
     outputs_dict = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
     if 'prev_feat' in self.npy:
@@ -323,7 +348,17 @@ def main(demo=False):
   k9_lr_view.set_mode(read_k9_lr_view(params))
   k9_lr_view.set_one_lane_hold(read_k9_olh(params))
   camera_gap = CameraGapTrace(cloudlog.event)
-  output_guard = RuntimeOutputGuard(lambda: ModelState(vipc_client_main.width, vipc_client_main.height),
+  # Student/direct model: stock model built now (not while modelV2 is missing at a switch) and seeded with the last
+  # warped frames at the switch (stock_standby.py). `model` in the lambda is the model being replaced: guard.check
+  # calls it before modeld rebinds `model`.
+  stock_standby = StockStandby(lambda: ModelState(vipc_client_main.width, vipc_client_main.height), log=cloudlog.warning)
+  internal_model = RuntimeOutputGuard._internal(model)
+  if (getattr(internal_model, 'lightspeed_status', None) or {}).get('model', 'stock') != 'stock':
+    phase_start = time.monotonic()
+    stock_standby.prepare()
+    internal_model.keep_warp_history(stock_standby.history_len)
+    cloudlog.warning("model startup stock standby: %.3fs", time.monotonic() - phase_start)
+  output_guard = RuntimeOutputGuard(lambda: stock_standby.take(RuntimeOutputGuard._internal(model)),
                                     params=params, log=cloudlog.error)
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
@@ -510,6 +545,12 @@ def main(demo=False):
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
+      if stock_standby.needs_warm:
+        # once, after the first published frame: the prepared stock model's first run is slow (worker: 0.68-0.74 s vs
+        # 0.16-0.24 s later); run it now on this frame and reset it, so the switch does not pay it.
+        phase_start = time.monotonic()
+        stock_standby.warm(bufs, transforms, inputs)
+        cloudlog.warning("stock standby warm run: %.3fs", time.monotonic() - phase_start)
     last_vipc_frame_id = meta_main.frame_id
     gpu_sync_wait_ms = float('nan')
     try:
