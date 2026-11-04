@@ -308,7 +308,7 @@ def audio_feedback_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
 
 def torque_nn_load_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   model_name = Params().get("NNFFModelName")
-  if model_name == "":
+  if not model_name:  # Params.get returns None when unset
     return Alert(
       "NNFF Torque Controller not available",
       "Donate logs to Twilsonco to get it added!",
