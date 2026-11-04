@@ -129,9 +129,8 @@ def _git_show(commit, rel):
                         encoding="utf-8").stdout
 
 
-def load_frozen_cc(commit, tmp_dir, tag):
-  """The real CarController of `commit`, with that commit's k9_stop_taper.py/k9_creep.py (if present) as its imports.
-  Everything else under opendbc_repo must be byte-identical to the working tree (asserted)."""
+def _byte_guard(commit):
+  """The original byte-equality check of load_frozen_cc (its statements unchanged, moved into one function)."""
   changed = subprocess.run(["git", "diff", "--name-only", commit, "--", "opendbc_repo"], cwd=ROOT, check=True,
                            capture_output=True, text=True).stdout.split()
   changed = [f for f in changed if "/tests/" not in f]  # test files are never imported by the controller
@@ -180,6 +179,36 @@ def load_frozen_cc(commit, tmp_dir, tag):
     assert body and all(ln in ok or ln.startswith('ctf = params.get_int("K9CenterToFront")') for ln in body), iface
     changed.remove(iface)
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
+
+
+_HIST_PROOF = {}  # commit -> proof dict or AssertionError, once per process (k9_hist_env runs two interpreters, ~40 s)
+
+
+def _historical_env_guard(commit, tmp_dir, tag, refused):
+  """2026-11-05 (k9guard_0518): the byte check refused because common files differ from <commit> (upstream merges, other
+  brands, CAN-FD). Its allow lists are not widened; instead what it protects is proven by behaviour: the reference controller
+  must send identical K9 CAN in its own commit's complete opendbc and in this tree's common environment (k9_hist_env.prove).
+  Only then are both sides of the frozen comparison, run in this tree's common environment, a historical comparison."""
+  from openpilot.selfdrive.car.tests import k9_hist_env
+  if commit not in _HIST_PROOF:
+    try:
+      _HIST_PROOF[commit] = k9_hist_env.prove(ROOT, commit, Path(tmp_dir) / f"{tag}_hist")
+    except AssertionError as e:
+      _HIST_PROOF[commit] = e
+  proof = _HIST_PROOF[commit]
+  if isinstance(proof, AssertionError):
+    raise AssertionError(f"byte check: {refused}; historical-environment proof: {proof}")
+  return proof
+
+
+def load_frozen_cc(commit, tmp_dir, tag):
+  """The real CarController of `commit`, with that commit's k9_stop_taper.py/k9_creep.py (if present) as its imports.
+  Everything else under opendbc_repo must be byte-identical to the working tree (asserted), or else the reference controller
+  must send the same K9 CAN in its own commit's opendbc as in this tree's (asserted by _historical_env_guard)."""
+  try:
+    _byte_guard(commit)
+  except AssertionError as refused:
+    _historical_env_guard(commit, tmp_dir, tag, refused)
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
 
