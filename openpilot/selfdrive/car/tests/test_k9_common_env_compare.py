@@ -104,6 +104,14 @@ def _kw(mode):
   return {} if mode is None else {"K9StopMode": mode}
 
 
+# 2026-11-05 07:16 (대감님 "0.3.5 ... 0.1.2로 바꿔"): this tree numbers the old 0 / 3 / 5 as 0 / 1 / 2 (number pin only)
+NEW_NUM = {None: None, 0: 0, 1: 3, 2: 4, 3: 1, 4: 5, 5: 2}
+
+
+def _kw_new(mode):
+  return _kw(NEW_NUM[mode])
+
+
 def _run(seqs, seq, module, values):
   mp = pytest.MonkeyPatch()
   try:
@@ -122,7 +130,7 @@ def _first_diff(a, b):
 def test_common_env_0_3_5_send_the_9df95178c_bytes(ref_env, mode, seq):
   """Counterpart of test_k9_stop_menu_035::test_0_3_5_send_the_9df95178c_bytes[mode-seq]."""
   ref = _run(RUNS, seq, ref_env, _kw(mode))
-  new = _run(RUNS, seq, None, _kw(mode))
+  new = _run(RUNS, seq, None, _kw_new(mode))
   same = new.can == ref.can and new.scc14 == ref.scc14
   _record("case", test=f"test_0_3_5_send_the_9df95178c_bytes[{mode}-{seq}]", frames=len(new.can), same=same,
           first_diff=_first_diff(new.can, ref.can))
@@ -130,8 +138,8 @@ def test_common_env_0_3_5_send_the_9df95178c_bytes(ref_env, mode, seq):
   if mode in (3, 5):
     assert new.cc.k9_creep.mode == ref_env.K9_CREEP_MENU[mode]
     # k9cmp2235: the actual 3/5 value is also checked against this tree's menu table (as the original test does)
-    assert new.cc.k9_creep.mode == kc.MENU[mode]
-    _record("menu", mode=mode, seq=seq, actual=new.cc.k9_creep.mode, ref_menu=ref_env.K9_CREEP_MENU[mode], cur_menu=kc.MENU[mode])
+    assert new.cc.k9_creep.mode == kc.MENU[NEW_NUM[mode]]
+    _record("menu", mode=mode, seq=seq, actual=new.cc.k9_creep.mode, ref_menu=ref_env.K9_CREEP_MENU[mode], cur_menu=kc.MENU[NEW_NUM[mode]])
 
 
 @pytest.mark.parametrize("seq", list(SEQS))
@@ -139,7 +147,7 @@ def test_common_env_0_3_5_send_the_9df95178c_bytes(ref_env, mode, seq):
 def test_common_env_removed_numbers_send_the_9df95178c_0_bytes(ref_env, mode, seq):
   """Counterpart of test_k9_stop_menu_035::test_removed_numbers_send_the_9df95178c_0_bytes[mode-seq]."""
   ref = _run(SEQS, seq, ref_env, {"K9StopMode": 0})
-  new = _run(SEQS, seq, None, {"K9StopMode": mode})
+  new = _run(SEQS, seq, None, {"K9StopMode": NEW_NUM[mode]})
   same = new.can == ref.can and new.scc14 == ref.scc14
   _record("case", test=f"test_removed_numbers_send_the_9df95178c_0_bytes[{mode}-{seq}]", frames=len(new.can), same=same,
           first_diff=_first_diff(new.can, ref.can))
@@ -196,14 +204,14 @@ def test_canfd_function_effect_on_k9(old_canfd, swap, mode, seq):
     for n in CHANGED:
       if hasattr(hyundaicanfd, n):
         mp.setattr(hyundaicanfd, n, counting(n, getattr(hyundaicanfd, n)))
-    new = RUNS[seq](Rig(mp, **_kw(mode)))
+    new = RUNS[seq](Rig(mp, **_kw_new(mode)))
   finally:
     mp.undo()
   mp = pytest.MonkeyPatch()
   try:
     for n in names:
       mp.setattr(hyundaicanfd, n, getattr(old_canfd, n), raising=False)
-    old = RUNS[seq](Rig(mp, **_kw(mode)))
+    old = RUNS[seq](Rig(mp, **_kw_new(mode)))
   finally:
     mp.undo()
   same = new.can == old.can and new.scc14 == old.scc14

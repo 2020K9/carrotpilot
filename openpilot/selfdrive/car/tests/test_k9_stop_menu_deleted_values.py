@@ -1,4 +1,5 @@
-"""K9StopMode 0 / 3 / 5 menu (2026-11-03 17:10, the driver "0.3번5번만 남겨두고 삭제", 17:14 정정): deleted stored values and
+"""(Number pins updated 2026-11-05 07:16, 대감님 "0.3.5 ... 0.1.2로 바꿔": the kept 3 / 5 are 1 / 2 now, marker 11;
+inputs unchanged.) K9StopMode 0 / 3 / 5 menu (2026-11-03 17:10, the driver "0.3번5번만 남겨두고 삭제", 17:14 정정): deleted stored values and
 the kept menu, checked on the current tree only (no frozen controller from an old commit, so it does not depend on the
 k9_rig environment-identity checks). Added 2026-11-04 (fix_1925); no existing test, threshold or input was changed.
 
@@ -55,48 +56,48 @@ def _setting():
 
 
 def test_kept_menu_is_0_3_5_with_kinds_15_17():
-  assert kc.MENU == {3: kc.V12K9OH, 5: kc.V12K9OGR} and (kc.V12K9OH, kc.V12K9OGR) == (15, 17)
-  assert carcontroller.K9_CREEP_MENU == {3: 15, 5: 17}
+  assert kc.MENU == {1: kc.V12K9OH, 2: kc.V12K9OGR} and (kc.V12K9OH, kc.V12K9OGR) == (15, 17)
+  assert carcontroller.K9_CREEP_MENU == {1: 15, 2: 17}
 
 
 def test_settings_offer_only_0_3_5_and_store_nothing_else():
   from openpilot.selfdrive.carrot.server.services.params import clamp_numeric
   p = _setting()
-  assert p["choices"] == [0, 3, 5] and p["default"] == 0
-  for v in (0, 3, 5):
+  assert p["choices"] == [0, 1, 2] and p["default"] == 0
+  for v in (0, 1, 2):
     assert clamp_numeric(float(v), p) == v
-  for v in (1, 2, 4):  # deleted numbers can never be stored from the settings page: they become 0
-    assert clamp_numeric(float(v), p) == 0
+  for v in (3, 4, 5):  # 2026-11-05 07:16: above max 2, so never stored as themselves (clamped into 0 / 1 / 2)
+    assert clamp_numeric(float(v), p) in (0, 1, 2) and clamp_numeric(float(v), p) != v
 
 
-@pytest.mark.parametrize("old,want", [(0, 0), (1, 0), (2, 3), (3, 5), (4, 0), (5, 0)])
+@pytest.mark.parametrize("old,want", [(0, 0), (1, 0), (2, 1), (3, 2), (4, 0), (5, 0)])
 @pytest.mark.parametrize("pending", [False, True])
 def test_marker9_deleted_and_moved_values(old, want, pending):
   p = FakeParams(K9StopMode=old, K9StopModeVer=90 + old if pending else 9)
   mig.migrate_k9_stop_mode(p)
-  assert p.v == {"K9StopMode": want, "K9StopModeVer": 10}
+  assert p.v == {"K9StopMode": want, "K9StopModeVer": 11}
   again = dict(p.v)
   assert mig.migrate_k9_stop_mode(p) is False and p.v == again
 
 
-@pytest.mark.parametrize("old,want", [(0, 0), (1, 0), (2, 0), (3, 3), (4, 0), (5, 5)])
+@pytest.mark.parametrize("old,want", [(0, 0), (1, 0), (2, 0), (3, 1), (4, 0), (5, 2)])
 def test_marker8_kinds_15_17_keep_3_5_others_0(old, want):
   p = FakeParams(K9StopMode=old, K9StopModeVer=8)
   mig.migrate_k9_stop_mode(p)
-  assert p.v == {"K9StopMode": want, "K9StopModeVer": 10}
+  assert p.v == {"K9StopMode": want, "K9StopModeVer": 11}
 
 
-@pytest.mark.parametrize("old,want", [(0, 0), (1, 0), (2, 0), (3, 3)])
+@pytest.mark.parametrize("old,want", [(0, 0), (1, 0), (2, 0), (3, 1)])
 def test_marker7_kind15_keeps_3_others_0(old, want):
   p = FakeParams(K9StopMode=old, K9StopModeVer=7)
   mig.migrate_k9_stop_mode(p)
-  assert p.v == {"K9StopMode": want, "K9StopModeVer": 10}
+  assert p.v == {"K9StopMode": want, "K9StopModeVer": 11}
 
 
-@pytest.mark.parametrize("stored", [1, 2, 4])
+@pytest.mark.parametrize("stored", [3, 4, 5])
 def test_marker10_deleted_value_is_left_but_acts_as_0(monkeypatch, stored):
-  p = FakeParams(K9StopMode=stored, K9StopModeVer=10)
-  assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": stored, "K9StopModeVer": 10}
+  p = FakeParams(K9StopMode=stored, K9StopModeVer=11)  # 2026-11-05 07:16: the current marker is 11
+  assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": stored, "K9StopModeVer": 11}
   for seq in SEQS:
     ref = seq(Rig(monkeypatch, K9StopMode=0))
     monkeypatch.undo()
@@ -106,7 +107,7 @@ def test_marker10_deleted_value_is_left_but_acts_as_0(monkeypatch, stored):
     assert r.cc.k9_creep is None and r.cc.k9_creep_mode == 0
 
 
-@pytest.mark.parametrize("mode,kind", [(3, 15), (5, 17)])
+@pytest.mark.parametrize("mode,kind", [(1, 15), (2, 17)])
 def test_kept_menus_select_their_kind_and_change_braking(monkeypatch, mode, kind):
   r = Rig(monkeypatch, K9StopMode=mode)
   r.step(-0.5, LCS.pid, 3.0)
@@ -125,7 +126,7 @@ def test_kept_menus_select_their_kind_and_change_braking(monkeypatch, mode, kind
 
 def test_menus_3_and_5_are_different_methods(monkeypatch):
   out = {}
-  for mode in (3, 5):
+  for mode in (1, 2):
     out[mode] = [seq(Rig(monkeypatch, K9StopMode=mode)).can for seq in SEQS]
     monkeypatch.undo()
-  assert out[3] != out[5]
+  assert out[1] != out[2]
