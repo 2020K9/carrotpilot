@@ -607,10 +607,11 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   stop = next(p for p in params if p["name"] == "K9StopMode")
   # 2026-11-03 17:10 (대감님 "0.3번5번만 남겨두고 삭제"): max 5 with only 0 / 3 / 5 selectable (choices); 1 / 2 / 4 keep
   # a label only so the labels stay indexed from min, the web list and the server clamp offer / store 0 / 3 / 5 only
-  assert (stop["min"], stop["max"], stop["default"], stop["unit"]) == (0, 5, 0, 1) and stop["choices"] == [0, 3, 5]
+  # 2026-11-05 07:16 (대감님 "0.3.5 ... 0.1.2로 바꿔"): number pins only, 0 / 1 / 2 = the old 0 / 3 / 5
+  assert (stop["min"], stop["max"], stop["default"], stop["unit"]) == (0, 2, 0, 1) and stop["choices"] == [0, 1, 2]
   from openpilot.selfdrive.carrot.server.services.params import clamp_numeric
-  assert clamp_numeric(1, stop) == 0 and clamp_numeric(4, stop) == 0 and clamp_numeric(3, stop) == 3 and clamp_numeric(5, stop) == 5
-  assert clamp_numeric(9, stop) == 5 and clamp_numeric(-2, stop) == 0
+  assert clamp_numeric(1, stop) == 1 and clamp_numeric(2, stop) == 2 and clamp_numeric(0, stop) == 0
+  assert clamp_numeric(9, stop) == 2 and clamp_numeric(-2, stop) == 0
   assert stop["control"] == "select" and stop["title"] == "K9 정차 방식 선택 (실험)"
   # history of this pin: 2026-10-23..24 the 0-6 menu and the 0-3 menu (v10 / v10 + light / v11), web text short since
   # 2026-10-24 (보노보노 "웹설명 너무길게말고 짧고 간단하게"; details only in docs/user/{ko,en}/settings.md, docs/k9_menus_zh.md).
@@ -634,27 +635,24 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   # 2026-11-03 (대감님 06:08 "2번 4번 메뉴 지워"): 2 (kind 16) and 4 (kind 14) left the menu, 3 -> 2, 5 -> 3; max 3, 4 labels,
   # "3" allowed only as the new 3 label, the old 2 / 4 labels banned, "4 이상" acts as 0 in the manual
   # 2026-11-03 17:10: back to the 9df95178c numbers, 3 = 원본2 + harder after 1 s, 5 = gap fix + harder below 1 km/h
-  assert stop["options"] == {"ko": ["0 기본 제동", "1 (없음, 0과 같음)", "2 (없음, 0과 같음)", "3 bono1739 원본2 + 선 뒤 1초 뒤 더 세게",
-                                    "4 (없음, 0과 같음)", "5 격차수정 + 1 km/h 아래 서서히 더 잡기"],
-                             "en": ["0 Base braking", "1 (none, same as 0)", "2 (none, same as 0)",
-                                    "3 bono1739 original2 + harder 1 s after the stop", "4 (none, same as 0)",
-                                    "5 Gap fix + gradually harder below 1 km/h"],
-                             "zh": ["0 基本制动", "1（无，等同0）", "2（无，等同0）", "3 bono1739原版2＋停后1秒起加压", "4（无，等同0）",
-                                    "5 差距修正＋1 km/h以下逐渐加大制动"]}
-  only_3 = {"descr": "3 원본2", "edescr": "3 original2", "cdescr": "3 原版2"}  # the one label a "3" may appear in
+  assert stop["options"] == {"ko": ["0 기본 제동", "1 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "2 격차수정 + 1 km/h 아래 서서히 더 잡기"],
+                             "en": ["0 Base braking", "1 bono1739 original2 + harder 1 s after the stop",
+                                    "2 Gap fix + gradually harder below 1 km/h"],
+                             "zh": ["0 基本制动", "1 bono1739原版2＋停后1秒起加压", "2 差距修正＋1 km/h以下逐渐加大制动"]}
+  only_3 = {"descr": "1 원본2", "edescr": "1 original2", "cdescr": "1 原版2"}  # 2026-11-05 07:16: no "3" label any more
   for key in ("descr", "edescr", "cdescr"):
     assert "K9StopTaper" not in stop[key] and "K9CreepMode" not in stop[key]
-    rest = stop[key].replace(only_3[key], "").replace("0·3·5", "").replace("0, 3 and 5", "").replace("0、3、5", "")
+    rest = stop[key].replace(only_3[key], "").replace("0·1·2", "").replace("0, 1 and 2", "").replace("0、1、2", "")
     assert "v8" not in stop[key] and "3:" not in rest and "3：" not in rest and "3 " not in rest
     assert "v9" not in stop[key] and "v10" not in stop[key] and "0.2" not in stop[key]
     for jargon in ("ComfortBand", "StopReq", "aReq", "m/s", "jerk", "Kalman", "래치", "latch"):
       assert jargon not in stop[key], (key, jargon)
   assert len(stop["descr"]) <= 300 and len(stop["cdescr"]) <= 300 and len(stop["edescr"]) <= 600
-  for label in ("0 기본", "3 원본2", "5 격차수정", "0·3·5만"):
+  for label in ("0 기본", "1 원본2", "2 격차수정", "0·1·2만"):
     assert label in stop["descr"], label
-  for label in ("0 Base", "3 original2", "5 Gap fix", "Only 0, 3 and 5"):
+  for label in ("0 Base", "1 original2", "2 Gap fix", "Only 0, 1 and 2"):
     assert label in stop["edescr"], label
-  for label in ("0 基本", "3 原版2", "5 差距修正", "只能选0、3、5"):
+  for label in ("0 基本", "1 原版2", "2 差距修正", "只能选0、1、2"):
     assert label in stop["cdescr"], label
   for key, gone in (("descr", "1 bono1739"), ("edescr", "1 bono1739"), ("cdescr", "1 bono1739")):
     assert gone not in stop[key], (key, gone)  # kind 13 left the menu 2026-11-03 17:10
@@ -672,16 +670,16 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   row_en = next(line for line in doc_en.splitlines() if "| `K9StopMode` |" in line)
   # 2026-11-03 17:10: 0 / 3 / 5 with the 9df95178c numbers; kind 13 (bono1739 원본2) is "옛 1", off the menu
   assert "0: 기본 제동" in row_ko and "옛 1(2026-11-03 17:10 메뉴에서 빠짐, 3·5의 바탕): bono1739 원본2" in row_ko
-  assert "5: 격차수정 + 1 km/h 아래 서서히 더 잡기" in row_ko and "0·3·5 중 하나" in row_ko
-  assert "바탕 v12k9" in row_ko and "3: bono1739 원본2 + 선 뒤 1초 뒤 더 세게" in row_ko
+  assert "2: 격차수정 + 1 km/h 아래 서서히 더 잡기" in row_ko and "0·1·2 중 하나" in row_ko  # 2026-11-05 07:16 numbers
+  assert "바탕 v12k9" in row_ko and "1: bono1739 원본2 + 선 뒤 1초 뒤 더 세게" in row_ko
   assert "0: base braking" in row_en and "Old 1 (off the menu since 2026-11-03 17:10, the base of 3 and 5): bono1739 original2" in row_en
-  assert "5: gap fix + gradually harder below 1 km/h" in row_en and "choice of 0, 3 or 5" in row_en
-  assert "Base v12k9" in row_en and "3: bono1739 original2 + harder 1 s after the stop" in row_en
-  for gone in ("1: bono1739 원본2", "2: bono1739 원본2", "2: 격차수정 |", "3: 격차수정", "4: bono1739 끝 구간 개선"):  # 2026-11-03
+  assert "2: gap fix + gradually harder below 1 km/h" in row_en and "choice of 0, 1 or 2" in row_en
+  assert "Base v12k9" in row_en and "1: bono1739 original2 + harder 1 s after the stop" in row_en
+  for gone in ("1: bono1739 원본2 |", "2: bono1739 원본2", "2: 격차수정 |", "3: 격차수정", "4: bono1739 끝 구간 개선"):  # 2026-11-03
     assert gone not in row_ko, gone
-  for gone in ("1: bono1739 original2", "2: bono1739 original2", "3: gap fix", "4: bono1739 end window improved"):
+  for gone in ("1: bono1739 original2 |", "2: bono1739 original2", "3: gap fix", "4: bono1739 end window improved"):
     assert gone not in row_en, gone
-  assert "K9StopModeVer 10" in row_ko and "K9StopModeVer 10" in row_en
+  assert "K9StopModeVer 11" in row_ko and "K9StopModeVer 11" in row_en
   # 2026-10-27 evening / 2026-10-28 / 05:40 / 07:10 (the v14 original left the menu and 4 moved into its slot); 2026-10-30:
   # 4 is the end-window improvement (kind 14) again, so only the old 4 label "4: bono1739 원본2" stays banned
   for gone in ("3: v13 원본", "4: C1", "5: C1+", "1: v12 원본", "2: v12 원본", "3: v14 원본", "4: bono1739 원본2"):
@@ -698,14 +696,14 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   assert "즉시 원래 명령" in row_ko and "returns the original command at once" in row_en
   # 1 / 2 / 4 / 6+ since 2026-11-03 17:10, 4+ 06:08..17:10, 6+ 2026-10-30..11-03, 4+ until 2026-10-30,
   # 5 or more between 2026-10-29 05:40 and 07:10
-  assert "1·2·4, 6 이상" in row_ko and "(1, 2, 4, 6 or more, negative)" in row_en
+  assert "3·4·5, 6 이상" in row_ko and "(3, 4, 5, 6 or more, negative)" in row_en  # 2026-11-05 07:16
   assert "0에서 시작" in row_ko and "starts at 0" in row_en
   assert "changelog.html" in row_ko and "changelog.html" in row_en
   zh = (SETTINGS_PATH.parents[2] / "docs" / "k9_menus_zh.md").read_text(encoding="utf-8")
   # 2026-11-03 17:10: 0 / 3 / 5 (the 9df95178c numbers), kind 13 is "原1" off the menu
-  assert "原1（2026-11-03 17:10移出菜单，3·5的基础）：bono1739原版2" in zh and "3：bono1739原版2＋停后1秒起加压" in zh
-  assert "5：差距修正＋1 km/h以下逐渐加大制动" in zh and "K9StopModeVer 10" in zh
-  assert "4：bono1739末段改良" not in zh and "1：bono1739原版2" not in zh and "2：bono1739原版2" not in zh
+  assert "原1（2026-11-03 17:10移出菜单，3·5的基础）：bono1739原版2" in zh and "1：bono1739原版2＋停后1秒起加压" in zh
+  assert "2：差距修正＋1 km/h以下逐渐加大制动" in zh and "K9StopModeVer 11" in zh  # 2026-11-05 07:16 numbers
+  assert "4：bono1739末段改良" not in zh and zh.count("1：bono1739原版2") == zh.count("1：bono1739原版2＋停后1秒起加压") and "2：bono1739原版2" not in zh
   assert "基础v12k9" in zh and "尚未经实车确认" in zh and "原1·2·3→2（v12k9）" in zh
   assert "3：v13原版" not in zh and "4：C1" not in zh and "5：C1+" not in zh  # removed 2026-10-28
   assert "1：v12原版" not in zh and "2：v12原版" not in zh  # the v12 original left the menu 2026-10-29 05:40

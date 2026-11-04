@@ -1124,7 +1124,7 @@ function getSettingOptionValues(name, config) {
   if (!config || !Number.isInteger(config.min) || !Number.isInteger(config.max)) return [];
   const out = [];
   for (let value = config.min; value <= config.max; value += 1) out.push(value);
-  // "choices" in carrot_settings.json limits the list (K9StopMode: 0 / 3 / 5 only).
+  // "choices" in carrot_settings.json limits the list (K9StopMode: 0 / 1 / 2 only).
   const choices = findSettingItemByName(String(name || "").trim())?.item?.choices;
   if (Array.isArray(choices) && choices.length) return out.filter((value) => choices.includes(value));
   return out;
