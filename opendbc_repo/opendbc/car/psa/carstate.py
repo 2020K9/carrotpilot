@@ -16,12 +16,15 @@ class CarState(CarStateBase):
     ret = structs.CarState()
 
     # car speed
-    self.parse_wheel_speeds(ret,
+    # this fork's CarStateBase has get_wheel_speeds/update_speed_kf, not upstream's parse_wheel_speeds
+    ret.wheelSpeeds = self.get_wheel_speeds(
       cp.vl['Dyn4_FRE']['P263_VehV_VPsvValWhlFrtL'],
       cp.vl['Dyn4_FRE']['P264_VehV_VPsvValWhlFrtR'],
       cp.vl['Dyn4_FRE']['P265_VehV_VPsvValWhlBckL'],
       cp.vl['Dyn4_FRE']['P266_VehV_VPsvValWhlBckR'],
     )
+    ret.vEgoRaw = (ret.wheelSpeeds.fl + ret.wheelSpeeds.fr + ret.wheelSpeeds.rl + ret.wheelSpeeds.rr) / 4.
+    ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
     ret.yawRate = cp_adas.vl['HS2_DYN_UCF_MDD_32D']['VITESSE_LACET_BRUTE'] * CV.DEG_TO_RAD
     ret.standstill = bool(cp_adas.vl['HS2_DYN_UCF_MDD_32D']['VEHICLE_STANDSTILL'])
 
