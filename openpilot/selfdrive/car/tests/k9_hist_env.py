@@ -1,4 +1,4 @@
-"""Historical-environment proof for k9_rig.load_frozen_cc (2026-11-05 k9guard_0518). Model-only, synthetic inputs (실차 미검증).
+"""공통환경 비교 helper, 역사적 원검사 대체 아님 (2026-11-05; used only by test_k9_hist_common_env.py, never by k9_rig.load_frozen_cc). Model-only, synthetic inputs (실차 미검증).
 
 k9_rig.load_frozen_cc runs a past K9 controller (the reference commit's carcontroller.py and k9_*.py) against THIS tree's common
 modules (hyundaican.py, hyundaicanfd.py, values.py, carstate.py, opendbc.can, car.capnp ...), so the reference side and the
