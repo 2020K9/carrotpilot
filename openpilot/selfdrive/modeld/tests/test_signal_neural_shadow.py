@@ -144,11 +144,6 @@ def test_auto_switch_releases_previous_process_and_final_child(monkeypatch, tmp_
   monkeypatch.setattr(worker.time, 'sleep', lambda _: position.__setitem__(0, position[0]+1))
   monkeypatch.setattr(multiprocessing, 'get_context', lambda _: SimpleNamespace(Process=Child))
   monkeypatch.setitem(sys.modules, 'openpilot.common.swaglog', SimpleNamespace(cloudlog=SimpleNamespace(event=lambda *a, **k: None)))
-  # integ3 removed eGPU QCOM selection (automatic_backend always returns tracking_cpu).
-  # Lifecycle-only restore: inject the base selection rule (eGPU active and DM not needed -> qcom),
-  # still driven by the mocked Params so change_dm keeps exercising the DM-triggered switch.
-  # Original order / termination / close checks below are unchanged.
-  monkeypatch.setattr(worker, 'automatic_backend', lambda p: 'qcom' if p.get_bool('UsbGpuActive') and not p.get_bool('DriverMonitoringEnabled') else 'tracking_cpu')
   worker.run_auto(tmp_path)
   assert [c.args[1] for c in children] == ['tracking_cpu', 'qcom', 'tracking_cpu']
   assert all(c.closed and not c.alive for c in children)

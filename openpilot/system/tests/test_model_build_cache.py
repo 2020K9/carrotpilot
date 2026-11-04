@@ -43,9 +43,7 @@ def test_scons_rebuilds_model_when_serialization_helper_changes(tmp_path: Path):
   assert run('-q') == 1
 
 
-# [False-1] checked the USB eGPU big-model rebuild branch, which integ3 removed from launch_chffrplus.sh
-# (c4-only eGPU removal). Kept visible as a skip instead of deleted; [True-0] keeps the original check.
-@pytest.mark.parametrize('artifact_ready, expected_rebuild', [(True, '0'), pytest.param(False, '1', marks=pytest.mark.skip(reason='eGPU big model removed in integ3'))])
+@pytest.mark.parametrize('artifact_ready, expected_rebuild', [(True, '0'), (False, '1')])
 def test_launcher_accepts_precompiled_model_without_legacy_chunks(tmp_path, artifact_ready, expected_rebuild):
   bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
   if not bash or not Path(bash).is_file():
