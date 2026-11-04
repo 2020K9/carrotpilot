@@ -8,10 +8,6 @@ from openpilot.cereal import messaging, car, log
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
-from openpilot.common.egpu_recovery_status import read_status as read_egpu_recovery, recovery_badge
-from openpilot.selfdrive.modeld.helpers import active_usbgpu_compiled_path, usbgpu_compile_pending
-from openpilot.selfdrive.modeld.big_model import model_cache_dir
-from openpilot.selfdrive.modeld.big_model_status import delivery_badge, read_big_model_status
 from openpilot.selfdrive.ui.carrot_param_cache import RealtimeUiParamSnapshot, TimedSnapshotCache, read_realtime_ui_params
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
@@ -112,14 +108,6 @@ class UIState:
     self.show_model_view: int = 0
     self.share_data: bool = False
     self.show_camera_with_cluster: bool = False
-    self.usbgpu_present: bool = False
-    self.usbgpu_compiled: bool = False
-    self.usbgpu_compile_pending: bool = False
-    self.usbgpu_delivery_badge = None
-    self.usbgpu_recovery_badge = None
-    self.usbgpu_loading: bool = False
-    self.usbgpu_active: bool = False
-    self.usbgpu_startup_failed: bool = False
     self.jetlink_badge = None
 
     self.update_params()
@@ -228,17 +216,6 @@ class UIState:
     self.show_model_view = self.params.get_int("ShowModelView")
     self.share_data = self.params.get_bool("ShareData")
     self.show_camera_with_cluster = self.params.get_int("ShowCameraWithCluster") == 1
-    self.usbgpu_present = self.params.get_bool("UsbGpuPresent")
-    # Runtime may temporarily fall back to the previous model's PKL. Keep the
-    # UI completion state tied to the active model so that fallback use does
-    # not look like the newly downloaded model was already compiled.
-    self.usbgpu_compiled = active_usbgpu_compiled_path() is not None
-    self.usbgpu_compile_pending = usbgpu_compile_pending()
-    self.usbgpu_delivery_badge = delivery_badge(read_big_model_status(model_cache_dir()))
-    self.usbgpu_loading = self.params.get_bool("UsbGpuLoading")
-    self.usbgpu_active = self.params.get_bool("UsbGpuActive")
-    self.usbgpu_startup_failed = self.params.get_bool("UsbGpuStartupFailed")
-    self.usbgpu_recovery_badge = recovery_badge(read_egpu_recovery())
     from openpilot.common.jetlink_status import badge
     self.jetlink_badge = badge()
     self.lightspeed_badge = lightspeed_badge(self.params.get("LightspeedModelStatus"))
@@ -249,7 +226,11 @@ class UIState:
 
 def lightspeed_badge(status):
   # small HUD marker of the model modeld really loaded; nothing when the student was never asked for
-  if not isinstance(status, dict) or not status.get("requested_student"):
+  if not isinstance(status, dict):
+    return None
+  if status.get("requested_direct"):
+    return ("LS-C4", "active") if status.get("model") == "lightspeed_c4_direct" else ("LS>STOCK", "error")
+  if not status.get("requested_student"):
     return None
   if status.get("model") == "lightspeed_student_b":
     return "LS-B", "active"

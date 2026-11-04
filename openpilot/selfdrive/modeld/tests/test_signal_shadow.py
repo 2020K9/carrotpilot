@@ -93,47 +93,30 @@ def test_dead_worker_disables_observation():
 
 def test_modeld_keeps_original_artifact_and_output():
   source = (Path(__file__).parents[1] / 'modeld.py').read_text()
-  assert "load_oob(open_file_chunked(pkl_path or modeld_pkl_path(usbgpu)))" in source
+  assert "load_oob(open_file_chunked(pkl_path or modeld_pkl_path()))" in source
   assert 'split_output' not in source
   assert 'shadow_tinygrad' not in source
   assert "self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]" in source
   assert source.index('self.signal_shadow.capture(model_output, self.npy)') < source.index("self.npy['prev_feat'][:] = model_output")
 
 
-@pytest.mark.parametrize('external_ready,external_requested', [(True, True), (False, True), (False, False)])
-def test_standby_preserves_internal_model_without_spawning_comparison(external_ready, external_requested):
-  tree = ast.parse((Path(__file__).parents[1] / 'modeld.py').read_text())
-  statement = next(n for n in ast.walk(tree) if isinstance(n, ast.Assign)
-                   and any(isinstance(t, ast.Name) and t.id == 'small_model' for t in n.targets))
-  calls = []
-  def model_state(*args, **kwargs):
-    calls.append((args, kwargs))
-    return 'internal'
-  scope = {'ModelState': model_state, 'vipc_client_main': SimpleNamespace(width=1344, height=760),
-           'model': object() if external_ready else None, 'USBGPU': external_requested,
-           'usbgpu_model_loaded': external_ready}
-  exec(compile(ast.fix_missing_locations(ast.Module(body=[statement], type_ignores=[])), '<standby>', 'exec'), scope)
-  assert scope['small_model'] == 'internal'
-  assert calls == [((1344, 760, False), {'enable_shadow': not external_ready})]
-
-
-@pytest.mark.parametrize('enable_shadow,usbgpu', [(False, False), (False, True), (True, True), (True, False)])
-def test_comparison_gate_skips_artifact_io_and_worker_start(enable_shadow, usbgpu):
+@pytest.mark.parametrize('enable_shadow', [False, True])
+def test_comparison_gate_skips_artifact_io_and_worker_start(enable_shadow):
   tree = ast.parse((Path(__file__).parents[1] / 'modeld.py').read_text())
   statement = next(n for n in ast.walk(tree) if isinstance(n, ast.Assign)
                    and any(isinstance(t, ast.Attribute) and t.attr == 'signal_shadow' for t in n.targets))
   reads, calls = [], []
-  def model_path(external):
-    reads.append(external)
+  def model_path(*args):
+    reads.append(args)
     return Path('/models/base.pkl')
   def optional(path):
     calls.append(path)
     return 'observer'
   model = SimpleNamespace()
-  scope = {'self': model, 'enable_shadow': enable_shadow, 'usbgpu': usbgpu,
+  scope = {'self': model, 'enable_shadow': enable_shadow,
            'modeld_pkl_path': model_path, 'ShadowClient': SimpleNamespace(optional=optional)}
   exec(compile(ast.fix_missing_locations(ast.Module(body=[statement], type_ignores=[])), '<shadow gate>', 'exec'), scope)
-  active = enable_shadow and not usbgpu
+  active = enable_shadow
   assert model.signal_shadow == ('observer' if active else None)
-  assert reads == ([False] if active else [])
+  assert reads == ([()] if active else [])
   assert calls == ([Path('/models/driving_supercombo.onnx')] if active else [])

@@ -13,7 +13,7 @@ class FakeParams:
 class FakeModel:
   fail_student = False
 
-  def __init__(self, cam_w, cam_h, usbgpu, pkl_path=None, *, enable_shadow=True):
+  def __init__(self, cam_w, cam_h, pkl_path=None, *, enable_shadow=True):
     if pkl_path == LIGHTSPEED_STUDENT_PKL and FakeModel.fail_student:
       raise FileNotFoundError("no student pkl")
     self.pkl_path = pkl_path or MODELS_DIR / 'driving_tinygrad.pkl'

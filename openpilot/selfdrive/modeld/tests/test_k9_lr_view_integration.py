@@ -136,9 +136,6 @@ def _run_modeld(monkeypatch, n_frames, params_at, lat_active, real_model_buf=Non
   fake_params = _FakeParams(store)
   monkeypatch.setattr(MD, "Params", lambda *a, **k: fake_params)
   monkeypatch.setattr(desire_helper, "Params", lambda *a, **k: fake_params)
-  for name in ("usbgpu_present", "wait_for_usbgpu_present"):
-    monkeypatch.setattr(MD, name, lambda *a, **k: False)
-  monkeypatch.setattr(MD, "usbgpu_compiled_path", lambda *a, **k: None)
   monkeypatch.setattr(MD, "config_realtime_process", lambda *a, **k: None)
 
   class FakeVipc:                            # the real receive_camera_pair() reads recv() / frame_id / timestamps

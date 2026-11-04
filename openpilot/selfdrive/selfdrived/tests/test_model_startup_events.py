@@ -18,8 +18,8 @@ def load_policy():
   tree = ast.parse((ROOT / 'selfdrived.py').read_text(encoding='utf8'))
   cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'SelfdriveD')
   method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == 'update_events')
-  start = next(i for i, n in enumerate(method.body) if isinstance(n, ast.Assign) and
-               any(isinstance(t, ast.Name) and t.id == 'big_model_settling' for t in n.targets))
+  start = next(i for i, n in enumerate(method.body) if isinstance(n, ast.If) and
+               ast.unparse(n.test) == "not self.sm.valid['radarState']")
   end = next(i for i, n in enumerate(method.body) if isinstance(n, ast.If) and
              ast.unparse(n.test) == "not self.sm.valid['pandaStates']")
   pose = next(n for n in method.body if isinstance(n, ast.If) and ast.unparse(n.test) == 'not self.CP.notCar')
@@ -80,49 +80,17 @@ class Messages(dict):
     return self.healthy
 
 
-def drive(*, valid=False, healthy=False, settling=True, enabled=False):
-  return SimpleNamespace(sm=Messages(valid=valid, healthy=healthy), events=Events(), enabled=enabled, model_startup_complete=False,
-                         CP=SimpleNamespace(notCar=False), _big_model_settling=lambda: settling)
-
-
-def test_cold_model_startup_blocks_enable_until_downstream_readiness():
-  check = load_policy()
-  state = drive()
-  state.sm['livePose'].inputsOK = False
-  machine = state_machine()
-  for seconds in (6, 29.6, 30.0):
-    state.events.clear()
-    check(state)
-    assert state.events == {EventName.selfdriveInitializing}, seconds
-    state.events.add(EventName.buttonEnable)
-    assert machine.update(state.events) == (False, False)
-  # Radar recovers before pose, which must still block engagement.
-  state.sm.valid['radarState'] = True
-  state.events.clear()
-  check(state)
-  assert EventName.selfdriveInitializing in state.events
-  state.events.add(EventName.buttonEnable)
-  assert machine.update(state.events) == (False, False)
-  state.sm.healthy = state.sm['livePose'].inputsOK = True
-  state.events.clear()
-  check(state)
-  assert not state.events
-  state.events.add(EventName.buttonEnable)
-  assert machine.update(state.events) == (True, True)
-  # A later dropout after readiness must not return to the startup exemption,
-  # even if the five-second settling interval has not elapsed yet.
-  state.sm.healthy = state.sm.valid['radarState'] = False
-  state.events.clear()
-  check(state)
-  assert state.events == {EventName.commIssue}
+def drive(*, valid=False, healthy=False, enabled=False):
+  return SimpleNamespace(sm=Messages(valid=valid, healthy=healthy), events=Events(), enabled=enabled,
+                         CP=SimpleNamespace(notCar=False))
 
 
 @pytest.mark.parametrize('fault,event', [('canError', EventName.canError),
   ('radarUnavailableTemporary', EventName.radarTempUnavailable),
   ('radarFault', EventName.radarFault), ('wrongConfig', EventName.radarFault)])
-@pytest.mark.parametrize('settling,enabled', [(True, False), (True, True), (False, False), (False, True)])
-def test_real_radar_faults_keep_no_entry_and_disable(fault, event, settling, enabled):
-  state = drive(settling=settling, enabled=enabled)
+@pytest.mark.parametrize('enabled', [False, True])
+def test_real_radar_faults_keep_no_entry_and_disable(fault, event, enabled):
+  state = drive(enabled=enabled)
   setattr(state.sm['radarState'].radarErrors, fault, True)
   load_policy()(state)
   assert event in state.events
@@ -135,9 +103,9 @@ def test_real_radar_faults_keep_no_entry_and_disable(fault, event, settling, ena
   assert machine.state == (State.disabled if fault == 'canError' else State.softDisabling)
 
 
-@pytest.mark.parametrize('settling,enabled', [(False, False), (False, True), (True, True)])
-def test_unexplained_invalid_radar_is_communication_error_outside_disabled_startup(settling, enabled):
-  state = drive(settling=settling, enabled=enabled)
+@pytest.mark.parametrize('enabled', [False, True])
+def test_unexplained_invalid_radar_is_communication_error_outside_disabled_startup(enabled):
+  state = drive(enabled=enabled)
   load_policy()(state)
   assert state.events == {EventName.commIssue}
   machine = state_machine()
@@ -159,33 +127,6 @@ def test_pose_sensor_or_sanity_failure_is_not_relabelled_as_startup(field):
   assert EventName.selfdriveInitializing not in state.events
   if field == 'posenetOK':
     assert EventName.posenetInvalid in state.events
-
-
-def test_settling_ends_five_seconds_after_loading_finishes():
-  tree = ast.parse((ROOT / 'selfdrived.py').read_text(encoding='utf8'))
-  method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == '_big_model_settling')
-  clock = SimpleNamespace(now=100.0)
-  ns = {'time': SimpleNamespace(monotonic=lambda: clock.now)}
-  exec(compile(ast.Module(body=[method], type_ignores=[]), '<settling>', 'exec'), ns)
-  params = {'UsbGpuLoading': True, 'UsbGpuActive': True}
-  state = SimpleNamespace(params=SimpleNamespace(get_bool=params.__getitem__), big_model_loading=False,
-                          big_model_active=False, big_model_ready_t=0.0)
-  check = ns['_big_model_settling']
-  assert check(state)
-  params['UsbGpuLoading'] = False
-  assert check(state)
-  clock.now += 4.99
-  assert check(state)
-  clock.now += 0.01
-  assert not check(state)
-
-
-def test_missing_first_pose_is_startup_not_a_sensor_fault():
-  state = drive()
-  state.sm.seen['livePose'] = False
-  state.sm['livePose'].inputsOK = state.sm['livePose'].sensorsOK = state.sm['livePose'].posenetOK = False
-  load_policy()(state)
-  assert state.events == {EventName.selfdriveInitializing}
 
 
 def test_engaged_communication_failure_is_not_exempt_during_gpu_settling():

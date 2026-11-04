@@ -7433,7 +7433,6 @@ class ClusterUiRenderer:
             and state.cruise_gap is None
             and not self._cruise_set_visible(state)
             and state.lfa_active is None
-            and not state.egpu_active
             and not state.external_compute_label
         ):
             return
@@ -7443,7 +7442,8 @@ class ClusterUiRenderer:
         self._draw_lfa_status_icon(state, TOP_STATUS_CENTER_Y + LFA_STATUS_ICON_SIZE * 0.5)
 
     def _draw_egpu_status(self, state: ClusterUiState) -> None:
-        label = 'eGPU' if state.egpu_active else state.external_compute_label
+        # Status slot shared with the Jetson HUD (tools/jetlink/hud_health.py overrides it).
+        label = state.external_compute_label
         if not label:
             return
         width = max(EGPU_STATUS_W, len(label) * EGPU_STATUS_FONT_SIZE * 0.7 + 16)

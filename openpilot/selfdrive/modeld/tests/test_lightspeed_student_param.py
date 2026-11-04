@@ -9,10 +9,10 @@ OPENPILOT = Path(__file__).resolve().parents[3]
 class FakeModel:
   created: list = []
 
-  def __init__(self, cam_w, cam_h, usbgpu, pkl_path=None, *, enable_shadow=True):
+  def __init__(self, cam_w, cam_h, pkl_path=None, *, enable_shadow=True):
     if pkl_path == LIGHTSPEED_STUDENT_PKL and FakeModel.fail_student:
       raise RuntimeError("student load failed")
-    self.pkl_path = pkl_path or modeld_pkl_path(usbgpu)
+    self.pkl_path = pkl_path or modeld_pkl_path()
     self.state = []
     FakeModel.created.append(self)
 
@@ -41,7 +41,7 @@ def test_on_student_failure_falls_back_with_new_state():
 
 
 def test_stock_path_does_not_depend_on_student_files():
-  assert modeld_pkl_path(False) == MODELS_DIR / 'driving_tinygrad.pkl'
+  assert modeld_pkl_path() == MODELS_DIR / 'driving_tinygrad.pkl'
 
 
 def test_param_default_off_and_exposed():

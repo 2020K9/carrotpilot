@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """Download the light speed ONNX and cut it down for the built-in (C4) GPU, without retraining.
 
-  python3 lightspeed_c4_fetch.py            # writes models/lightspeed_c4.onnx (reduced)
-  BUILD_LIGHTSPEED_C4=1 scons openpilot/selfdrive/modeld   # compiles lightspeed_c4_driving_tinygrad.pkl
+  python3 lightspeed_c4_fetch.py   # rebuilds models/lightspeed_c4_direct.onnx (needs the onnx package; dev machine only)
+
+The reduced ONNX is committed (C4 has no onnx package and should not download 790 MB), and scons compiles it to
+lightspeed_c4_direct_driving_tinygrad.pkl like the stock model. A failed compile never fails the build. modeld uses
+it only when selected (see helpers.lightspeed_c4_direct_selected) and falls back to the stock model if it can't load.
 
 Reduction (100.2 -> 7.2 GFLOP by ONNX count):
   - vision ConvNeXt: keep the first block of each stage (stage 2: 1 of 27), skip the rest through their residuals
   - temporal transformers (on/off policy): skip all layers through their residuals
   - every remaining GELU MLP keeps its strongest hidden units (|W1 col|*|W2 row|): 1024->4096 MLPs to 1024, others 1/8
 No retraining, so the outputs move a lot (CPU, 80 frames vs the full model: 5 s path lateral 0.54 m mean / 2.4 m max,
-speed 4.7 m/s mean). Delete models/lightspeed_c4* to go back to stock.
+speed 4.7 m/s mean).
 """
 import argparse
 import hashlib
 import json
+import os
 import urllib.request
 from pathlib import Path
 
@@ -142,25 +146,53 @@ def shrink(src, dst):
   dropped = drop_blocks(nodes, KEEP)
   narrowed = narrow_mlps(model, nodes)
   del model.graph.value_info[:]
-  onnx.save(Extractor(model).extract_model(ins, outs), str(dst))
+  out = Extractor(model).extract_model(ins, outs)
+  # extract_model drops the model metadata, but modeld/compile_modeld need output_slices from it
+  del out.metadata_props[:]
+  out.metadata_props.extend(model.metadata_props)
+  assert 'output_slices' in {m.key for m in out.metadata_props}, 'source onnx has no output_slices metadata'
+  dst = Path(dst)
+  tmp = dst.with_name(dst.name + '.tmp')
+  try:
+    onnx.save(out, str(tmp))
+    os.replace(tmp, dst)
+  finally:
+    tmp.unlink(missing_ok=True)
   print(f'dropped {dropped} blocks/layers, narrowed {narrowed} MLPs')
+
+
+def download(url, dst):
+  tmp = dst.with_name(dst.name + '.part')
+  try:
+    urllib.request.urlretrieve(url, tmp)
+    os.replace(tmp, dst)
+  finally:
+    tmp.unlink(missing_ok=True)
 
 
 def main():
   entry = json.loads(CATALOG.read_text())['light-speed']['c4_builtin']
   ap = argparse.ArgumentParser()
   ap.add_argument('--src', type=Path, help='already downloaded full light speed onnx')
+  ap.add_argument('--out', type=Path, default=LIGHTSPEED_C4_ONNX)
   args = ap.parse_args()
 
-  src = args.src or LIGHTSPEED_C4_ONNX.with_suffix('.src.onnx')
-  if not src.is_file() or sha256(src) != entry['sha256']:
-    print('downloading', entry['url'])
-    urllib.request.urlretrieve(entry['url'], src)
-  assert sha256(src) == entry['sha256'], 'sha256 mismatch'
-  shrink(src, LIGHTSPEED_C4_ONNX)
-  if args.src is None:
-    src.unlink()
-  print('wrote', LIGHTSPEED_C4_ONNX)
+  src = args.src or args.out.with_name('lightspeed_c4.src.onnx')
+  try:
+    if not src.is_file() or sha256(src) != entry['sha256']:
+      print('downloading', entry['url'])
+      download(entry['url'], src)
+    assert sha256(src) == entry['sha256'], 'sha256 mismatch'
+    shrink(src, args.out)
+    got = sha256(args.out)
+    # the cut is deterministic: the same source must give the committed file
+    if got != entry['reduced_sha256']:
+      args.out.unlink(missing_ok=True)
+      raise AssertionError(f'reduced sha256 {got} != catalog {entry["reduced_sha256"]}')
+  finally:
+    if args.src is None:
+      src.unlink(missing_ok=True)
+  print('wrote', args.out)
 
 
 if __name__ == '__main__':

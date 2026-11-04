@@ -70,7 +70,7 @@ BROADCAST_NETWORK_ERROR_LOG_INTERVAL = 30.0
 AUTO_ONROAD_TMUX_DELAY_SECONDS = float(os.environ.get("CARROT_AUTO_ONROAD_TMUX_DELAY_SECONDS", "60"))
 CARROT_CAN_ERROR_TMUX_DELAY_SECONDS = float(os.environ.get("CARROT_CAN_ERROR_TMUX_DELAY_SECONDS", "5"))
 CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS = 60.0
-CARROT_EXCEPTION_TMUX_REASONS = ("exception", "log", "tmux_send", "can_error", "spi_error", "egpu_error")
+CARROT_EXCEPTION_TMUX_REASONS = ("exception", "log", "tmux_send", "can_error", "spi_error")
 DISCORD_TMUX_FILE_MAX_BYTES = 8 * 1024 * 1024
 EXCEPTION_DISCORD_WEBHOOK_KEY = b"carrot-exception-v1"
 EXCEPTION_DISCORD_WEBHOOK_OBFUSCATED = (
@@ -787,8 +787,6 @@ class CarrotMan:
     try:
       subprocess.run("rm -f /data/media/tmux.log; tmux capture-pane -pq -S-1000 > /data/media/tmux.log", shell=True, capture_output=True, text=False, check=True)
       subprocess.run("/data/openpilot/openpilot/selfdrive/apilot.py", shell=True, capture_output=True, text=False)
-      from openpilot.common.egpu_diagnostics import append_report
-      append_report('/data/media/tmux.log')
       return True
     except Exception as e:
       print(f"TMUX creation error: {e}")

@@ -146,7 +146,6 @@ class JoiningModel:
     self.client = None
     self.connection = None
     self.active = False
-    self.usbgpu = False
     self.vision_input_names = ['img', 'big_img']
     self.packed = np.zeros(SPEC.packed_nelem, np.float32)
     self.spec = SPEC
@@ -265,7 +264,7 @@ class JoiningModel:
           self.active = True
           self.error = ''
           self.next_status = 0
-        # As in the generic eGPU runtime, run the full recurrent graph for each
+        # Run the full recurrent graph for each
         # received pair. Camera gaps still propagate unchanged into pose validity.
         parsed = parse_outputs(self.parser, self.spec, result)
         if os.getenv('SEND_RAW_PRED'):

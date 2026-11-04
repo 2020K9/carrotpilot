@@ -52,11 +52,12 @@
     "jetson_spec": "light-speed.json",
     "jetson_release": "light-speed-release.json",
     "c4_builtin": {
-      "filename": "lightspeed_c4.onnx",
+      "filename": "lightspeed_c4_direct.onnx",
       "size": 792305602,
       "sha256": "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21",
       "url": "https://upload.shind0.synology.me/models/comma4-big-light-speed-f22b8b34/big_driving_supercombo.onnx",
-      "reduced_gflops": 7.19
+      "reduced_gflops": 7.19,
+      "reduced_sha256": "e35ae4c45490455e40eb162fca65ca9ba27f32b191cdb0143d32755f07efeb6d"
     }
   }
 }

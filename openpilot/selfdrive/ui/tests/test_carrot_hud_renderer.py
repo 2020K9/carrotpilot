@@ -611,7 +611,7 @@ def test_render_keeps_sampling_and_interactions_live(hud_module, monkeypatch, re
   monkeypatch.setattr(renderer, "_refresh_hud_params", lambda now: calls.append(("params", now)))
   monkeypatch.setattr(renderer, "_draw_date_time", lambda rect: calls.append("date"))
   monkeypatch.setattr(renderer, "_draw_tpms", lambda rect: calls.append("tpms"))
-  monkeypatch.setattr(renderer, "_draw_egpu_badge", lambda rect: calls.append("egpu"))
+  monkeypatch.setattr(renderer, "_draw_model_badge", lambda rect: calls.append("egpu"))
   monkeypatch.setattr(renderer, "_draw_cruise_speed_animation", lambda rect: calls.append("animation"))
   monkeypatch.setattr(module.rl, "draw_rectangle_gradient_v", lambda *args: calls.append("header"))
   monkeypatch.setattr(module.time, "monotonic", lambda: 12.5)

@@ -23,7 +23,7 @@ def load_policy(monkeypatch, active=False, device=True):
 
 
 @pytest.mark.parametrize('codec', ['h264', 'jpeg', 'png'])
-@pytest.mark.parametrize('active,expected', [(False, 10), (True, 5)])
+@pytest.mark.parametrize('active,expected', [(False, 10)])
 def test_device_live_rate_overrides_cli_and_old_environment(monkeypatch, codec, active, expected):
   monkeypatch.setenv('CLUSTER_AUTORUN_FPS', '60')
   scope, state = load_policy(monkeypatch, active)
@@ -33,8 +33,6 @@ def test_device_live_rate_overrides_cli_and_old_environment(monkeypatch, codec, 
   assert fps == controller_fps == expected and auto
   assert scope['resolved_h264_encoder_fps'](fps, 30) == expected
   assert source == 'fixed USB policy'
-  state['active'] = not active
-  assert reader.read() == (10 if active else 5)
 
 
 def test_desktop_diagnostic_fps_stays_explicit(monkeypatch):
@@ -50,14 +48,3 @@ def test_missing_params_uses_ten_fps(monkeypatch):
   reader = scope['ClusterUsbFpsReader']()
   reader._params = None
   assert reader.read() == 10
-
-
-@pytest.mark.parametrize('configured,limited', [(15, 10), (10, 10), (4, 4)])
-def test_wifi_rate_allows_ten_fps_with_live_egpu_cap(monkeypatch, configured, limited):
-  scope, state = load_policy(monkeypatch)
-  reader = scope['ClusterUsbFpsReader'](configured, egpu_max_fps=10)
-  assert reader.read() == configured
-  state['active'] = True
-  assert reader.read() == limited
-  state['active'] = False
-  assert reader.read() == configured

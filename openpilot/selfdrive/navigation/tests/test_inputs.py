@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 import numpy as np
 import pytest
 
-from openpilot.selfdrive.modeld.generic_model_runtime import host_input_layout, model_metadata
+from openpilot.selfdrive.modeld.artifact_metadata import host_input_layout, model_metadata
 from openpilot.selfdrive.navigation.helpers import navigation_input
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.navigation.source import RouteSource, coordinates

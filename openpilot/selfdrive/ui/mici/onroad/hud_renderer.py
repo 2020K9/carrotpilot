@@ -13,7 +13,6 @@ from openpilot.selfdrive.carrot.deceleration_source import (
 # from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar # 아이콘에 토크 적용: 토크바 미사용
 from openpilot.selfdrive.ui.mici.onroad import blend_colors
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
-from openpilot.system.hardware.usbgpu import usbgpu_badge_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -319,32 +318,15 @@ class HudRenderer(Widget):
 
     self._draw_steering_wheel(rect)
 
-    self._draw_egpu_badge(rect)
+    self._draw_model_badge(rect)
 
 
-  def _draw_egpu_badge(self, rect: rl.Rectangle) -> None:
-    # Keep runtime state visible while the shared USB hub re-enumerates; a
-    # transient missing sysfs sample must not hide loading or failure details.
-    egpu_shown = (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
-                  ui_state.usbgpu_present or ui_state.usbgpu_active or
-                  ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed)
-    lightspeed = getattr(ui_state, 'lightspeed_badge', None)
-    if not (egpu_shown or lightspeed):
+  def _draw_model_badge(self, rect: rl.Rectangle) -> None:
+    # Jetlink state wins over the built-in model badge (same priority as before).
+    badge = getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'lightspeed_badge', None)
+    if not badge:
       return
-
-    state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
-                               ui_state.usbgpu_active, ui_state.usbgpu_startup_failed,
-                               ui_state.usbgpu_compile_pending)
-    text = "eGPU REBOOT" if state == "compile_pending" else "eGPU ERROR" if state == "error" else "eGPU"
-    if (getattr(ui_state, "usbgpu_delivery_badge", None) and
-        not (ui_state.usbgpu_active or ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed)):
-      text, state = ui_state.usbgpu_delivery_badge
-    if getattr(ui_state, 'jetlink_badge', None) and not ui_state.usbgpu_active:
-      text, state = ui_state.jetlink_badge
-    if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
-      text, state = ui_state.usbgpu_recovery_badge
-    if lightspeed and not egpu_shown:
-      text, state = lightspeed
+    text, state = badge
     font = gui_app.font(FontWeight.DISPLAY) if not text.isascii() else self._font_semi_bold
     font_size = 22
     text_size = measure_text_cached(font, text, font_size)

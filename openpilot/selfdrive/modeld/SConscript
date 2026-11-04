@@ -7,8 +7,7 @@ from openpilot.common.file_chunker import chunk_file, get_chunk_targets, get_exi
 from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
 from openpilot.common.transformations.model import MEDMODEL_INPUT_SIZE, DM_INPUT_SIZE
 from openpilot.selfdrive.modeld.constants import ModelConstants
-from openpilot.selfdrive.modeld.big_model import active_manifest, active_model_path
-from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, LIGHTSPEED_C4_ONNX, LIGHTSPEED_C4_PKL, MODELS_DIR, modeld_pkl_path, \
+from openpilot.selfdrive.modeld.helpers import optional_compile_cmd, TG_INPUT_DEVICES_PATH, LIGHTSPEED_C4_ONNX, LIGHTSPEED_C4_PKL, MODELS_DIR, \
   LIGHTSPEED_STUDENT_ONNX, LIGHTSPEED_STUDENT_PKL
 
 
@@ -31,7 +30,7 @@ def estimate_pickle_max_size(onnx_size):
   return 2.0 * onnx_size + 10 * 1024 * 1024
 
 # get fastest TG config
-# probe in subprocess so usbgpu locks gets released on process exit
+# probe in subprocess so device locks get released on process exit
 def probe_devices():
   return set(subprocess.run(
     [sys.executable, '-c', 'from tinygrad import Device\nprint("\\n".join(Device.get_available_devices()))'],
@@ -51,21 +50,11 @@ else:
 tg_devices = { # which device to put jit inputs to at runtime
   'openpilot.selfdrive.modeld.modeld': {
     'default': {'WARP_DEV': tg_backend, 'QUEUE_DEV': tg_backend},
-    'usbgpu': {'WARP_DEV': tg_backend, 'QUEUE_DEV': 'AMD'}
   },
   'openpilot.selfdrive.modeld.dmonitoringmodeld': {
     'default': {'DEV': tg_backend}
   },
 }
-
-# build.py checks for the hardware before requesting this optional target.
-# Do not repeat the live USB check while SCons is defining its graph: a hub
-# re-enumeration in that instant would omit the target entirely.
-USBGPU = os.getenv('BUILD_USB_GPU_MODEL') == '1'
-if USBGPU:
-  usbgpu_tg_flags = f'DEBUG=2 DEV=USB+AMD:LLVM WARP_DEV={tg_backend} FLOAT16=1 JIT_BATCH_SIZE=0 GMMU=0 TC_OPT=2'
-  # the USB+AMD GPU takes an exclusive flock; serialize all targets that touch it
-  usbgpu_lock = File("models/.usb_gpu.lock").abspath
 
 def write_tg_devices(target, source, env):
   with open(str(target[0]), "w") as f:
@@ -95,23 +84,18 @@ frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
 model_builds = []
 regular_prefix = 'big_' if os.getenv('BIG_INTO_SMALL') else ''
 regular_onnx = File(f"models/{regular_prefix}driving_supercombo.onnx").abspath
-model_builds.append((False, MODELS_DIR / 'driving_tinygrad.pkl', get_existing_chunks(regular_onnx), regular_onnx, tg_flags))
+model_builds.append((MODELS_DIR / 'driving_tinygrad.pkl', get_existing_chunks(regular_onnx), regular_onnx, tg_flags))
 
-# opt-in only: the built-in light speed needs lightspeed_c4_fetch.py first and a lot of build memory
-if os.getenv('BUILD_LIGHTSPEED_C4') == '1' and LIGHTSPEED_C4_ONNX.is_file():
-  model_builds.append((False, LIGHTSPEED_C4_PKL, [str(LIGHTSPEED_C4_ONNX)], str(LIGHTSPEED_C4_ONNX), tg_flags))
+# directly reduced light speed (committed onnx made by lightspeed_c4_fetch.py), used only when selected at modeld
+# start (helpers.lightspeed_c4_direct_selected); BUILD_LIGHTSPEED_C4=0 skips it
+if os.getenv('BUILD_LIGHTSPEED_C4') != '0' and LIGHTSPEED_C4_ONNX.is_file():
+  model_builds.append((LIGHTSPEED_C4_PKL, [str(LIGHTSPEED_C4_ONNX)], str(LIGHTSPEED_C4_ONNX), tg_flags))
 
 # student model, used only when the LightspeedStudentModel param is on at modeld start
 if LIGHTSPEED_STUDENT_ONNX.is_file():
-  model_builds.append((False, LIGHTSPEED_STUDENT_PKL, [str(LIGHTSPEED_STUDENT_ONNX)], str(LIGHTSPEED_STUDENT_ONNX), tg_flags))
+  model_builds.append((LIGHTSPEED_STUDENT_PKL, [str(LIGHTSPEED_STUDENT_ONNX)], str(LIGHTSPEED_STUDENT_ONNX), tg_flags))
 
-if USBGPU:
-  big_manifest = active_manifest()
-  big_onnx = active_model_path()
-  if big_manifest is not None and not big_manifest.precompiled_only and big_onnx is not None:
-    model_builds.append((True, modeld_pkl_path(True, big_manifest.sha256), [str(big_onnx)], str(big_onnx), usbgpu_tg_flags))
-
-for usbgpu, pkl_path, driving_onnx_deps, driving_onnx, cmd_flags in model_builds:
+for pkl_path, driving_onnx_deps, driving_onnx, cmd_flags in model_builds:
   target_pkl_path = File(pkl_path).abspath
   camera_res_args = ' '.join(f'{cw}x{ch}' for cw, ch in CAMERA_CONFIGS)
   # CPU 7 is isolated with isolcpus on AGNOS, so explicitly pin the model
@@ -124,11 +108,11 @@ for usbgpu, pkl_path, driving_onnx_deps, driving_onnx, cmd_flags in model_builds
         f'--output {target_pkl_path} --frame-skip {frame_skip}')
   # the student build must never fail the whole build: on failure leave an empty manifest so
   # the student load fails at modeld start and it falls back to the stock model
-  optional = pkl_path == LIGHTSPEED_STUDENT_PKL
+  optional = pkl_path in (LIGHTSPEED_STUDENT_PKL, LIGHTSPEED_C4_PKL)
   if optional:
     # drop any stale/partial pkl so a failed compile always leaves the empty manifest
-    cmd = (f'rm -f {target_pkl_path}; {cmd} || (rm -f {target_pkl_path}; '
-           f'echo "  [LIGHTSPEED STUDENT] compile failed; stock model unaffected")')
+    tag = 'LIGHTSPEED STUDENT' if pkl_path == LIGHTSPEED_STUDENT_PKL else 'LIGHTSPEED C4 DIRECT'
+    cmd = optional_compile_cmd(cmd, target_pkl_path, tag)
   onnx_sizes_sum = sum(os.path.getsize(f) for f in driving_onnx_deps)
   chunk_targets = get_chunk_targets(target_pkl_path, estimate_pickle_max_size(onnx_sizes_sum))
   def do_chunk(target, source, env, pkl=target_pkl_path, chunks=chunk_targets, optional=optional):
@@ -139,14 +123,11 @@ for usbgpu, pkl_path, driving_onnx_deps, driving_onnx, cmd_flags in model_builds
         f.write('0')
       return
     chunk_file(pkl, chunks)
-  node = lenv.Command(
+  lenv.Command(
     chunk_targets,
     tinygrad_files + compile_modeld_script + driving_onnx_deps + [Value(chunk_targets), chunker_file],
     [cmd, Action(do_chunk, "  [CHUNK] $TARGET")],
   )
-  if usbgpu:
-    lenv.SideEffect(usbgpu_lock, node)
-    lenv.NoCache(node)
 
 # get model metadata
 fn = File(f"models/dmonitoring_model").abspath
