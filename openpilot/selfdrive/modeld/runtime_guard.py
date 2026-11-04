@@ -3,8 +3,13 @@
 Policy:
   * A non-finite output frame is never published (modeld publishes nothing for that frame;
     diagnostics records published=0). The previous output is never re-sent as a new one.
-  * Student / direct model: replaced by a freshly built stock model (new ModelState, so the
-    old recurrent/feature buffers are dropped). LightspeedModelStatus -> stock, reason "runtime nonfinite".
+  * Student / direct model: replaced by a freshly built stock model (new ModelState: the model's
+    internal state - recurrent/feature buffers, input queues - is reset). LightspeedModelStatus -> stock,
+    reason "runtime nonfinite".
+  * Not reset: modeld's prev_action (and other main-loop state outside the model) is kept, so the
+    first published actions after a switch are smoothed from the last finite action of the old model
+    (desiredAcceleration / desiredVelocity, tau LONG_SMOOTH_SECONDS 0.3 s; desiredCurvature is held
+    from prev_action below MIN_LAT_CONTROL_SPEED).
   * Stock model: rebuilt fresh at most MAX_STOCK_RETRIES times in a row. One more non-finite frame
     after that raises ModelOutputError, so modeld exits and the existing process-not-running /
     commIssue path reports it. A finite frame resets the counter.
