@@ -72,7 +72,7 @@ class VisionRenderer(Widget):
     if not ui_state.share_data:
       return
     state = vision_display_state(self._packet, time.monotonic_ns())
-    # Above the DM inset, below the model badge, beside the relocated right BSD label/bar.
+    # Above the DM inset, below eGPU, beside the relocated right BSD label/bar.
     card = rl.Rectangle(rect.x + rect.width - 94, rect.y + rect.height - 184, 84, 78)
     rl.draw_rectangle_rounded(card, 0.14, 6, rl.Color(0, 0, 0, 190))
     color = CYAN if state.state == "running" else AMBER if state.state == "stale" else GRAY

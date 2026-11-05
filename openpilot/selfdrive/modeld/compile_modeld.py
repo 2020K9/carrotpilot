@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import atexit
-import contextlib
 import math
 import os
 import pickle
@@ -57,22 +56,6 @@ from tinygrad.engine.jit import TinyJit
 NV12Frame = namedtuple("NV12Frame", ['width', 'height', 'stride', 'y_height', 'uv_height', 'size'])
 WARP_INPUTS = ['tfm', 'big_tfm']
 POLICY_INPUTS = ['img_q', 'big_img_q', 'feat_q', 'desire_q', 'packed_npy_inputs']
-
-
-def is_stateful(input_shapes):
-  # stateful models (e.g. light_speed) take the newest warped frames as new_img and keep
-  # their own history in state_* inputs, returned updated as next_state_* outputs
-  return 'new_img' in input_shapes
-
-
-def state_names(input_shapes):
-  return [k for k in input_shapes if k.startswith('state_')]
-
-
-def policy_input_keys(input_shapes):
-  if is_stateful(input_shapes):
-    return state_names(input_shapes) + ['packed_npy_inputs']
-  return POLICY_INPUTS
 
 UV_SCALE_MATRIX = np.array([[0.5, 0, 0], [0, 0.5, 0], [0, 0, 1]], dtype=np.float32)
 UV_SCALE_MATRIX_INV = np.linalg.inv(UV_SCALE_MATRIX)
@@ -153,9 +136,6 @@ def make_frame_prepare(nv12: NV12Frame, model_w, model_h):
 
 
 def make_warp_input_queues(vision_input_shapes, frame_skip, device):
-  if is_stateful(vision_input_shapes):
-    npy = {k: np.zeros((3, 3), dtype=np.float32) for k in WARP_INPUTS}
-    return {k: Tensor(v, device='NPY').realize() for k, v in npy.items()}, npy
   img = vision_input_shapes['img']  # (1, 12, 128, 256)
   n_frames = img[1] // 6
   img_buf_shape = (frame_skip * (n_frames - 1) + 1, 6, img[2], img[3])
@@ -173,9 +153,6 @@ def make_warp_input_queues(vision_input_shapes, frame_skip, device):
 
 
 def get_policy_npy_shapes(input_shapes):
-  if is_stateful(input_shapes):
-    shapes = {k: tuple(input_shapes[k]) for k in ('desire', 'traffic_convention', 'action_t')}
-    return shapes, [math.prod(s) for s in shapes.values()]
   dp = input_shapes['desire_pulse']  # (1, 25, 8)
   tc = input_shapes['traffic_convention']  # (1, 2)
   at = input_shapes['action_t']  # (1, 2)
@@ -188,14 +165,6 @@ def get_policy_npy_shapes(input_shapes):
 
 def make_input_queues(input_shapes, frame_skip, device):
   input_queues, npy = make_warp_input_queues(input_shapes, frame_skip, device)
-  if is_stateful(input_shapes):
-    shapes, sizes = get_policy_npy_shapes(input_shapes)
-    packed_npy_inputs = np.zeros(sum(sizes), dtype=np.float32)
-    npy.update({k: v.reshape(s) for (k, s), v in zip(shapes.items(), np.split(packed_npy_inputs, np.cumsum(sizes[:-1])), strict=True)})
-    input_queues.update({k: Tensor(np.zeros(input_shapes[k], dtype=np.uint8 if 'img' in k else np.float32), device=device).contiguous().realize()
-                         for k in state_names(input_shapes)})
-    input_queues['packed_npy_inputs'] = Tensor(packed_npy_inputs, device='NPY').realize()
-    return input_queues, npy
 
   fb = input_shapes['features_buffer']  # (1, T-1, ...), past features only; the model appends the current frame's feature
   feat_dim = math.prod(fb[2:])
@@ -241,32 +210,7 @@ def make_warp(nv12, model_w, model_h, frame_skip):
   return warp
 
 
-def make_stateful_run_policy(model_runner, model_metadata):
-  input_shapes = model_metadata['input_shapes']
-  npy_shapes, npy_sizes = get_policy_npy_shapes(input_shapes)
-  names = state_names(input_shapes)
-
-  def run_policy(warped, packed_npy_inputs, **states):
-    packed_npy_inputs = packed_npy_inputs.to(Device.DEFAULT)
-    warped = warped.to(Device.DEFAULT)
-    Tensor.realize(packed_npy_inputs, warped)
-    inputs = {k: t.reshape(s) for (k, s), t in zip(npy_shapes.items(), packed_npy_inputs.split(npy_sizes), strict=True)}
-    inputs['new_img'] = warped.reshape(input_shapes['new_img'])
-    inputs.update({k: states[k] for k in names})
-    outs = model_runner(inputs)
-    # write the model's next state back into the persistent state buffers
-    for k in names:
-      states[k].assign(outs['next_' + k].cast(states[k].dtype).contiguous())
-    # return only the output: from a replayed (pickled) jit, returned input buffers are the captured ones
-    out = outs['outputs'].cast('float32')
-    Tensor.realize(out, *(states[k] for k in names))
-    return out,
-  return run_policy
-
-
 def make_run_policy(model_runner, model_metadata, frame_skip):
-  if is_stateful(model_metadata['input_shapes']):
-    return make_stateful_run_policy(model_runner, model_metadata)
   sample_desire_fn = partial(sample_desire, frame_skip=frame_skip)
   sample_skip_fn = partial(sample_skip, frame_skip=frame_skip)
   npy_shapes, npy_sizes = get_policy_npy_shapes(model_metadata['input_shapes'])
@@ -296,21 +240,6 @@ def make_run_policy(model_runner, model_metadata, frame_skip):
   return run_policy
 
 
-# NULL (e.g. NULL:IR3:a630, the C4 compile check off-device) has no copyout: ONNX Slice/Reshape
-# consts can't be read back and buffers pickle empty, so it's a compile check only
-NULL_TARGET = Device.DEFAULT.split(':', 1)[0] == 'NULL'
-
-
-def make_null_target_runner(model_path):
-  # parse on CPU and fill the runner's python const cache from one CPU run, then move it to the target
-  from tinygrad.nn.onnx import OnnxRunner
-  target = Device.DEFAULT
-  with Context(DEV='CPU:LLVM'):
-    model_runner = OnnxRunner(model_path)
-    model_runner(model_runner.get_empty_input_data(device='CPU'))
-  return model_runner.to(target)
-
-
 def compile_jit(jit, make_random_inputs, input_keys, make_queues):
   SEED = 42
   def random_inputs_run(fn, seed, test_val=None, test_buffers=None, expect_match=True):
@@ -320,7 +249,6 @@ def compile_jit(jit, make_random_inputs, input_keys, make_queues):
 
     testing = test_val is not None or test_buffers is not None
     n_runs = 1 if testing else 3
-    val = buffers = None
 
     for i in range(n_runs):
       for v in npy.values():
@@ -334,7 +262,7 @@ def compile_jit(jit, make_random_inputs, input_keys, make_queues):
       et = time.perf_counter()
       print(f"  [{i+1}/{n_runs}] enqueue {(mt-st)*1e3:6.2f} ms -- total {(et-st)*1e3:6.2f} ms")
 
-      if i == 0 and not NULL_TARGET:
+      if i == 0:
         val = [np.copy(v.numpy()) for v in outs]
         buffers = [np.copy(v.numpy().copy()) for v in input_queues.values()]
 
@@ -348,9 +276,6 @@ def compile_jit(jit, make_random_inputs, input_keys, make_queues):
 
   print('capture + replay')
   test_val, test_buffers = random_inputs_run(jit, SEED)
-  if NULL_TARGET:
-    print('NULL target: compile check only, no value checks')
-    return jit
   print('pickle round trip')
   with tempfile.TemporaryFile(dir=".") as f:
     dump_oob(jit, f)
@@ -391,17 +316,14 @@ if __name__ == "__main__":
   model_path = read_file_chunked_to_disk(args.onnx)
   model_w, model_h = args.model_size
 
-  model_runner = make_null_target_runner(model_path) if NULL_TARGET else OnnxRunner(model_path)
-  with Context(DEV='CPU:LLVM') if NULL_TARGET else contextlib.nullcontext():
-    out = {'metadata': make_metadata_dict(model_path)}
+  model_runner = OnnxRunner(model_path)
+  out = {'metadata': make_metadata_dict(model_path)}
 
   run_policy_jit = TinyJit(make_run_policy(model_runner, out['metadata'], args.frame_skip), prune=True)
 
   make_policy_queues = partial(make_input_queues, out['metadata']['input_shapes'], args.frame_skip)
-  input_shapes = out['metadata']['input_shapes']
-  img_hw = (input_shapes['new_img'] if is_stateful(input_shapes) else input_shapes['img'])[-2:]
-  make_random_model_inputs = partial(make_random_images, keys=['warped'], shape=(2, 6, *img_hw), device=WARP_DEV)
-  out['run_policy'] = compile_jit(run_policy_jit, make_random_model_inputs, policy_input_keys(input_shapes),
+  make_random_model_inputs = partial(make_random_images, keys=['warped'], shape=(2, 6, *out['metadata']['input_shapes']['img'][2:]), device=WARP_DEV)
+  out['run_policy'] = compile_jit(run_policy_jit, make_random_model_inputs, POLICY_INPUTS,
                                   make_policy_queues)
 
   for cam_w, cam_h in args.camera_resolutions:
@@ -411,9 +333,6 @@ if __name__ == "__main__":
     make_warp_queues = partial(make_warp_input_queues, out['metadata']['input_shapes'], args.frame_skip)
     out[(cam_w,cam_h)] = compile_jit(warp, make_random_warp_inputs, WARP_INPUTS, make_warp_queues)
 
-  if NULL_TARGET:
-    print(f"COMPILE_CHECK_OK on {Device.DEFAULT}; {args.output} not written (NULL buffers have no data)")
-    raise SystemExit(0)
   with open(args.output, "wb") as f:
     dump_oob(out, f)
   validate_model_file(args.output)

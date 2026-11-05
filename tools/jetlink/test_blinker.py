@@ -274,8 +274,7 @@ def test_bundled_driver_sources_match_pinned_manifest():
     assert entry['url'].startswith('https://raw.githubusercontent.com/gregkh/linux/v5.15.148/')
 
 
-@pytest.mark.parametrize('ble,fingerprint', [(False, 'HYUNDAI_IONIQ_5_PE'), (True, 'ANOTHER_CAR')])
-def test_source_uses_time_after_receiving_vehicle_messages(monkeypatch, ble, fingerprint):
+def test_source_uses_time_after_receiving_vehicle_messages(monkeypatch):
   import blink_source as source
   import types
   from contextlib import nullcontext
@@ -290,7 +289,7 @@ def test_source_uses_time_after_receiving_vehicle_messages(monkeypatch, ble, fin
   fake_params.Params = lambda: SimpleNamespace(get=lambda _:b'car-params', get_int=lambda _:0)
   fake_cereal = types.ModuleType('openpilot.cereal')
   fake_cereal.messaging = SimpleNamespace(SubMaster=lambda _:sm)
-  fake_cereal.car = SimpleNamespace(CarParams=SimpleNamespace(from_bytes=lambda _:nullcontext(SimpleNamespace(carFingerprint=fingerprint))))
+  fake_cereal.car = SimpleNamespace(CarParams=SimpleNamespace(from_bytes=lambda _:nullcontext(SimpleNamespace(carFingerprint='HYUNDAI_IONIQ_5_PE'))))
   monkeypatch.setitem(sys.modules, 'openpilot.common.params', fake_params)
   monkeypatch.setitem(sys.modules, 'openpilot.cereal', fake_cereal)
   sock = SimpleNamespace(setblocking=lambda _:None, recv=lambda _:b'', send=lambda raw:sent.append(json.loads(raw)))
@@ -300,7 +299,6 @@ def test_source_uses_time_after_receiving_vehicle_messages(monkeypatch, ble, fin
   monkeypatch.setattr(source.time, 'sleep', lambda _:None)
   monkeypatch.setattr(model, 'read_json', lambda *a:{})
   monkeypatch.setattr(model, 'config', dict)
-  source.main(0, ble=ble)
+  source.main(0)
   assert len(sent) == 1 and sent[0]['ok'] is True
   assert sent[0]['stamp'] == clock[0]
-  assert sent[0]['b1_hold'] == ble

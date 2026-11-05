@@ -83,35 +83,6 @@ def test_live_camera_worker_separates_start_guard_from_old_assist(monkeypatch, t
 
 
 @pytest.mark.parametrize('selection', ['auto', 'qcom'])
-def test_explicit_qcom_also_passes_through_dm_guard(monkeypatch, tmp_path, selection):
-  for name in ['enabled', 'neural_enabled']: (tmp_path/name).write_text('1')
-  (tmp_path/'neural_backend').write_text(selection)
-  calls = []
-  monkeypatch.setattr(worker, 'run_auto', lambda *a: calls.append(a))
-  worker.run(tmp_path, duration=1)
-  assert calls == [(tmp_path, 1)]
-
-
-def test_auto_cpu_is_comparison_only_and_gpu_requires_cache(monkeypatch, tmp_path):
-  from openpilot.selfdrive.modeld import signal_tracking_shadow
-  calls = []
-  monkeypatch.setattr(signal_tracking_shadow, 'run', lambda *a, **k: calls.append(k))
-  worker.run_selected(tmp_path, 'tracking_cpu')
-  assert calls == [dict(comparison_override=True)]
-  with pytest.raises(RuntimeError, match='requires locally validated'):
-    worker.run_selected(tmp_path, 'qcom')
-
-
-@pytest.mark.parametrize("external", [False])
-@pytest.mark.parametrize("enabled,session_off,preview", [(True,False,False), (True,True,False), (False,False,False), (False,False,True), (True,True,True)])
-def test_gpu_selection_preserves_dm_and_preview(external, enabled, session_off, preview):
-  values = dict(UsbGpuActive=external, DriverMonitoringEnabled=enabled,
-                DriverMonitoringSessionDisabled=session_off, IsDriverViewEnabled=preview)
-  selected = worker.automatic_backend(SimpleNamespace(get_bool=values.__getitem__))
-  assert selected == ("qcom" if external and not ((enabled and not session_off) or preview) else "tracking_cpu")
-
-
-@pytest.mark.parametrize('selection', ['auto', 'qcom'])
 @pytest.mark.parametrize('change_dm', [False, True])
 def test_auto_switch_releases_previous_process_and_final_child(monkeypatch, tmp_path, selection, change_dm):
   import multiprocessing
@@ -147,3 +118,32 @@ def test_auto_switch_releases_previous_process_and_final_child(monkeypatch, tmp_
   worker.run_auto(tmp_path)
   assert [c.args[1] for c in children] == ['tracking_cpu', 'qcom', 'tracking_cpu']
   assert all(c.closed and not c.alive for c in children)
+
+
+@pytest.mark.parametrize('selection', ['auto', 'qcom'])
+def test_explicit_qcom_also_passes_through_dm_guard(monkeypatch, tmp_path, selection):
+  for name in ['enabled', 'neural_enabled']: (tmp_path/name).write_text('1')
+  (tmp_path/'neural_backend').write_text(selection)
+  calls = []
+  monkeypatch.setattr(worker, 'run_auto', lambda *a: calls.append(a))
+  worker.run(tmp_path, duration=1)
+  assert calls == [(tmp_path, 1)]
+
+
+@pytest.mark.parametrize('external', [False, True])
+@pytest.mark.parametrize('enabled,session_off,preview', [(True,False,False), (True,True,False), (False,False,False), (False,False,True), (True,True,True)])
+def test_gpu_selection_preserves_dm_and_preview(external, enabled, session_off, preview):
+  values = dict(UsbGpuActive=external, DriverMonitoringEnabled=enabled,
+                DriverMonitoringSessionDisabled=session_off, IsDriverViewEnabled=preview)
+  selected = worker.automatic_backend(SimpleNamespace(get_bool=values.__getitem__))
+  assert selected == ('qcom' if external and not ((enabled and not session_off) or preview) else 'tracking_cpu')
+
+
+def test_auto_cpu_is_comparison_only_and_gpu_requires_cache(monkeypatch, tmp_path):
+  from openpilot.selfdrive.modeld import signal_tracking_shadow
+  calls = []
+  monkeypatch.setattr(signal_tracking_shadow, 'run', lambda *a, **k: calls.append(k))
+  worker.run_selected(tmp_path, 'tracking_cpu')
+  assert calls == [dict(comparison_override=True)]
+  with pytest.raises(RuntimeError, match='requires locally validated'):
+    worker.run_selected(tmp_path, 'qcom')

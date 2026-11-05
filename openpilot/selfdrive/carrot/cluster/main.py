@@ -288,12 +288,24 @@ class ClusterClockVisibilityParamReader:
 
 
 class ClusterUsbFpsReader:
-    def __init__(self, normal_fps: float = 10.0) -> None:
+    def __init__(self, normal_fps: float = 10.0, *, egpu_max_fps: float = 5.0) -> None:
         self.normal_fps = normal_fps
+        self.egpu_max_fps = egpu_max_fps
         self._params = None
+        try:
+            from openpilot.common.params import Params
+
+            self._params = Params()
+        except Exception:
+            pass
 
     def read(self) -> float:
-        return self.normal_fps
+        if self._params is None:
+            return self.normal_fps
+        try:
+            return min(self.egpu_max_fps, self.normal_fps) if self._params.get_bool("UsbGpuActive") else self.normal_fps
+        except Exception:
+            return self.normal_fps
 
 
 class ClusterHudBrightnessParamReader:
@@ -2043,7 +2055,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Target refresh rate. Use 0 for uncapped/as-fast-as-possible. "
-            "Live USB output on devices is fixed at 10 FPS."
+            "Live USB output on devices is fixed at 10 FPS, or 5 FPS with eGPU."
         ),
     )
     parser.add_argument(

@@ -55,11 +55,6 @@ class ReplayContext:
     self.main_pub = cfg.main_pub
     self.main_pub_drained = cfg.main_pub_drained
     assert len(self.pubs) != 0 or self.main_pub is not None
-    # Liveness hook set by ProcessContainer once the child is started. Without it a dead
-    # child leaves the event waits below blocked forever (poll retries on EINTR, so the
-    # SIGALRM based Timeout never fires and pytest-timeout cannot interrupt it).
-    self.alive_check: Callable[[], bool] | None = None
-    self.wait_timeout = cfg.timeout
 
   def __enter__(self):
     self.open_context()
@@ -94,21 +89,8 @@ class ReplayContext:
   def all_recv_ready_events(self):
     return [man.recv_ready_event for man in self.events.values()]
 
-  def _wait_for_one(self, events) -> int:
-    deadline = time.monotonic() + self.wait_timeout
-    while True:
-      if self.alive_check is not None and not self.alive_check():
-        raise RuntimeError(f"process {self.proc_name!r} died while replay was waiting for it")
-      try:
-        return messaging.wait_for_one_event(events, 1)
-      except RuntimeError as e:
-        if "timed out" not in str(e):
-          raise
-      if time.monotonic() > deadline:
-        raise TimeoutError(f"timed out waiting for {self.proc_name!r} to call recv")
-
   def send_sync(self, pm, endpoint, dat):
-    self._wait_for_one([self.events[endpoint].recv_called_event])
+    self.events[endpoint].recv_called_event.wait()
     self.events[endpoint].recv_called_event.clear()
     pm.send(endpoint, dat)
     self.events[endpoint].recv_ready_event.set()
@@ -116,20 +98,20 @@ class ReplayContext:
   def unlock_sockets(self):
     expected_sets = len(self.events)
     while expected_sets > 0:
-      index = self._wait_for_one(self.all_recv_called_events)
+      index = messaging.wait_for_one_event(self.all_recv_called_events)
       self.all_recv_called_events[index].clear()
       self.all_recv_ready_events[index].set()
       expected_sets -= 1
 
   def wait_for_recv_called(self):
-    self._wait_for_one(self.all_recv_called_events)
+    messaging.wait_for_one_event(self.all_recv_called_events)
 
   def wait_for_next_recv(self, trigger_empty_recv):
-    index = self._wait_for_one(self.all_recv_called_events)
+    index = messaging.wait_for_one_event(self.all_recv_called_events)
     if self.main_pub is not None and self.main_pub_drained and trigger_empty_recv:
       self.all_recv_called_events[index].clear()
       self.all_recv_ready_events[index].set()
-      self._wait_for_one([self.all_recv_called_events[index]])
+      self.all_recv_called_events[index].wait()
 
 
 @dataclass
@@ -265,7 +247,6 @@ class ProcessContainer:
         self.capture = ProcessOutputCapture(self.cfg.proc_name, p.prefix)
 
       self._start_process()
-      self.rc.alive_check = lambda: self.process.proc is not None and self.process.proc.is_alive()
 
       if self.cfg.init_callback is not None:
         self.cfg.init_callback(self.rc, self.pm, all_msgs, fingerprint)

@@ -172,11 +172,7 @@ KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
 # 2026-11-03 06:08 menus 2 (kind 16) and 4 (kind 14, with its code) left the menu, 3 -> 2 and 5 -> 3)
 # 2026-11-03 17:10 (the driver "0.3번5번만 남겨두고 삭제", 17:14 정정): the 06:08 renumbering was wrong; only 0 / 3 / 5 stay,
 # with their 9df95178c numbers: 3 = kind 15, 5 = kind 17. Kind 13 (menu 1) left the menu, its code stays as the base of 15 / 16 / 17.
-# 2026-11-05 07:16 (the driver "메뉴 브레이크 0.3.5 말하는 거면 0.1.2로 바꿔"): the same kinds renumbered, 1 = kind 15
-# (was 3), 2 = kind 17 (was 5); behaviour unchanged.
-# 2026-11-05 13:35 (the driver "1번에적용시킨건 3번 2번에적용시킨건 4번"): 3 = kind 15 and 4 = kind 17, the same braking as
-# 1 / 2 here; only StoppingAccel -100 differs (longcontrol.K9_STOP_MODE_STOPPING_ACCEL).
-MENU = {1: V12K9OH, 2: V12K9OGR, 3: V12K9OH, 4: V12K9OGR}
+MENU = {3: V12K9OH, 5: V12K9OGR}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted(MENU))  # K9StopMode values that change braking; anything else acts as 0
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import os
-from collections import deque
+os.environ['GMMU'] = '0' # for usbgpu fast loading, noop for qcom
 from tinygrad.tensor import Tensor
 import time
+import threading
 import numpy as np
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal import car, log
@@ -10,6 +11,7 @@ from openpilot.cereal.messaging import PubMaster, SubMaster
 from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.modeld.egpu_events import log_event
 from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
 from openpilot.selfdrive.modeld.gpu_sampler import GpuTimingDiag
 from openpilot.selfdrive.modeld.k9_lr_view import K9LRView, read_mode as read_k9_lr_view, read_one_lane_hold as read_k9_olh
@@ -24,7 +26,7 @@ from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.desire_lib.boundary_observer import BoundaryObserver
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, smooth_value, get_curvature_from_plan
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
-from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, policy_input_keys
+from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, POLICY_INPUTS
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
 from openpilot.common.file_chunker import open_file_chunked
 from openpilot.selfdrive.modeld.camera_sync import FrameMeta
@@ -32,9 +34,9 @@ from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
-from openpilot.selfdrive.modeld.runtime_guard import RuntimeOutputGuard, ModelOutputError
-from openpilot.selfdrive.modeld.stock_standby import StockStandby
-from openpilot.selfdrive.modeld.helpers import make_internal_model, get_tg_input_devices, load_oob, modeld_pkl_path, select_vision_streams
+from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
+                                                refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
+                                                usbgpu_pcie_not_ready, usbgpu_present, wait_for_usbgpu_present)
 
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
@@ -43,6 +45,35 @@ SIMULATION = os.getenv('SIMULATION') == '1'
 LAT_SMOOTH_SECONDS = 0.0
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
+USBGPU_MODEL_LOAD_TIMEOUT = 120
+USBGPU_DISCOVERY_GRACE_SECONDS = 5.0
+USBGPU_DISCOVERY_POLL_INTERVAL = 0.1
+USBGPU_INIT_ATTEMPTS = 6
+USBGPU_PRECOMPILED_INIT_ATTEMPTS = 2
+USBGPU_INIT_RETRY_INTERVAL = 2.0
+USBGPU_TMUX_ERROR_REASON = "egpu_error"
+
+
+def queue_usbgpu_error_tmux(params: Params, context: str) -> bool:
+  """Request one tmux capture without replacing another pending diagnostic."""
+  try:
+    pending_reason = params.get("CarrotException")
+    if isinstance(pending_reason, bytes):
+      pending_reason = pending_reason.decode("utf-8", errors="ignore")
+    if pending_reason in (None, ""):
+      params.put("CarrotException", USBGPU_TMUX_ERROR_REASON)
+      cloudlog.warning(f"queued {USBGPU_TMUX_ERROR_REASON} tmux capture: {context}")
+      return True
+    if pending_reason == USBGPU_TMUX_ERROR_REASON:
+      return True
+    cloudlog.warning(
+      f"did not replace pending CarrotException={pending_reason!r} with "
+      f"{USBGPU_TMUX_ERROR_REASON}: {context}"
+    )
+  except Exception:
+    cloudlog.exception(f"failed to queue {USBGPU_TMUX_ERROR_REASON} tmux capture: {context}")
+  return False
+
 
 def get_lat_smooth_seconds_dynamic(model_output: dict[str, np.ndarray],
                                    base_lat_smooth_seconds: float) -> tuple[float, float, float]:
@@ -82,7 +113,7 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
                                                 lat_action_t)
   else:
     desired_accel = model_output['action'][0,1]
-    desired_curvature = model_output['action'][0,0] / (max(2.5, v_ego))**2
+    desired_curvature = model_output['action'][0,0] / (max(1.0, v_ego))**2
     #should_stop = (v_ego < 0.3 and desired_accel < 0.1)
   desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
   desired_velocity_now = smooth_value(desired_velocity_now, prev_action.desiredVelocity, LONG_SMOOTH_SECONDS)
@@ -100,18 +131,17 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
 class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
-  def __init__(self, cam_w: int, cam_h: int, pkl_path=None, *, enable_shadow=True):
-    input_devices = get_tg_input_devices(PROCESS_NAME)
+  def __init__(self, cam_w: int, cam_h: int, usbgpu: bool, pkl_path=None, *, enable_shadow=True):
+    input_devices = get_tg_input_devices(PROCESS_NAME, usbgpu)
     self.WARP_DEV, self.QUEUE_DEV = input_devices['WARP_DEV'], input_devices['QUEUE_DEV']
-    jits = load_oob(open_file_chunked(pkl_path or modeld_pkl_path()))
+    jits = load_oob(open_file_chunked(pkl_path or modeld_pkl_path(usbgpu)))
     metadata = jits['metadata']
     self.input_shapes = metadata['input_shapes']
-    # run() always takes the two camera frames as img/big_img (frame_buf_params, warp frame/big_frame); a stateful
-    # (light speed student) PKL lists new_img/state_img_q in input_shapes, which are model inputs, not camera buffers.
-    self.vision_input_names = ['img', 'big_img']
+    self.vision_input_names = [k for k in self.input_shapes if 'img' in k]
     self.output_slices = metadata['output_slices']
 
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+    self.usbgpu = usbgpu
 
     self.frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
     self.input_queues, self.npy = make_input_queues(self.input_shapes, self.frame_skip, device=self.QUEUE_DEV)
@@ -121,40 +151,19 @@ class ModelState:
     self.frame_buf_params = {k: get_nv12_info(cam_w, cam_h) for k in ('img', 'big_img')}
     self.run_policy = jits['run_policy']
     self.warp = jits[(cam_w,cam_h)]
-    self.signal_shadow = ShadowClient.optional(modeld_pkl_path().parent / 'driving_supercombo.onnx') if enable_shadow else None
-    self.warp_history = None  # last warped frames, kept only by a student/direct model (stock_standby.py)
+    self.signal_shadow = ShadowClient.optional(modeld_pkl_path(False).parent / 'driving_supercombo.onnx') if enable_shadow and not usbgpu else None
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
     return parsed_model_outputs
 
-  def keep_warp_history(self, n: int):
-    self.warp_history = deque(maxlen=n) if n > 0 else None
-
-  def seed_image_history(self, frames) -> int:
-    # Fresh (non-stateful) stock model: put the last warped camera frames (oldest first, as shift_and_sample appends)
-    # into img_q / big_img_q so the first runs do not sample a zero past frame.
-    if 'img_q' not in self.input_queues or not frames:
-      return 0
-    q = self.input_queues['img_q']
-    hist = np.stack(frames[-q.shape[0]:])  # (n, 2, 6, H, W): [:, 0] road, [:, 1] wide
-    if hist.shape[2:] != tuple(q.shape[1:]) or hist.dtype != np.dtype(q.dtype.fmt):
-      return 0
-    for name, cam in (('img_q', 0), ('big_img_q', 1)):
-      buf = np.zeros(self.input_queues[name].shape, dtype=hist.dtype)
-      buf[-hist.shape[0]:] = hist[:, cam]
-      self.input_queues[name]._buffer().copyin(memoryview(buf.reshape(-1)))
-    return int(hist.shape[0])
-
   def reset(self):
-    # Returning from the Jetlink model must not reuse old local history.
-    if self.warp_history is not None:
-      self.warp_history.clear()
+    # Returning from a recovered external model must not reuse old local history.
     self.prev_desire[:] = 0
     for array in self.npy.values():
       array[:] = 0
     for name, tensor in self.input_queues.items():
-      if name.endswith('_q') or name.startswith('state_'):
+      if name.endswith('_q'):
         tensor._buffer().copyin(memoryview(bytearray(tensor.numel() * tensor.dtype.itemsize)))
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
@@ -206,20 +215,19 @@ class ModelState:
       return None
 
     outs, = self.run_policy(
-      **{k: self.input_queues[k] for k in policy_input_keys(self.input_shapes) if k in self.input_queues}, warped=warped
-    )[:1]
+      **{k: self.input_queues[k] for k in POLICY_INPUTS if k in self.input_queues}, warped=warped
+    )
     # gpu_sync_wait: run_policy only enqueues GPU work, so .numpy() blocks until the
     # queued warp+policy kernels finish, then copies the output to host. This is the
     # wall time spent waiting for the GPU plus copy-out (diagnostics only).
     sync_start = time.perf_counter()
     model_output = outs.numpy()[0]
     self.last_gpu_sync_wait_ms = (time.perf_counter() - sync_start) * 1000
-    if self.warp_history is not None:  # after the sync above: no extra GPU wait; the warp buffer is reused next run
-      self.warp_history.append(warped.numpy())
     shadow_payload = self.signal_shadow.capture(model_output, self.npy) if self.signal_shadow is not None else None
+    if self.usbgpu and not np.all(np.isfinite(model_output)):
+      raise RuntimeError("eGPU model output is not finite")
     outputs_dict = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
-    if 'prev_feat' in self.npy:
-      self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]
+    self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]
 
     if SEND_RAW_PRED:
       outputs_dict['raw_pred'] = model_output.copy()
@@ -228,22 +236,34 @@ class ModelState:
     return outputs_dict
 
 
-def halt_after_model_failure(params, err):
-  # Stock model still non-finite after fresh rebuilds. Exiting would not surface: manager restarts a dead modeld
-  # in the same ensure_running() pass, before managerState is sent, so processNotRunning never shows and modeld
-  # crash-loops (worker: 35 starts / 240 s, each publishing ~9 frames). Stay alive and publish nothing instead:
-  # modelV2 stops -> selfdrived commIssue (not alive) until the next onroad start restarts modeld.
-  cloudlog.error(f"modeld halted, no model output: {err}")
-  params.put("LightspeedModelStatus", {"model": "stock", "requested_student": params.get_bool("LightspeedStudentModel"),
-                                       "fallback_reason": "runtime nonfinite stock failed; modeld halted"})
-  while True:
-    time.sleep(1.)
-
-
 def main(demo=False):
   cloudlog.warning("modeld init")
 
   params = Params()
+  usbgpu_pkl_path = usbgpu_compiled_path()
+  _compiled = usbgpu_pkl_path is not None
+  _hardware_seen = params.get_bool("UsbGpuHardwareSeen")
+  _present = usbgpu_present()
+  if not _present and _compiled and _hardware_seen:
+    cloudlog.warning(
+      f"eGPU USB not present at modeld start; waiting up to {USBGPU_DISCOVERY_GRACE_SECONDS:.1f}s for SuperSpeed enumeration"
+    )
+    _present = wait_for_usbgpu_present(USBGPU_DISCOVERY_GRACE_SECONDS, USBGPU_DISCOVERY_POLL_INTERVAL)
+    if _present:
+      cloudlog.warning("eGPU USB enumerated during startup grace period")
+    else:
+      cloudlog.warning("eGPU USB still absent after startup grace period; using internal model")
+  _startup_failed = params.get_bool("UsbGpuStartupFailed")
+  USBGPU = _present and _compiled and not _startup_failed
+  cloudlog.warning(f"usbgpu present: {_present}, compiled: {_compiled}, startup_failed: {_startup_failed}, requested: {USBGPU}")
+  params.put_bool("UsbGpuPresent", _present)
+  if _present or _compiled:
+    params.put_bool("UsbGpuHardwareSeen", True)
+  params.put_bool("UsbGpuCompiled", _compiled)
+  params.put_bool("UsbGpuLoading", USBGPU)
+  params.put_bool("UsbGpuActive", False)
+  if _present and (not _compiled or _startup_failed):
+    queue_usbgpu_error_tmux(params, "USB present but eGPU model unavailable at startup")
   use_wide_camera = bool(params.get("UseWideCamera", return_default=True))
 
   config_realtime_process(7, 54)
@@ -277,13 +297,70 @@ def main(demo=False):
 
   st = time.monotonic()
   cloudlog.warning("loading model")
+  model = None
+  usbgpu_model_loaded = False
+  if USBGPU:
+    usbgpu_model = None
+    precompiled = usbgpu_pkl_path.name == 'model.pkl' and (usbgpu_pkl_path.parent / 'installed.json').is_file()
+    # Repeatedly reloading the same large PKL cannot repair a persistently down
+    # PCIe link. One retry allows delayed readiness, then start the internal model.
+    init_attempts = USBGPU_PRECOMPILED_INIT_ATTEMPTS if precompiled else USBGPU_INIT_ATTEMPTS
+
+    def load_usbgpu_model():
+      nonlocal usbgpu_model
+      for attempt in range(1, init_attempts + 1):
+        try:
+          if precompiled:
+            from openpilot.selfdrive.modeld.precompiled_runner import PrecompiledModelState
+            usbgpu_model = PrecompiledModelState(vipc_client_main.width, vipc_client_main.height, usbgpu_pkl_path)
+          else:
+            usbgpu_model = ModelState(vipc_client_main.width, vipc_client_main.height, True, usbgpu_pkl_path)
+          return
+        except Exception as exc:
+          if usbgpu_pcie_not_ready(exc) and attempt < init_attempts:
+            cloudlog.warning(f"eGPU PCIe link not ready; retrying ({attempt}/{init_attempts}): {exc!r}")
+            time.sleep(USBGPU_INIT_RETRY_INTERVAL)
+            refresh_usbgpu_device_cache()
+            continue
+          cloudlog.exception("eGPU model load failed")
+          queue_usbgpu_error_tmux(params, "model load failed")
+          return
+
+    loader = threading.Thread(target=load_usbgpu_model, name="usbgpu-model-loader", daemon=True)
+    loader.start()
+    loader.join(USBGPU_MODEL_LOAD_TIMEOUT)
+    if loader.is_alive():
+      cloudlog.error(f"eGPU model load timed out after {USBGPU_MODEL_LOAD_TIMEOUT}s")
+      queue_usbgpu_error_tmux(params, "model load timed out")
+      params.put_bool("UsbGpuStartupFailed", True)
+      params.put_bool("UsbGpuLoading", False)
+      # A Python thread cannot be stopped safely. Terminate modeld so the
+      # process restart releases every tinygrad/libusb resource, then use the
+      # internal model for the rest of this ignition cycle.
+      raise RuntimeError("eGPU model loader did not terminate")
+    model = usbgpu_model
+    if model is None:
+      params.put_bool("UsbGpuStartupFailed", True)
+    usbgpu_model_loaded = model is not None
+    params.put_bool("UsbGpuActive", usbgpu_model_loaded)
+
+  # Keep the internal-GPU model ready so a USB disconnect or runtime error does
+  # not take modeld down while driving.
   phase_start = time.monotonic()
-  model = make_internal_model(ModelState, vipc_client_main.width, vipc_client_main.height,
-                              params.get_bool("LightspeedStudentModel"), params)
-  cloudlog.warning("model startup internal model: %.3fs", time.monotonic() - phase_start)
-  # A separate USB owner handles external computers and late server startup
-  # through the selected Jetlink model.
-  if os.path.isfile('/AGNOS'):
+  # A standby model must not spawn a separate experimental ONNX observer that
+  # receives no live samples. Keep standby inference/warmup and fallback intact;
+  # optional comparison remains available when internal inference starts active.
+  small_model = ModelState(vipc_client_main.width, vipc_client_main.height, False,
+                           enable_shadow=not usbgpu_model_loaded) if model is None or USBGPU else None
+  if usbgpu_model_loaded:
+    from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
+    warm_internal_model_from_camera(small_model, vipc_client_main)
+  cloudlog.warning("model startup internal model: %.3fs, loaded=%s", time.monotonic() - phase_start, small_model is not None)
+  if model is None:
+    model = small_model
+  # Keep the existing eGPU selection unchanged. A separate USB owner handles
+  # external computers and late server startup through the selected Jetlink model.
+  if not USBGPU and os.path.isfile('/AGNOS'):
     phase_start = time.monotonic()
     adapter_ready = False
     try:
@@ -293,6 +370,21 @@ def main(demo=False):
     except Exception:
       cloudlog.exception('Jetlink camera adapter unavailable; retaining internal model')
     cloudlog.warning("model startup Jetlink wrapper: %.3fs, created=%s", time.monotonic() - phase_start, adapter_ready)
+  # Loading is not complete until the first model result is published. The
+  # first eGPU execution can spend several seconds initializing queues/kernels
+  # after the PKL has loaded; clearing this here causes a false commIssue while
+  # modelV2 and its downstream services are still waiting for their first data.
+  usbgpu_startup_pending = usbgpu_model_loaded
+  egpu_recovery = None
+  internal_needs_reset = False
+  if usbgpu_model_loaded and precompiled:
+    from openpilot.selfdrive.modeld.egpu_recovery import EgpuRecovery
+    try:
+      egpu_recovery = EgpuRecovery(usbgpu_pkl_path, vipc_client_main.width, vipc_client_main.height)
+    except Exception:
+      cloudlog.exception('eGPU background recovery unavailable')
+  if not usbgpu_startup_pending:
+    params.put_bool("UsbGpuLoading", False)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
 
   # messaging
@@ -348,18 +440,6 @@ def main(demo=False):
   k9_lr_view.set_mode(read_k9_lr_view(params))
   k9_lr_view.set_one_lane_hold(read_k9_olh(params))
   camera_gap = CameraGapTrace(cloudlog.event)
-  # Student/direct model: stock model built now (not while modelV2 is missing at a switch) and seeded with the last
-  # warped frames at the switch (stock_standby.py). `model` in the lambda is the model being replaced: guard.check
-  # calls it before modeld rebinds `model`.
-  stock_standby = StockStandby(lambda: ModelState(vipc_client_main.width, vipc_client_main.height), log=cloudlog.warning)
-  internal_model = RuntimeOutputGuard._internal(model)
-  if (getattr(internal_model, 'lightspeed_status', None) or {}).get('model', 'stock') != 'stock':
-    phase_start = time.monotonic()
-    stock_standby.prepare()
-    internal_model.keep_warp_history(stock_standby.history_len)
-    cloudlog.warning("model startup stock standby: %.3fs", time.monotonic() - phase_start)
-  output_guard = RuntimeOutputGuard(lambda: stock_standby.take(RuntimeOutputGuard._internal(model), drop_current=True),
-                                    params=params, log=cloudlog.error)
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
     frame += 1
@@ -372,6 +452,13 @@ def main(demo=False):
       vEgoStopping = get_stopping_speed(params)
       camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
       k9_lr_view.set_mode(read_k9_lr_view(params))
+      # eGPU power follows ignition on the vehicle. Keep UI state current when
+      # the shared USB hub is connected or removed after modeld starts.
+      usbgpu_present_now = usbgpu_present()
+      params.put_bool_nonblocking("UsbGpuPresent", usbgpu_present_now)
+      if usbgpu_present_now:
+        params.put_bool_nonblocking("UsbGpuHardwareSeen", True)
+      params.put_bool_nonblocking("UsbGpuCompiled", usbgpu_compiled_path() is not None)
 
     frames = camera_gap.receive(vipc_client_main, vipc_client_extra if use_extra_client else None)
     if frames is None:
@@ -442,22 +529,41 @@ def main(demo=False):
     mt1 = time.perf_counter()
     camera_age_at_run_ms = (inference_started - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
-    model_output = model.run(bufs, transforms, inputs, prepare_only)
-    switches_before = output_guard.switches
     try:
-      model, model_output = output_guard.check(model, model_output)  # NaN/Inf: never published
-      if model_output is None and output_guard.switches != switches_before:
-        # student -> stock switch: the camera frame is still here, so the stock model runs on it now instead of
-        # waiting for the next frame (the non-finite output itself is still never published).
-        model_output = model.run(bufs, transforms, inputs, False)
-        model, model_output = output_guard.check(model, model_output)
-    except ModelOutputError as e:
-      halt_after_model_failure(params, e)
+      model_output = model.run(bufs, transforms, inputs, prepare_only)
+    except Exception as exc:
+      if not params.get_bool("UsbGpuActive") or small_model is None:
+        raise
+      cloudlog.exception("eGPU model failed, falling back to internal GPU")
+      queue_usbgpu_error_tmux(params, "runtime model execution failed")
+      params.put_bool("UsbGpuActive", False)
+      params.put_bool("UsbGpuStartupFailed", True)
+      params.put_bool("UsbGpuLoading", False)
+      usbgpu_startup_pending = False
+      model = small_model
+      if internal_needs_reset:
+        model.reset()
+        internal_needs_reset = False
+      if egpu_recovery is not None:
+        try:
+          egpu_recovery.failed(exc)
+        except Exception:
+          cloudlog.exception('eGPU recovery could not be armed')
+          egpu_recovery = None
+      else:
+        log_event('retry_stopped', reason='background recovery unavailable', retry=False, active_model='internal')
+      run_count = 0
+      # The failed USB wait can outlive this camera buffer by a second. Receive
+      # a fresh synchronized pair before running/publishing the internal model.
+      # Account for the consumed failed frame; the next frame still performs
+      # the ordinary dropped-frame catch-up when required.
+      last_vipc_frame_id = meta_main.frame_id
+      continue
     mt2 = time.perf_counter()
     run_end_mono = time.monotonic()
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
     model_execution_time = mt2 - mt1
-    inference_backend = type(model).__name__
+    inference_backend, inference_usbgpu = type(model).__name__, model.usbgpu
 
     if model_output is not None:
       model_output = k9_lr_view.apply(model_output, engaged=bool(sm['carControl'].latActive))
@@ -551,13 +657,37 @@ def main(demo=False):
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
-      if stock_standby.needs_warm:
-        # once, after the first published frame: the prepared stock model's first run is slow (worker: 0.68-0.74 s vs
-        # 0.16-0.24 s later); run it now on this frame and reset it, so the switch does not pay it.
-        phase_start = time.monotonic()
-        stock_standby.warm(bufs, transforms, inputs)
-        cloudlog.warning("stock standby warm run: %.3fs", time.monotonic() - phase_start)
+      if usbgpu_startup_pending:
+        # Clear only after all first-frame outputs are on the bus so selfdrived
+        # cannot observe "ready" before modelV2 and its dependants can run.
+        params.put_bool("UsbGpuLoading", False)
+        usbgpu_startup_pending = False
+        cloudlog.warning("eGPU first model output published; startup complete")
+        log_event('live_output_resumed', frame_id=meta_main.frame_id, active_model='eGPU')
     last_vipc_frame_id = meta_main.frame_id
+    if egpu_recovery is not None and model is small_model:
+      try:
+        # Observe actual publication and full post-camera work, not just a
+        # successful GPU call. Recovery never supplies a substitute prediction.
+        now = time.monotonic()
+        healthy_output = (model_output is not None and modelv2_send.valid and
+                          0 <= now - meta_main.timestamp_eof * 1e-9 < .15)
+        egpu_recovery.observe(healthy_output, now - camera_ready, vipc_dropped_frames)
+        recovered = egpu_recovery.tick(sm, params.get_bool('UsbGpuPresent'))
+        if recovered is not None:
+          model = recovered
+          internal_needs_reset = True
+          params.put_bool('UsbGpuStartupFailed', False)
+          params.put_bool('UsbGpuActive', True)
+          params.put_bool('UsbGpuLoading', True)
+          usbgpu_startup_pending = True
+          run_count = 0
+          cloudlog.warning('eGPU recovered; selected at the Jetlink transition gate')
+      except Exception:
+        cloudlog.exception('eGPU recovery disabled; retaining internal model')
+        if egpu_recovery.task is not None:
+          egpu_recovery.task.cancel.set()
+        egpu_recovery = None
     gpu_sync_wait_ms = float('nan')
     try:
       gpu_diag.add_run(run_start_mono, run_end_mono)
@@ -573,7 +703,7 @@ def main(demo=False):
                       postprocess=(time.perf_counter() - mt2) * 1000,
                       loop=(time.monotonic() - loop_start) * 1000)
     diagnostics.record(
-      context=gpu_diag.context({'backend': inference_backend, 'frame_id': meta_main.frame_id}),
+      context=gpu_diag.context({'backend': inference_backend, 'usbgpu': inference_usbgpu, 'frame_id': meta_main.frame_id}),
       run_start_mono=run_start_mono, run_end_mono=run_end_mono, gpu_sync_wait_ms=gpu_sync_wait_ms,
       camera_wait_ms=(camera_ready - loop_start) * 1000,
       camera_age_at_run_ms=camera_age_at_run_ms,

@@ -16,8 +16,6 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
-from opendbc.car.hyundai.values import get_pedal_interceptor_params
-from opendbc.car.pedal_interceptor import PedalInterceptor
 from openpilot.common.filter_simple import MyMovingAverage
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -195,9 +193,6 @@ class CarController(CarControllerBase):
                            if CP.flags & HyundaiFlags.CANFD and CP.openpilotLongitudinalControl else None)
     self.apply_torque_last = 0
     self.car_fingerprint = CP.carFingerprint
-    pedal_interceptor_params = get_pedal_interceptor_params(CP)
-    self.pedal_interceptor = (PedalInterceptor(CANPacker(dbc_names[Bus.party]), pedal_interceptor_params)
-                              if pedal_interceptor_params is not None else None)
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
@@ -212,7 +207,6 @@ class CarController(CarControllerBase):
     # 0-3 again: 1 / 2 / 3 = kinds 13 / 15 / 17 (원본2, 원본2 + 선 뒤 1초 잠금, 격차수정 + 1 km/h 아래 서서히).
     # 2026-11-03 17:10 (the driver "0.3번5번만 남겨두고 삭제"): that renumbering was wrong; the menu is 0 / 3 / 5 with the
     # 9df95178c numbers (3 = kind 15, 5 = kind 17); kind 13 left the menu (its code is the base of 15 / 16 / 17).
-    # 2026-11-05 07:16 (the driver "0.3.5 ... 0.1.2로 바꿔"): the same methods as 0 / 1 / 2 (1 = kind 15, 2 = kind 17).
     # Stored values of older menus are migrated once at manager start (k9_stop_mode_migration.py).
     # See k9_creep.py.
     self.k9_creep_applies = k9_creep_applies(CP)
@@ -331,8 +325,8 @@ class CarController(CarControllerBase):
         except (TypeError, ValueError, OverflowError):
           mode = 0
         # 6+ as well (menu 0-5 since 2026-10-30; the next line's "4+" is the 0-3 menu note, kept as in b6696b37)
-        # 2026-11-03 17:10: menu 0 / 3 / 5, so 1 / 2 / 4 act as 0 as well; 2026-11-05 07:16: menu 0 / 1 / 2; 13:35: 0-4 (3 / 4 = 1 / 2 + StoppingAccel -100), 5+ act as 0
-        mode = mode if mode in K9_CREEP_MENU else 0  # 5+, negative, NaN, non-int: 0
+        # 2026-11-03 17:10: menu 0 / 3 / 5, so 1 / 2 / 4 act as 0 as well
+        mode = mode if mode in K9_CREEP_MENU else 0  # 4+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(K9_CREEP_MENU[mode]) if mode in K9_CREEP_MENU else None
@@ -538,7 +532,7 @@ class CarController(CarControllerBase):
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
         lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
-      # K9StopMode 1 / 2 (3 / 4 the same): K9Creep kinds 15 / 17 (k9_creep.MENU, v12k9 based); changes accel AND StopReq timing.
+      # K9StopMode 3 / 5: K9Creep kinds 15 / 17 (k9_creep.MENU, v12k9 based); changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
@@ -584,8 +578,7 @@ class CarController(CarControllerBase):
     # *** common hyundai stuff ***
 
     # tester present - w/ no response (keeps relevant ECU disabled)
-    if (self.frame % 100 == 0 and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and
-        self.CP.openpilotLongitudinalControl and self.pedal_interceptor is None):
+    if self.frame % 100 == 0 and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and self.CP.openpilotLongitudinalControl:
       # for longitudinal control, either radar or ADAS driving ECU
       addr, bus = 0x7d0, self.CAN.ECAN if self.CP.flags & HyundaiFlags.CANFD else 0
       if self.CP.flags & HyundaiFlags.CANFD_HDA2.value:
@@ -686,7 +679,7 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_mdps12(self.packer, self.frame, CS.mdps12))
 
       casper_ev = self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV
-      if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl and self.pedal_interceptor is None:
+      if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:
         self.hyundai_jerk.make_jerk(self.CP, CS, accel, actuators, hud_control,
                                     creep=self.k9_creep is not None and self.k9_creep.active, creep_obj=self.k9_creep,
                                     jerk_u_cap=None if self.k9_hard_brake is None else self.k9_hard_brake.jerk_u_cap())
@@ -708,7 +701,7 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC, self.blinking_signal))
 
       # 5 Hz ACC options
-      if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl and self.pedal_interceptor is None:
+      if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl:
         if camera_scc:
           if CS.scc13 is not None:
             if casper_ev:
@@ -719,16 +712,8 @@ class CarController(CarControllerBase):
           can_sends.extend(hyundaican.create_acc_opt(self.packer, self.CP))
 
       # 2 Hz front radar options
-      if self.frame % 50 == 0 and self.CP.openpilotLongitudinalControl and not camera_scc and self.pedal_interceptor is None:
+      if self.frame % 50 == 0 and self.CP.openpilotLongitudinalControl and not camera_scc:
         can_sends.append(hyundaican.create_frt_radar_opt(self.packer))
-
-    if self.pedal_interceptor is not None:
-      pedal_active = (CC.longActive and not CS.pedal_interceptor_cruise_blocked and
-                      not CS.pedal_interceptor_state.faulted and
-                      not CC.cruiseControl.override and not CS.out.gasPressed and not CS.out.brakePressed)
-      pedal_message = self.pedal_interceptor.update(self.frame, pedal_active, accel, CS.out.vEgo, hud_control.setSpeed)
-      if pedal_message is not None:
-        can_sends.append(pedal_message)
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX

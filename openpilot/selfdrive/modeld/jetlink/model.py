@@ -146,6 +146,7 @@ class JoiningModel:
     self.client = None
     self.connection = None
     self.active = False
+    self.usbgpu = False
     self.vision_input_names = ['img', 'big_img']
     self.packed = np.zeros(SPEC.packed_nelem, np.float32)
     self.spec = SPEC
@@ -194,22 +195,6 @@ class JoiningModel:
     for name, tensor in self.small.input_queues.items():
       if name.endswith('_q'):
         tensor._buffer().copyin(memoryview(bytearray(tensor.numel() * tensor.dtype.itemsize)))
-
-  def drop_remote(self, reason, retry_after=30.):
-    # Same exit as a Jetlink exception in run() (FAULT -> commIssue, reset local history), for a remote output that
-    # arrived but is unusable (runtime_guard: NaN/Inf). Longer back-off so a bad remote cannot flap every 5 s.
-    from openpilot.common.swaglog import cloudlog
-    cloudlog.error('Jetlink output rejected (%s); restoring local model', reason)
-    self.error = str(reason)
-    if self.client is not None:
-      self.client.close()
-      self.client = None
-    if self.active:
-      FAULT.write_text(str(time.monotonic()))
-      self._reset_small()
-    self.active = False
-    self.next_join = time.monotonic() + retry_after
-    self.next_status = 0
 
   def run(self, bufs, transforms, inputs, prepare_only):
     from openpilot.common.swaglog import cloudlog
@@ -280,7 +265,7 @@ class JoiningModel:
           self.active = True
           self.error = ''
           self.next_status = 0
-        # Run the full recurrent graph for each
+        # As in the generic eGPU runtime, run the full recurrent graph for each
         # received pair. Camera gaps still propagate unchanged into pose validity.
         parsed = parse_outputs(self.parser, self.spec, result)
         if os.getenv('SEND_RAW_PRED'):

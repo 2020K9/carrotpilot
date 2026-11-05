@@ -504,6 +504,7 @@ class ClusterUiState:
     disk_used_percent: float | None = None
     network_address: str | None = None
     network_connected: bool = False
+    egpu_active: bool = False
     external_compute_label: str = ''
     external_nav_active: bool = False
     vehicle_navi_available: bool = False

@@ -253,7 +253,7 @@ hardware path.
 `--usb-h264-align 16` deliberately tests macroblock-aligned output such as
 1920x464. When `--fps` is omitted, non-live H264 USB runs use
 `--usb-h264-fps 30` as the render cap. Device live USB output fixes rendering,
-encoding and the TURZX controller to 10 FPS.
+encoding and the TURZX controller to 10 FPS, or 5 FPS while eGPU is active.
 Diagnostic non-live runs still accept explicit FPS overrides. H264 chunks are no-ACK by
 default like JPEG frame uploads; use
 `--usb-h264-wait-ack` for strict response diagnostics, or
@@ -344,8 +344,10 @@ Keep `--usb-h264-input-format nv12` for native hardware testing. Direct RGB
 USERPTR diagnostics were removed after measured device tests showed corrupted
 output across direct and hidden 32-bit RGB variants.
 
-Manager autostart uses 10 FPS. Device live USB
-output ignores legacy FPS settings and environment overrides.
+Manager autostart uses 10 FPS, or 5 FPS while eGPU is active. Device live USB
+output ignores legacy FPS settings and environment overrides. The live loop
+checks eGPU activity each second; JPEG/PNG update in place, while H264 restarts
+to keep encoder timing, SPS timing and automatic bitrate consistent.
 `ClusterHudDebug` controls the autorun output gate: `0` starts external HUD
 rendering only while openpilot is onroad, and `1`, `2`, and `3` keep the
 always-on debug behavior after power-up. In live input only, `2` also keeps the

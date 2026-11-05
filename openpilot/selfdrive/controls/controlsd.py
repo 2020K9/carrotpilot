@@ -160,14 +160,6 @@ class Controls:
     CC.latActive = self.carrot_controls.lat_suspend_control(CS, CC.latActive)
     # Wait only for the first readiness confirmation, including AlwaysLateral.
     CC.latActive = CC.latActive and lateral_ready
-    # Release lateral when modelV2 stops (model switch gap, modeld stall): otherwise the last desiredCurvature /
-    # lateralPlan is held unchanged for the whole gap, and AlwaysLateral has no selfdrived disengage to end it.
-    # 0.5 s = the modelV2 alive window selfdrived uses for commIssue. Age is measured in message time
-    # (logMonoTime of the newest selfdriveState/carState vs modelV2), not in controlsd loop counts, so a slow
-    # controlsd loop still releases after 0.5 s of real time. Unseen modelV2 has logMonoTime 0 -> stale.
-    mono = getattr(self.sm, 'logMonoTime', None)
-    model_age = 0.0 if mono is None else (max(mono['selfdriveState'], mono['carState']) - mono['modelV2']) * 1e-9
-    CC.latActive = CC.latActive and model_age <= 0.5
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
 
     # AlwaysLateral must also stop while manager drains workers for this reboot.

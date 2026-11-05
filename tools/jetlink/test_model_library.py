@@ -52,7 +52,7 @@ def test_official_inputs_and_retired_legacy_alias():
     spec = ModelSpec.from_dict(C.model_spec(key))
     assert validate_model_spec(spec) is spec
     assert model_name(spec) == ('N16 Nav (96244b1f)' if key == 'n16' else 'Light speed (f22b8b34)' if key == 'light-speed' else 'Flip Flop (1365126a)')
-  from openpilot.selfdrive.modeld.artifact_metadata import model_metadata
+  from openpilot.selfdrive.modeld.generic_model_runtime import model_metadata
 
   for key, fixture in [('md-v3', 'md_v3_metadata.json'), ('flip-flop', 'flip_flop_metadata.json'), ('light-speed', 'light_speed_metadata.json')]:
     raw = json.loads((C.ROOT / 'openpilot/selfdrive/modeld/tests/fixtures' / fixture).read_text())
@@ -181,6 +181,8 @@ C.select('flip-flop'); C.freeze_boot()
 original = Path.is_file
 Path.is_file = lambda path: path.as_posix() == '/TICI' or original(path)
 from openpilot.common.jetson_model import read_spec, selected_release
+from openpilot.selfdrive.modeld.big_model import DEFAULT_MANIFEST_URL, fetch_manifest
+assert fetch_manifest(DEFAULT_MANIFEST_URL).sha256 == C.catalog()['flip-flop']['egpu']['sha256']
 assert read_spec() == C.model_spec('flip-flop')
 assert selected_release(C.DIRECTORY / '../jetlink/host_release.json', required=True)['model']['sha256'] == read_spec()['sha256']
 C.select('n16')

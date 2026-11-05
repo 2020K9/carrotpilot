@@ -1515,19 +1515,3 @@ msgstr "请重启设备以应用更新"
 #: openpilot/selfdrive/selfdrived/events.py
 msgid "Park safely before rebooting your device"
 msgstr "请安全停车后再重启设备"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "Auto Hold Active"
-msgstr "自动驻车已启用"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "Rebooting into Dashcam Mode"
-msgstr "正在重启进入行车记录仪模式"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "전방 물체 주의"
-msgstr "注意前方物体"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "전방을 확인하고 감속을 준비하세요"
-msgstr "请注意前方并准备减速"
