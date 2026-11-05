@@ -18,9 +18,6 @@ HYUNDAI_LONGITUDINAL_KF = 1.0
 STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
 STOPPING_ACCEL_MAX = -50
-# K9StopMode 3 / 4 (2026-11-05 13:35, 대감님 "1번에적용시킨건 3번 2번에적용시킨건 4번"): menu 1 / 2 with StoppingAccel -100
-# (-1.00 m/s^2) used only while that menu is picked; the stored StoppingAccel param is never written.
-K9_STOP_MODE_STOPPING_ACCEL = {3: -100, 4: -100}
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -98,12 +95,6 @@ class LongControl:
       value = STOPPING_ACCEL_DEFAULT
     if not math.isfinite(value):
       value = STOPPING_ACCEL_DEFAULT
-    try:
-      k9_mode = self.params.get_int("K9StopMode")
-    except (TypeError, ValueError, OverflowError):
-      k9_mode = 0
-    if k9_mode in K9_STOP_MODE_STOPPING_ACCEL:
-      value = K9_STOP_MODE_STOPPING_ACCEL[k9_mode]
     # Enforce the menu bounds even for stale Params or direct writes.
     self.stopping_accel = min(STOPPING_ACCEL_MAX, max(STOPPING_ACCEL_MIN, value)) * 0.01
 

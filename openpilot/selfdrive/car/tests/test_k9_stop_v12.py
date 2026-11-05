@@ -373,6 +373,10 @@ def test_migration(ver, old):
 def test_migration_after_ver8_never_touches():  # marker 9 since 2026-11-03, 8 since 2026-10-30 (7 since 10-29 07:10; older devices migrate once more)
   for v in (0, 1, 2, 3, 4, 5, 9):
     p = FakeParams(K9StopMode=v, K9StopModeVer=mig.STOP_MODE_VER)
+    if v in (3, 4):  # 2026-11-06 06:21: menus 3 / 4 left, a marker-11 3 / 4 folds into 1 / 2 (MERGE_V12), once
+      assert mig.migrate_k9_stop_mode(p) is True and p.v["K9StopMode"] == v - 2
+      assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == v - 2
+      continue
     assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == v
 
 

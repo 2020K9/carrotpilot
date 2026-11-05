@@ -91,11 +91,21 @@ the marker first (MOVE10_PENDING_BASE + value), as for the earlier moves.
   table (_mark_done11). So a marker-9 2 (kind 15) goes 2 -> 3 -> 1 and a marker-9 3 (kind 17) 3 -> 5 -> 2.
 MOVE_V11 is not idempotent (a second pass would take the new 1 / 2 to 0), so its pre-move value goes into the marker first
 (MOVE11_PENDING_BASE + value), as for the earlier moves.
+2026-11-06 06:21 (the driver "브레이크3.4.제거"): menus 3 / 4 (a082dc0d, 2026-11-05 13:35: 1 / 2 + StoppingAccel -1.00 while
+picked, added with NO new marker) left the menu with their -1.00 code, again with NO new marker (K9StopModeVer stays 11).
+Rule added:
+- K9StopModeVer 11 (the 0 / 1 / 2 numbering, 3 / 4 since a082dc0d): 3 -> 1 and 4 -> 2 (the same kinds 15 / 17, now without the
+  -1.00 stopping accel); 0 / 1 / 2 unchanged; any other value is left as stored (it acted as 0 and still acts as 0);
+- an older / absent / pending marker first runs its own steps above (their outputs are already 0 / 1 / 2 or a value that
+  acted as 0), so a stored 3 / 4 on an older numbering never becomes 1 / 2 by this rule.
+MERGE_V12 is idempotent (0 / 1 / 2 are fixed points), so it runs at every start of a marker-11 device and needs no marker:
+a power loss at any point leaves 3 / 4 or 1 / 2, and the next start ends on 1 / 2 either way.
 """
 
 STOP_MODE_KEY = "K9StopMode"
 STOP_MODE_VER_KEY = "K9StopModeVer"
 # 9 = the 2026-11-03 06:08 numbering 0-3 (K9StopModeVer 10 since 17:10)
+# still 11 after 2026-11-06 06:21 (3 / 4 of a082dc0d folded into 1 / 2 by MERGE_V12, idempotent, no new marker)
 STOP_MODE_VER = 11  # (11 since 2026-11-05 07:16, 10 = the 2026-11-03 17:10 numbering 0 / 3 / 5) K9StopModeVer after this migration (8 = the 2026-10-30 numbering 0-5, 7 = the 2026-10-29 07:10 numbering 0-3 with 2 = the improved
 # table, 6 = the 2026-10-29 05:40 numbering with 3 = v14 original and 4 = his table + the 1 s extra braking,
 # 5 = the 04:48 numbering with 2 = v12 original, 4 = the 2026-10-28 0-3 menu
@@ -138,6 +148,8 @@ MOVE10_PENDING_BASE = 90  # K9StopModeVer 90 + v: the 17:10 move is pending, pre
 MOVE_V11 = {0: 0, 1: 0, 2: 0, 3: 1, 4: 0, 5: 2}  # from K9StopModeVer 10: 3 -> 1, 5 -> 2 (same kinds); 1 / 2 / 4 acted as 0
 MOVE11_PENDING_BASE = 100  # K9StopModeVer 100 + v: the 07:16 move is pending, pre-move value v (0 <= v <= 5); apart from
 # 50..53 / 60..64 / 70..75 / 80..85 / 90..95
+# 2026-11-06 06:21: menus 3 / 4 removed. Applied to a K9StopModeVer 11 device at every start. Idempotent, so no marker.
+MERGE_V12 = {0: 0, 1: 1, 2: 2, 3: 1, 4: 2}  # on K9StopModeVer 11: 3 -> 1, 4 -> 2 (same kinds 15 / 17)
 
 
 def migrate_k9_stop_mode(params) -> bool:
@@ -146,8 +158,8 @@ def migrate_k9_stop_mode(params) -> bool:
     ver = params.get(STOP_MODE_VER_KEY)
   except Exception:
     ver = None
-  if ver == STOP_MODE_VER:
-    return False
+  if ver == STOP_MODE_VER:  # on the current numbering: only the 2026-11-06 fold of 3 / 4 (a082dc0d) into 1 / 2
+    return _merge12(params)
   changed = False
   is_int = isinstance(ver, int) and not isinstance(ver, bool)
   swap_pending = is_int and SWAP_PENDING_BASE <= ver <= SWAP_PENDING_BASE + 3
@@ -363,3 +375,18 @@ def _finish_move11(params, ver, changed: bool) -> bool:
   except Exception:
     pass
   return changed
+
+
+def _merge12(params) -> bool:
+  """The value is on the K9StopModeVer 11 numbering: apply MERGE_V12 (idempotent, no marker). Never raises."""
+  try:
+    cur = params.get(STOP_MODE_KEY)
+  except Exception:
+    return False  # unreadable: left as stored (acts as 0)
+  if not (isinstance(cur, int) and not isinstance(cur, bool) and cur in MERGE_V12 and MERGE_V12[cur] != cur):
+    return False
+  try:
+    params.put_int(STOP_MODE_KEY, MERGE_V12[cur])
+  except Exception:
+    return False  # not written: the next start applies the same table again
+  return True

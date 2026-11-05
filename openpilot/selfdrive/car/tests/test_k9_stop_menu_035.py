@@ -161,8 +161,8 @@ def test_every_device_runs_what_it_ran_before(olds, marker):
     if is_int and marker == 10:  # 2026-11-05 07:16: marker 10 now takes MOVE_V11 once
       assert new.v == _start(11, M11(stored))
       continue
-    if is_int and marker == 11:  # 2026-11-05 07:16: 11 is the current marker, never touched again
-      assert new.v == _start(11, stored)
+    if is_int and marker == 11:  # 2026-11-05 07:16: 11 is the current marker; 2026-11-06 06:21: only 3 / 4 -> 1 / 2 (MERGE_V12)
+      assert new.v == _start(11, mig.MERGE_V12[stored] if stored in (3, 4) and not isinstance(stored, bool) else stored)
       continue
     was = _kind(old.v.get("K9StopMode"), old_kc.MENU)
     assert _kind(new.v.get("K9StopMode"), kc.MENU) == (0 if was in OFF_MENU else was), (marker, stored, old.v, new.v)
@@ -203,7 +203,7 @@ def test_power_loss_at_any_write_lands_on_the_same_value(marker):
     for n in range(12):
       p = _Cut(n, **_start(marker, stored))
       mig.migrate_k9_stop_mode(p)  # never raises
-      if p.v.get("K9StopModeVer") == mig.STOP_MODE_VER:
+      if p.v.get("K9StopModeVer") == mig.STOP_MODE_VER and not (marker == 11 and stored in (3, 4)):  # 2026-11-06: MERGE_V12 has no marker
         assert p.v == ref.v, (marker, stored, n)  # the final marker is written last
       q = FakeParams(**p.v)  # the next start
       mig.migrate_k9_stop_mode(q)
