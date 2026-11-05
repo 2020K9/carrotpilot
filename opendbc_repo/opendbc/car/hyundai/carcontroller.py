@@ -326,8 +326,8 @@ class CarController(CarControllerBase):
         except (TypeError, ValueError, OverflowError):
           mode = 0
         # 6+ as well (menu 0-5 since 2026-10-30; the next line's "4+" is the 0-3 menu note, kept as in b6696b37)
-        # 2026-11-03 17:10: menu 0 / 3 / 5, so 1 / 2 / 4 act as 0 as well; 2026-11-05 07:16: menu 0 / 1 / 2, 3+ act as 0
-        mode = mode if mode in K9_CREEP_MENU else 0  # 4+, negative, NaN, non-int: 0
+        # 2026-11-03 17:10: menu 0 / 3 / 5, so 1 / 2 / 4 act as 0 as well; 2026-11-05 07:16: menu 0 / 1 / 2; 13:35: 0-4 (3 / 4 = 1 / 2 + StoppingAccel -100), 5+ act as 0
+        mode = mode if mode in K9_CREEP_MENU else 0  # 5+, negative, NaN, non-int: 0
         if mode != self.k9_creep_mode:  # any change starts fresh
           self.k9_creep_mode = mode
           self.k9_creep = K9Creep(K9_CREEP_MENU[mode]) if mode in K9_CREEP_MENU else None
@@ -533,7 +533,7 @@ class CarController(CarControllerBase):
         brake=bool(CS.out.brakePressed), can_valid=bool(CS.out.canValid), lead_visible=bool(hud_control.leadVisible),
         lead_distance=float(hud_control.leadDistance), lead_rel_speed=float(hud_control.leadRelSpeed))
     if self.k9_creep is not None:
-      # K9StopMode 1 / 2: K9Creep kinds 15 / 17 (k9_creep.MENU, v12k9 based); changes accel AND StopReq timing.
+      # K9StopMode 1 / 2 (3 / 4 the same): K9Creep kinds 15 / 17 (k9_creep.MENU, v12k9 based); changes accel AND StopReq timing.
       cp = getattr(CS, "cp", None)
       accel, stopping = self.k9_creep.update(
         accel=accel, a_target=float(actuators.aTarget), stopping=stopping,
