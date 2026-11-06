@@ -22,6 +22,7 @@ from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
+from openpilot.selfdrive.controls.lib.k9_torque_recover import k9_torque_recover_for
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
@@ -103,6 +104,8 @@ class Controls:
       self.LaC = LatControlPID(self.CP, self.CI)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI)
+    # K9 torque handback after the driver held the wheel against openpilot (k9_torque_recover.py, 17:54 rotary 2026-11-06)
+    self.k9_torque_recover = k9_torque_recover_for(self.CP)
     self.carrot_controls = CarrotControls(self.CP)
 
   def update(self):
@@ -324,6 +327,12 @@ class Controls:
                                                        CC, curvature_limited,
                                                        model_data=self.sm['modelV2'])
     actuators.torque = float(steer)
+    if self.k9_torque_recover is not None:
+      model = self.sm['modelV2']
+      y_std_1s = float(model.position.yStd[10]) if len(model.position.yStd) > 10 else None
+      actuators.torque = float(self.k9_torque_recover.update(actuators.torque, self.sm['carOutput'].actuatorsOutput.torque,
+                                                             CS.steeringTorque, CS.steeringPressed, CS.vEgo, CC.latActive,
+                                                             y_std_1s))
     actuators.steeringAngleDeg = float(steeringAngleDeg)
     # Ensure no NaNs/Infs
     for p in ACTUATOR_FIELDS:
@@ -480,6 +489,8 @@ class Controls:
                                               STEER_ANGLE_SATURATION_THRESHOLD
       else:
         self.steer_limited_by_safety = abs(CC.actuators.torque - CO.actuatorsOutput.torque) > 1e-2
+        if self.k9_torque_recover is not None and self.k9_torque_recover.limiting:
+          self.steer_limited_by_safety = True  # handback envelope holds the request: keep the integrator frozen
 
     # TODO: both controlsState and carControl valids should be set by
     #       sm.all_checks(), but this creates a circular dependency
