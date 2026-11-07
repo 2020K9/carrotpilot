@@ -843,7 +843,24 @@ function getDeclaredSettingOptionLabel(name, value) {
   return Number.isInteger(index) ? (labels[index] ?? null) : null;
 }
 
+function normalizeSettingNumericValue(raw, p, previous = null) {
+  const text = String(raw).trim();
+  if (!text || !Number.isFinite(Number(text))) return null;
+  const min = Number(p.min);
+  const max = Number(p.max);
+  let next = Math.max(min, Math.min(max, Number(text)));
+  if (Number.isInteger(min) && Number.isInteger(max)) next = Math.round(next);
+  const nonzeroMin = Number(p.nonzero_min);
+  if (next > 0 && next < nonzeroMin) {
+    next = previous !== null && next < previous ? 0 : nonzeroMin;
+  }
+  return next;
+}
+
 function formatSettingDisplayValue(p, value) {
+  if (Number(value) === 0 && p?.zero_label) {
+    return p.zero_label[LANG] || p.zero_label.en;
+  }
   if (String(p?.name || "") === "SoundLanguageSetting") {
     return getSoundLanguageSettingOptionLabel(value);
   }
@@ -1674,6 +1691,31 @@ async function selectSettingSearchEntry(entry) {
   } catch (e) {
     showAppToast(e.message || "Search jump failed", { tone: "error" });
   }
+}
+
+// The paired assistant may navigate only to an actual setting available in this
+// device's filtered catalog. Never accept URLs, scripts or parameter values.
+async function openAssistantSetting(name) {
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(name || ""))) return "unavailable";
+  showPage("setting", true);
+  await loadSettings();
+  if (typeof switchSettingTab === "function") await switchSettingTab("carrot");
+  const entry = rebuildSettingSearchEntries().find(item => item.name === name && item.source !== "profile");
+  if (!entry) return "unavailable";
+  // Entry rendering schedules its initial scroll reset on the next frame.
+  // Let it finish before placing the assistant's requested row in view.
+  const afterPaint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await afterPaint();
+  if (CURRENT_PAGE !== "setting") return "failed";
+  await selectSettingSearchEntry(entry);
+  if (entry.detailParent && CURRENT_SETTING_DETAIL !== entry.detailParent) {
+    await selectSettingDetail(entry.group, entry.detailParent, true);
+  }
+  await afterPaint();
+  if (CURRENT_PAGE !== "setting") return "failed";
+  const visible = Array.from(document.querySelectorAll('.setting[data-setting-name]'))
+    .some(row => row.dataset.settingName === name && row.offsetParent !== null);
+  return visible && focusSettingItem(name, "instant") ? "opened" : "failed";
 }
 
 // Overlay panel DOM state (visibility, scope, labels, results, debounce) lives
@@ -2816,16 +2858,7 @@ async function renderItems(group, options = {}) {
         return matched || null;
       }
 
-      const num = Number(text);
-      if (!Number.isFinite(num)) return null;
-
-      const min = Number(p.min);
-      const max = Number(p.max);
-      let next = clamp(num, min, max);
-      if (Number.isInteger(min) && Number.isInteger(max)) {
-        next = Math.round(next);
-      }
-      return next;
+      return normalizeSettingNumericValue(text, p);
     }
 
     async function refreshSettingHistory() {
@@ -2958,7 +2991,7 @@ async function renderItems(group, options = {}) {
         getFallback: () => Number(p.default),
         getStep: () => getSettingUnitValue(name),
         getRange: () => ({ min: Number(p.min), max: Number(p.max) }),
-        commit: (next) => commitSettingValue(next),
+        commit: (next) => commitSettingValue(normalizeSettingNumericValue(next, p, Number(val.dataset.rawValue))),
       });
     }
 
