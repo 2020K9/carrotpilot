@@ -17,6 +17,10 @@ driver, rate and max limits (and panda its safety model) to whatever comes out, 
   - once he lets go it rises only along an ease-in curve from its last low point:
     CAP = low + (1 - low) * (t / T)^2, T from model uncertainty like the angle-control recovery in the car
     code (0.5~3.0 s by position yStd at 1 s), never below T_MIN
+  - with the wheel speed known (controlsd passes carState.steeringRateDeg, 2026-11-07 fix): while he holds, the
+    envelope may rise HOLD_RISE/s up to HOLD_MAX so openpilot still pushes back a little (rotary tracking); after he
+    lets go it rises over T_FAST but only while the wheel is not already running the request's way (RATE_OK..
+    RATE_HOLD deg/s slows and stops the rise), and a request in the other direction is never limited
   - disarmed once the envelope reaches 1, the driver turns the way of the request (he asked for it), lateral
     control is off, or speed is above V_MAX
 """
@@ -27,6 +31,11 @@ CLAMP_MIN = 40       # car torque units the driver limit cuts that count as the 
 V_MAX = 15.0         # m/s, not used above (handback at speed stays as before)
 T_MIN = 2.0          # s, shortest handback
 HELP_TQ = 60.0       # driver torque in the request direction that counts as asking for it
+RATE_OK = 60.0       # deg/s, wheel speed in the request direction below which the handback may go fast
+RATE_HOLD = 120.0    # deg/s, wheel speed in the request direction above which the envelope stops rising
+T_FAST = 0.6         # s, handback time while the wheel is not running away (rate known)
+HOLD_MAX = 0.4       # highest envelope while the driver still holds against (rate known)
+HOLD_RISE = 2.0      # 1/s, how fast the envelope may rise while the driver still holds against (rate known, wheel slow)
 
 
 def handback_time(y_std_1s):
@@ -59,8 +68,11 @@ class K9TorqueRecover:
     self.t = 0.0
     self.T = T_MIN
     self.limiting = False
+    self.sign = 0.0
+    self.hold_cap = 1.0
 
-  def update(self, request, applied_prev, driver_torque, steering_pressed, v_ego, lat_active, y_std_1s=None):
+  def update(self, request, applied_prev, driver_torque, steering_pressed, v_ego, lat_active, y_std_1s=None,
+             steering_rate_deg=None):
     """request: actuators.torque (-1..1) before this stage; applied_prev: carOutput.actuatorsOutput.torque of the
     last frame; driver_torque: carState.steeringTorque. Returns the request to send."""
     self.limiting = False
@@ -78,23 +90,46 @@ class K9TorqueRecover:
       self.cap = min(1.0, abs(applied_prev))
       self.low = self.cap
       self.t = 0.0
+      self.sign = float(np.sign(request))
+      self.hold_cap = self.cap
     if not self.armed:
       return request
 
     self.T = handback_time(y_std_1s)
     mag = abs(request)
     if against:
+      self.sign = float(np.sign(request))
       # the driver still holds against: follow what the car put out down at once, no rise until he lets go
       self.cap = min(self.cap, abs(applied_prev))
+      if HOLD_RISE > 0.0 and steering_rate_deg is not None and np.isfinite(steering_rate_deg):
+        w = float(np.interp(float(steering_rate_deg) * self.sign, [RATE_OK, RATE_HOLD], [1.0, 0.0]))
+        self.hold_cap = min(max(HOLD_MAX, self.cap), max(self.hold_cap, self.cap) + HOLD_RISE * DT * w) if w > 0.0 else self.cap
+        self.cap = self.hold_cap
+      else:
+        self.hold_cap = self.cap
       self.low = self.cap
       self.t = 0.0
-    else:
+    elif steering_rate_deg is None or not np.isfinite(steering_rate_deg):
       # he let go: rise along the ease-in curve whatever openpilot's own request does
       self.t += DT
       self.cap = self.low + (1.0 - self.low) * min(1.0, self.t / self.T) ** 2
       if self.cap >= 1.0:
         self.reset()
         return request
+    else:
+      # he let go and the wheel speed is known: the spring is the wheel running the request's way, so rise fast while
+      # the wheel stays slow, slow down as it speeds up and stop rising above RATE_HOLD (time does not count then)
+      run = float(steering_rate_deg) * self.sign
+      w = float(np.interp(run, [RATE_OK, RATE_HOLD], [1.0, 0.0]))
+      T = min(self.T, T_FAST)
+      self.t += DT * w
+      self.cap = self.low + (1.0 - self.low) * min(1.0, self.t / T) ** 2
+      if self.cap >= 1.0:
+        self.reset()
+        return request
+    if self.sign != 0.0 and np.sign(request) != self.sign:
+      # openpilot now asks the other way (the way the driver pushed): that is not the unwind, leave it alone
+      return request
     if mag <= self.cap:
       return request
     self.limiting = True

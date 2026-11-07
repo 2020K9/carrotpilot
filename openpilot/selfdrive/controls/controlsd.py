@@ -332,7 +332,7 @@ class Controls:
       y_std_1s = float(model.position.yStd[10]) if len(model.position.yStd) > 10 else None
       actuators.torque = float(self.k9_torque_recover.update(actuators.torque, self.sm['carOutput'].actuatorsOutput.torque,
                                                              CS.steeringTorque, CS.steeringPressed, CS.vEgo, CC.latActive,
-                                                             y_std_1s))
+                                                             y_std_1s, CS.steeringRateDeg))
     actuators.steeringAngleDeg = float(steeringAngleDeg)
     # Ensure no NaNs/Infs
     for p in ACTUATOR_FIELDS:
