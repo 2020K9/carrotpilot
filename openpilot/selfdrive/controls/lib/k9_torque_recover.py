@@ -21,6 +21,11 @@ driver, rate and max limits (and panda its safety model) to whatever comes out, 
     envelope may rise HOLD_RISE/s up to HOLD_MAX so openpilot still pushes back a little (rotary tracking); after he
     lets go it rises over T_FAST but only while the wheel is not already running the request's way (RATE_OK..
     RATE_HOLD deg/s slows and stops the rise), and a request in the other direction is never limited
+  - 2026-11-08: carState.steeringRateDeg is unsigned on the K9 (SAS11 SAS_Speed), so controlsd also passes the
+    steering angle (set_angle) and the rate gets its direction from it. While he holds, the push-back only grows
+    while the wheel is still (HOLD_RUN0..HOLD_RUN1 deg/s the request's way); once the wheel runs the request's way
+    faster than HOLD_RUN1 he is giving way and the push-back the hold allowance added falls (HOLD_FALL/s) back to
+    the lowest output of the hold, so the wheel is not shoved when he lets go (17:54:05.3, 10.9, 13.0)
   - disarmed once the envelope reaches 1, the driver turns the way of the request (he asked for it), lateral
     control is off, or speed is above V_MAX
 """
@@ -36,6 +41,10 @@ RATE_HOLD = 120.0    # deg/s, wheel speed in the request direction above which t
 T_FAST = 1.0         # s, handback time while the wheel is not running away (rate known)
 HOLD_MAX = 0.4       # highest envelope while the driver still holds against (rate known)
 HOLD_RISE = 2.0      # 1/s, how fast the envelope may rise while the driver still holds against (rate known, wheel slow)
+HOLD_RUN0 = 4.0      # deg/s, wheel speed in the request direction while he holds above which the push-back stops growing
+HOLD_RUN1 = 40.0     # deg/s, ... above which he is giving way: the push-back falls to what the driver limit lets through
+HOLD_FALL = 1.0      # 1/s, how fast the push-back falls once he gives way
+ANGLE_EPS = 0.05     # deg, steering angle change that sets the wheel direction (carState.steeringRateDeg is unsigned)
 
 
 def handback_time(y_std_1s):
@@ -60,6 +69,8 @@ class K9TorqueRecover:
   def __init__(self, limits):
     self.limits = limits  # CarControllerParams of the car (STEER_MAX and the driver-limit constants)
     self.reset()
+    self.angle_ref = None
+    self.angle_dir = 0.0
 
   def reset(self):
     self.armed = False
@@ -70,11 +81,33 @@ class K9TorqueRecover:
     self.limiting = False
     self.sign = 0.0
     self.hold_cap = 1.0
+    self.follow = 1.0
+
+  def set_angle(self, steering_angle_deg):
+    """carState.steeringAngleDeg of this frame. On the K9 (SAS11 SAS_Speed, unsigned in the DBC) carState.steeringRateDeg
+    is only the wheel speed, never negative (11-06 logs: 0..288, sign matches the angle motion 49 % of frames), so the
+    direction is taken from the angle and steering_rate_deg is used as a magnitude once an angle has been given."""
+    if steering_angle_deg is None or not np.isfinite(steering_angle_deg):
+      return
+    a = float(steering_angle_deg)
+    if self.angle_ref is None:
+      self.angle_ref = a
+    elif abs(a - self.angle_ref) >= ANGLE_EPS:
+      self.angle_dir = 1.0 if a > self.angle_ref else -1.0
+      self.angle_ref = a
+
+  def signed_rate(self, steering_rate_deg):
+    if steering_rate_deg is None or not np.isfinite(steering_rate_deg):
+      return None
+    if self.angle_ref is None:
+      return float(steering_rate_deg)  # caller gave a signed rate
+    return abs(float(steering_rate_deg)) * self.angle_dir
 
   def update(self, request, applied_prev, driver_torque, steering_pressed, v_ego, lat_active, y_std_1s=None,
              steering_rate_deg=None):
     """request: actuators.torque (-1..1) before this stage; applied_prev: carOutput.actuatorsOutput.torque of the
     last frame; driver_torque: carState.steeringTorque. Returns the request to send."""
+    steering_rate_deg = self.signed_rate(steering_rate_deg)
     self.limiting = False
     if not lat_active or v_ego > V_MAX:
       self.reset()
@@ -92,6 +125,7 @@ class K9TorqueRecover:
       self.t = 0.0
       self.sign = float(np.sign(request))
       self.hold_cap = self.cap
+      self.follow = self.cap
     if not self.armed:
       return request
 
@@ -101,9 +135,18 @@ class K9TorqueRecover:
       self.sign = float(np.sign(request))
       # the driver still holds against: follow what the car put out down at once, no rise until he lets go
       self.cap = min(self.cap, abs(applied_prev))
+      self.follow = min(self.follow, abs(applied_prev))
       if HOLD_RISE > 0.0 and steering_rate_deg is not None and np.isfinite(steering_rate_deg):
-        w = float(np.interp(float(steering_rate_deg) * self.sign, [RATE_OK, RATE_HOLD], [1.0, 0.0]))
-        self.hold_cap = min(max(HOLD_MAX, self.cap), max(self.hold_cap, self.cap) + HOLD_RISE * DT * w) if w > 0.0 else self.cap
+        run = float(steering_rate_deg) * self.sign
+        if run > HOLD_RUN1:
+          # he is giving way while still on the wheel (17:54:04.7~05.4, 10.3~10.9, 12.8~13.0): the wheel already runs
+          # the request's way, so pushing back now only adds to the spring when he lets go -> let the push-back fall
+          # only the push-back the hold allowance added falls; what the car put out at the lowest point stays
+          self.hold_cap = max(self.follow, min(self.hold_cap, self.cap) - HOLD_FALL * DT)
+        else:
+          w = float(np.interp(run, [HOLD_RUN0, HOLD_RUN1], [1.0, 0.0]))
+          top = max(HOLD_MAX, self.cap)
+          self.hold_cap = min(top, max(self.hold_cap, self.cap) + HOLD_RISE * DT * w) if w > 0.0 else min(self.hold_cap, top)
         self.cap = self.hold_cap
       else:
         self.hold_cap = self.cap

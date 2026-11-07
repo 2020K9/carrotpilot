@@ -330,6 +330,7 @@ class Controls:
     if self.k9_torque_recover is not None:
       model = self.sm['modelV2']
       y_std_1s = float(model.position.yStd[10]) if len(model.position.yStd) > 10 else None
+      self.k9_torque_recover.set_angle(CS.steeringAngleDeg)  # gives steeringRateDeg its direction (unsigned on the K9)
       actuators.torque = float(self.k9_torque_recover.update(actuators.torque, self.sm['carOutput'].actuatorsOutput.torque,
                                                              CS.steeringTorque, CS.steeringPressed, CS.vEgo, CC.latActive,
                                                              y_std_1s, CS.steeringRateDeg))
