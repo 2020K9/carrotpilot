@@ -33,7 +33,7 @@ T_MIN = 2.0          # s, shortest handback
 HELP_TQ = 60.0       # driver torque in the request direction that counts as asking for it
 RATE_OK = 60.0       # deg/s, wheel speed in the request direction below which the handback may go fast
 RATE_HOLD = 120.0    # deg/s, wheel speed in the request direction above which the envelope stops rising
-T_FAST = 0.6         # s, handback time while the wheel is not running away (rate known)
+T_FAST = 1.0         # s, handback time while the wheel is not running away (rate known)
 HOLD_MAX = 0.4       # highest envelope while the driver still holds against (rate known)
 HOLD_RISE = 2.0      # 1/s, how fast the envelope may rise while the driver still holds against (rate known, wheel slow)
 
@@ -117,6 +117,10 @@ class K9TorqueRecover:
         self.reset()
         return request
     else:
+      if self.t == 0.0:
+        # just let go (or the wheel has been running away since): start from what the car actually put out, not
+        # from the hold allowance
+        self.low = min(self.low, abs(applied_prev))
       # he let go and the wheel speed is known: the spring is the wheel running the request's way, so rise fast while
       # the wheel stays slow, slow down as it speeds up and stop rising above RATE_HOLD (time does not count then)
       run = float(steering_rate_deg) * self.sign
