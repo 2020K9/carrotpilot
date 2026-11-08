@@ -1,3 +1,4 @@
+# 2026-11-08: menu 3 is half-gap (kind 18), current marker 12; historical inputs stay unchanged.
 """K9StopMode menu of 2026-10-25 (보노보노 00:36 "v12 원본 그대로 넣어놓기도 해보고, K9 맞춰 넣는 것도 v12k9으로" /
 "브레이크 앞전꺼는 다 별로니 지워" / 00:39 "원본 그대로 수정하지 말고 올려라"): 0 base, 1 v12 original (the creep_fix v12 page
 code unchanged in carcontroller.py), 2 v12k9 (k9_creep kind V12K9). The old 1 v10 / 2 v10 + light / 3 v11 are deleted.
@@ -118,8 +119,8 @@ def test_menu():
   # 2026-10-30 (17:29 / 17:31): 2 = kind 16 (격차수정), 4 = kind 14 (moved from 2), 5 = kind 17 (격차수정 + harder below 1 km/h).
   # 2026-11-03 (대감님 06:08): 2 / 4 left the menu (kind 14 deleted with its code, kind 16 stays as the base of 17), 3 -> 2, 5 -> 3.
   # 2026-11-03 17:10 (대감님 "0.3번5번만 남겨두고 삭제"): 0 / 3 / 5 only, the 9df95178c numbers; kind 13 off the menu
-  assert kc.MENU == {1: kc.V12K9OH, 2: kc.V12K9OGR} and kc.MODES == (1, 2)  # 2026-11-05 07:16: 0 / 1 / 2
-  assert kc.KINDS == (V9, V12K9, kc.V12K9O, kc.V12K9OH, kc.V12K9OG, kc.V12K9OGR) == (1, 8, 13, 15, 16, 17)
+  assert kc.MENU == {1: kc.V12K9OH, 2: kc.V12K9OGR, 3: kc.V12K9OGR_HALF} and kc.MODES == (1, 2, 3)  # 2026-11-05 07:16: 0 / 1 / 2
+  assert kc.KINDS == (V9, V12K9, kc.V12K9O, kc.V12K9OH, kc.V12K9OG, kc.V12K9OGR, kc.V12K9OGR_HALF) == (1, 8, 13, 15, 16, 17, 18)
   assert carcontroller.K9_CREEP_MENU is kc.MENU
   for gone in ("V10", "V10_LIGHT", "V11", "LIGHT_MIN_DECEL", "V10_FEATHER_V", "V11_FEATHER_V", "V12_ORIG_MENU"):
     assert not hasattr(kc, gone), gone
@@ -298,7 +299,7 @@ class FakeParams:
 
 def test_migration_tables():
   # 8 until 2026-11-03, 7 until 2026-10-30, 6 until 2026-10-29 07:10, 5 until 05:40, 4 until the 04:48 slot swap, 3 until 2026-10-28
-  assert mig.STOP_MODE_VER == 11  # 10 until 2026-11-05 07:16, 9 until 2026-11-03 17:10
+  assert mig.STOP_MODE_VER == 12  # 10 until 2026-11-05 07:16, 9 until 2026-11-03 17:10
   assert mig.MENU_MIGRATION_V4 == {0: 0, 1: 1, 2: 2, 3: 0, 4: 0, 5: 0, 6: 0}
   assert mig.MENU_MIGRATION_V3 == {0: 0, 1: 2, 2: 2, 3: 2}
   assert mig.MENU_MIGRATION_FROM_V1 == {0: 0, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2}
@@ -342,12 +343,15 @@ def test_migration_tables():
   assert set(mig.MOVE_V11.values()) <= {0, *kc.MENU}  # 2026-11-05 07:16
 
 
-@pytest.mark.parametrize("ver", [7, 6, 5, 4, 3, 2, None, 1, 12])  # 6 added 2026-10-29 07:10, 7 on 2026-10-30; 12 = unknown (11 current since 2026-11-05 07:16)
+@pytest.mark.parametrize("ver", [7, 6, 5, 4, 3, 2, None, 1, 12, 13])  # 6 added 2026-10-29 07:10, 7 on 2026-10-30; 12 = unknown (11 current since 2026-11-05 07:16)
 @pytest.mark.parametrize("old", [None, 0, 1, 2, 3, 4, 5, 6, 7, 99, -1, "x"])
 def test_migration(ver, old):
   table = {} if ver in (4, 5, 6, 7) else (mig.MENU_MIGRATION_V4 if ver == 3 else (mig.MENU_MIGRATION_V3 if ver == 2 else mig.MENU_MIGRATION_FROM_V1))
   p = FakeParams(**({} if old is None else {"K9StopMode": old}), **({} if ver is None else {"K9StopModeVer": ver}))
   changed = mig.migrate_k9_stop_mode(p)
+  if ver == 12:
+    assert changed is False and p.v.get("K9StopMode") == old and p.v["K9StopModeVer"] == 12
+    return
   if isinstance(old, int):
     mid = table.get(old, old)  # the older menu first, then the 04:48 slot swap, the 05:40 drop and the 07:10 move
     if ver == 7:  # 2026-10-30: a marker-7 device is past every older step, only the MOVE_V8 move below
@@ -373,10 +377,6 @@ def test_migration(ver, old):
 def test_migration_after_ver8_never_touches():  # marker 9 since 2026-11-03, 8 since 2026-10-30 (7 since 10-29 07:10; older devices migrate once more)
   for v in (0, 1, 2, 3, 4, 5, 9):
     p = FakeParams(K9StopMode=v, K9StopModeVer=mig.STOP_MODE_VER)
-    if v in (3, 4):  # 2026-11-06 06:21: menus 3 / 4 left, a marker-11 3 / 4 folds into 1 / 2 (MERGE_V12), once
-      assert mig.migrate_k9_stop_mode(p) is True and p.v["K9StopMode"] == v - 2
-      assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == v - 2
-      continue
     assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == v
 
 
@@ -462,16 +462,16 @@ def test_migration_old_v13_c1_values_go_to_0():
   (the 0-5 menu of d76f7ecc) with 3 v13 / 4 C1 / 5 C1+ (6 = the never-pushed v13k9) goes to 0 once; an old 3 v13 was never
   carried to the 3 v14 that followed, and the v14 original is itself off the menu since 2026-10-29 07:10. 0 / 1 / 2 stay."""
   # 9 until 2026-11-03 17:10, 8 until 2026-11-03 06:08
-  assert mig.STOP_MODE_VER == 11  # 10 until 2026-11-05 07:16; 7 until 2026-10-30, 6 until 2026-10-29 07:10, 5 until 05:40, 4 until the 04:48 slot swap
+  assert mig.STOP_MODE_VER == 12  # 10 until 2026-11-05 07:16; 7 until 2026-10-30, 6 until 2026-10-29 07:10, 5 until 05:40, 4 until the 04:48 slot swap
   # table first, then the 1 <-> 2 swap, the 05:40 drop of the v12 original and the 07:10 move: a ver-3 stored 1 was the
   # v12 original, so it ends on 0 (base) instead of the slot it used to own.
   # 2026-11-03 17:10: the ver-3 stored 2 that ended on 1 (kind 13) now ends on 0 as well (kind 13 off the menu)
   for old, want in ((0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0)):
     p = FakeParams(K9StopMode=old, K9StopModeVer=3)
-    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v["K9StopMode"] == want and p.v["K9StopModeVer"] == 11
+    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v["K9StopMode"] == want and p.v["K9StopModeVer"] == 12
     assert mig.migrate_k9_stop_mode(p) is False and p.v["K9StopMode"] == want  # once only
   p = FakeParams(K9StopMode=3, K9StopModeVer=4)  # the v14 original kept its number until 07:10 took it off the menu
-  assert mig.migrate_k9_stop_mode(p) is True and p.v["K9StopMode"] == 0 and p.v["K9StopModeVer"] == 11
+  assert mig.migrate_k9_stop_mode(p) is True and p.v["K9StopMode"] == 0 and p.v["K9StopModeVer"] == 12
   p = FakeParams(K9StopMode=3, K9StopModeVer=5)  # picked on the 04:48 menu: v14, now base
   assert mig.migrate_k9_stop_mode(p) is True and p.v["K9StopMode"] == 0
   p = FakeParams(K9StopMode=3, K9StopModeVer=2)  # the 2026-10-24 evening menu: 3 was v11 -> 2 -> 1 after the swap, never v14
@@ -551,4 +551,4 @@ def test_settings_entry():
   ents = [e for e in d["params"] if e.get("name") == "K9StopMode"]
   assert len(ents) == 1
   e = ents[0]
-  assert e["min"] == 0 and e["max"] == 2 and e["default"] == 0 and e["choices"] == [0, 1, 2]  # 2026-11-05 07:16  # 2026-11-03 17:10: 0 / 3 / 5 (kinds 15 / 17)
+  assert e["min"] == 0 and e["max"] == 3 and e["default"] == 0 and e["choices"] == [0, 1, 2, 3]  # 2026-11-05 07:16  # 2026-11-03 17:10: 0 / 3 / 5 (kinds 15 / 17)

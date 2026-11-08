@@ -1,3 +1,4 @@
+# 2026-11-08: menu 3 is half-gap (kind 18), current marker 12; historical inputs stay unchanged.
 """K9StopMode 3 / 4 removed (2026-11-06 06:21, 대감님 "브레이크3.4.제거"). a082dc0d had 3 / 4 = 1 / 2 + StoppingAccel -1.00
 while picked; the menu is 0 / 1 / 2 again and a marker-11 3 -> 1, 4 -> 2 (MERGE_V12, idempotent, no new marker).
 Model-only harness (실차 미검증)."""
@@ -11,25 +12,25 @@ from openpilot.selfdrive.controls.lib import longcontrol
 
 
 def test_menu_is_0_1_2_again():
-  assert kc.MENU == {1: 15, 2: 17} and kc.MODES == (1, 2)
+  assert kc.MENU == {1: 15, 2: 17, 3: 18} and kc.MODES == (1, 2, 3)
   assert not hasattr(longcontrol, "K9_STOP_MODE_STOPPING_ACCEL")
   item = next(i for i in json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))["params"]
               if i["name"] == "K9StopMode")
-  assert item["max"] == 2 and item["choices"] == [0, 1, 2]
-  assert all(len(item["options"][lang]) == 3 for lang in ("ko", "en", "zh"))
+  assert item["max"] == 3 and item["choices"] == [0, 1, 2, 3]
+  assert all(len(item["options"][lang]) == 4 for lang in ("ko", "en", "zh"))
 
 
 def test_marker11_3_4_fold_into_1_2_once():
   for old, want in ((3, 1), (4, 2)):
     p = FakeParams(K9StopMode=old, K9StopModeVer=11)
-    assert mig.migrate_k9_stop_mode(p) is True and p.v == {"K9StopMode": want, "K9StopModeVer": 11}
-    assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": want, "K9StopModeVer": 11}
+    assert mig.migrate_k9_stop_mode(p) is True and p.v == {"K9StopMode": want, "K9StopModeVer": 12}
+    assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": want, "K9StopModeVer": 12}
 
 
 def test_marker11_other_values_untouched():
   for v in (0, 1, 2, 5, 6, 9, -1, True, None, "x"):
     p = FakeParams(K9StopMode=v, K9StopModeVer=11)
-    assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": v, "K9StopModeVer": 11}
+    assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": v, "K9StopModeVer": 12}
 
 
 def test_marker10_never_gets_1_2_from_3_4_rule():  # old numbering: 3 -> 1 (kind 15) and 4 -> 0 by MOVE_V11, as before
@@ -37,7 +38,7 @@ def test_marker10_never_gets_1_2_from_3_4_rule():  # old numbering: 3 -> 1 (kind
     p = FakeParams(K9StopMode=old, K9StopModeVer=10)
     mig.migrate_k9_stop_mode(p)
     mig.migrate_k9_stop_mode(p)
-    assert p.v == {"K9StopMode": want, "K9StopModeVer": 11}
+    assert p.v == {"K9StopMode": want, "K9StopModeVer": 12}
 
 
 def test_write_failure_retries_next_start():
@@ -62,7 +63,7 @@ def test_older_markers_never_end_on_3_4():
     for stored in range(6):
       p = FakeParams(K9StopMode=stored) if marker is None else FakeParams(K9StopMode=stored, K9StopModeVer=marker)
       mig.migrate_k9_stop_mode(p)
-      assert p.v["K9StopModeVer"] == 11 and p.v["K9StopMode"] in (0, 1, 2), (marker, stored, p.v)
+      assert p.v["K9StopModeVer"] == 12 and p.v["K9StopMode"] in (0, 1, 2), (marker, stored, p.v)
 
 
 class _LP:

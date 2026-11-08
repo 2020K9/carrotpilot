@@ -1,5 +1,9 @@
 """K9 camera-SCC stop feathering ("creep fix"), selected by K9StopMode.
 
+Current menu (2026-11-08): 0 base, 1 kind 15, 2 kind 17, 3 kind 18.
+Kind 18 retains kind 17 safeguards and sub-1 km/h ramp; only B17O_GAP_A
+correction is multiplied by 0.5. Historical menu numbers below are historical.
+
 K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대로 넣어놓기도 해보고, K9 맞춰 넣는 것도 v12k9으로
 해서 넣어봐" / "브레이크 앞전꺼는 다 별로니 지워" and 00:39 "원본 그대로 수정하지 말고 올려라"):
 - 0 = base braking (default; nothing here is called);
@@ -161,7 +165,8 @@ V12K9OH = 15  # kind 15 (2026-10-29 05:40) "bono1739 원본2 + 선 뒤 1초 잠�
 V12K9OG = 16  # kind 16 (2026-10-30) "격차수정": kind 13 + the measured gap (B17O_GAP_*) before the stop; off the menu since 11-03, base of kind 17
 V12K9OGR = 17  # kind 17 (2026-10-30 17:31) "격차수정 + 1 km/h 아래 서서히 더 잡기": kind 16 + the ramp from B17O_RAMP5_V down
 # (kind 17: menu 5; 3 from 2026-11-03 06:08 to 17:10)
-KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
+V12K9OGR_HALF = 18  # menu 3: kind 17 with only the measured gap correction scaled to 50%
+KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR, V12K9OGR_HALF)
 # K9StopMode value -> K9Creep kind (2026-10-25: 0 base, 1 v12 original (not a kind), 2 v12k9; 2026-10-26: 3 v13 original;
 # 2026-10-28: 3 v14 original instead (not a kind); 2026-10-29: 2 = kind 13 "bono1739 원본" (kind 8 + B17O_*),
 # kind 8 itself unchanged; 00:50 "bono1739 원본2": B17O_HOLD_T 0; 04:48 the 1 <-> 2 slot swap; 05:40 the v12 original left
@@ -174,7 +179,7 @@ KINDS = (V9, V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
 # with their 9df95178c numbers: 3 = kind 15, 5 = kind 17. Kind 13 (menu 1) left the menu, its code stays as the base of 15 / 16 / 17.
 # 2026-11-05 07:16 (the driver "메뉴 브레이크 0.3.5 말하는 거면 0.1.2로 바꿔"): the same kinds renumbered, 1 = kind 15
 # (was 3), 2 = kind 17 (was 5); behaviour unchanged.
-MENU = {1: V12K9OH, 2: V12K9OGR}
+MENU = {1: V12K9OH, 2: V12K9OGR, 3: V12K9OGR_HALF}
 # Stored values of older menus are migrated once at manager start: openpilot/selfdrive/car/k9_stop_mode_migration.py
 MODES = tuple(sorted(MENU))  # K9StopMode values that change braking; anything else acts as 0
 
@@ -451,14 +456,15 @@ class K9Creep:
   def __init__(self, mode: int = V9):
     assert mode in KINDS, mode
     self.mode = mode
+    self.gap_scale = 0.5 if mode == V12K9OGR_HALF else 1.0
     # kind 8 / 13 / 15 / 16 / 17: v12k9 (own update path _update_v12k9, jerk_u / jerk_l profile; band below 3.0 m/s)
-    self.v12 = mode in (V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR)
-    self.b17o = mode in (V12K9O, V12K9OH, V12K9OG, V12K9OGR)  # kinds 13 / 15 / 16 / 17: kind 8 + the driver's own stop table (B17O_*)
+    self.v12 = mode in (V12K9, V12K9O, V12K9OH, V12K9OG, V12K9OGR, V12K9OGR_HALF)
+    self.b17o = mode in (V12K9O, V12K9OH, V12K9OG, V12K9OGR, V12K9OGR_HALF)  # kinds 13 / 15 / 16 / 17: kind 8 + the driver's own stop table (B17O_*)
     self.b17h = mode == V12K9OH  # kind 15 only: the extra braking 1 s after the stop (B17O_HOLD2_*) on top of kind 13
-    self.b17g = mode in (V12K9OG, V12K9OGR)  # kinds 16 / 17: the measured gap on top of the kind 13 table before the stop (B17O_GAP_*)
-    self.b17r = mode in (V12K9OH, V12K9OGR)  # kinds 15 / 17: the ramp before the stop and its floor from the stop (B17O_RAMP_*)
+    self.b17g = mode in (V12K9OG, V12K9OGR, V12K9OGR_HALF)  # kinds 16 / 17: the measured gap on top of the kind 13 table before the stop (B17O_GAP_*)
+    self.b17r = mode in (V12K9OH, V12K9OGR, V12K9OGR_HALF)  # kinds 15 / 17: the ramp before the stop and its floor from the stop (B17O_RAMP_*)
     self.ref = _V12K9Ref() if self.v12 else None  # kind 8: reference for the zone clamp
-    self.sh = K9Creep(V12K9O) if mode in (V12K9OG, V12K9OGR) else None  # kinds 16 / 17: kind 13 itself on the same inputs (update() / bands())
+    self.sh = K9Creep(V12K9O) if mode in (V12K9OG, V12K9OGR, V12K9OGR_HALF) else None  # kinds 16 / 17: kind 13 itself on the same inputs (update() / bands())
     self.sh_out = None  # kinds 16 / 17: the kind 13 request of this frame
     self.sh_cb, self.sh_n = None, 0  # kinds 16 / 17: the band kind 13 sent on its last bands() call, update() calls since then
     self.reset()
@@ -745,7 +751,7 @@ class K9Creep:
     self.b17o_tab = float(tab)
     if self.b17g and self.b17o_k < 0:  # kinds 16 / 17: the gap on top of the table before the stop (b17o_plan / b17o_tab: kind 13's)
       self.b17g_f = min(1.0, self.b17g_f + B17O_GAP_STEP)
-      tab = tab - self.b17g_f * max(float(np.interp(v_ego, B17O_GAP_BP, B17O_GAP_A)), 0.0)
+      tab = tab - self.gap_scale * self.b17g_f * max(float(np.interp(v_ego, B17O_GAP_BP, B17O_GAP_A)), 0.0)
     self.b17g_tab = float(tab)  # kind 17: the ramp base (kind 16's table request)
     return float(max(min(tab, a_target), -3.5))
 
