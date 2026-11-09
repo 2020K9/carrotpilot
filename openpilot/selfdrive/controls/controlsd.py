@@ -42,6 +42,7 @@ from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader
 from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 
 State = log.SelfdriveState.OpenpilotState
+LaneChangeState = log.LaneChangeState
 LAT_CURVATURE_SATURATION_ACCEL = 0.1  # infiniteCable2 LatControlCurvature: 곡률 기반 steer_limited 임계 (m/s^2 환산)
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
