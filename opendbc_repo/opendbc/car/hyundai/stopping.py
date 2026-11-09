@@ -8,38 +8,12 @@ from enum import StrEnum
 
 
 DT = 0.02  # SCC_CONTROL is transmitted at 50 Hz
-ENTRY_SPEED = 0.7  # m/s; retain approach braking above the low-speed stop region (default of K9CanfdEntrySpeed)
-# 실험중 > CAN-FD 정차 진입 속도: K9CanfdEntrySpeed in 0.01 m/s (70 = ENTRY_SPEED 0.7 m/s, unchanged behaviour).
-# Read at construction, then every ENTRY_SPEED_REFRESH_FRAMES update() calls while no stop episode is active;
-# unreadable / out of range -> ENTRY_SPEED.
-ENTRY_SPEED_PARAM = "K9CanfdEntrySpeed"
-ENTRY_SPEED_PARAM_MIN = 20   # 0.20 m/s (above STOP_SPEED / MOVING_SPEED)
-ENTRY_SPEED_PARAM_MAX = 200  # 2.00 m/s
-ENTRY_SPEED_REFRESH_FRAMES = 50  # 1 s at 50 Hz
+ENTRY_SPEED = 0.7  # m/s; retain approach braking above the low-speed stop region
 STOP_SPEED = 0.05
 MOVING_SPEED = 0.10
 STOP_CONFIRM_TIME = 0.2
 APPROACH_ACCEL = -0.5
 STOP_LOWER_BAND = 0.20  # fixed during active ACC, including before StopReq; never copied from stock
-
-
-def read_entry_speed(params=None) -> float:
-  """K9CanfdEntrySpeed (0.01 m/s) -> m/s; any failure or out-of-range value -> ENTRY_SPEED (0.7)."""
-  try:
-    if params is None:
-      from openpilot.common.params import Params
-      params = Params()
-    raw = params.get(ENTRY_SPEED_PARAM)
-    if raw is None:
-      return ENTRY_SPEED
-    if isinstance(raw, bytes):
-      raw = raw.decode()
-    value = int(raw)
-    if not ENTRY_SPEED_PARAM_MIN <= value <= ENTRY_SPEED_PARAM_MAX:
-      return ENTRY_SPEED
-    return value / 100.0
-  except Exception:
-    return ENTRY_SPEED
 
 
 class StopPhase(StrEnum):
@@ -58,10 +32,7 @@ class StopCommand:
 
 
 class CanfdStopping:
-  def __init__(self, params=None):
-    self._entry_params = params
-    self._entry_refresh = 0
-    self.entry_speed = read_entry_speed(params)
+  def __init__(self):
     # Packet history survives episode resets; it follows the final StopReq,
     # including approach and interlock overrides.
     self.last_scc_stop_req = 0
@@ -89,20 +60,13 @@ class CanfdStopping:
   def update(self, *, active: bool, requested: bool, speed: float, held: bool,
              accel: float, previous_value: float, jerk_u: float, jerk_l: float) -> StopCommand | None:
     # Caller validates sensor values and applies pedal/CAN/hold interlocks.
-    if self.phase == StopPhase.idle:
-      self._entry_refresh += 1
-      if self._entry_refresh >= ENTRY_SPEED_REFRESH_FRAMES:
-        self._entry_refresh = 0
-        self.entry_speed = read_entry_speed(self._entry_params)
-
     if not active or not requested:
       self.reset()
       return None
 
-    entry_speed = self.entry_speed
     if self.phase == StopPhase.idle:
-      self.enter(StopPhase.approach if speed > entry_speed else StopPhase.request, "stop_requested")
-    if self.phase == StopPhase.approach and speed <= entry_speed:
+      self.enter(StopPhase.approach if speed > ENTRY_SPEED else StopPhase.request, "stop_requested")
+    if self.phase == StopPhase.approach and speed <= ENTRY_SPEED:
       self.enter(StopPhase.request, "entry_speed")
 
     self.stopped_time = self.stopped_time + DT if speed <= STOP_SPEED else 0.0
