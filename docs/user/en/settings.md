@@ -495,3 +495,5 @@ This is display/logging only, with no braking, stop or departure command.
 The new Params key requires the normal build after updating. The current road
 camera supplies 20fps. Reduced processing overhead does not establish sustained
 20Hz detection; this change does not promise 20Hz or 50Hz detection.
+
+Mode 3 now adds half-gap correction only at/below mode 1’s ramp threshold (about 1.5 km/h). Its own gradual-braking ramp remains at/below 1 km/h; modes 0/1/2 are unchanged. Not road-tested.

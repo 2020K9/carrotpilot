@@ -32,13 +32,14 @@ def test_existing_modes_exact_can_bytes(monkeypatch, baseline, mode, seq):
   assert old.can == new.can and old.scc12 == new.scc12 and old.scc14 == new.scc14
 
 
-@pytest.mark.parametrize('v', sorted(set(kc.B17O_GAP_BP + [0.15, 0.3, 0.4, 0.5, 0.65, 0.8])))
+@pytest.mark.parametrize('v', sorted(set(kc.B17O_GAP_BP + [0.15, 0.3, 0.4, kc.B17O_RAMP_V - 1e-6, kc.B17O_RAMP_V, kc.B17O_RAMP_V + 1e-6, 0.5, 0.65, 0.8])))
 def test_exact_half_gap_at_bins_and_interpolation(v):
   half = kc.K9Creep(kc.V12K9OGR_HALF)
   out = half._b17o(-0.01, True, v, v, False, False, 0.0)
   base = -float(np.interp(v, kc.B17O_TAB_BP, kc.B17O_TAB_V))
   gap = float(np.interp(v, kc.B17O_GAP_BP, kc.B17O_GAP_A))
-  assert out == pytest.approx(base - 0.5 * gap, abs=1e-12)
+  expected_gap = 0.5 * gap if v <= kc.B17O_RAMP_V else 0.0
+  assert out == pytest.approx(base - expected_gap, abs=1e-12)
   assert half.gap_scale == 0.5 and kc.K9Creep(kc.V12K9OGR).gap_scale == 1.0
 
 
@@ -157,3 +158,14 @@ def test_new_mode_does_not_apply_to_other_vehicle_configuration(monkeypatch, cam
   monkeypatch.undo()
   three = gentle_sequence(Rig(monkeypatch, cp=cp, K9StopMode=3))
   assert three.can == zero.can and three.cc.k9_creep is None
+
+
+def test_half_gap_speed_crossings_do_not_change_mode2():
+  half, full = kc.K9Creep(kc.V12K9OGR_HALF), kc.K9Creep(kc.V12K9OGR)
+  for v in (0.8, 0.5, kc.B17O_RAMP_V, 0.3, 0.5, 0.4):
+    base = -float(np.interp(v, kc.B17O_TAB_BP, kc.B17O_TAB_V))
+    gap = float(np.interp(v, kc.B17O_GAP_BP, kc.B17O_GAP_A))
+    h = half._b17o(-0.01, True, v, v, False, False, 0.0)
+    f = full._b17o(-0.01, True, v, v, False, False, 0.0)
+    assert h == pytest.approx(base - (0.5 * gap if v <= kc.B17O_RAMP_V else 0.0), abs=1e-12)
+    assert f == pytest.approx(base - gap, abs=1e-12)
