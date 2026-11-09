@@ -444,7 +444,7 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]   # 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9CanfdEntrySpeed", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]   # 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed; 2026-11-09 K9CanfdEntrySpeed after K9StopMode (registration pin updated deliberately)
   params = settings["params"]
   p = next(x for x in params if x["name"] == "K9LaneAssist")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")

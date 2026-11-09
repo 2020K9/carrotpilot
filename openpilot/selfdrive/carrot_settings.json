@@ -409,6 +409,7 @@
           "zh": "试验中",
           "params": [
             "K9StopMode",
+            "K9CanfdEntrySpeed",
             "K9LaneAssist",
             "K9LaneCenterGain",
             "PathOffset",
@@ -3707,6 +3708,22 @@
       "control": "select",
       "options": {"ko": ["0 기본 제동", "1 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "2 격차수정 + 1 km/h 아래 서서히 더 잡기", "3 격차 반만 + 1 km/h 아래 서서히 더 잡기"], "en": ["0 Base braking", "1 bono1739 original2 + harder 1 s after the stop", "2 Gap fix + gradually harder below 1 km/h", "3 Half gap + gradually harder below 1 km/h"], "zh": ["0 基本制动", "1 bono1739原版2＋停后1秒起加压", "2 差距修正＋1 km/h以下逐渐加大制动", "3 半差距＋1 km/h以下逐渐加大制动"]},
       "risk": "high"
+    },
+    {
+      "group": "주행튜닝",
+      "name": "K9CanfdEntrySpeed",
+      "title": "CAN-FD 정차 진입 속도 x0.01m/s (실험)",
+      "descr": "CAN-FD 현대·기아 롱컨에서 정차 요청(StopReq)을 넣기 시작하는 속도. 값/100 m/s. 70 = 0.70 m/s(2.52 km/h) 기본(원래 코드 그대로). 이보다 빠르면 기존 감속을 유지하다 이 속도 이하에서 정차 요청. K9 브레이크 메뉴(K9StopMode)와는 별개. 정차 중이 아닐 때 약 1초 안에 반영. 실차 미확인.",
+      "egroup": "LONG",
+      "etitle": "CAN-FD Stop Entry Speed x0.01m/s (Trial)",
+      "edescr": "Speed at which CAN-FD Hyundai/Kia openpilot long starts sending the stop request (StopReq). Value/100 m/s. 70 = 0.70 m/s (2.52 km/h) default (original code unchanged). Above it the existing approach braking is kept; at or below it the stop request is sent. Separate from the K9 brake menu (K9StopMode). Applied within about 1 s while not stopping. Not tested in the car.",
+      "cgroup": "纵向控制",
+      "ctitle": "CAN-FD 停车进入速度 x0.01m/s（试验）",
+      "cdescr": "CAN-FD 现代/起亚纵向控制开始发送停车请求（StopReq）的速度。数值/100 m/s。70 = 0.70 m/s（2.52 km/h）默认（原代码不变）。高于此速度保持原有减速，低于或等于时发送停车请求。与K9停车方式（K9StopMode）无关。非停车中约1秒内生效。未经实车确认。",
+      "min": 20,
+      "max": 200,
+      "default": 70,
+      "unit": 5
     },
     {
       "group": "레인모드",

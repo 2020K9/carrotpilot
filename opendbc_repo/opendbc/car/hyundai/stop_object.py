@@ -51,7 +51,7 @@ def apply_signal_stop_object(values, cs, hud, *, stopping_controller):
     or out.brakeHoldActive
     or out.parkingBrake
     or not all(math.isfinite(value) for value in speeds)
-    or max(abs(value) for value in speeds) > ENTRY_SPEED
+    or max(abs(value) for value in speeds) > getattr(stopping_controller, "entry_speed", ENTRY_SPEED)
     or has_lead(getattr(cs, "radarState", None))
   ):
     return False
