@@ -560,7 +560,7 @@ def main() -> None:
     from cluster_usb_display import find_supported_usb_product, product_id_for_hud_mode, product_label
 
     # external HUD never above nice CLUSTER_MIN_NICE (10), offroad / while starting too; onroad DISPLAY_NICE 19 as before
-    scheduler = DisplayScheduler(4, enabled=TICI, min_nice=getattr(display_scheduling, "CLUSTER_MIN_NICE", 10))
+    scheduler = DisplayScheduler(4, enabled=TICI, extra_onroad_cores=(7,), min_nice=getattr(display_scheduling, "CLUSTER_MIN_NICE", 10))
     scheduler.update(False, force=True)
     params = Params()
     params.put_bool_nonblocking("ClusterHudConnected", False)

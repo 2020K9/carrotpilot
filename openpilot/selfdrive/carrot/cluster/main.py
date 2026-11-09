@@ -775,7 +775,7 @@ def run_demo(
     is_metric: bool | None,
     usb_h264_ffmpeg_threads: int = 0,
 ) -> None:
-    scheduler = DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE)
+    scheduler = DisplayScheduler(4, enabled=TICI, extra_onroad_cores=(7,), min_nice=CLUSTER_MIN_NICE)
     scheduler.update(False, force=True)
     profile = ProfileReporter(profile_render, profile_interval_s)
     gc_hook = GcProfileHook(profile) if profile_render else None
