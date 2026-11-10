@@ -70,11 +70,11 @@ def test_emergency_lead_and_standstill_latch(kw):
   assert out[0] <= -0.5
 
 
-def test_ramp_threshold_and_steps_retained():
+def test_ramp_threshold_1p5_and_steps_retained():
   c = kc.K9Creep(kc.V12K9OGR_HALF)
-  upd(c, v_ego=0.3, v_ego_raw=0.3, a_target=-0.01, a_ego=0.0)
+  upd(c, v_ego=0.42, v_ego_raw=0.42, a_target=-0.01, a_ego=0.0)
   assert c.b17o_ramp == 0
-  upd(c, v_ego=0.27, v_ego_raw=0.27, a_target=-0.01, a_ego=0.0)
+  upd(c, v_ego=1.5 / 3.6, v_ego_raw=1.5 / 3.6, a_target=-0.01, a_ego=0.0)
   assert c.b17o_ramp == -kc.B17O_RAMP_STEP
   assert c.b17o_hold is not None
   upd(c, stopping=False)

@@ -707,6 +707,8 @@ class K9Creep:
     if o is None:
       return o
     rv, base = (B17O_RAMP5_V, self.b17g_tab) if self.b17g else (B17O_RAMP_V, self.b17o_tab)
+    if self.mode == V12K9OGR_HALF:  # menu 3 only: start extra braking at 1.5 km/h (2026-11-11)
+      rv = 1.5 / 3.6
     if v_ego <= rv and a_ego > base:
       if self.b17o_ramp > -B17O_RAMP_KNEE:
         r = max(self.b17o_ramp - B17O_RAMP_STEP, -B17O_RAMP_KNEE)
