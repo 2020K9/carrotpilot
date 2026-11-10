@@ -2,8 +2,8 @@
 
 Current menu (2026-11-08): 0 base, 1 kind 15, 2 kind 17, 3 kind 18.
 Kind 18 retains kind 17 safeguards and sub-1 km/h ramp; only B17O_GAP_A
-correction is multiplied by 0.5, only at/below B17O_RAMP_V (mode 1's ramp
-start speed). Historical menu numbers below are historical.
+correction is multiplied by 0.5 only at/above B17O_RAMP_V (1.5 km/h); below
+it the correction is the same as menu 2. Historical menu numbers below are historical.
 
 K9StopMode (menu since 2026-10-25, the driver's orders 00:36 "v12 원본 그대로 넣어놓기도 해보고, K9 맞춰 넣는 것도 v12k9으로
 해서 넣어봐" / "브레이크 앞전꺼는 다 별로니 지워" and 00:39 "원본 그대로 수정하지 말고 올려라"):
@@ -750,12 +750,12 @@ class K9Creep:
       tab = -float(np.interp(v_ego, B17O_TAB_BP, B17O_TAB_V))
     self.b17o_plan = a_target < tab
     self.b17o_tab = float(tab)
-    # Mode 3 alone: start the half-gap addition at mode 1's ramp threshold.
-    # Modes 16/17 retain their original speed-dependent correction unchanged.
-    gap_allowed = self.mode != V12K9OGR_HALF or v_ego <= B17O_RAMP_V
-    if self.b17g and self.b17o_k < 0 and gap_allowed:
+    # Mode 3: below B17O_RAMP_V (1.5 km/h) the gap correction is mode 2's (100%); at/above it only
+    # 50% of mode 2's added gap (11/10 18:29 / 22:55 "1.5km미만구간은놔두고"). Other modes unchanged.
+    gap_scale = 1.0 if v_ego < B17O_RAMP_V else self.gap_scale
+    if self.b17g and self.b17o_k < 0:
       self.b17g_f = min(1.0, self.b17g_f + B17O_GAP_STEP)
-      tab = tab - self.gap_scale * self.b17g_f * max(float(np.interp(v_ego, B17O_GAP_BP, B17O_GAP_A)), 0.0)
+      tab = tab - gap_scale * self.b17g_f * max(float(np.interp(v_ego, B17O_GAP_BP, B17O_GAP_A)), 0.0)
     self.b17g_tab = float(tab)  # kind 17: the ramp base (kind 16's table request)
     return float(max(min(tab, a_target), -3.5))
 

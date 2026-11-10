@@ -38,7 +38,7 @@ def test_exact_half_gap_at_bins_and_interpolation(v):
   out = half._b17o(-0.01, True, v, v, False, False, 0.0)
   base = -float(np.interp(v, kc.B17O_TAB_BP, kc.B17O_TAB_V))
   gap = float(np.interp(v, kc.B17O_GAP_BP, kc.B17O_GAP_A))
-  expected_gap = 0.5 * gap if v <= kc.B17O_RAMP_V else 0.0
+  expected_gap = gap if v < kc.B17O_RAMP_V else 0.5 * gap
   assert out == pytest.approx(base - expected_gap, abs=1e-12)
   assert half.gap_scale == 0.5 and kc.K9Creep(kc.V12K9OGR).gap_scale == 1.0
 
@@ -167,5 +167,5 @@ def test_half_gap_speed_crossings_do_not_change_mode2():
     gap = float(np.interp(v, kc.B17O_GAP_BP, kc.B17O_GAP_A))
     h = half._b17o(-0.01, True, v, v, False, False, 0.0)
     f = full._b17o(-0.01, True, v, v, False, False, 0.0)
-    assert h == pytest.approx(base - (0.5 * gap if v <= kc.B17O_RAMP_V else 0.0), abs=1e-12)
+    assert h == pytest.approx(base - (gap if v < kc.B17O_RAMP_V else 0.5 * gap), abs=1e-12)
     assert f == pytest.approx(base - gap, abs=1e-12)
