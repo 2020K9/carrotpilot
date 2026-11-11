@@ -5,7 +5,6 @@ import importlib.util
 from openpilot.cereal import car
 from openpilot.common.params import Params
 from openpilot.selfdrive.carrot.ext_hud import ext_hud_active, read_ext_hud
-from openpilot.selfdrive.carrot.k9_active_sound import active_sound_mode
 from openpilot.system.hardware import PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
@@ -64,6 +63,11 @@ def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started
 
 
+def signal_color_observer(started: bool, params: Params, CP: car.CarParams) -> bool:
+  from openpilot.selfdrive.modeld.signal_color_shadow import requested
+  return started and requested()
+
+
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started
 
@@ -112,10 +116,6 @@ def c3x_lite(started: bool, params: Params, CP: car.CarParams) -> bool:
 def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
   return cluster_hud_active(params)
 
-def enable_k9_active_sound(started, params, CP: car.CarParams) -> bool:
-  # K9ActiveSound 1 (주행 제어 > 실험중, last): onroad only. 0 / anything else: never started -> no UDP port at all.
-  return started and active_sound_mode(params) == 1
-
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
 
@@ -137,6 +137,7 @@ procs = [
   PythonProcess("timed", "openpilot.system.timed", always_run, enabled=not PC),
 
   PythonProcess("modeld", "openpilot.selfdrive.modeld.modeld", only_onroad),
+  PythonProcess("signalcolord", "openpilot.selfdrive.modeld.signal_color_shadow", signal_color_observer, spawn=True),
   PythonProcess("jetlinkd", "openpilot.selfdrive.modeld.jetlink.daemon", always_run, enabled=TICI, restart_if_crash=True),
   PythonProcess("dmonitoringmodeld", "openpilot.selfdrive.modeld.dmonitoringmodeld", enable_dm_model, enabled=(WEBCAM or not PC)),
   PythonProcess("sensord", "openpilot.system.sensord.sensord", only_onroad, enabled=not PC),
@@ -152,8 +153,10 @@ procs = [
   PythonProcess("card", "openpilot.selfdrive.car.card", only_onroad),
   PythonProcess("deleter", "openpilot.system.loggerd.deleter", always_run),
   PythonProcess("dmonitoringd", "openpilot.selfdrive.monitoring.dm2d", enable_dm, enabled=(WEBCAM or not PC)),
-  PythonProcess("qcomgpsd", "openpilot.system.qcomgpsd.qcomgpsd", qcomgps, enabled=TICI),
+  # Restart GPS without forking the running manager's IPC state.
+  PythonProcess("qcomgpsd", "openpilot.system.qcomgpsd.qcomgpsd", qcomgps, enabled=TICI, spawn=True),
   PythonProcess("navd", "openpilot.selfdrive.navd.navd", only_onroad),
+  PythonProcess("mapsd", "openpilot.selfdrive.navigation.mapsd", only_onroad),
   PythonProcess("pandad", "openpilot.selfdrive.pandad.pandad", always_run),
   PythonProcess("paramsd", "openpilot.selfdrive.locationd.paramsd", only_onroad),
   PythonProcess("lagd", "openpilot.selfdrive.locationd.lagd", only_onroad),
@@ -189,7 +192,6 @@ procs = [
   PythonProcess("carrot_bluetooth", "openpilot.selfdrive.carrot.bluetooth.daemon", always_run, enabled=TICI, restart_if_crash=True),
   PythonProcess("cweb_push", "openpilot.selfdrive.carrot.cweb_push", always_run, enabled=not PC),
   PythonProcess("carrot_cluster", "openpilot.selfdrive.carrot.cluster_autorun", enable_cluster_hud, restart_if_crash=True),
-  PythonProcess("k9_active_sound", "openpilot.selfdrive.carrot.k9_active_sound", enable_k9_active_sound, restart_if_crash=True),
 
   #Xiaoge data broadcaster (conditional on ShareData param)
   # Starts after onroad readiness, when manager already has live IPC mappings.

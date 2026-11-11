@@ -4,6 +4,9 @@
     controlsd.state_control lateral command are compared bit for bit with frozen copies of the parent files.
 (b) K9LaneFix=1 gives exactly the LANEFIX4 "F1" outputs (frozen copy of the replay / simulation tree_F1 files,
     lane_planner_2.py sha256 9d7bbe26..., controlsd.py sha256 1a2dbb64...). Tolerance: 0 (np.array_equal / ==).
+    2026-10-26 recheck_0208 (lane-mode merge latch): the lane planner now latches the F1 merge once per lane-mode run, so it
+    equals the frozen F1 file on the first lane-mode frame of each run, the frozen parent minus the LATCHED e0 * s(t + elapsed)
+    (same ramp-in) while the merge runs, and the frozen parent after the merge time (check_latched). controlsd: unchanged.
 (c) changing the number restarts the K9LaneFix transition state.
 (d) the param is registered, in the 'EXPERIMENTAL' (실험중) menu right after K9StopMode, and described per number.
 Inputs are synthetic random sequences (several seeds) built to cross lane-mode on/off, lane change, lateral off and
@@ -60,6 +63,12 @@ def load_module(path, name):
 # ---------------------------------------------------------------- lane planner
 LP_PARENT = load_module(REF / "lane_planner_2.parent.py.ref", "k9_ref_lp_parent")
 LP_F1 = load_module(REF / "lane_planner_2.F1.py.ref", "k9_ref_lp_F1")
+# 2026-10-25 23:38 (보노보노 "1초로 해라"): F1 times shortened in place - merge 2 -> 1 s, longest merge 4 -> 2 s, hand-over cap
+# at most 2 -> 1 s (entry jerk 2.5 unchanged). The frozen F1 reference keeps its code; only these three numbers follow.
+F1_TIMES = {"LANE_CONVERGE_T": 1.0, "LANE_CONVERGE_T_MAX": 2.0, "LANE_CONVERGE_T_EREF": 0.075}   # 2026-10-26 audit D3: t_eref 0.3 -> 0.075
+F1_ENTRY_T = 1.0
+for _k, _v in F1_TIMES.items():
+  setattr(LP_F1, _k, _v)
 N = LP_NEW.TRAJECTORY_SIZE
 PATH_T = (np.linspace(0.0, 1.0, N) ** 2) * 10.0
 
@@ -113,7 +122,7 @@ def run_lp(planner, frames, modes=None, params=None):
   out = []
   for k, f in enumerate(frames):
     if modes is not None:
-      params.values["K9LaneFix"] = modes[k]
+      params.values["K9LaneAssist"] = modes[k]
     out.append(lp_step(planner, f))
   return out
 
@@ -122,12 +131,79 @@ def same(a, b):
   return all(np.array_equal(x[0], y[0]) and x[1] == y[1] for x, y in zip(a, b, strict=True))
 
 
+def lp_state(planner, ph0):
+  return dict(k=planner.lane_merge_k, e0=planner.lane_merge_e0, T=planner.lane_merge_t, r0=planner.lane_merge_r0, a0=planner.lane_merge_a0,
+              g=planner.lane_ramp_g, ph0=ph0, lof=float(planner.lane_offset_filtered.x))
+
+
+def ref_e0t(planner):
+  return (getattr(planner, "lane_converge_e0_used", None), getattr(planner, "lane_converge_t_used", None))
+
+
+def check_latched(got, st, par, f1, f1_e0t, model_ys, k_from=0):
+  """2026-10-26 recheck_0208: K9LaneAssist 1 lane planner (merge latched once per lane-mode run) against the frozen files.
+  got / st: new planner outputs and lp_state per frame; par: frozen parent outputs; f1 / f1_e0t: frozen F1 outputs and its
+  (e0, merge time) per frame; model_ys: the model path y fed in. Entry frame: the frozen F1 start offset (capped at
+  t_eref * (t_max / converge_t)^2) and, uncapped, its merge time; rate / accel from the frozen parent path. Every lane-mode frame:
+  frozen parent path - lane_merge_offset(t + elapsed) with the latched values (same ramp-in), bit for bit (np.array_equal)."""
+  prof = K9.K9_LANE_FIX_PROFILES[1]; mode = prof["converge_mode"]
+  cap = prof["t_eref"] * (max(prof["t_max"], prof["converge_t"]) / prof["converge_t"]) ** 2
+  n = {"off": 0, "entry": 0, "capped": 0, "merge": 0, "after": 0}
+  for k in range(k_from, len(got)):
+    s = st[k]
+    if s["k"] < 0:
+      assert same([got[k]], [par[k]]); n["off"] += 1; continue
+    if s["k"] == 0:
+      e0_f1, t_f1 = f1_e0t[k]
+      assert s["e0"] == float(np.clip(e0_f1, -cap, cap))          # the frozen F1 start offset (car - lane path start), capped
+      t_hi = max(prof["t_max"], prof["converge_t"])
+      t_j = min(float(np.cbrt(60.0 * abs(s["e0"]) / LP_NEW.LANE_MERGE_J_REF)), t_hi) if LP_NEW.LANE_MERGE_J_REF > 0.0 else 0.0
+      if abs(e0_f1) <= cap:
+        assert s["T"] == max(t_f1, t_j)                            # its merge time, or longer for the merge jerk bound
+      else:
+        n["capped"] += 1
+        assert prof["converge_t"] <= s["T"] <= t_hi
+      assert (s["r0"], s["a0"]) == LP_NEW.lane_merge_rates(PATH_T, par[k][0][:, 1] - model_ys[k])
+      n["entry"] += 1
+    else:
+      assert all(s[q] == st[k - 1][q] for q in ("e0", "T", "r0", "a0")) and s["k"] == st[k - 1]["k"] + 1   # latched, not measured again
+    el = s["k"] * DT_MDL
+    y = par[k][0][:, 1].copy()
+    if el < s["T"]:
+      y -= LP_NEW.lane_merge_offset(PATH_T + el, mode, s["T"], s["e0"], s["r0"], s["a0"]); n["merge"] += 1
+    else:
+      n["after"] += 1
+    if s["ph0"] != 2:   # ramp-in step
+      ref = model_ys[k] + (LP_NEW.CAMERA_OFFSET + s["lof"])
+      y = ref + s["g"] * (y - ref)
+    assert np.array_equal(got[k][0][:, 1], y) and np.array_equal(got[k][0][:, [0, 2]], par[k][0][:, [0, 2]]) and got[k][1] == par[k][1]
+  return n
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_lane_merge_offset_boundary_values(seed):
+  # 2026-10-26 recheck_0208: E(0) = e0, E'(0) = r0, E''(0) = a0, E = E' = E'' = 0 at T and after; r0 = a0 = 0 -> the old e0 * s(t)
+  rng = np.random.default_rng(seed)
+  for _ in range(20):
+    T = float(rng.uniform(1.0, 2.0)); e0, r0, a0 = rng.uniform(-0.3, 0.3), rng.uniform(-1.0, 1.0), rng.uniform(-1.5, 1.5)
+    h = 1e-4
+    E = lambda t: float(LP_NEW.lane_merge_offset(np.array([t]), "smootherstep", T, e0, r0, a0)[0])
+    assert E(0.0) == pytest.approx(e0, abs=1e-12)
+    assert (E(h) - E(0.0)) / h == pytest.approx(r0 + a0 * h / 2, abs=1e-3)
+    assert (E(2 * h) - 2 * E(h) + E(0.0)) / h ** 2 == pytest.approx(a0, abs=2e-2)
+    for t in (T, T + 0.3, 10.0):
+      assert abs(E(t)) < 1e-12
+    assert abs(E(T - h) - E(T)) < 1e-8
+    w = LP_NEW.lane_merge_offset(PATH_T, "smootherstep", T, e0)
+    assert np.array_equal(w, e0 * LP_NEW.lane_converge_weight(PATH_T, "smootherstep", T))
+
+
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("off_value", [0, -1, 2, 7])
 def test_lane_planner_off_equals_parent(seed, off_value):
   frames = lp_frames(seed)
   base = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)
-  new = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneFix=off_value)
+  new = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=off_value)
   ref = run_lp(make_lp(LP_PARENT, base), frames)
   got = run_lp(make_lp(LP_NEW, new), frames)
   assert same(ref, got)
@@ -135,12 +211,23 @@ def test_lane_planner_off_equals_parent(seed, off_value):
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_lane_planner_on_equals_f1(seed):
+def test_lane_planner_on_latched_merge(seed):
+  # pin rewritten 2026-10-26 recheck_0208: was "on == frozen F1 every frame" (merge measured again every frame = the lane-mode
+  # oscillation of the closed-loop sim); now the merge is latched once per lane-mode run (check_latched)
   frames = lp_frames(seed)
-  ref = run_lp(make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
-  got = run_lp(make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneFix=1)), frames)
-  assert same(ref, got)
+  planner = make_lp(LP_NEW, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1))
+  got, st = [], []
+  for f in frames:
+    ph0 = planner.lane_ramp_phase
+    got.append(lp_step(planner, f)); st.append(lp_state(planner, ph0))
+  f1p = make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6))
+  f1, e0t = [], []
+  for f in frames:
+    f1.append(lp_step(f1p, f)); e0t.append(ref_e0t(f1p))
   off = run_lp(make_lp(LP_PARENT, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
+  n = check_latched(got, st, off, f1, e0t, [f["path"][:, 1] for f in frames])
+  assert n["entry"] >= 3 and n["merge"] > 20 and n["after"] > 0   # the sequence really had lane-mode runs, merges and after-merge
+  assert any(s["k"] == 0 and (s["r0"] != 0.0 or s["a0"] != 0.0) for s in st)   # the rate / accel take-over really acted
   assert not same(off, got)  # F1 really changes the lane-mode reference
 
 
@@ -148,33 +235,37 @@ def test_lane_planner_on_equals_f1(seed):
 def test_lane_planner_switch_resets_and_returns_to_parent(seed):
   frames = lp_frames(seed)
   modes = [1] * 200 + [0] * 150 + [1] * 250
-  params = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneFix=1)
+  params = MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6, K9LaneAssist=1)
   planner = make_lp(LP_NEW, params)
-  got = []; states = []
+  got = []; states = []; st = []
   for k, f in enumerate(frames):
-    params.values["K9LaneFix"] = modes[k]
+    params.values["K9LaneAssist"] = modes[k]
+    ph0 = planner.lane_ramp_phase
     got.append(lp_step(planner, f))
-    states.append((planner.lane_ramp_phase, planner.lane_ramp_g, planner.k9_lane_fix_mode))
+    states.append((planner.lane_ramp_phase, planner.lane_ramp_g, planner.k9_lane_fix_mode)); st.append(lp_state(planner, ph0))
   ref_off = run_lp(make_lp(LP_PARENT, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6)), frames)
   # OFF stretch is bit-identical to the parent fed the same whole sequence (F1 keeps no state that leaks into OFF)
   assert same(ref_off[200:350], got[200:350])
   # every change of the number restarted the K9LaneFix state: idle ramp state while OFF
   assert all(s[0] == 0 and s[1] == 0.0 and s[2] == 0 for s in states[200:350])
+  assert all(s["k"] == -1 for s in st[200:350])          # merge latch idle while OFF
   # back ON: identical to a fresh F1 planner whose base filters saw the same history -> compare against F1 fed the
-  # same whole sequence with its K9 state reset at frame 350 (base filters are shared behaviour)
+  # same whole sequence with its K9 state reset at frame 350 (base filters are shared behaviour); 2026-10-26 recheck_0208:
+  # with the merge latch the comparison is check_latched (frozen F1 on entry frames, frozen parent + latched merge after)
   f1 = make_lp(LP_F1, MemParams(AdjustLaneOffset=0, LatMpcInputOffset=6))
-  ref_on = []
+  ref_on = []; e0t = []
   for k, f in enumerate(frames):
     if k == 350:
       f1.lane_ramp_g, f1.lane_ramp_from, f1.lane_ramp_k, f1.lane_ramp_phase, f1.lane_ramp_delta = 0.0, 0.0, 0, 0, None
-    ref_on.append(lp_step(f1, f))
-  assert same(ref_on[350:], got[350:])
+    ref_on.append(lp_step(f1, f)); e0t.append(ref_e0t(f1))
+  n = check_latched(got, st, ref_off, ref_on, e0t, [f["path"][:, 1] for f in frames], k_from=350)
+  assert n["entry"] >= 1
 
 
 def test_lane_planner_unreadable_param_is_off():
   class Broken(MemParams):
     def get_int(self, k, *a, **kw):
-      if k == "K9LaneFix":
+      if k == "K9LaneAssist":
         raise KeyError(k)
       return super().get_int(k)
   frames = lp_frames(9, 200)
@@ -242,7 +333,8 @@ def cd_step(c, f, k):
   CS = car.CarState.new_message(vEgo=f["v"], gearShifter="drive", latEnabled=True)
   plan = NS(laneBlendWeight=0.0, useLaneLines=f["use"], mpcSolutionValid=True, laneChangeState=f["lcs"], modelMonoTime=k,
             psis=f["psis"], curvatures=f["curvs"], distances=f["dist"])
-  sm = SM(carState=CS, modelV2=NS(meta=NS(laneChangeState=f["lcs"], laneChangeDirection=0), action=NS(desiredCurvature=f["dc"])),
+  sm = SM(carState=CS, modelV2=NS(meta=NS(laneChangeState=f["lcs"], laneChangeDirection=0), action=NS(desiredCurvature=f["dc"]),
+                              laneLines=[], laneLineProbs=[], laneLineStds=[]),   # 2026-10-25: no lane lines -> the K9LaneAssist holds add 0
           lateralPlan=plan, liveParameters=NS(stiffnessFactor=1.0, steerRatio=15.0, angleOffsetDeg=0.0, roll=f["roll"]),
           longitudinalPlan=NS(), selfdriveState=NS(enabled=True, active=True), onroadEvents=[], radarState=NS(),
           carrotMan=NS(vTurnSpeed=f["vturn"]), liveDelay=NS(lateralDelay=0.2))
@@ -259,7 +351,7 @@ def run_cd(c, frames, params=None, modes=None, sync_from=None):
   out = []
   for k, f in enumerate(frames):
     if modes is not None:
-      params.values["K9LaneFix"] = modes[k]
+      params.values["K9LaneAssist"] = modes[k]
     if sync_from is not None:
       sync_from(k, c)
     out.append(cd_step(c, f, k))
@@ -274,15 +366,17 @@ CD_SETTINGS = dict(LatSmoothSec=13, SteerActuatorDelay=23, UseLaneLineCurveSpeed
 def test_controls_off_equals_parent(seed, off_value):
   frames = cd_frames(seed)
   ref = run_cd(make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS)), frames)
-  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneFix=off_value)), frames)
+  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneAssist=off_value)), frames)
   assert np.array_equal(ref, got)
 
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_controls_on_equals_f1(seed):
   frames = cd_frames(seed)
-  ref = run_cd(make_controls(REF / "controlsd.F1.py.ref", MemParams(**CD_SETTINGS)), frames)
-  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneFix=1)), frames)
+  ref_c = make_controls(REF / "controlsd.F1.py.ref", MemParams(**CD_SETTINGS))
+  ref_c.LANELESS_ENTRY_T = F1_ENTRY_T   # 2026-10-25 23:38: 2 -> 1 s
+  ref = run_cd(ref_c, frames)
+  got = run_cd(make_controls(CONTROLS / "controlsd.py", MemParams(**CD_SETTINGS, K9LaneAssist=1)), frames)
   assert np.array_equal(ref, got)
   off = run_cd(make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS)), frames)
   assert not np.array_equal(off, got)  # the hand-over cap really acts on this sequence
@@ -291,13 +385,13 @@ def test_controls_on_equals_f1(seed):
 @pytest.mark.parametrize("seed", SEEDS[:3])
 def test_controls_switch_resets(seed):
   frames = cd_frames(seed)
-  params = MemParams(**CD_SETTINGS, K9LaneFix=1)
+  params = MemParams(**CD_SETTINGS, K9LaneAssist=1)
   c = make_controls(CONTROLS / "controlsd.py", params)
   modes = [1] * 1500 + [0] * 1000 + [1] * 1500
   parent = make_controls(REF / "controlsd.parent.py.ref", MemParams(**CD_SETTINGS))
   got = []; ref = []; ks = []
   for k, f in enumerate(frames):
-    params.values["K9LaneFix"] = modes[k]
+    params.values["K9LaneAssist"] = modes[k]
     prev = c.desired_curvature  # parent steps from the same command level each tick
     got.append(cd_step(c, f, k))
     if k >= 1500:
@@ -316,27 +410,29 @@ def test_controls_switch_resets(seed):
 def test_profile_table_and_mode_reader():
   assert set(K9.K9_LANE_FIX_PROFILES) == {1}
   f1 = K9.K9_LANE_FIX_PROFILES[1]
-  assert f1 == {"name": "F1", "converge_mode": "smootherstep", "converge_t": 2.0, "ramp_in_t": 0.5, "t_eref": 0.3, "t_max": 4.0,
-                "t_kref": 0.003, "entry_jerk": 2.5, "entry_t": 2.0}
+  assert f1 == {"name": "F1", "converge_mode": "smootherstep", "converge_t": 1.0, "ramp_in_t": 0.5, "t_eref": 0.075, "t_max": 2.0,
+                "t_kref": 0.003, "entry_jerk": 2.5, "entry_t": 1.0}   # 2026-10-25 23:38: times 2 / 4 / 2 -> 1 / 2 / 1 s
   # the same constants as the frozen F1 files
   assert (LP_F1.LANE_CONVERGE_MODE, LP_F1.LANE_CONVERGE_T, LP_F1.LANE_RAMP_IN_T, LP_F1.LANE_CONVERGE_T_EREF,
-          LP_F1.LANE_CONVERGE_T_MAX, LP_F1.LANE_CONVERGE_T_KREF) == ("smootherstep", 2.0, 0.5, 0.3, 4.0, 0.003)
+          LP_F1.LANE_CONVERGE_T_MAX, LP_F1.LANE_CONVERGE_T_KREF) == ("smootherstep", 1.0, 0.5, 0.075, 2.0, 0.003)
   cd_src = (REF / "controlsd.F1.py.ref").read_text(encoding="utf8")
   assert "LANELESS_ENTRY_JERK = 2.5" in cd_src and "LANELESS_ENTRY_T = 2.0" in cd_src and "LANELESS_LANE_ENTRY_JERK = 0.0" in cd_src
   for value, expect in ((0, 0), (1, 1), (2, 0), (-1, 0), (99, 0)):
-    assert K9.k9_lane_fix_mode(MemParams(K9LaneFix=value)) == expect
+    assert K9.k9_lane_fix_mode(MemParams(K9LaneAssist=value)) == expect   # 2026-10-25 merge: K9LaneAssist
   assert K9.k9_lane_fix_profile(0) is None and K9.k9_lane_fix_profile(2) is None
 
 
 def test_param_registered_default_off():
   keys = (ROOT / "openpilot" / "common" / "params_keys.h").read_text(encoding="utf8")
-  assert '{"K9LaneFix", {PERSISTENT, INT, "0"}},' in keys
+  assert '{"K9LaneFix", {PERSISTENT, INT, "0"}},' in keys   # old key kept (migration only)
+  assert '{"K9LaneAssist", {PERSISTENT, INT, "0"}},' in keys
 
 
 def test_menu_schema():
+  # 2026-10-25 lane menu merge (pin rewritten deliberately): K9LaneFix is part of the single K9LaneAssist switch
   settings = json.loads((ROOT / "openpilot" / "selfdrive" / "carrot_settings.json").read_text(encoding="utf8"))
   text = json.dumps(settings["menu"])
-  assert "K9LaneFix" in text
+  assert "K9LaneAssist" in text and "K9LaneFix" not in text
 
   def groups(node):
     if isinstance(node, dict):
@@ -348,19 +444,30 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneFix", "K9LRView", "K9ExtHud", "K9MeterSeason", "K9OneLaneHold", "K9ActiveSound"]
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]   # 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
   params = settings["params"]
-  p = next(x for x in params if x["name"] == "K9LaneFix")
+  p = next(x for x in params if x["name"] == "K9LaneAssist")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")
   for locale in ("ko", "en", "zh"):
     assert [o.split(" ", 1)[0] for o in p["options"][locale]] == ["0", "1"]
-  # 2026-10-24: web text rewritten short and plain (pin rewritten); the numbers (2.5 m/s³, 2 s, 4 s, 0.5 s) live in the docs rows
-  assert "실차 미확인" in p["descr"] and "Not tested in the car" in p["edescr"] and "未经实车确认" in p["cdescr"]
+  # 2026-10-24: web text short and plain; the numbers (2.5 m/s³, 2 s, 4 s, 0.5 s) live in the docs rows
+  # 2026-10-25 23:33 (보노보노 "설명서 간단하면서 딱 알 수 있게"): no '실차 미확인', no old menu names, no internal limits
+  for key, gone in (("descr", "실차 미확인"), ("edescr", "Not tested in the car"), ("cdescr", "未经实车确认")):
+    assert gone not in p[key]
+  for key in ("descr", "edescr", "cdescr"):
+    assert not any(o in p[key] for o in ("K9LaneFix", "K9LRView", "K9OneLaneHold", "K9LaneCenter ", "LaneFix", "LRView"))
   assert len(p["descr"]) <= 150 and "m/s" not in p["descr"] and "m/s" not in p["edescr"]
   docs_ko = (ROOT / "docs" / "user" / "ko" / "settings.md").read_text(encoding="utf8")
   docs_en = (ROOT / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf8")
+  # 2026-10-25 23:33: the user rows are short; the long technical text moved to docs/dev/k9_lane_assist.md (times 23:38: 1 / 2 / 1 s)
   for doc in (docs_ko, docs_en):
-    row = doc.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
-    assert "2.5" in row and re.search(r"2\s?(초|s)", row) and re.search(r"4\s?(초|s)", row) and "0.5" in row
-  assert "`K9LaneFix`" in docs_ko and "실차 미검증" in docs_ko.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
-  assert "`K9LaneFix`" in docs_en and "not vehicle-validated" in docs_en.split("`K9LaneFix`", 1)[1].split("\n", 1)[0]
+    row = doc.split("| `K9LaneAssist` |", 1)[1].split("\n", 1)[0]
+    assert "k9_lane_assist.md" in row and "m/s" not in row
+  dev = (ROOT / "docs" / "dev" / "k9_lane_assist.md").read_text(encoding="utf8")
+  ko = dev.split("## K9LaneAssist (ko", 1)[1].split("\n## ", 1)[0]
+  en = dev.split("## K9LaneAssist (en", 1)[1].split("\n## ", 1)[0]
+  for row in (ko, en):
+    assert "`K9LaneFix`" in row
+    assert "2.5" in row and re.search(r"1\s?(초|s)", row) and re.search(r"최대 2초|up to 2 s", row) and "0.5" in row
+    assert not re.search(r"최대 4초|up to 4 s|over 2 s|2초에 걸쳐", row)
+  assert "실차 미검증" in ko and "not vehicle-validated" in en

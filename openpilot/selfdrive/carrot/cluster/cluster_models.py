@@ -204,6 +204,7 @@ class NaviLiveState:
     lane_current: NaviLaneInfo | None = None
     lane_ahead: tuple[NaviLaneInfo, ...] = ()
     speed: NaviSpeedInfo | None = None
+    traffic_light: NaviTrafficLightInfo | None = None
     crossroad: NaviCrossroadInfo | None = None
     route: NaviRouteInfo | None = None
     status: NaviStatusInfo | None = None
@@ -215,7 +216,24 @@ class NaviDebugInfo:
     lines: tuple[str, ...] = ()
     severity: str = "normal"
     speed_limit_kph: int | None = None
+    traffic_light: NaviTrafficLightInfo | None = None
     guidance_image: NaviGuidanceImage | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NaviTrafficLightInfo:
+    distance_m: int | None = None
+    red_s: int | None = None
+    straight_s: int | None = None
+    left_s: int | None = None
+    right_s: int | None = None
+    uturn_s: int | None = None
+    red_on: bool | None = None
+    straight_on: bool | None = None
+    left_on: bool | None = None
+    right_on: bool | None = None
+    uturn_on: bool | None = None
+    meta: NaviItemMeta | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +397,7 @@ class ClusterUiState:
     surround_view_active: bool
     lanes: tuple[LaneMarking, ...]
     onroad: bool = False
+    car_fingerprint: str = ""
     active_lane_line: bool | None = None
     camera_view_mode: int = 0
     extra_left_lane_visible: bool = False
@@ -475,6 +494,7 @@ class ClusterUiState:
     lateral_plan_curvatures: tuple[float, ...] = ()
     lateral_plan_curvature_rates: tuple[float, ...] = ()
     display_speed_kph: float | None = None
+    traffic_state: int = 0
     driving_mode: int | None = None
     git_status: GitBranchStatus | None = None
     actual_fps: float | None = None
@@ -510,6 +530,26 @@ class ClusterUiState:
     # SR / SAD lateral control actually uses (cluster_lat_values). None = unknown -> '-'.
     applied_steer_ratio: float | None = None
     applied_steer_delay_s: float | None = None
+    # display only, None = '-': liveDelay calPerc % and learned lag [s] (cluster_lat_values.learned_delay);
+    # liveTorqueParameters calPerc % and the latAccelFactor [m/s^2] / friction lateral control applies (applied_torque)
+    delay_learn_perc: int | None = None
+    delay_learn_s: float | None = None
+    torque_learn_perc: int | None = None
+    torque_learn_lat_accel_factor: float | None = None
+    torque_learn_friction: float | None = None
+    # 2026-10-30: liveTorqueParameters Filtered (what torqued learned), shown above the applied values
+    torque_filtered_lat_accel_factor: float | None = None
+    torque_filtered_friction: float | None = None
+    # 2026-11-11: liveParameters.steerRatio (learned steer ratio), HUD line 5
+    learned_steer_ratio: float | None = None
+    # K9LaneAssist line above SR / SAD (cluster_lat_values.lane_values_text): lane-centre offset [m]
+    # (+ right, None = '--'), controlsState.k9LaneState (None = unknown) and k9LaneAccel [m/s^2].
+    k9_lane_offset_m: float | None = None
+    k9_lane_state: int | None = None
+    k9_lane_accel: float | None = None
+    # car centre (comma) <-> left / right inner lane line [m] (cluster_lat_values.lane_gaps_m, None = '--')
+    k9_lane_gap_left_m: float | None = None
+    k9_lane_gap_right_m: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
