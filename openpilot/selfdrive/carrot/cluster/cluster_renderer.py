@@ -139,7 +139,12 @@ K9_PARK_CAR_BOX = (856.0, 358.0, 292.0)  # car centre x, bottom y, height (photo
 # turned 1.86 deg (right end up) -> in photo heights from the photo bottom-centre:
 K9_PARK_STAGE_REL = (-0.0180, -0.0811, 1.1377, 0.2766, -1.86)  # centre dx, dy, radius x, radius y, turn deg
 K9_PARK_PROFILE_STEP = 3  # photo px per column of the thin contact shadow along the car's bottom outline
-K9_PARK_WHEELS = ((310, 275), (505, 199))  # photo px: front / rear tyre contact (lowest alpha), reflection axis
+K9_PARK_WHEELS = ((310, 275), (505, 199))
+# 대감님 11/11 22:59 "그림자는 1번처럼 해야지": the floor under the car (contact shadow, mirror image of body and tyres,
+# darkening towards the car, rim) is lifted from his mock-up itself, in photo px, transparent under the opaque photo
+# (no plate or tyre-pressure text in it) and faded out just outside the rim
+K9_PARK_FLOOR_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_floor.png"
+K9_PARK_FLOOR_OFFSET = (-72, 160)  # floor PNG top-left relative to the car photo top-left, photo px  # photo px: front / rear tyre contact (lowest alpha), reflection axis
 K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (selfdrive/car/k9_fuel.py)
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
@@ -2352,6 +2357,21 @@ class ClusterUiRenderer:
             sprite = self._k9_park_sprite
         return sprite or None
 
+    def _k9_park_floor_texture(self):
+        floor = getattr(self, "_k9_park_floor", None)
+        if floor is None:
+            self._k9_park_floor = False
+            try:
+                if K9_PARK_FLOOR_PATH.is_file():
+                    texture = rl.load_texture(str(K9_PARK_FLOOR_PATH))
+                    if texture is not None and getattr(texture, "id", 0) > 0:
+                        rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+                        self._k9_park_floor = texture
+            except Exception as exc:
+                print(f"K9 parked screen: could not load {K9_PARK_FLOOR_PATH}: {exc}", flush=True)
+            floor = self._k9_park_floor
+        return floor or None
+
     def _k9_park_bottom_profile(self) -> list:
         # photo px (column centre x, lowest opaque y) along the car's bottom outline; read once from the PNG
         prof = getattr(self, "_k9_park_profile", None)
@@ -2379,6 +2399,15 @@ class ClusterUiRenderer:
         # K9 (대감님 11/11 21:30): round stage the car stands on, like the mock-up: soft blue floor inside a thin
         # bright rim, dark contact shadow under the tyres and a faint mirror image, all drawn before the photo.
         sx, sy, srx, sry, turn = self.k9_park_stage_geometry(car_cx, car_bottom, car_h)
+        floor = self._k9_park_floor_texture()
+        if floor is not None:
+            scale = car_h / max(1, sprite.height)
+            left, top = car_cx - sprite.width * scale / 2, car_bottom - car_h
+            ox, oy = K9_PARK_FLOOR_OFFSET
+            rl.draw_texture_pro(floor, rl.Rectangle(0, 0, floor.width, floor.height),
+                                rl.Rectangle(left + ox * scale, top + oy * scale, floor.width * scale, floor.height * scale),
+                                rl.Vector2(0, 0), 0.0, rl.WHITE)
+            return
         rl.rl_push_matrix()  # floor in the stage frame (centre, turned like the mock-up rim)
         rl.rl_translatef(sx, sy, 0.0)
         rl.rl_rotatef(turn, 0.0, 0.0, 1.0)
