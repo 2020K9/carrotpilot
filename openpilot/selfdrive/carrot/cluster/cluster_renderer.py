@@ -9638,6 +9638,9 @@ class ClusterUiRenderer:
         )
 
         energy_value = state.fuel_gauge
+        # K9 (대감님 11/12 05:10): no green fuel bar on the driving screen; the K9 fuel level stays on the P screen only.
+        if ego_model_name(getattr(state, "car_fingerprint", "")) == "k9":
+            energy_value = None
         if energy_value is not None:
             self._draw_level_gauge(
                 gauge_center_x,
