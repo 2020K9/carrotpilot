@@ -254,6 +254,10 @@ class Controls:
       dc_model = model_v2.action.desiredCurvature
       if k9_lane_add != 0.0:
         dc_model = dc_model + k9_lane_add   # K9LaneAssist 1: lane-centre hold, both lines or one line (laneless only)
+      # K9LaneAssist 1: stable wall / guard rail with weak lane lines -> follow the wall at a fixed gap (k9_wall_hold).
+      # Switch 0 / no wall: dc_model is returned unchanged.
+      from openpilot.selfdrive.controls.lib.k9_wall_hold import k9_wall_hold_step
+      dc_model = k9_wall_hold_step(self, CS, CC, model_v2, LaneChangeState.off, dc_model)
       new_desired_curvature = smooth_value(dc_model, self.desired_curvature, 0.1)
 
     # K9LaneFix (experimental, see controls/lib/k9_lane_fix.py): read every control tick like the other lateral params
