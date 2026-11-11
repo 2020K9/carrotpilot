@@ -372,6 +372,13 @@ B17O_RAMP5_V = 1.0 / 3.6  # m/s (1 km/h): kind 17 ramp start
 B17O_GAP_BP = [0.10, 0.20, 0.275, 0.35, 0.45, 0.575, 0.725, 0.90, 1.25, 1.75, 2.50]  # m/s: the B17O_TAB_BP bins
 B17O_GAP_A = [0.55, 0.55, 0.55, 0.404, 0.237, 0.165, 0.33, 0.0, 0.0, 0.0, 0.0]  # m/s^2 decel added per bin
 B17O_GAP_STEP = 1.0  # share of the gap per frame from the first table frame of a stop (1.0: all of it at once)
+# Menu 3 (kind 18) only, 2026-11-12 (the driver 05:07 "3번 정지하기 직전에 왜 이렇게 안 멈춤?"): in the 00000227--1a9943ad32--13
+# stop the car floated at 0.47 .. 0.414 m/s (1.7 .. 1.5 km/h) for 0.9 s with aEgo -0.04 .. -0.06 on a -0.56 .. -0.62 request,
+# because the ramp waited for 1.5 km/h. So above B17O_RAMP_V the same ramp also runs while the car has not slowed for
+# B18_STALL_FRAMES frames in a row (aEgo above B18_STALL_AEGO), up to B18_STALL_V. Below B17O_RAMP_V nothing changes.
+B18_STALL_V = 3.0 / 3.6  # m/s: highest speed of the stall ramp
+B18_STALL_AEGO = -0.15  # m/s^2: aEgo above this = not slowing
+B18_STALL_FRAMES = 10  # consecutive frames (0.1 s)
 
 
 def k9_creep_applies(CP) -> bool:
@@ -513,6 +520,7 @@ class K9Creep:
     self.b17o_ramp = 0.0  # kinds 15 / 17: the ramp offset past the table in this stop (B17O_RAMP_*), <= 0
     self.b17o_hold = None  # kinds 15 / 17: the floor from the stop until the latch request passes it (B17O_RAMP_*), None: none
     self.b17g_f = 0.0  # kinds 16 / 17: share of the gap entered in this stop (0 .. 1, only up; B17O_GAP_STEP)
+    self.b18_stall_k = 0  # kind 18: consecutive stall frames above B17O_RAMP_V (B18_STALL_*)
     self.b17g_tab = 0.0  # kind 17: the kind 16 table request (table + gap) of the last table frame, the ramp base
 
   def update(self, **kw):
@@ -703,13 +711,19 @@ class K9Creep:
     frame is ever weaker than kind 13 / 16, and a frame out of the stopping state clears the ramp and its floor."""
     if not stopping_in:
       self.b17o_ramp, self.b17o_hold = 0.0, None
+      self.b18_stall_k = 0
       return o
     if o is None:
+      self.b18_stall_k = 0
       return o
     rv, base = (B17O_RAMP5_V, self.b17g_tab) if self.b17g else (B17O_RAMP_V, self.b17o_tab)
+    stall = False
     if self.mode == V12K9OGR_HALF:  # menu 3 only: start extra braking at 1.5 km/h (2026-11-11)
       rv = 1.5 / 3.6
-    if v_ego <= rv and a_ego > base:
+      # menu 3 only (2026-11-12): also above 1.5 km/h while the car does not slow (B18_STALL_*)
+      self.b18_stall_k = self.b18_stall_k + 1 if (rv < v_ego <= B18_STALL_V and a_ego > B18_STALL_AEGO) else 0
+      stall = self.b18_stall_k >= B18_STALL_FRAMES
+    if (v_ego <= rv or stall) and a_ego > base:
       if self.b17o_ramp > -B17O_RAMP_KNEE:
         r = max(self.b17o_ramp - B17O_RAMP_STEP, -B17O_RAMP_KNEE)
       else:
