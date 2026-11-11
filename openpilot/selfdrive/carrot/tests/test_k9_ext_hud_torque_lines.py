@@ -101,14 +101,14 @@ def test_renderer_fixed_slots():
   r._draw_text_with_stroke = lambda text, x, y, *a, **k: calls.append((text, y))
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(61))
   assert calls == list(zip(("조향비 12.90  지연설정 0.20초", "지연학습 63%  0.24초", "학습 횡가속 2745  마찰 105",
-                            "적용 횡가속 2500  마찰 130", "학습 조향비 13.42"), cr.LAT_VALUES_SLOT_Y, strict=True))
+                            "적용 횡가속 2500  마찰 130", "학습 조향비 13.42  학습지연 0.24초"), cr.LAT_VALUES_SLOT_Y, strict=True))
   first = list(calls)
   calls.clear()
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(100))
   assert calls == first                                   # 2026-11-11: 토크학습 % line removed, torque calPerc changes nothing
   calls.clear()
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(unknown=True))
-  assert [t for t, _ in calls][2:] == ["학습 횡가속 -  마찰 -", "적용 횡가속 -  마찰 -", "학습 조향비 --"]
+  assert [t for t, _ in calls][2:] == ["학습 횡가속 -  마찰 -", "적용 횡가속 -  마찰 -", "학습 조향비 --  학습지연 --"]
   ys = list(cr.LAT_VALUES_SLOT_Y)
   assert ys == sorted(ys) and ys[-1] < cr.TPMS_STATUS_CAR_CENTER_Y - cr.TPMS_STATUS_ICON_H * 0.5
   assert cr.LAT_VALUES_SLOT_Y[:3] == cr.LAT_VALUES_LINE_Y and cr.LAT_VALUES_SLOT_Y[3:] == cr.TORQUE_LINE_Y

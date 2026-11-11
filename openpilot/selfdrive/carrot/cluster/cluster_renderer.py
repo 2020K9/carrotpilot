@@ -3653,7 +3653,7 @@ class ClusterUiRenderer:
                                 getattr(state, "torque_filtered_friction", None)),
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
                                 getattr(state, "torque_learn_friction", None)),
-            learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None)),
+            learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
         for text, y in zip(texts, LAT_VALUES_SLOT_Y):
             if text is None:
