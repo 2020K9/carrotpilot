@@ -21,6 +21,7 @@ from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car
 from opendbc.car.interfaces import CarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
+from openpilot.selfdrive.car.k9_fuel import K9Fuel
 from openpilot.selfdrive.car.alternative_experience import get_alternative_experience
 from openpilot.selfdrive.car.card_diagnostics import should_log_card_diagnostics
 from openpilot.selfdrive.car.cruise import VCruiseCarrot
@@ -149,6 +150,7 @@ class Car:
     stock_signal = native_indicator(self.CP)
     self.native_voice_indicator = NativeVoiceIndicator(stock_signal) if stock_signal else None
     self.spas_signals = SpasSignals(self.CP, self.params)
+    self.k9_fuel = K9Fuel(self.CP)
     self.spas_signal_status = None
     self.spas_signal_log_at = 0.
 
@@ -246,6 +248,8 @@ class Car:
     self.CI.CS.speedcam_v_cruise = self.v_cruise_helper.v_cruise_kph
     CS = self.CI.update(can_list)
     self.spas_signals.observe(can_list, time.monotonic())
+    self.k9_fuel.observe(can_list)
+    self.k9_fuel.apply(CS)
     if self.CP.brand == 'mock':
       CS = self.mock_carstate.update(CS)
     ci_done_ns = time.monotonic_ns()
