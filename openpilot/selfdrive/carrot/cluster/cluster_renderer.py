@@ -131,6 +131,9 @@ PARK_K9_SCALE_M = (1.915, 5.12, 1.49)  # K9 RJ width x length x height
 K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
 K9_PARK_COLORS_DARK = {"bg_top": (22, 52, 118), "bg_bot": (6, 16, 44), "text": (240, 244, 250), "muted": (150, 172, 210),
                        "card": (20, 44, 96), "line": (60, 92, 150), "accent": (110, 180, 255)}
+# 대감님 11/11 21:05 "2번째처럼 비율좀 잘맞춰보지?": mock-up panel (1860x518 px) mapped to 1920x480
+K9_PARK_CAR_BOX = (856.0, 358.0, 292.0)  # car centre x, bottom y, height (photo aspect kept)
+K9_PARK_STAGE = (850, 345, 372, 78)  # round stage centre x/y, radii
 K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (selfdrive/car/k9_fuel.py)
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
@@ -2349,8 +2352,17 @@ class ClusterUiRenderer:
             return ""
         return f"{int(round(fraction * K9_DTE_FULL_KM))} km"
 
-    def _ev6_draw_top_view_car(self, cx: float, cy: float, dark: bool, colors: dict) -> None:
+    def _ev6_draw_top_view_car(self, cx: float, cy: float, dark: bool, colors: dict, scale: float = 1.0) -> None:
         # EV6 HUD patch v16: small top-view car (front up) for the tyre pressures, instead of a plain box
+        if scale != 1.0:
+            rl.rl_push_matrix()
+            rl.rl_translatef(cx, cy, 0.0)
+            rl.rl_scalef(scale, scale, 1.0)
+            try:
+                self._ev6_draw_top_view_car(0.0, 0.0, dark, colors)
+            finally:
+                rl.rl_pop_matrix()
+            return
         tyre = rl_color((88, 92, 100) if dark else (70, 74, 82))
         glass = rl_color((70, 76, 86) if dark else (92, 100, 112))
         body = rl_color(colors["card"])
@@ -2476,37 +2488,51 @@ class ClusterUiRenderer:
                 date_text = f"{now.tm_mon}월 {now.tm_mday}일 {EV6_PARK_WEEKDAYS_KO[now.tm_wday]}요일"
             else:
                 date_text = time.strftime("%a, %b %d", now)
-            text(date_text, 70, 92, 34, "muted")
-            text(time.strftime("%H:%M", now), 64, 170, 108, "text")
             weather = EV6_WEATHER.snapshot()  # EV6 HUD patch v17: Open-Meteo weather, fetched in the background
-            gear_y = 300
-            if weather is not None:
-                self._ev6_draw_weather(weather, colors, theme.is_dark, text)
-                gear_y = 400
+            fuel_x, fuel_y = 236, None
+            if is_k9:  # K9 (대감님 11/11 21:05): positions measured off his mock-up panel, scaled to 1920x480
+                text(date_text, 62, 76, 38, "muted")
+                text(time.strftime("%H:%M", now), 58, 160, 118, "text")
+                if weather is not None:
+                    self._ev6_draw_weather(weather, colors, theme.is_dark, text)
+                    gear_y = 400
+                else:  # mock-up rows: weather row -> P, divider, fuel row
+                    gear_y, fuel_x, fuel_y = 262, 72, 400
+                rl.draw_line_ex(rl.Vector2(62, 358), rl.Vector2(250, 358), 2, rl_color(colors["line"]))
+            else:
+                text(date_text, 70, 92, 34, "muted")
+                text(time.strftime("%H:%M", now), 64, 170, 108, "text")
+                gear_y = 300
+                if weather is not None:
+                    self._ev6_draw_weather(weather, colors, theme.is_dark, text)
+                    gear_y = 400
             text("P", 70, gear_y, 64, "accent")
             text("주차" if self.language == CLUSTER_LANGUAGE_KO else "Park", 130, gear_y + 4, 30, "muted")
+            if fuel_y is None:
+                fuel_y = gear_y + 2
             # Use the existing vehicle decoder, never infer EV6 CAN layout from the fallback picture.
             soc = state.fuel_gauge if state.energy_gauge_label == "battery" else None
             if soc is not None:
                 self._ev6_draw_battery(soc, 236, gear_y + 2, colors, text)
             elif state.energy_gauge_label == "fuel":  # K9 (대감님 11/11 18:24): fuel level instead of the battery
-                self._k9_draw_fuel(state.fuel_gauge, 236, gear_y + 2, colors, text)
+                self._k9_draw_fuel(state.fuel_gauge, fuel_x, fuel_y, colors, text)
                 range_text = self.k9_range_text(state.fuel_gauge) if is_k9 else ""
                 if range_text:  # km to empty from the cluster (CF_Clu_DTE), same source as the %
-                    text(range_text, 236 + 46 + 104, gear_y + 2, 34, "muted")
+                    text(range_text, fuel_x + 46 + 104, fuel_y, 34, "muted")
 
             # centre: car photo on a soft floor shadow
             car_cx, car_bottom, car_h = 790.0, 412.0, 350.0
             sprite = self._k9_park_sprite_texture() if is_k9 else None
             if sprite is not None:  # photo car on a round stage, like the mock-up
-                car_cx, car_bottom, car_h = 810.0, 400.0, 250.0
-                stage_y = int(car_bottom - 28)
+                car_cx, car_bottom, car_h = K9_PARK_CAR_BOX
+                stage_x, stage_y, stage_rx, stage_ry = K9_PARK_STAGE
                 for i in range(10):
                     k = 1.0 - i * 0.07
-                    rl.draw_ellipse(int(car_cx), stage_y, int(300 * k), int(46 * k),
+                    rl.draw_ellipse(stage_x, stage_y, int(stage_rx * k), int(stage_ry * k),
                                     rl.Color(90, 150, 255, 7 if theme.is_dark else 5))
-                for rx, ry, alpha in ((300, 46, 170), (297, 45, 70), (240, 36, 40)):
-                    rl.draw_ellipse_lines(int(car_cx), stage_y, rx, ry, rl.Color(120, 190, 255, alpha))
+                for rx, ry, alpha in ((stage_rx + 2, stage_ry + 1, 60), (stage_rx, stage_ry, 230),
+                                      (stage_rx - 1, stage_ry - 1, 200), (stage_rx - 3, stage_ry - 2, 60)):
+                    rl.draw_ellipse_lines(stage_x, stage_y, rx, ry, rl.Color(120, 190, 255, alpha))
             for i in range(12):
                 k = 1.0 - i * 0.045
                 rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
@@ -2524,17 +2550,30 @@ class ClusterUiRenderer:
 
             # tyre pressures, top view
             tpms = getattr(state, "tpms", None)
-            cx, cy = 1290, 290
-            self._ev6_draw_top_view_car(cx, cy, theme.is_dark, colors)
-            for key, dx, dy in (("fl", -70, -34), ("fr", 70, -34), ("rl", -70, 34), ("rr", 70, 34)):
-                value = getattr(tpms, key, None) if tpms is not None else None
-                text("--" if value is None or value <= 0 else f"{value:.0f}", cx + dx, cy + dy, 30, "text", "center")
-            text("공기압 (psi)" if korean else "Tyres (psi)", cx, cy + 86, 22, "muted", "center")
+            if is_k9:  # mock-up: bigger top view, value with "psi" under it at each corner
+                cx, cy = 1373, 318
+                self._ev6_draw_top_view_car(cx, cy, theme.is_dark, colors, 1.45)
+                for key, dx, dy in (("fl", -88, -58), ("fr", 88, -58), ("rl", -88, 60), ("rr", 88, 60)):
+                    value = getattr(tpms, key, None) if tpms is not None else None
+                    text("--" if value is None or value <= 0 else f"{value:.0f}", cx + dx, cy + dy, 34, "text", "center")
+                    text("psi", cx + dx, cy + dy + 27, 22, "muted", "center")
+            else:
+                cx, cy = 1290, 290
+                self._ev6_draw_top_view_car(cx, cy, theme.is_dark, colors)
+                for key, dx, dy in (("fl", -70, -34), ("fr", 70, -34), ("rl", -70, 34), ("rr", 70, 34)):
+                    value = getattr(tpms, key, None) if tpms is not None else None
+                    text("--" if value is None or value <= 0 else f"{value:.0f}", cx + dx, cy + dy, 30, "text", "center")
+                text("공기압 (psi)" if korean else "Tyres (psi)", cx, cy + 86, 22, "muted", "center")
 
             # right: this trip
             trip = getattr(state, "trip_report", None)
-            x0, x1 = 1420, 1860
-            text(("주행 정보" if is_k9 else "이번 주행") if korean else ("Trip info" if is_k9 else "This trip"), x0, 70, 30, "muted")
+            x0, x1 = (1540, 1876) if is_k9 else (1420, 1860)
+            title = ("주행 정보" if is_k9 else "이번 주행") if korean else ("Trip info" if is_k9 else "This trip")
+            if is_k9:
+                text(title, x0, 74, 34, "text")
+                rl.draw_line_ex(rl.Vector2(x0, 109), rl.Vector2(x1, 109), 2, rl_color(colors["line"]))
+            else:
+                text(title, x0, 70, 30, "muted")
             rows = (
                 ("거리" if korean else "Distance", format_trip_distance(trip.distance_m, self.is_metric) if trip else "--"),
                 ("시간" if korean else "Time", self._ev6_park_duration_text(trip.duration_s, korean) if trip else "--"),
@@ -2543,6 +2582,12 @@ class ClusterUiRenderer:
                 ("자동주행" if korean else "Automatic", f"{trip.auto_ratio_percent:.0f} %" if trip else "--"),
             )
             for i, (label, value) in enumerate(rows):
+                if is_k9:  # mock-up rows 147/218/298/374, lines under every row
+                    y = (147, 220, 296, 372)[i]
+                    text(label, x0, y, 31, "text")
+                    text(value, x1, y, 42, "text", "right")
+                    rl.draw_line_ex(rl.Vector2(x0, y + 37), rl.Vector2(x1, y + 37), 2, rl_color(colors["line"]))
+                    continue
                 y = 135 + i * 78
                 text(label, x0, y, 28, "muted")
                 text(value, x1, y, 40, "text", "right")
