@@ -129,9 +129,38 @@ def _git_show(commit, rel):
                         encoding="utf-8").stdout
 
 
+# 2026-11-11 (k9_230_fix, 대감님 19:27): rebased baselines. Each frozen commit below is replaced by a snapshot commit whose
+# tree is carrot-wip bdc77e07 with that commit's K9 brake code put back (carcontroller.py and k9_creep.py / k9_hard_brake.py /
+# k9_stop_taper.py byte-for-byte from the commit, plus only the upstream 7d337b05 line `new_actuators.stopObjectActive = ...`
+# after `new_actuators.accel = accel`; c62a4716 also takes the 0bc09563 pedal-interceptor removal, pedal hunks only, as its
+# CC imports get_pedal_interceptor_params that this tree no longer has). Each snapshot's parent is its original commit; carrot-wip reaches the snapshots
+# through an `-s ours` merge (no tree change). The guard below is unchanged and now runs against the snapshot. Proven before
+# use: the old CC on its own opendbc + car.capnp and the snapshot CC on this tree send identical CAN bytes and accel
+# (k9_230fix_out/proof: K9 and K7, menus None/0-6, mixed / edge / gentle / lead_hold / override sequences).
+REBASED = {
+  "aeef67c68039dd29d4a5c207b76cb21c194c1e3a": "0f07296dc6c50de9d632100111d16ef6ef191fe4",
+  "1d0961da0a4eeccaa70a2af7ea40b7006ec72eaf": "8a1634a799e5ab9610bc4adba3f5b3bc1c849b0b",
+  "badf1ea7bf1e72ccb5d512bfc2aa7f0ae311e7ed": "1c8b7fff66c7f59198892f60d23d4e89f6e2ca41",
+  "f8532bed73e7ee914e4bd6197a396f887ab69ee5": "7e74cb5294462ac7c7b54765cb5d0193cbd6f2ff",
+  "c62a47160b0e9381cf05eb0c49d3b2beffed5eeb": "f7d247fd7c229b5154dc28eef20e249c9a96a3cb",
+  "9df95178c9867ff58d06a2824ecc4f2854f8ec09": "75ef97f9960cbb5fb23c0e70f536cc0d64bc1771",
+  "88114288a04478ec5c030f3baac96a652f0156b2": "2b72f73f4edf0ae0890761b1ff459efb404e1d61",
+  "b6696b3786254cc6f74f237751b4d28b84eb24e5": "a9982ace841046f58e7306520ff163086391b418",
+  "6f518e3542141b015cc8884273e097ac50a814c3": "f726b7cd4c70e1e5f5e1934c7128ff34bb3182cb",
+  "f9cd096066f4462578d233bf9936d0489a92dc2a": "df53bb25a9d96f34b988e5deceeab7d61275d30e",
+}
+
+
+def _rebased(commit):
+  full = subprocess.run(["git", "rev-parse", f"{commit}^{{commit}}"], cwd=ROOT, check=True, capture_output=True,
+                        text=True).stdout.strip()
+  return REBASED.get(full, commit)
+
+
 def load_frozen_cc(commit, tmp_dir, tag):
   """The real CarController of `commit`, with that commit's k9_stop_taper.py/k9_creep.py (if present) as its imports.
   Everything else under opendbc_repo must be byte-identical to the working tree (asserted)."""
+  commit = _rebased(commit)
   changed = subprocess.run(["git", "diff", "--name-only", commit, "--", "opendbc_repo"], cwd=ROOT, check=True,
                            capture_output=True, text=True).stdout.split()
   changed = [f for f in changed if "/tests/" not in f]  # test files are never imported by the controller

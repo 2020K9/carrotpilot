@@ -46,7 +46,7 @@ from opendbc.car.hyundai.values import CAR
 from openpilot.selfdrive.car import k9_stop_mode_migration as mig
 from openpilot.selfdrive.car.tests.k9_rig import LCS, ROOT, CC_REL, Rig, edge_sequence, gentle_sequence, load_frozen_cc, make_cp, mixed_sequence
 
-PREV = "b6696b37"  # carrot-wip before this change: K9StopMode 0 base, 1 v10, 2 v10 + light shudder fix, 3 v11 (kind 7)
+PREV = "a9982ace"  # b6696b37 rebased on bdc77e07 (k9_rig.REBASED: its K9 brake code + upstream opendbc/car.capnp, 2026-11-11); carrot-wip before this change: K9StopMode 0 base, 1 v10, 2 v10 + light shudder fix, 3 v11 (kind 7)
 PREV_V11 = 7
 PAGE_BLOCK_1 = """\
       if self.CP.openpilotLongitudinalControl:
