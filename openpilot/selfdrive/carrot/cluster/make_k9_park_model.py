@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the 2020 Kia K9 (RJ facelift) parked-screen model for the cluster HUD.
+"""Generate the 2020 Kia K9 (RJ facelift, Platinum, black) parked-screen model for the cluster HUD.
 
-Original low-poly design drawn from published exterior dimensions only (no third-party mesh or image):
-length 5120 mm, width 1915 mm, height 1490 mm, wheelbase 3105 mm, 19-inch wheels.
+Original low-poly design. Side / top / front / rear outlines were traced by hand from the owner's own photos of
+the car (shape reference only) and the published dimensions: length 5120 mm, width 1915 mm, height 1490 mm,
+wheelbase 3105 mm, 19-inch wheels. No photo pixels, texture or third-party mesh are part of the output.
+The body is lofted from smooth cross-sections; grille, lamps, chrome, glass and wheels are separate colours.
 Axes match the other cluster models: x = right, y = forward, z = up; normalised to x +-0.5, y +-0.5, z 0..1.
 """
 import math
@@ -11,27 +13,56 @@ import sys
 import numpy as np
 
 L, W, H = 5.12, 1.915, 1.49
-WB, R_AXLE = 3.105, 1.02          # rear axle 1.02 m from the rear bumper, front axle at 4.125 m
+WB, R_AXLE = 3.105, 1.03          # rear axle 1.03 m from the rear bumper, front axle at 4.135 m
 TIRE_R, TIRE_W = 0.355, 0.245
+ARCH_R = 0.405
+HW = W / 2
 
 MAT = {
-  "paint": "rgb_c4c8cc",   # silver metallic (reads on both the light and the dark theme)
-  "glass": "rgb_1a1e24",
-  "trim": "rgb_0e0f10",
-  "chrome": "rgb_d8dbde",
-  "grille": "rgb_24272b",
-  "lamp": "rgb_eef3ff",
-  "drl": "rgb_ffffff",
-  "tail": "rgb_a8121c",
+  "paint": "rgb_25282d",   # black gloss (lifted a little so the shading reads on the dark theme)
+  "glass": "rgb_0b0d11",
+  "trim": "rgb_101113",
+  "well": "rgb_060607",
+  "chrome": "rgb_dfe2e6",
+  "chrome2": "rgb_9ea3a9",
+  "grille": "rgb_15171a",
+  "lamp": "rgb_e9eef6",
+  "lamp_in": "rgb_5a6068",
+  "tail": "rgb_b0141e",
+  "tail2": "rgb_5e0a10",
+  "plate": "rgb_c9ccd0",   # blank plate (no characters)
   "tire": "rgb_141414",
-  "rim": "rgb_b4b8bc",
+  "rim": "rgb_c2c6cb",
+  "rim_dark": "rgb_2b2e33",
 }
 
 
-def smooth(points, u):
-  xs, ys = [q[0] for q in points], [q[1] for q in points]
-  out = np.interp(u, xs, ys)
-  return out
+def _smooth_profile(points, n=1200, passes=6, k=15):
+  u = np.linspace(0.0, L, n)
+  y = np.interp(u, [p[0] for p in points], [p[1] for p in points])
+  ker = np.ones(k) / k
+  for _ in range(passes):
+    y = np.convolve(np.pad(y, k // 2, mode="edge"), ker, mode="valid")
+  return u, y
+
+
+# side view (u = metres from the rear bumper): long hood, long low rear window, short trunk
+TOP = [(0.0, 0.93), (0.04, 1.00), (0.12, 1.045), (0.45, 1.06), (0.88, 1.075), (1.02, 1.10), (1.30, 1.21),
+       (1.60, 1.345), (1.90, 1.435), (2.30, 1.482), (2.70, 1.49), (3.00, 1.465), (3.20, 1.405), (3.50, 1.265),
+       (3.80, 1.115), (3.95, 1.07), (4.40, 1.03), (4.80, 0.975), (5.00, 0.92), (5.08, 0.86), (5.12, 0.80)]
+BELT = [(0.0, 0.91), (0.06, 0.985), (0.40, 1.0), (1.30, 1.005), (3.60, 0.995), (3.95, 0.995), (4.40, 0.985),
+        (4.80, 0.935), (5.00, 0.88), (5.08, 0.83), (5.12, 0.775)]
+BOTTOM = [(0.0, 0.36), (0.10, 0.28), (0.45, 0.20), (4.65, 0.20), (5.00, 0.24), (5.12, 0.29)]
+_U, _TOP = _smooth_profile(TOP)
+_, _BELT = _smooth_profile(BELT)
+_, _BOT = _smooth_profile(BOTTOM)
+
+# side window opening (u, z), chrome surround outside it, B pillar inside
+DLO = [(1.30, 1.035), (1.52, 1.26), (1.85, 1.385), (2.30, 1.425), (2.95, 1.415), (3.22, 1.335), (3.64, 1.035)]
+
+
+def prof(arr, u):
+  return float(np.interp(u, _U, arr))
 
 
 def sstep(a, b, x):
@@ -39,47 +70,104 @@ def sstep(a, b, x):
   return t * t * (3 - 2 * t)
 
 
-# side profile (u = metres from the rear bumper)
-TOP = [(0.0, 0.80), (0.06, 0.95), (0.18, 1.025), (0.55, 1.05), (0.98, 1.065), (1.30, 1.25), (1.62, 1.42),
-       (1.95, 1.475), (2.45, 1.49), (2.85, 1.47), (3.15, 1.36), (3.55, 1.13), (3.72, 1.04), (4.20, 1.005),
-       (4.70, 0.965), (4.95, 0.90), (5.07, 0.80), (5.12, 0.62)]
-BELT = [(0.0, 0.80), (0.18, 1.0), (1.0, 1.0), (3.7, 0.985), (4.7, 0.95), (5.12, 0.62)]
-BOTTOM = [(0.0, 0.42), (0.10, 0.27), (0.35, 0.20), (4.75, 0.20), (5.0, 0.24), (5.12, 0.36)]
-
-
 def half_width(u):
-  end = min(u, L - u)
-  return 0.5 * W * (0.86 + 0.14 * math.sqrt(sstep(0.0, 0.75, end)))
+  # plan view: elliptic corners, the front a bit squarer than the rear
+  w = HW
+  df, dr = L - u, u
+  if df < 0.42:
+    t = 1.0 - df / 0.42
+    w -= 0.20 * (1.0 - math.sqrt(max(0.0, 1.0 - t * t)))
+  if dr < 0.32:
+    t = 1.0 - dr / 0.32
+    w -= 0.17 * (1.0 - math.sqrt(max(0.0, 1.0 - t * t)))
+  return w
+
+
+def chaikin(pts, it=2):
+  p = np.asarray(pts, float)
+  for _ in range(it):
+    q = [p[0]]
+    for a, b in zip(p[:-1], p[1:], strict=True):
+      q.append(0.75 * a + 0.25 * b)
+      q.append(0.25 * a + 0.75 * b)
+    q.append(p[-1])
+    p = np.array(q)
+  return p
+
+
+def lerp(a, b, t):
+  return a + (b - a) * t
 
 
 def station(u):
-  top, belt, bot = smooth(TOP, u), smooth(BELT, u), smooth(BOTTOM, u)
-  belt = min(belt, top)
-  wb = half_width(u)
-  cab = sstep(0.0, 0.35, top - belt)
-  wc_belt = wb - 0.07
-  wc_top = wc_belt + (0.60 - wc_belt) * cab
-  crown = 0.03 + 0.02 * cab
-  ring = [
-    (0.0, bot), (wb * 0.80, bot), (wb * 0.97, bot + 0.07), (wb, bot + 0.22), (wb, 0.72 * belt + 0.28 * bot + 0.12),
-    (wb * 0.985, belt - 0.05), (wc_belt, belt), (wc_belt - 0.02 * cab, belt + 0.03 * cab),
-    (wc_top, top - crown * 0.6), (wc_top * 0.55, top - crown * 0.1), (0.0, top),
+  top, belt, bot = prof(_TOP, u), prof(_BELT, u), prof(_BOT, u)
+  belt = min(belt, top - 0.02)
+  w = half_width(u)
+  c = sstep(0.06, 0.28, top - belt)
+  wr = min(0.60, w - 0.12)
+  g = top - belt
+  zc = bot + 0.62 * (belt - bot)
+  ctrl = [
+    (0.0, bot), (0.68 * w, bot), (0.91 * w, bot + 0.035), (0.975 * w, bot + 0.15), (w, zc),
+    (0.985 * w, belt - 0.10), (w - 0.045, belt - 0.02), (w - 0.085, belt + 0.01),
+    (lerp(w - 0.13, w - 0.10, c), belt + lerp(0.30, 0.10, c) * g),
+    (lerp(0.70 * w, wr + 0.045, c), belt + lerp(0.62, 0.62, c) * g),
+    (lerp(0.45 * w, wr, c), top - lerp(0.12, 0.05, c) * g),
+    (lerp(0.22 * w, 0.62 * wr, c), top - 0.008),
+    (0.0, top),
   ]
-  return ring, cab, top, belt
+  return chaikin(ctrl, 2), top, belt
 
 
-def body_material(u, j, cab, top):
-  # ring segment j joins ring point j and j+1 (right side)
-  if j == 7 and cab > 0.25 and 0.95 < u < 3.62:
-    return "glass"
-  if j in (8, 9) and cab > 0.25 and 0.95 < u < 3.62:
-    if u < 1.66 or u > 2.98:
-      return "glass"              # rear window / windscreen
-    return "paint"
-  if j == 6 and cab > 0.25 and 0.95 < u < 3.62:
-    return "chrome"               # window line
-  if j in (0, 1):
+def _point_in_poly(u, z, poly):
+  inside = False
+  for (u0, z0), (u1, z1) in zip(poly, poly[1:] + poly[:1], strict=True):
+    if (z0 > z) != (z1 > z) and u < u0 + (z - z0) * (u1 - u0) / (z1 - z0):
+      inside = not inside
+  return inside
+
+
+def _poly_dist(u, z, poly):
+  best = 1e9
+  for (u0, z0), (u1, z1) in zip(poly, poly[1:] + poly[:1], strict=True):
+    du, dz = u1 - u0, z1 - z0
+    t = max(0.0, min(1.0, ((u - u0) * du + (z - z0) * dz) / (du * du + dz * dz)))
+    best = min(best, math.hypot(u - u0 - t * du, z - z0 - t * dz))
+  return best
+
+
+def body_material(u, x, z, nx, nz, top, belt):
+  ax = abs(x)
+  # wheel wells
+  for ay in (R_AXLE, R_AXLE + WB):
+    if math.hypot(u - ay, z - TIRE_R) < ARCH_R - 0.01 and nx > 0.2:
+      return "well"
+  if nz < -0.55:
     return "trim"
+  side = nx > 0.35
+  if side and z > belt - 0.02:
+    inside = _point_in_poly(u, z, DLO)
+    if inside:
+      if abs(u - 2.47) < 0.035:
+        return "trim"            # B pillar (gloss black)
+      return "glass"
+  if nz > 0.25 and z > belt + 0.05:
+    if 3.10 < u < 3.90 and z > 1.075 and ax < 0.72:
+      return "glass"             # windscreen
+    if 1.02 < u < 1.88 and z > 1.10 and ax < 0.64:
+      return "glass"             # long low rear window
+  # headlamp wrap and tail lamp wrap on the corners
+  if u > L - 0.17 and nx > 0.25 and 0.68 < z < 0.77 - 0.15 * (L - u):
+    return "lamp"
+  if u < 0.24 - 0.5 * max(0.0, z - 0.98) and nx > 0.25 and 0.787 < z < 1.025:
+    return "tail2" if (z - 0.787) % 0.03 < 0.006 else "tail"
+  # chrome lines: lower sill, rear bumper wrap, door handles
+  if side and 0.335 < z < 0.36 and 1.15 < u < 4.05:
+    return "chrome"
+  if u < 0.30 and side and 0.40 < z < 0.418:
+    return "chrome"
+  if side and 0.89 < z < 0.915 and (abs(u - 2.05) < 0.08 or abs(u - 3.02) < 0.08):
+    return "chrome"
   return "paint"
 
 
@@ -95,21 +183,25 @@ class Obj:
     for i in range(n_i - 1):
       for j in range(n_j - 1):
         m = mats[i][j]
-        if m is None:
-          continue
         a, b, c, d = (base + i * n_j + j, base + (i + 1) * n_j + j, base + (i + 1) * n_j + j + 1, base + i * n_j + j + 1)
         self.faces.setdefault(m, []).append((a, b, c, d))
 
   def add_poly(self, pts, normal, mat):
     base = len(self.v)
     for p in pts:
-      self.v.append(tuple(p))
+      self.v.append(tuple(float(c) for c in p))
       self.vn.append(tuple(normal))
     self.faces.setdefault(mat, []).append(tuple(range(base, base + len(pts))))
 
+  def front_poly(self, pts_xz, y, mat, ny=1):
+    pts = [(x, y, z) for x, z in pts_xz]
+    if ny < 0:
+      pts = pts[::-1]
+    self.add_poly(pts, (0, ny, 0), mat)
+
   def box(self, c, s, mat):
     cx, cy, cz = c
-    sx, sy, sz = (x / 2 for x in s)
+    half = tuple(x / 2 for x in s)
     for axis in range(3):
       for sign in (-1, 1):
         n = [0, 0, 0]
@@ -118,7 +210,6 @@ class Obj:
         pts = []
         for du, dv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
           p = [cx, cy, cz]
-          half = (sx, sy, sz)
           p[axis] += sign * half[axis]
           p[u_ax] += du * half[u_ax]
           p[v_ax] += dv * half[v_ax]
@@ -126,23 +217,37 @@ class Obj:
         self.add_poly(pts, n, mat)
 
   def wheel(self, y, side):
-    seg = 28
-    x_out = side * (half_width(y) + 0.005)
+    seg = 36
+    x_out = side * (HW - 0.045)
     x_in = x_out - side * TIRE_W
     cz = TIRE_R
+
+    def p(x, a, r):
+      return (x, y + r * math.cos(a), cz + r * math.sin(a))
     for k in range(seg):
       a0, a1 = 2 * math.pi * k / seg, 2 * math.pi * (k + 1) / seg
-      def p(x, a, r=TIRE_R, y=y, cz=cz):
-        return (x, y + r * math.cos(a), cz + r * math.sin(a))
-      n = ((0, math.cos((a0 + a1) / 2), math.sin((a0 + a1) / 2)))
-      self.add_poly([p(x_in, a0), p(x_in, a1), p(x_out, a1), p(x_out, a0)], n, "tire")
-      # sidewall ring and rim disc (multi-spoke look: alternating rim / dark)
-      r_rim = 0.245
-      self.add_poly([p(x_out, a0), p(x_out, a1), p(x_out + side * 0.004, a1, r_rim), p(x_out + side * 0.004, a0, r_rim)],
+      am = (a0 + a1) / 2
+      self.add_poly([p(x_in, a0, TIRE_R), p(x_in, a1, TIRE_R), p(x_out, a1, TIRE_R), p(x_out, a0, TIRE_R)],
+                    (0, math.cos(am), math.sin(am)), "tire")
+      self.add_poly([p(x_out, a0, TIRE_R), p(x_out, a1, TIRE_R), p(x_out, a1, 0.245), p(x_out, a0, 0.245)],
                     (side, 0, 0), "tire")
-      mat = "rim" if k % 2 == 0 else "grille"
-      self.add_poly([(x_out + side * 0.006, y, cz), p(x_out + side * 0.004, a0, r_rim), p(x_out + side * 0.004, a1, r_rim)],
-                    (side, 0, 0), mat)
+      self.add_poly([p(x_out + side * 0.003, a0, 0.245), p(x_out + side * 0.003, a1, 0.245),
+                     p(x_out + side * 0.003, a1, 0.222), p(x_out + side * 0.003, a0, 0.222)], (side, 0, 0), "rim")
+      self.add_poly([p(x_out - side * 0.03, a0, 0.222), p(x_out - side * 0.03, a1, 0.222),
+                     p(x_out - side * 0.03, a1, 0.0), p(x_out - side * 0.03, a0, 0.0)], (side, 0, 0), "rim_dark")
+    # ten twin spokes, trapezoids widening towards the rim
+    for k in range(10):
+      for off in (-0.075, 0.075):
+        a = 2 * math.pi * k / 10 + off
+        w_in, w_out = 0.035, 0.07
+        xs = x_out + side * 0.002
+        pts = [p(xs - side * 0.012, a - w_in, 0.06), p(xs, a - w_out / 2, 0.224), p(xs, a + w_out / 2, 0.224),
+               p(xs - side * 0.012, a + w_in, 0.06)]
+        self.add_poly(pts, (side, 0, 0), "rim")
+    hub = [p(x_out + side * 0.001, 2 * math.pi * k / 12, 0.065) for k in range(12)]
+    self.add_poly(hub, (side, 0, 0), "rim")
+    logo = [p(x_out + side * 0.003, 2 * math.pi * k / 12, 0.03) for k in range(12)]
+    self.add_poly(logo, (side, 0, 0), "rim_dark")
 
   def write(self, fh, header):
     fh.write(header)
@@ -164,83 +269,181 @@ def grid_normals(g):
   return n
 
 
+def recess_wells(g, us):
+  # push the shell in around each wheel so the wheels sit in arches (right side, x >= 0)
+  for i, u in enumerate(us):
+    w_in = half_width(u) - 0.20
+    for j in range(g.shape[1]):
+      x, z = g[i, j, 0], g[i, j, 2]
+      for ay in (R_AXLE, R_AXLE + WB):
+        if math.hypot(u - ay, z - TIRE_R) < ARCH_R and x > w_in:
+          g[i, j, 0] = w_in
+
+
+def side_x(u, z):
+  """x of the (unrecessed) right side shell at height z, greenhouse part of the station."""
+  ring, top, belt = station(u)
+  j0 = int(np.argmax(ring[:, 0]))
+  part = ring[j0:]
+  zs, xs = part[:, 1], part[:, 0]
+  k = int(np.searchsorted(zs, z))
+  k = min(max(k, 1), len(zs) - 1)
+  t = (z - zs[k - 1]) / max(zs[k] - zs[k - 1], 1e-9)
+  x = xs[k - 1] + (xs[k] - xs[k - 1]) * min(max(t, 0.0), 1.0)
+  dx, dz = xs[k] - xs[k - 1], zs[k] - zs[k - 1]
+  ln = math.hypot(dx, dz) or 1.0
+  return x, (dz / ln, 0.0, -dx / ln)
+
+
+def window_chrome(obj):
+  # smooth chrome surround of the side window (sampled along the outline, 3 mm proud of the shell)
+  poly = DLO + DLO[:1]
+  pts = []
+  for (u0, z0), (u1, z1) in zip(poly[:-1], poly[1:], strict=True):
+    n = max(2, int(math.hypot(u1 - u0, z1 - z0) / 0.02))
+    for k in range(n):
+      t = k / n
+      pts.append((u0 + (u1 - u0) * t, z0 + (z1 - z0) * t))
+  pts.append(pts[0])
+  cu = sum(p[0] for p in DLO) / len(DLO)
+  cz = sum(p[1] for p in DLO) / len(DLO)
+  half = 0.016
+  for side in (1, -1):
+    for (ua, za), (ub, zb) in zip(pts[:-1], pts[1:], strict=True):
+      quad = []
+      for (u, z), sgn in (((ua, za), -1), ((ub, zb), -1), ((ub, zb), 1), ((ua, za), 1)):
+        du, dz = u - cu, z - cz
+        ln = math.hypot(du, dz * 3.0) or 1.0
+        uu, zz = u + sgn * half * du / ln, z + sgn * half * dz * 3.0 / ln
+        zz = max(zz, prof(_BELT, uu) - 0.01)
+        x, nrm = side_x(uu, zz)
+        quad.append((side * (x + 0.004), uu, zz))
+      if side < 0:
+        quad = quad[::-1]
+      obj.add_poly(quad, (side * nrm[0], 0.0, nrm[2]), "chrome")
+
+
+def front_details(obj, ring_end):
+  yf = L + 0.004
+  # wide trapezoid grille (wider at the bottom), chrome frame, chrome diamond pattern
+  gt, gb, z0, z1 = 0.45, 0.50, 0.42, 0.745
+
+  def chamfer(t, b, za, zb, c):
+    return [(-b + c, za), (b - c, za), (b, za + c), (t, zb - c), (t - c, zb), (-t + c, zb), (-t, zb - c), (-b, za + c)]
+  obj.front_poly(chamfer(gt + 0.028, gb + 0.028, z0 - 0.025, z1 + 0.022, 0.06), yf, "chrome")
+  obj.front_poly(chamfer(gt, gb, z0, z1, 0.045), yf + 0.003, "grille")
+  rows, dz = 7, (z1 - z0) / 7
+  for r in range(rows):
+    zc = z0 + (r + 0.5) * dz
+    half = gb + (gt - gb) * (zc - z0) / (z1 - z0)
+    step = 0.068
+    offs = 0.0 if r % 2 == 0 else step / 2
+    n = int(half / step) + 1
+    for k in range(-n, n + 1):
+      xc = k * step + offs
+      if abs(xc) + 0.026 > half - (0.03 if r in (0, rows - 1) else 0.0):
+        continue
+      obj.front_poly([(xc, zc - dz * 0.42), (xc + 0.026, zc), (xc, zc + dz * 0.42), (xc - 0.026, zc)], yf + 0.006,
+                     "chrome2" if r % 2 else "chrome")
+  # slim headlamps either side of the grille, rising slightly outwards, with an inner dark band
+  for s in (1, -1):
+    pts = [(0.52, 0.675), (0.80, 0.705), (0.80, 0.77), (0.51, 0.75)]
+    obj.front_poly([(s * x, z) for x, z in (pts if s > 0 else pts[::-1])], yf, "lamp")
+    band = [(0.56, 0.69), (0.79, 0.715), (0.79, 0.735), (0.56, 0.715)]
+    obj.front_poly([(s * x, z) for x, z in (band if s > 0 else band[::-1])], yf + 0.002, "lamp_in")
+  # lower bumper: blank plate, dark intake, chrome lip across the bottom
+  obj.front_poly([(-0.26, 0.30), (0.26, 0.30), (0.26, 0.405), (-0.26, 0.405)], yf, "plate")
+  obj.front_poly([(-0.72, 0.29), (-0.30, 0.29), (-0.30, 0.37), (-0.68, 0.37)], yf, "grille")
+  obj.front_poly([(0.30, 0.29), (0.72, 0.29), (0.68, 0.37), (0.30, 0.37)], yf, "grille")
+  obj.front_poly([(-0.74, 0.262), (0.74, 0.262), (0.74, 0.282), (-0.74, 0.282)], yf + 0.002, "chrome")
+  obj.front_poly([(-0.06, z1 + 0.035), (0.06, z1 + 0.035), (0.06, z1 + 0.06), (-0.06, z1 + 0.06)], yf, "chrome")
+
+
+def rear_details(obj):
+  yr = -0.004
+  # tall tail lamps at both ends with horizontal inner lines, chrome bar across the trunk between them
+  for s in (1, -1):
+    x0, x1 = 0.54, 0.79
+    rim = [(x0 - 0.012, 0.80), (x0 + 0.02, 0.775), (x1, 0.775), (x1, 1.035), (x0 + 0.05, 1.035), (x0 - 0.012, 0.985)]
+    obj.front_poly([(s * x, z) for x, z in (rim if s > 0 else rim[::-1])], yr + 0.001, "chrome2", ny=-1)
+    red = [(x0, 0.805), (x0 + 0.025, 0.787), (x1, 0.787), (x1, 1.025), (x0 + 0.05, 1.025), (x0, 0.98)]
+    obj.front_poly([(s * x, z) for x, z in (red if s > 0 else red[::-1])], yr - 0.001, "tail", ny=-1)
+    for k in range(1, 8):
+      za = 0.787 + k * 0.03
+      pts = [(x0 + 0.03, za), (x1, za), (x1, za + 0.006), (x0 + 0.03, za + 0.006)]
+      if s < 0:
+        pts = [(-x, z) for x, z in pts[::-1]]
+      obj.front_poly(pts, yr - 0.003, "tail2", ny=-1)
+  obj.front_poly([(-0.50, 0.905), (0.50, 0.905), (0.50, 0.925), (-0.50, 0.925)], yr - 0.002, "chrome", ny=-1)
+  obj.front_poly([(-0.26, 0.69), (0.26, 0.69), (0.26, 0.80), (-0.26, 0.80)], yr, "plate", ny=-1)
+  obj.front_poly([(-0.06, 0.95), (0.06, 0.95), (0.06, 0.975), (-0.06, 0.975)], yr, "chrome", ny=-1)
+  # lower chrome line, dark diffuser, square exhaust tips on both sides
+  obj.front_poly([(-0.80, 0.40), (0.80, 0.40), (0.80, 0.418), (-0.80, 0.418)], yr, "chrome", ny=-1)
+  obj.front_poly([(-0.80, 0.30), (0.80, 0.30), (0.80, 0.39), (-0.80, 0.39)], yr, "trim", ny=-1)
+  for s in (1, -1):
+    obj.front_poly([(s * 0.47, 0.31), (s * 0.75, 0.31), (s * 0.73, 0.375), (s * 0.49, 0.375)][::s], yr - 0.003,
+                   "chrome", ny=-1)
+    obj.front_poly([(s * 0.49, 0.322), (s * 0.73, 0.322), (s * 0.715, 0.362), (s * 0.505, 0.362)][::s], yr - 0.005,
+                   "trim", ny=-1)
+
+
 def build():
   obj = Obj()
-  us = np.concatenate([np.linspace(0, 0.3, 7), np.linspace(0.34, 4.78, 75), np.linspace(4.82, L, 7)])
-  rings, mats_r = [], []
+  us = np.concatenate([np.linspace(0, 0.30, 10)[:-1], np.linspace(0.30, 4.80, 200)[:-1], np.linspace(4.80, L, 11)])
+  rings, tops, belts = [], [], []
   for u in us:
-    ring, cab, top, belt = station(u)
+    ring, top, belt = station(u)
     rings.append(ring)
-    mats_r.append([body_material(u, j, cab, top) for j in range(len(ring) - 1)])
+    tops.append(top)
+    belts.append(belt)
+  g = np.array([[(x, u, z) for x, z in ring] for u, ring in zip(us, rings, strict=True)])
+  orig = g.copy()
+  recess_wells(g, us)
+  mats_r = []
+  for i, u in enumerate(us):
+    row = []
+    for j in range(g.shape[1] - 1):
+      a, b = orig[i, j], orig[i, j + 1]
+      dx, dz = b[0] - a[0], b[2] - a[2]
+      ln = math.hypot(dx, dz) or 1.0
+      nx, nz = dz / ln, -dx / ln
+      row.append(body_material(u, (a[0] + b[0]) / 2, (a[2] + b[2]) / 2, nx, nz, tops[i], belts[i]))
+    mats_r.append(row)
   for side in (1, -1):
-    g = np.array([[(side * x, u, z) for x, z in ring] for u, ring in zip(us, rings, strict=True)])
-    n = grid_normals(g)
-    # point every normal away from the car centre line (z = 0.55 m) at its own station
-    out = g.copy()
+    gs = g.copy()
+    gs[..., 0] *= side
+    n = grid_normals(gs)
+    out = gs.copy()
     out[..., 1] = 0.0
-    out[..., 2] -= 0.55
+    out[..., 2] -= 0.6
     n = np.where(np.sum(n * out, axis=2, keepdims=True) < 0, -n, n)
+    mats = mats_r
     if side < 0:
-      g = g[:, ::-1]
-      n = n[:, ::-1]
+      gs, n = gs[:, ::-1], n[:, ::-1]
       mats = [list(reversed(m)) for m in mats_r]
-    else:
-      mats = mats_r
-    obj.add_grid(g, n, mats)
+    obj.add_grid(gs, n, mats)
 
   # front and rear faces
-  for u, ny in ((us[-1], 1), (us[0], -1)):
-    ring = rings[-1] if ny > 0 else rings[0]
-    pts = [(x, u, z) for x, z in ring] + [(-x, u, z) for x, z in reversed(ring[:-1])]
+  for i, ny in ((-1, 1), (0, -1)):
+    ring = rings[i]
+    pts = [(x, us[i], z) for x, z in ring] + [(-x, us[i], z) for x, z in reversed(ring[:-1])]
     if ny < 0:
       pts = pts[::-1]
     obj.add_poly(pts, (0, ny, 0), "paint")
-
-  yf = L + 0.006
-  # K9 RJ facelift front: tall chrome-framed grille with vertical bars, slim lamps with four-dot DRL, wide lower intake
-  obj.box((0, yf, 0.555), (0.70, 0.02, 0.36), "chrome")
-  obj.box((0, yf + 0.006, 0.555), (0.64, 0.02, 0.31), "grille")
-  for k in range(13):
-    x = -0.30 + k * 0.05
-    obj.box((x, yf + 0.013, 0.555), (0.012, 0.012, 0.30), "chrome")
-  for side in (1, -1):
-    obj.box((side * 0.66, L - 0.03, 0.66), (0.42, 0.06, 0.075), "lamp")
-    obj.box((side * 0.66, L - 0.005, 0.615), (0.40, 0.02, 0.012), "drl")
-    for k in range(4):
-      obj.box((side * (0.50 + k * 0.075), L + 0.002, 0.66), (0.035, 0.02, 0.035), "drl")
-  obj.box((0, yf, 0.30), (1.25, 0.02, 0.10), "trim")
-  obj.box((0, yf + 0.005, 0.25), (0.52, 0.02, 0.11), "trim")  # plate area
-
-  # rear: full-width light bar, chrome strip and plate
-  yr = -0.006
-  obj.box((0, yr, 0.93), (1.68, 0.02, 0.065), "tail")
-  for side in (1, -1):
-    obj.box((side * 0.70, yr - 0.002, 0.90), (0.30, 0.02, 0.11), "tail")
-  obj.box((0, yr, 0.80), (1.10, 0.02, 0.018), "chrome")
-  obj.box((0, yr, 0.62), (0.52, 0.02, 0.12), "trim")
-  obj.box((0, yr, 0.33), (1.50, 0.02, 0.07), "trim")
-  for side in (1, -1):
-    obj.box((side * 0.45, yr, 0.30), (0.18, 0.03, 0.06), "chrome")  # exhaust tips
+  window_chrome(obj)
+  front_details(obj, rings[-1])
+  rear_details(obj)
 
   for side in (1, -1):
-    # mirrors
-    obj.box((side * (half_width(3.5) - 0.02), 3.5, 1.0), (0.12, 0.06, 0.04), "trim")
-    obj.box((side * (half_width(3.5) + 0.06), 3.5, 1.03), (0.16, 0.10, 0.09), "paint")
-    # lower chrome side sill trim
-    obj.box((side * (half_width(2.5) + 0.004), 2.55, 0.34), (0.01, 2.1, 0.03), "chrome")
-    # wheel arches (dark gaps), then wheels
+    # mirrors on the doors, chrome-free body colour caps
+    y = 3.55
+    x0 = side * (half_width(y) - 0.10)
+    obj.box((x0 + side * 0.07, y, 1.03), (0.12, 0.05, 0.04), "paint")
+    obj.box((x0 + side * 0.18, y - 0.02, 1.07), (0.16, 0.10, 0.12), "paint")
+    obj.box((x0 + side * 0.18, y - 0.072, 1.07), (0.14, 0.006, 0.10), "glass")
     for y in (R_AXLE, R_AXLE + WB):
-      seg = 20
-      for k in range(seg):
-        a0, a1 = math.pi * k / seg, math.pi * (k + 1) / seg
-        r0, r1 = TIRE_R + 0.02, TIRE_R + 0.06
-        x = side * (half_width(y) + 0.003)
-        pts = [(x, y + r0 * math.cos(a0), TIRE_R + r0 * math.sin(a0)), (x, y + r0 * math.cos(a1), TIRE_R + r0 * math.sin(a1)),
-               (x, y + r1 * math.cos(a1), TIRE_R + r1 * math.sin(a1)), (x, y + r1 * math.cos(a0), TIRE_R + r1 * math.sin(a0))]
-        obj.add_poly(pts, (side, 0, 0), "trim")
       obj.wheel(y, side)
 
-  # normalise: x +-0.5, y +-0.5, z 0..1
   v = np.array(obj.v)
   v[:, 0] /= W
   v[:, 1] = v[:, 1] / L - 0.5
@@ -253,8 +456,9 @@ if __name__ == "__main__":
   out = sys.argv[1]
   obj = build()
   header = ("# Kia K9 (2020 RJ facelift) parked-screen model for the CarrotPilot cluster HUD.\n"
-            + "# Original low-poly design generated by make_k9_park_model.py from published dimensions only\n"
-            + "# (5120 x 1915 x 1490 mm, wheelbase 3105 mm); no third-party mesh or photo was used.\n"
+            + "# Original low-poly design generated by make_k9_park_model.py: outlines traced by hand from the owner's\n"
+            + "# photos (shape reference only) and published dimensions (5120 x 1915 x 1490 mm, wheelbase 3105 mm);\n"
+            + "# no third-party mesh or photo pixels are included, number plates are blank.\n"
             + "# Axes: x=right, y=forward, z=up; normalised to x +-0.5, y +-0.5, z 0..1 (renderer scales to real size).\n")
   with open(out, "w") as fh:
     obj.write(fh, header)
