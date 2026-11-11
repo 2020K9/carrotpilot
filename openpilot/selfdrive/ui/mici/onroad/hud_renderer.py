@@ -13,6 +13,7 @@ from openpilot.selfdrive.carrot.deceleration_source import (
 # from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar # 아이콘에 토크 적용: 토크바 미사용
 from openpilot.selfdrive.ui.mici.onroad import blend_colors
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
+from openpilot.system.hardware.usbgpu import usbgpu_badge_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -318,15 +319,28 @@ class HudRenderer(Widget):
 
     self._draw_steering_wheel(rect)
 
-    self._draw_model_badge(rect)
+    self._draw_egpu_badge(rect)
 
 
-  def _draw_model_badge(self, rect: rl.Rectangle) -> None:
-    # Jetlink state wins over the built-in model badge (same priority as before).
-    badge = getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'lightspeed_badge', None)
-    if not badge:
+  def _draw_egpu_badge(self, rect: rl.Rectangle) -> None:
+    # Keep runtime state visible while the shared USB hub re-enumerates; a
+    # transient missing sysfs sample must not hide loading or failure details.
+    if not (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
+            ui_state.usbgpu_present or ui_state.usbgpu_active or
+            ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
       return
-    text, state = badge
+
+    state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
+                               ui_state.usbgpu_active, ui_state.usbgpu_startup_failed,
+                               ui_state.usbgpu_compile_pending)
+    text = "eGPU REBOOT" if state == "compile_pending" else "eGPU ERROR" if state == "error" else "eGPU"
+    if (getattr(ui_state, "usbgpu_delivery_badge", None) and
+        not (ui_state.usbgpu_active or ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed)):
+      text, state = ui_state.usbgpu_delivery_badge
+    if getattr(ui_state, 'jetlink_badge', None) and not ui_state.usbgpu_active:
+      text, state = ui_state.jetlink_badge
+    if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
+      text, state = ui_state.usbgpu_recovery_badge
     font = gui_app.font(FontWeight.DISPLAY) if not text.isascii() else self._font_semi_bold
     font_size = 22
     text_size = measure_text_cached(font, text, font_size)
@@ -427,7 +441,8 @@ class HudRenderer(Widget):
     pos_y = int(rect.y + margin_y + wheel_txt.height / 2 + self._wheel_y_filter.x)
 
     self._draw_steering_wheel_icon(wheel_txt, pos_x, pos_y)
-    self._draw_wheel_side_info(wheel_txt, pos_x, pos_y)
+    # Reserve the right status column (128px link badge plus an 8px gap).
+    self._draw_wheel_side_info(wheel_txt, pos_x, pos_y, info_right=rect.x + rect.width - 24 - 128 - 8)
 
 
   def _draw_steering_wheel_icon(self, wheel_txt, pos_x: int, pos_y: int) -> None:
@@ -493,7 +508,7 @@ class HudRenderer(Widget):
     return "CPU: --"
 
 
-  def _draw_wheel_side_info(self, wheel_txt, pos_x: int, pos_y: int) -> None:
+  def _draw_wheel_side_info(self, wheel_txt, pos_x: int, pos_y: int, info_right=None) -> None:
     now = datetime.now()
 
     try:
@@ -620,7 +635,7 @@ class HudRenderer(Widget):
     if show_debug_ui == 0:
       return
 
-    info_x = time_block_right + 25
+    info_x = time_block_right + 12
 
     cpu_text = self._get_cpu_temp_text()
 
@@ -637,9 +652,25 @@ class HudRenderer(Widget):
     except Exception:
       road_name = ""
 
-    cpu_size = measure_text_cached(self._font_medium, cpu_text, side_font)
-    sr_size = measure_text_cached(self._font_medium, sr_text, side_font)
-    road_size = measure_text_cached(self._font_medium, road_name, side_font) if road_name else rl.Vector2(0, 0)
+    if info_right is not None:
+      available = info_right - info_x
+      if available < 30:
+        return
+      while side_font > 12 and max(measure_text_cached(self._font_display, text, side_font).x for text in (cpu_text, sr_text)) > available:
+        side_font -= 1
+
+      def fit(text):
+        if measure_text_cached(self._font_display, text, side_font).x <= available:
+          return text
+        while text and measure_text_cached(self._font_display, text + '…', side_font).x > available:
+          text = text[:-1]
+        return text + '…' if text else ''
+
+      cpu_text, sr_text, road_name = (fit(text) for text in (cpu_text, sr_text, road_name))
+
+    cpu_size = measure_text_cached(self._font_display, cpu_text, side_font)
+    sr_size = measure_text_cached(self._font_display, sr_text, side_font)
+    road_size = measure_text_cached(self._font_display, road_name, side_font) if road_name else rl.Vector2(0, 0)
 
     line_gap = max(4, int(side_font * 0.15))
 

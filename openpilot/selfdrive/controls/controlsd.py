@@ -15,8 +15,10 @@ from collections import deque
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
+from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
+from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -37,10 +39,10 @@ from openpilot.selfdrive.carrot.carrot_controls import CarrotControls
 from openpilot.selfdrive.carrot.carrot_man_input import get_carrot_man
 from openpilot.selfdrive.monitoring.dm_alerts import driver_monitoring_hud_alert
 from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader
+from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
-LaneChangeDirection = log.LaneChangeDirection
 LAT_CURVATURE_SATURATION_ACCEL = 0.1  # infiniteCable2 LatControlCurvature: 곡률 기반 steer_limited 임계 (m/s^2 환산)
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
@@ -160,15 +162,8 @@ class Controls:
     CC.latActive = self.carrot_controls.lat_suspend_control(CS, CC.latActive)
     # Wait only for the first readiness confirmation, including AlwaysLateral.
     CC.latActive = CC.latActive and lateral_ready
-    # Release lateral when modelV2 stops (model switch gap, modeld stall): otherwise the last desiredCurvature /
-    # lateralPlan is held unchanged for the whole gap, and AlwaysLateral has no selfdrived disengage to end it.
-    # 0.5 s = the modelV2 alive window selfdrived uses for commIssue. Age is measured in message time
-    # (logMonoTime of the newest selfdriveState/carState vs modelV2), not in controlsd loop counts, so a slow
-    # controlsd loop still releases after 0.5 s of real time. Unseen modelV2 has logMonoTime 0 -> stale.
-    mono = getattr(self.sm, 'logMonoTime', None)
-    model_age = 0.0 if mono is None else (max(mono['selfdriveState'], mono['carState']) - mono['modelV2']) * 1e-9
-    CC.latActive = CC.latActive and model_age <= 0.5
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
+    inhibit_faulted_controls(CC, self.sm['onroadEvents'])
 
     # AlwaysLateral must also stop while manager drains workers for this reboot.
     if self.params.get_bool("ImpactDashcamReboot"):
@@ -176,10 +171,7 @@ class Controls:
 
     actuators = CC.actuators
 
-    # Enable blinkers while lane changing
-    if model_v2.meta.laneChangeState != LaneChangeState.off:
-      CC.leftBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.left
-      CC.rightBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.right
+    set_lane_change_blinkers(CC, model_v2.meta)
 
     if not CC.latActive:
       self.LaC.reset()
@@ -447,6 +439,12 @@ class Controls:
     hudControl.leadRelSpeed = leadOne.vRel if leadOne.status else 0
     hudControl.leadRadar = 1 if leadOne.radar else 0
     hudControl.leadDPath = leadOne.dPath
+    hudControl.signalStopObject = signal_stop_object_requested(
+      self.CP, CS, CC, lp, radarState,
+      inputs_ready=self.sm.all_checks(['longitudinalPlan', 'radarState']) and
+                   0 <= (self.sm.frame - self.sm.recv_frame['longitudinalPlan']) * DT_CTRL <= 0.2 and
+                   0 <= (self.sm.frame - self.sm.recv_frame['radarState']) * DT_CTRL <= 0.2,
+    )
 
     meta = self.sm['modelV2'].meta
     if False: # command

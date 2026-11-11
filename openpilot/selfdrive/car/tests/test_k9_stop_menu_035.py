@@ -1,4 +1,6 @@
-"""K9StopMode 0 / 3 / 5 (2026-11-03 17:10, 대감님 "0.3번5번만 남겨두고 삭제", 17:14 정정): the 06:08 renumbering (0-3, 1 / 2 / 3 =
+# 2026-11-08: menu 3 is half-gap (kind 18), current marker 12; historical inputs stay unchanged.
+"""(Number pins updated 2026-11-05 07:16, 대감님 "0.3.5 ... 0.1.2로 바꿔": this tree runs the old 0 / 3 / 5 as 0 / 1 / 2 and the
+final marker is 11 (MOVE_V11 after MOVE_V10); inputs and references unchanged.) K9StopMode 0 / 3 / 5 (2026-11-03 17:10, 대감님 "0.3번5번만 남겨두고 삭제", 17:14 정정): the 06:08 renumbering (0-3, 1 / 2 / 3 =
 kinds 13 / 15 / 17, K9StopModeVer 9) was wrong. Only 0 / 3 / 5 stay with their 9df95178c numbers and behaviour: 0 base, 3 = kind
 15 (원본2 + the 1 s hold, ramp from 1.5 km/h), 5 = kind 17 (격차수정 + the ramp from 1 km/h); kind 13 left the menu (its code is
 the base of 15 / 16 / 17). Stored values move once to K9StopModeVer 10.
@@ -53,10 +55,18 @@ def _kw(mode):
   return {} if mode is None else {"K9StopMode": mode}
 
 
+# 2026-11-05 07:16: this tree's number of the 9df95178c menu value (number pin only)
+NEW_NUM = {None: None, 0: 0, 1: 6, 2: 4, 3: 1, 4: 5, 5: 2}
+
+
+def M11(v):
+  return mig.MOVE_V11.get(v, v) if isinstance(v, int) and not isinstance(v, bool) else v
+
+
 # --- (a) behaviour: frame for frame against 9df95178c ----------------------------------------------------------------
 def test_menu_is_0_3_5():
-  assert kc.MENU == {3: kc.V12K9OH, 5: kc.V12K9OGR} and kc.MODES == (3, 5) and (kc.V12K9OH, kc.V12K9OGR) == (15, 17)
-  assert mig.STOP_MODE_VER == 10
+  assert kc.MENU == {1: kc.V12K9OH, 2: kc.V12K9OGR, 3: kc.V12K9OGR_HALF} and kc.MODES == (1, 2, 3) and (kc.V12K9OH, kc.V12K9OGR) == (15, 17)
+  assert mig.STOP_MODE_VER == 12
 
 
 @pytest.mark.parametrize("seq", list(RUNS))
@@ -64,11 +74,11 @@ def test_menu_is_0_3_5():
 def test_0_3_5_send_the_9df95178c_bytes(monkeypatch, ref_cc, mode, seq):
   ref = RUNS[seq](Rig(monkeypatch, module=ref_cc, **_kw(mode)))
   monkeypatch.undo()
-  new = RUNS[seq](Rig(monkeypatch, **_kw(mode)))
+  new = RUNS[seq](Rig(monkeypatch, **_kw(NEW_NUM[mode])))
   monkeypatch.undo()
   assert len(new.can) > 400 and new.can == ref.can and new.scc14 == ref.scc14
   if mode in (3, 5):
-    assert new.cc.k9_creep.mode == ref_cc.K9_CREEP_MENU[mode] == kc.MENU[mode]
+    assert new.cc.k9_creep.mode == ref_cc.K9_CREEP_MENU[mode] == kc.MENU[NEW_NUM[mode]]
 
 
 @pytest.mark.parametrize("seq", list(SEQS))
@@ -76,7 +86,7 @@ def test_0_3_5_send_the_9df95178c_bytes(monkeypatch, ref_cc, mode, seq):
 def test_removed_numbers_send_the_9df95178c_0_bytes(monkeypatch, ref_cc, mode, seq):
   ref = SEQS[seq](Rig(monkeypatch, module=ref_cc, K9StopMode=0))
   monkeypatch.undo()
-  new = SEQS[seq](Rig(monkeypatch, K9StopMode=mode))
+  new = SEQS[seq](Rig(monkeypatch, K9StopMode=NEW_NUM[mode]))
   monkeypatch.undo()
   assert new.can == ref.can and new.scc14 == ref.scc14 and new.cc.k9_creep is None and new.cc.k9_creep_mode == 0
 
@@ -84,11 +94,11 @@ def test_removed_numbers_send_the_9df95178c_0_bytes(monkeypatch, ref_cc, mode, s
 def test_settings_offer_0_3_5_only():
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   e = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
-  assert (e["min"], e["max"], e["choices"]) == (0, 5, [0, 3, 5])
-  for loc, three, five in (("ko", "3 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "5 격차수정 + 1 km/h 아래 서서히 더 잡기"),
-                           ("en", "3 bono1739 original2 + harder 1 s after the stop", "5 Gap fix + gradually harder below 1 km/h"),
-                           ("zh", "3 bono1739原版2＋停后1秒起加压", "5 差距修正＋1 km/h以下逐渐加大制动")):
-    assert e["options"][loc][3] == three and e["options"][loc][5] == five  # the 9df95178c labels of 3 / 5
+  assert (e["min"], e["max"], e["choices"]) == (0, 3, [0, 1, 2, 3])
+  for loc, three, five in (("ko", "1 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "2 격차수정 + 1 km/h 아래 서서히 더 잡기"),
+                           ("en", "1 bono1739 original2 + harder 1 s after the stop", "2 Gap fix + gradually harder below 1 km/h"),
+                           ("zh", "1 bono1739原版2＋停后1秒起加压", "2 差距修正＋1 km/h以下逐渐加大制动")):
+    assert e["options"][loc][1] == three and e["options"][loc][2] == five  # the 9df95178c labels of 3 / 5
   js = (ROOT / "openpilot/selfdrive/carrot/web/js/pages/setting.js").read_text(encoding="utf-8")
   assert "?.item?.choices" in js and "out.filter((value) => choices.includes(value))" in js
 
@@ -115,10 +125,11 @@ def test_marker9_table():
   """The 06:08 numbering (1 / 2 / 3 = kinds 13 / 15 / 17): 1 -> 0, 2 -> 3, 3 -> 5, a 4 / 5 that acted as 0 -> 0."""
   for old, want in ((0, 0), (1, 0), (2, 3), (3, 5), (4, 0), (5, 0), (6, 6), (9, 9), (-1, -1), (99, 99)):
     p = FakeParams(K9StopMode=old, K9StopModeVer=9)
-    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v == {"K9StopMode": want, "K9StopModeVer": 10}
-    assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": want, "K9StopModeVer": 10}
+    want = M11(want)  # 2026-11-05 07:16: then 3 -> 1, 5 -> 2
+    assert mig.migrate_k9_stop_mode(p) is (want != old) and p.v == {"K9StopMode": want, "K9StopModeVer": 12}
+    assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopMode": want, "K9StopModeVer": 12}
   p = FakeParams(K9StopModeVer=9)
-  assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopModeVer": 10}
+  assert mig.migrate_k9_stop_mode(p) is False and p.v == {"K9StopModeVer": 12}
 
 
 def test_marker8_3_and_5_keep_their_number():
@@ -126,7 +137,7 @@ def test_marker8_3_and_5_keep_their_number():
   for old, want in ((0, 0), (1, 0), (2, 0), (3, 3), (4, 0), (5, 5), (6, 6)):
     p = FakeParams(K9StopMode=old, K9StopModeVer=8)
     mig.migrate_k9_stop_mode(p)
-    assert p.v == {"K9StopMode": want, "K9StopModeVer": 10}, (old, p.v)
+    assert p.v == {"K9StopMode": M11(want), "K9StopModeVer": 12}, (old, p.v)  # 2026-11-05 07:16 numbers
 
 
 @pytest.mark.parametrize("marker", MARKERS)
@@ -148,8 +159,11 @@ def test_every_device_runs_what_it_ran_before(olds, marker):
       old_mig, old_kc = olds.ref_mig, olds.ref_kc
     old = FakeParams(**_start(marker, stored))
     old_mig.migrate_k9_stop_mode(old)
-    if is_int and marker == 10:
-      assert new.v == _start(10, stored)  # never touched again
+    if is_int and marker == 10:  # 2026-11-05 07:16: marker 10 now takes MOVE_V11 once
+      assert new.v == _start(12, M11(stored))
+      continue
+    if is_int and marker == 11:  # 2026-11-05 07:16: 11 is the current marker; 2026-11-06 06:21: only 3 / 4 -> 1 / 2 (MERGE_V12)
+      assert new.v == _start(12, mig.MERGE_V12[stored] if stored in (3, 4) and not isinstance(stored, bool) else stored)
       continue
     was = _kind(old.v.get("K9StopMode"), old_kc.MENU)
     assert _kind(new.v.get("K9StopMode"), kc.MENU) == (0 if was in OFF_MENU else was), (marker, stored, old.v, new.v)
@@ -166,7 +180,7 @@ def test_pending_marker_90_is_crash_safe(old):
     p = FakeParams(K9StopMode=stored, K9StopModeVer=mig.MOVE10_PENDING_BASE + old)
     for _ in range(4):
       mig.migrate_k9_stop_mode(p)
-    assert p.v == {"K9StopMode": want, "K9StopModeVer": 10}, (old, stored, p.v)
+    assert p.v == {"K9StopMode": M11(want), "K9StopModeVer": 12}, (old, stored, p.v)  # 2026-11-05 07:16: then MOVE_V11
 
 
 class _Cut(FakeParams):
@@ -190,7 +204,7 @@ def test_power_loss_at_any_write_lands_on_the_same_value(marker):
     for n in range(12):
       p = _Cut(n, **_start(marker, stored))
       mig.migrate_k9_stop_mode(p)  # never raises
-      if p.v.get("K9StopModeVer") == mig.STOP_MODE_VER:
+      if p.v.get("K9StopModeVer") == mig.STOP_MODE_VER:  # 2026-11-06: MERGE_V12 has no marker
         assert p.v == ref.v, (marker, stored, n)  # the final marker is written last
       q = FakeParams(**p.v)  # the next start
       mig.migrate_k9_stop_mode(q)
@@ -202,4 +216,4 @@ def test_pending_ranges_name_one_rule_each():
                                              (mig.MOVE9_PENDING_BASE, 6), (mig.MOVE10_PENDING_BASE, 6))]
   assert all(not (a & b) for i, a in enumerate(ranges) for b in ranges[i + 1:])
   assert mig.STOP_MODE_VER not in set().union(*ranges)
-  assert set(mig.MOVE_V10.values()) <= {0, *kc.MENU} and not all(mig.MOVE_V10.get(v, v) == v for v in mig.MOVE_V10.values())
+  assert set(mig.MOVE_V10.values()) <= {0, 3, 5} and not all(mig.MOVE_V10.get(v, v) == v for v in mig.MOVE_V10.values())

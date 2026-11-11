@@ -37,9 +37,16 @@ def run_selected(directory, backend):
 
 
 def automatic_backend(params):
-  # comma 4 runs the driving and DM models on its internal GPU, so the neural
-  # observer never takes QCOM time. The QCOM grant existed only for an active eGPU.
-  return 'tracking_cpu'
+  from openpilot.selfdrive.carrot.signal_mode import read_mode
+  if read_mode(params) == 2:
+    # Preparation requires the measured-housing CPU evidence contract.
+    return 'tracking_cpu'
+  # The DM model also runs on the internal GPU with an external driving model.
+  # Parked A/B/A showed ~20 -> 10 Hz DM even at QCOM priority 15. Camera failure
+  # must never grant GPU access: that would keep the overloaded DM in fallback.
+  dm_needed = (params.get_bool('DriverMonitoringEnabled') and
+               not params.get_bool('DriverMonitoringSessionDisabled')) or params.get_bool('IsDriverViewEnabled')
+  return 'qcom' if params.get_bool('UsbGpuActive') and not dm_needed else 'tracking_cpu'
 
 
 def run_auto(directory=DIRECTORY, duration=None):

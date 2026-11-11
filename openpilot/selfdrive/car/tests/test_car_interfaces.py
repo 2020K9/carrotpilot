@@ -50,13 +50,12 @@ class TestCarInterfaces:
       now_nanos += DT_CTRL * 1e9  # 10ms
 
     # Test controller initialization
-    # carrot lateral controllers take (CP, CI) like controlsd.py and use DT_CTRL internally
     # TODO: wait until card refactor is merged to run controller a few times,
     #  hypothesis also slows down significantly with just one more message draw
     LongControl(car_params)
     if car_params.steerControlType == CarParams.SteerControlType.angle:
-      LatControlAngle(car_params, car_interface)
+      LatControlAngle(car_params, car_interface, DT_CTRL)
     elif car_params.lateralTuning.which() == 'pid':
-      LatControlPID(car_params, car_interface)
+      LatControlPID(car_params, car_interface, DT_CTRL)
     elif car_params.lateralTuning.which() == 'torque':
-      LatControlTorque(car_params, car_interface)
+      LatControlTorque(car_params, car_interface, DT_CTRL)

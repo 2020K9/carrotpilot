@@ -163,8 +163,34 @@ def load_frozen_cc(commit, tmp_dir, tag):
     diff = subprocess.run(["git", "diff", "-U0", commit, "--", canfd], cwd=ROOT, check=True, capture_output=True,
                           text=True).stdout.splitlines()
     heads = [ln for ln in diff if ln.startswith("@@")]
-    assert heads and all(ln.split("@@")[2].strip().startswith("def create_acc_control_scc2(") for ln in heads), canfd
+    # 2026-11-11 (ec79cae3 via upstream merge 3cc3c4b0): create_ccnc_messages (CAN-FD CCNC, built only under
+    # `if self.CP.flags & HyundaiFlags.CANFD:` like scc2) may change exactly these two lines; any other line there stops.
+    ccnc_old = ['        hold = _blink_hold_side(md, desire, create_ccnc_messages.__dict__.setdefault("_blink_hold", {}))']
+    ccnc_new = ['        hold_desire = 0 if getattr(CS.out, "cruiseCancelState", False) else desire',
+                '        hold = _blink_hold_side(md, hold_desire, create_ccnc_messages.__dict__.setdefault("_blink_hold", {}))']
+    hunks = []
+    for ln in diff:
+      if ln.startswith("@@"):
+        hunks.append((ln, [], []))
+      elif hunks and ln[:1] == "-" and not ln.startswith("---"):
+        hunks[-1][1].append(ln[1:])
+      elif hunks and ln[:1] == "+" and not ln.startswith("+++"):
+        hunks[-1][2].append(ln[1:])
+    assert heads, canfd
+    for head, minus, plus in hunks:
+      fn = head.split("@@")[2].strip()
+      assert fn.startswith("def create_acc_control_scc2(") or (fn.startswith("def create_ccnc_messages(") and
+                                                               minus == ccnc_old and plus == ccnc_new), canfd
     changed.remove(canfd)
+  # 2026-11-11 (ec79cae3): car.capnp may only append the CarState field cruiseCancelState @115 (a new ordinal changes no
+  # existing field layout; the K9 path never reads it). Exactly this one added line and nothing removed, else stop.
+  capnp = "opendbc_repo/opendbc/car/car.capnp"
+  if capnp in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", capnp], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    assert body == ["+  cruiseCancelState @115 :Bool; # Carrot cruise CANCEL latch, cleared by SET/RES or +/-."], capnp
+    changed.remove(capnp)
   # 2026-10-28 (K9CenterToFront, 실험중 메뉴): interface.py may change only the centerToFront assignment (lateral vehicle
   # model; nothing in the longitudinal path under test reads CP.centerToFront). Any other changed line stops the frozen load.
   iface = f"{HY}/interface.py"

@@ -674,17 +674,18 @@ def test_ev_mode_indicator_fits_between_three_digit_speeds(monkeypatch) -> None:
   assert cruise_left - ev_right >= 3.0
 
 
-@pytest.mark.parametrize(('external', 'expected'), (
-  ('', None), ('jetSON', 'jetSON'), ('MAC', 'MAC'), ('Jetlink', 'Jetlink'),
+@pytest.mark.parametrize(('active', 'external', 'expected'), (
+  (False, '', None), (True, '', 'eGPU'), (False, 'jetSON', 'jetSON'),
+  (False, 'MAC', 'MAC'), (False, 'Jetlink', 'Jetlink'), (True, 'jetSON', 'eGPU'),
 ))
-def test_external_compute_indicator_draws_only_while_active(monkeypatch, external, expected) -> None:
+def test_egpu_indicator_draws_only_while_active(monkeypatch, active, external, expected) -> None:
   renderer = object.__new__(ClusterUiRenderer)
   texts = []
   renderer._draw_text = lambda *args, **kwargs: texts.append((args, kwargs))
   monkeypatch.setattr(cluster_renderer.rl, "draw_rectangle_rounded", lambda *_args: None)
   monkeypatch.setattr(cluster_renderer.rl, "draw_rectangle_rounded_lines_ex", lambda *_args: None)
 
-  renderer._draw_egpu_status(_cluster_state(external_compute_label=external))
+  renderer._draw_egpu_status(_cluster_state(egpu_active=active, external_compute_label=external))
 
   assert len(texts) == int(expected is not None)
   if texts:

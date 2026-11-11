@@ -30,5 +30,6 @@ class OverlayState:
       sm.valid['modelV2'], sm.alive['modelV2'], sm.valid['carState'], sm.alive['carState'],
       sm.valid['radarState'], sm.alive['radarState'], sm.valid['longitudinalPlan'], sm.alive['longitudinalPlan'],
       sm.valid['carrotMan'], sm.alive['carrotMan'],
-      getattr(ui, 'jetlink_badge', None), getattr(ui, 'lightspeed_badge', None),
+      ui.usbgpu_active, ui.usbgpu_loading, ui.usbgpu_startup_failed,
+      getattr(ui, 'usbgpu_recovery_badge', None),
     )

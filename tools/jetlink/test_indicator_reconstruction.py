@@ -171,30 +171,30 @@ def test_turn_distance_freezes_at_stop_and_survives_desire_navigation_advance():
   assert j.reason=='completed'
 
 
-def test_opposite_driver_zero_crossing_cancels_started_turn():
+def test_opposite_driver_motion_not_zero_crossing_cancels_turn():
   j,s=turn()
   assert s(12.,angle=60.,heading=-.5)
-  assert s(12.1,angle=-40.,heading=-.5)  # Outside the new wheel-return band.
-  assert s(12.2,angle=-40.,heading=-.3,pressed=True,torque=-100.) is None
+  assert s(12.1,angle=-10.,heading=-.5)  # normal unwind/angle zero
+  assert s(12.2,angle=-20.,heading=-.3,pressed=True,torque=-100.)
+  assert s(12.45,angle=-20.,heading=-.2,pressed=True,torque=-100.) is None
   assert j.reason=='driver_opposite'
   assert s(12.5,cue=12.5) is None
 
 
-def test_same_direction_next_turn_is_queued_without_extending_repeated_cue():
+def test_same_direction_next_turn_extends_anchor_without_extending_repeated_cue():
   j,s=turn()
   assert s(12.,cue=12.,travel=(0,5.),distance=15.)
   assert j.active['end']==50.
   assert s(13.,cue=13.,travel=(0,15.),distance=30.)
-  assert j.active['end']==50. and j.pending[1]==45.
-  assert s(14.,travel=(0,51.))
   assert j.active['end']==75.
+  assert s(14.,travel=(0,51.))
 
 
 def test_next_opposite_turn_waits_for_current_turn_to_complete():
   j,s=turn()
   assert s(12.,travel=(0,18.),angle=60.,heading=-.6)==('turn','left')
   assert s(13.,cue=13.,direction='right',atc='turn right',travel=(0,20.),distance=30.,angle=45.,heading=-1.)==('turn','left')
-  assert s(13.1,travel=(0,21.),angle=0.,heading=-1.)==('turn','right')
+  assert s(13.1,travel=(0,21.),angle=0.,heading=-1.)==('turn','left')
   assert s(13.6,travel=(0,23.),angle=0.,heading=-1.)==('turn','right')
   assert j.active['end']==80.
 
@@ -239,3 +239,70 @@ def test_travel_gap_invalidates_anchor_without_extrapolating_stale_speed():
   assert t.distance==pytest.approx(1.)
   j,s=turn()
   assert s(12.,travel=(1,1.)) is None
+
+@pytest.mark.parametrize('side', [1, 2])
+@pytest.mark.parametrize('case', ['approaching', 'no_motion', 'other_side', 'one_boundary', 'split_vote',
+                                  'low_confidence', 'no_target_line', 'bad_shape', 'invalid', 'cancel'])
+def test_near_forecasts_require_measured_approach_and_fresh_agreement(side, case):
+  cs, md = scene()
+  detector, isolation = ModelIndicator(), BoundaryIndicator()
+  sign = 1 if side == 1 else -1
+  row = [0.] * 8
+  row[side+2] = .8
+  row[0] = .2
+  md.meta.desirePrediction = row * 4
+  if case == 'bad_shape':
+    md.meta.desirePrediction.pop()
+  elif case == 'split_vote':
+    md.meta.desirePrediction[8+side+2], md.meta.desirePrediction[8+5-side] = .1, .7
+  elif case == 'low_confidence':
+    md.meta.desirePrediction[side+2] = .64
+  elif case == 'invalid':
+    md.meta.desirePrediction[8] = math.nan
+  elif case == 'no_target_line':
+    md.laneLineProbs[side] = 0.
+  for i in range(22):
+    now = 10+i*.05
+    md.frameId, cs.laneLineInfoMonoTime = i, int(now*1e9)
+    delta = (0 if case == 'no_motion' else -.025 if case == 'other_side' else .025)*i*sign
+    for j in (1, 2):
+      md.laneLines[j].y[0] = (-1.55 if j == 1 else 1.55) + (0 if case == 'one_boundary' and j != side else delta)
+    detector.update(now, cs, md, valid=True, lateral_active=True, desire_enabled=True, path_enabled=False,
+                    busy=case == 'cancel', isolation=isolation)
+  if case == 'approaching':
+    assert detector.active and (detector.active.direction, detector.active.source) == (side, 'model_desire')
+    assert isolation.filter_lamp(side) == 0
+  else:
+    assert detector.active is None
+
+
+@pytest.mark.parametrize('side', [1, 2])
+@pytest.mark.parametrize('stop', ['fade', 'opposite', 'return', 'stalled', 'steering', 'bad_geometry', 'gap'])
+def test_forecast_hold_tracks_widening_fork_without_a_second_request(side, stop):
+  from openpilot.selfdrive.controls.lib.desire_lib.indicator_observer import ForecastLaneMovement
+  cs, md = scene()
+  def boundaries(near, far):
+    md.laneLines[1].y[0], md.laneLines[2].y[0] = (-near, far) if side == 1 else (-far, near)
+  boundaries(1., 2.3)
+  row = [0.] * 8
+  row[side+2], row[0] = .8, .2
+  md.meta.desirePrediction = row * 4
+  move = ForecastLaneMovement(10., side, 'model_desire', cs, md)
+  for i in range(1, 13):
+    boundaries(1.+i*.03, 2.3+i*.06)
+    assert move.update(10.+i*.05, cs, md)
+  assert move.split and not move.crossed
+  if stop == 'fade':
+    md.meta.desirePrediction = [1.,0.,0.,0.,0.,0.,0.,0.] * 4
+  elif stop == 'opposite':
+    md.meta.desireState[5-side] = .8
+  elif stop == 'return':
+    boundaries(1.38, 2.49)
+  elif stop == 'steering':
+    cs.steeringPressed = True
+  elif stop == 'bad_geometry':
+    boundaries(math.nan, 3.)
+  elif stop == 'stalled':
+    for i in range(1, 15):
+      assert move.update(10.6+i*.05, cs, md)
+  assert not move.update(11.41 if stop == 'stalled' else 11. if stop == 'gap' else 10.65, cs, md)

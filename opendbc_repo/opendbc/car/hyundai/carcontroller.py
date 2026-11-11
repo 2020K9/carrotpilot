@@ -16,8 +16,6 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
-from opendbc.car.hyundai.values import get_pedal_interceptor_params
-from opendbc.car.pedal_interceptor import PedalInterceptor
 from openpilot.common.filter_simple import MyMovingAverage
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -195,9 +193,6 @@ class CarController(CarControllerBase):
                            if CP.flags & HyundaiFlags.CANFD and CP.openpilotLongitudinalControl else None)
     self.apply_torque_last = 0
     self.car_fingerprint = CP.carFingerprint
-    pedal_interceptor_params = get_pedal_interceptor_params(CP)
-    self.pedal_interceptor = (PedalInterceptor(CANPacker(dbc_names[Bus.party]), pedal_interceptor_params)
-                              if pedal_interceptor_params is not None else None)
     self.last_button_frame = 0
 
     self.hyundai_jerk = HyundaiJerk()
@@ -583,8 +578,7 @@ class CarController(CarControllerBase):
     # *** common hyundai stuff ***
 
     # tester present - w/ no response (keeps relevant ECU disabled)
-    if (self.frame % 100 == 0 and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and
-        self.CP.openpilotLongitudinalControl and self.pedal_interceptor is None):
+    if self.frame % 100 == 0 and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and self.CP.openpilotLongitudinalControl:
       # for longitudinal control, either radar or ADAS driving ECU
       addr, bus = 0x7d0, self.CAN.ECAN if self.CP.flags & HyundaiFlags.CANFD else 0
       if self.CP.flags & HyundaiFlags.CANFD_HDA2.value:
@@ -685,7 +679,7 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_mdps12(self.packer, self.frame, CS.mdps12))
 
       casper_ev = self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV
-      if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl and self.pedal_interceptor is None:
+      if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:
         self.hyundai_jerk.make_jerk(self.CP, CS, accel, actuators, hud_control,
                                     creep=self.k9_creep is not None and self.k9_creep.active, creep_obj=self.k9_creep,
                                     jerk_u_cap=None if self.k9_hard_brake is None else self.k9_hard_brake.jerk_u_cap())
@@ -707,7 +701,7 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC, self.blinking_signal))
 
       # 5 Hz ACC options
-      if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl and self.pedal_interceptor is None:
+      if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl:
         if camera_scc:
           if CS.scc13 is not None:
             if casper_ev:
@@ -718,16 +712,8 @@ class CarController(CarControllerBase):
           can_sends.extend(hyundaican.create_acc_opt(self.packer, self.CP))
 
       # 2 Hz front radar options
-      if self.frame % 50 == 0 and self.CP.openpilotLongitudinalControl and not camera_scc and self.pedal_interceptor is None:
+      if self.frame % 50 == 0 and self.CP.openpilotLongitudinalControl and not camera_scc:
         can_sends.append(hyundaican.create_frt_radar_opt(self.packer))
-
-    if self.pedal_interceptor is not None:
-      pedal_active = (CC.longActive and not CS.pedal_interceptor_cruise_blocked and
-                      not CS.pedal_interceptor_state.faulted and
-                      not CC.cruiseControl.override and not CS.out.gasPressed and not CS.out.brakePressed)
-      pedal_message = self.pedal_interceptor.update(self.frame, pedal_active, accel, CS.out.vEgo, hud_control.setSpeed)
-      if pedal_message is not None:
-        can_sends.append(pedal_message)
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
@@ -737,6 +723,7 @@ class CarController(CarControllerBase):
     new_actuators.torqueOutputCan = steering_authority if angle_control else apply_torque
     new_actuators.steeringAngleDeg = float(apply_angle)
     new_actuators.accel = accel
+    new_actuators.stopObjectActive = bool(self.canfd_stopping is not None and self.canfd_stopping.stop_object_active)
 
     self.frame += 1
     return new_actuators, can_sends

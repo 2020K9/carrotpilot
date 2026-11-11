@@ -4,6 +4,18 @@ msgstr ""
 "Language: zh-CHS\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "BRAKE! Tesla CAN Red Light"
+msgstr "请刹车！特斯拉 CAN 红灯"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "Stopping Distance May Be Insufficient"
+msgstr "剩余距离可能不足以停车"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "Tesla CAN Traffic Signal Lost or Inconsistent"
+msgstr "特斯拉 CAN 信号灯数据丢失或不一致"
+
 #: openpilot/selfdrive/ui/layouts/settings/device.py
 msgid " Steering torque response calibration is complete."
 msgstr " 转向扭矩响应校准完成。"
@@ -1515,19 +1527,3 @@ msgstr "请重启设备以应用更新"
 #: openpilot/selfdrive/selfdrived/events.py
 msgid "Park safely before rebooting your device"
 msgstr "请安全停车后再重启设备"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "Auto Hold Active"
-msgstr "自动驻车已启用"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "Rebooting into Dashcam Mode"
-msgstr "正在重启进入行车记录仪模式"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "전방 물체 주의"
-msgstr "注意前方物体"
-
-#: openpilot/selfdrive/selfdrived/events.py
-msgid "전방을 확인하고 감속을 준비하세요"
-msgstr "请注意前方并准备减速"

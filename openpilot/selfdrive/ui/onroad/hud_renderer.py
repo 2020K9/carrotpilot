@@ -5,6 +5,7 @@ from openpilot.common.constants import CV
 from openpilot.selfdrive.carrot.deceleration_source import deceleration_source_presentation
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
+from openpilot.system.hardware.usbgpu import usbgpu_badge_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -320,17 +321,30 @@ class HudRenderer(Widget):
 
     self._draw_date_time(rect)
     self._draw_tpms(rect)
-    self._draw_model_badge(rect)
+    self._draw_egpu_badge(rect)
 
   def user_interacting(self) -> bool:
     return self._exp_button.is_pressed
 
-  def _draw_model_badge(self, rect: rl.Rectangle) -> None:
-    # Jetlink state wins over the built-in model badge (same priority as before).
-    badge = getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'lightspeed_badge', None)
-    if not badge:
+  def _draw_egpu_badge(self, rect: rl.Rectangle) -> None:
+    # Keep runtime state visible while the shared USB hub re-enumerates; a
+    # transient missing sysfs sample must not hide loading or failure details.
+    if not (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
+            ui_state.usbgpu_present or ui_state.usbgpu_active or
+            ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
       return
-    text, state = badge
+
+    state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
+                               ui_state.usbgpu_active, ui_state.usbgpu_startup_failed,
+                               ui_state.usbgpu_compile_pending)
+    text = "eGPU REBOOT" if state == "compile_pending" else "eGPU ERROR" if state == "error" else "eGPU"
+    if (getattr(ui_state, "usbgpu_delivery_badge", None) and
+        not (ui_state.usbgpu_active or ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed)):
+      text, state = ui_state.usbgpu_delivery_badge
+    if getattr(ui_state, 'jetlink_badge', None) and not ui_state.usbgpu_active:
+      text, state = ui_state.jetlink_badge
+    if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
+      text, state = ui_state.usbgpu_recovery_badge
     color = {
       "active": COLORS.GREEN_210,
       "loading": COLORS.YELLOW_210,

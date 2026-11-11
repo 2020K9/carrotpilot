@@ -238,7 +238,7 @@ def serve_local(listener, client, peer, wifi=None):
   blinker = None
   try:
     blinker = BlinkerSender(client, peer)
-    _serve_local(listener, client, peer, publisher, phase, wifi, blinker if blinker.worker is not None else None)
+    _serve_local(listener, client, peer, publisher, phase, wifi, blinker if blinker.enabled else None)
   finally:
     if blinker is not None:
       blinker.close()
@@ -253,11 +253,14 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
   from openpilot.common.swaglog import cloudlog
   params = Params()
   diagnostics = RuntimeDiagnostics('jetlinkd', cloudlog.event, peak_metric='usb_exchange_ms')
+  from openpilot.selfdrive.modeld.jetlink.performance_log import PerformanceLog
+  performance_log = PerformanceLog(cloudlog.event, peer, getattr(client.spec, 'sha256', None))
   from tools.jetlink.model_library import Client as ModelLibrary  # noqa: TID251 -- shared standalone host protocol
   library = ModelLibrary(peer)
   last_status = 0.
   last_ping = time.monotonic()
   telemetry_updated = 0.
+  last_state_request = time.monotonic()
   hud_connected = None
   spec = client.spec
   usb_display = publisher is not None and (peer.get('carrot_host') != 'jetson' or peer.get(HUD_USB_CAPABILITY) is True)
@@ -278,20 +281,20 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
       connection, _ = listener.accept()
     except TimeoutError:
       library.idle(client, params)
+      if time.monotonic() - last_ping > (.2 if blinker is not None else 2):
+        client.last_state = client.state()
+        check_loaded(client, client.last_state)
+        telemetry_updated = time.monotonic()
+        last_ping = time.monotonic()
       if blinker is not None:
         blinker.send(client)
       if wifi is not None:
         wifi.send(client)
       if usb_display:
         publish_hud(client, publisher)
-      if time.monotonic() - last_ping > 2:
-        client.last_state = client.state()
-        check_loaded(client, client.last_state)
-        telemetry_updated = time.monotonic()
-        last_ping = time.monotonic()
       continue
     with connection:
-      connection.settimeout(.5)
+      connection.settimeout(.1 if blinker is not None else .5)
       from jetlink import deferred_map
       reader = PacketReader(REQUEST.size + spec.warped_nbytes + spec.packed_nbytes + deferred_map.META.size)
       from openpilot.selfdrive.modeld.jetlink import shared_input
@@ -375,7 +378,13 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
             raise ValueError('invalid local model context')
           started = time.monotonic()
           map_options = {'nav_metadata': nav_meta} if nav_meta is not None else {}
-          seq = client.infer_begin(images, packed, frame, reset=bool(reset & 1), want_state=(frame % 20 == 0), **map_options)
+          # Output ownership needs fresh receiver health within 500 ms. The
+          # usual 1 Hz display telemetry would repeatedly expire that lease.
+          want_state = blinker is not None or time.monotonic() - last_state_request >= 1
+          seq = client.infer_begin(images, packed, frame, reset=bool(reset & 1),
+                                   want_state=want_state, **map_options)
+          if want_state:
+            last_state_request = time.monotonic()
           sent = time.monotonic()
           if peer.get('carrot_host') == 'jetson':
             phase.sent(source_sof)
@@ -456,6 +465,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
             **display_metrics,
             **receive_metrics,
           )
+          performance_log.record(client.last_state, telemetry_updated, frame, seq, client.last_timings)
       except (ConnectionError, BrokenPipeError, ValueError) as exc:
         log.info('local client ended: %s', exc)
       finally:
@@ -663,7 +673,8 @@ def main():
         log.exception('Jetlink cable setup failed')
         if TRANSPORT_MODE == 'auto' and not mobile_unavailable:
           mobile_unavailable = True
-          publish('retrying', peer=None, error=f'iOS/NCM unavailable; retrying bulk USB after verified cleanup: {exc}'[:300])
+          error = str(exc) if '[adb-handoff:' in str(exc) else f'iOS/NCM unavailable; retrying bulk USB after verified cleanup: {exc}'
+          publish('retrying', peer=None, error=error[:300])
         else:
           publish('retrying', peer=None, error=str(exc)[:300])
       except Exception as exc:

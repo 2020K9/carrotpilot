@@ -108,7 +108,7 @@ def clamp_numeric(value: float, p: Optional[Dict[str, Any]]) -> float:
     nonzero_min = p.get("nonzero_min")
     if nonzero_min is not None and 0 < value < float(nonzero_min):
       value = float(nonzero_min)
-    choices = p.get("choices")  # optional list of the only values that may be stored (e.g. K9StopMode 0 / 3 / 5)
+    choices = p.get("choices")  # optional list of the only values that may be stored (e.g. K9StopMode 0 / 1 / 2)
     if isinstance(choices, list) and choices and value not in [float(c) for c in choices]:
       value = float(choices[0])  # a value outside the list is never stored; the first choice is the safe default
   except Exception:

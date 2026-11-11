@@ -7,9 +7,10 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from openpilot.common.atc_params import right_lane_change_distance
 from blink_protocol import PACKAGE_CONFIG, LIMIT, encode, finite, fresh
 from blink_policy import Policy, AutomaticSignals
+from blink_voice import VoiceLaneSignal
+from openpilot.selfdrive.controls.lib.desire_lib.assistant_lane import ROOT as ASSISTANT_LANE_ROOT
 from blink_tbt import TbtBlinker, right_front_clear
 from blink_turn_location import observations as turn_observations, navigation_cancelled
 from blink_boundary import BoundaryEvents, vehicle_allowed as boundary_vehicle_allowed
@@ -73,7 +74,7 @@ class Events:
     return result[-4:]
 
 
-def main(fd, spas=False, ble=False):
+def main(fd, spas=False):
   if spas:
     import os
     try:
@@ -89,23 +90,20 @@ def main(fd, spas=False, ble=False):
   with car.CarParams.from_bytes(Params().get('CarParams')) as cp:
     fingerprint = cp.carFingerprint
     front_radar_available = not getattr(cp, 'radarUnavailable', True)
-    if ble and getattr(cp, 'passive', False):
-      return
     if spas:
       from opendbc.car.hyundai.values import HyundaiFlags
       if cp.brand != 'hyundai' or not cp.flags & HyundaiFlags.CANFD_SPAS_BLINKERS or cp.passive:
         return
-  if not spas and not ble and json.loads(PACKAGE_CONFIG.read_text()).get('fingerprint') != fingerprint:
+  if not spas and json.loads(PACKAGE_CONFIG.read_text()).get('fingerprint') != fingerprint:
     return
   sock = socket.socket(fileno=fd)
   sock.setblocking(False)
   sm = messaging.SubMaster(['carState', 'carControl', 'selfdriveState', 'pandaStates', 'modelV2', 'carrotMan', 'livePose', 'radarState',
                              'gpsLocation', 'gpsLocationExternal', 'carrotNavi'])
   events = Events(time.monotonic())
-  trial_until = 0.
-  last_trial = None
   policy, params = Policy(), Params()
   automatic = AutomaticSignals()
+  voice, voice_tap = VoiceLaneSignal(), ObservationFeedback()
   tbt = TbtBlinker()
   boundary = BoundaryEvents(read_json(RUNTIME/'boundary-indicator.json', {}))
   observation = ObservationSignals(read_json(RUNTIME/'boundary-indicator.json', {}))
@@ -138,7 +136,7 @@ def main(fd, spas=False, ble=False):
         feedback = {}
     sm.update(0)
     now = time.monotonic()  # SubMaster assigns receive timestamps during update.
-    ok = vehicle_ready(sm, now, fingerprint, spas or ble)
+    ok = vehicle_ready(sm, now, fingerprint, spas)
     status = read_json(RUNTIME/'status.json', {})
     settings, learning, cancelled = config(), read_json(RUNTIME/'learn.json', {}), read_json(RUNTIME/'cancelled.json', {})
     commands = events.read(read_json(RUNTIME/'blinker.json', {}), settings, status, learning, cancelled, now)
@@ -153,11 +151,13 @@ def main(fd, spas=False, ble=False):
     cs = sm['carState']
     mode = params.get_int('AutoBlinkerControl')
     mode = mode if mode in (0, 1, 2) else 0
+    # Physical lever and explicit Bluetooth taps/holds keep their normal behavior.
+    auto_paused = getattr(cs, 'cruiseCancelState', False)
     auto_fresh = all(k in sm.services and sm.valid[k] and sm.alive[k] and
                      fresh(sm.recv_time[k], now, 1.0 if k == 'carrotMan' and automatic.direction else .35)
                      for k in ('modelV2', 'carrotMan'))
     travelled = travel.update(now, cs.vEgo, ok)
-    auto_valid = auto_fresh and ok and automatic_control_allowed(
+    auto_valid = not auto_paused and auto_fresh and ok and automatic_control_allowed(
       cs, sm['carControl'], sm['selfdriveState'], params.get_bool('AlwaysLateral'), automatic.direction is not None)
     auto_valid = auto_valid and not navigation_cancelled(sm, now)
     auto = None
@@ -175,13 +175,12 @@ def main(fd, spas=False, ble=False):
       automatic.update(now, mode, False, 0., 'none', '', 'none', use_travel=True)
     # The ATC add-on lights the real right indicator. Its CAN feedback goes through the
     # unchanged driver-blinker lane-change path; no LANECHANGE command is sent.
-    tbt_distance = right_lane_change_distance(params)
     tbt_enabled = (not spas and mode == 2 and params.get_int('AutoTurnControl') in (1, 2) and
-                   tbt_distance > 0)
+                   params.get_bool('AutoTurnControlRightLaneChange'))
     front_clear = (tbt_enabled and front_radar_available and 'radarState' in sm.services and sm.valid['radarState'] and
                    sm.alive['radarState'] and fresh(sm.recv_time['radarState'], now, .35) and
                    right_front_clear(sm['radarState']))
-    tbt_auto = tbt.update(now, enabled=tbt_enabled, distance_limit=tbt_distance,
+    tbt_auto = tbt.update(now, enabled=tbt_enabled,
                           front_clear=front_clear,
                           valid=(auto_valid and fresh(sm.recv_time['carrotMan'], now, .35) and
                                  sm['carControl'].latActive and params.get_int('LaneChangeNeedTorque') == 0),
@@ -196,12 +195,13 @@ def main(fd, spas=False, ble=False):
     meta = sm['modelV2'].meta if model_fresh else None
     observed_source = str(getattr(meta, 'observedIndicatorSource', ''))
     observation_enabled = (params.get_bool('ManualLaneChangeIndicator') if observed_source == 'manual' else
+                           params.get_bool('ManualTurnIndicator') if observed_source == 'manual_turn' else
                            params.get_bool('ModelPathIndicator') if observed_source == 'model_path' else
                            params.get_bool('ModelDesireIndicator') if observed_source in ('model_desire', 'model_turn') else False)
     own_tap = (observation.owned is not None and tap_echo.matches(
       now, cs, observation.owned[1], observation.owned[0], observation_feedback.value))
     observe_auto = observation.update(now, meta,
-      allowed=(not spas and mode in (1, 2) and observation_enabled and ok and model_fresh and
+      allowed=(not auto_paused and not spas and mode in (1, 2) and observation_enabled and ok and model_fresh and
                observation_allowed(cs, sm['carControl'], sm['modelV2'], observed_source, now, observation.owned is not None, own_tap) and
                (observation.owned is not None or fresh(feedback.get('stamp'), now, .35) and feedback.get('state') == 'ready')),
       busy=bool(commands) or auto is not None or (policy.hold is not None and policy.hold['source'] != 'observation') or
@@ -209,23 +209,32 @@ def main(fd, spas=False, ble=False):
       record=record_ownership)
     if auto is None and observe_auto:
       auto = observe_auto
+    peer_fresh = fresh(feedback.get('stamp'), now, .35)
+    # Only a worker with live receiver feedback for this vehicle advertises a path.
+    # Bind a request to that worker for its lifetime, even across adapter handoff.
+    voice.advertise(now, fingerprint, ok and mode == 2 and peer_fresh and (not spas or feedback.get('available') is True) and feedback.get('state') in
+      ('ready', 'waiting', 'sending', 'waiting_previous_signal', 'driver_override'),
+      lambda record: atomic_json(ASSISTANT_LANE_ROOT/'indicator-device.json', record))
+    voice_auto = voice.select(meta, cs,
+      allowed=(mode == 2 and auto_valid and sm['carControl'].latActive),
+      peer_ready=peer_fresh and not feedback.get('lamps') and not feedback.get('accepted_id') and (
+        feedback.get('state') == 'ready' or (spas and feedback.get('state') == 'waiting')), hold=policy.hold,
+      busy=(auto is not None or bool(commands) or not peer_fresh or feedback.get('state') == 'driver_override'))
+    if voice_auto:
+      auto = voice_auto
     local_observation = (auto is not None and auto[0] == 'observation') or (auto is None and (policy.hold is None or policy.hold['source'] == 'observation'))
-    policy_valid = (ok and model_fresh) if local_observation else auto_valid
+    policy_valid = (not auto_paused and ok and model_fresh) if local_observation else auto_valid
     commands, hold = policy.update(now, mode, ok, commands, cs.vEgo, cs.steeringAngleDeg,
                                   str(cs.gearShifter), remote, auto, policy_valid)
+    if voice.bind(hold):
+      # Persist ownership before sending, so a process restart cannot reinterpret the lamp as a lever press.
+      record_ownership({'time': now, 'direction': 1 if voice.direction == 'left' else 2, 'voice_fingerprint':fingerprint})
+    voice_hold = hold if voice.direction and hold and hold['id'] == voice.hold_id else None
+    voice_tap.prepare_tap(now, voice_hold, 0., cs)
     observation_feedback.prepare(now, hold, meta, cs)
-    receiver_override = fresh(feedback.get('stamp'), now, .35) and feedback.get('state') == 'driver_override'
-    native_hold = not ble or fingerprint == 'HYUNDAI_IONIQ_5_PE'
-    tbt_turn_hold = bool(not spas and native_hold and hold and hold['source'] == 'turn' and automatic.journey.active)
-    # A confirmed TBT lamp is maintained by the comma-side lease. Receiver
-    # one-touch ownership ending must not erase the ongoing turn. This cannot
-    # activate a hold whose initial send and lamp were never acknowledged.
-    continuing_turn = (tbt_turn_hold and activated_id == hold['id'] and fresh(feedback.get('stamp'), now, .35) and
-                       feedback.get('state') in ('ready', 'waiting', 'driver_override') and
-                       feedback.get('accepted_id') in (None, hold['id']))
-    hold = policy.acknowledged(now, activated_id, receiver_override and not tbt_turn_hold)
+    hold = policy.acknowledged(now, activated_id, fresh(feedback.get('stamp'), now, .35) and feedback.get('state') == 'driver_override')
     acknowledged = (hold and fresh(feedback.get('stamp'), now, .35) and feedback.get('accepted_id') == hold['id'] and
-                    feedback.get('state') in ('ready', 'waiting', 'waiting_previous_signal')) or continuing_turn
+                    feedback.get('state') in ('ready', 'waiting', 'waiting_previous_signal'))
     if not acknowledged:
       if activated_id is not None:
         release_until = now+.8
@@ -234,14 +243,14 @@ def main(fd, spas=False, ble=False):
           (hold['direction'] == 'right' and cs.rightBlinker and not cs.leftBlinker)):
       activated_id = hold['id']
     activated_id = observation_feedback.activation(now, hold, cs, feedback, acknowledged, activated_id, ok)
-    if feedback.get('state') == 'driver_override' and not continuing_turn:
+    if feedback.get('state') == 'driver_override':
       release_until = 0.
-    if commands or ((spas or not native_hold) and feedback.get('state') == 'driver_override'):
+    if commands or feedback.get('state') == 'driver_override':
       automatic.pending = None
       automatic.journey.pending = None
       automatic.journey.active = None
       automatic.journey.cancelled_until = now+3.
-    if not spas and policy.relight(now, activated_id, acknowledged and not receiver_override, cs.leftBlinker, cs.rightBlinker,
+    if not spas and policy.relight(now, activated_id, acknowledged, cs.leftBlinker, cs.rightBlinker,
                                   retry_unlit=auto_valid and automatic.direction is not None and feedback.get('state') == 'ready'):
       hold, activated_id = policy.hold, None
     model_fresh = ('modelV2' in sm.services and sm.valid['modelV2'] and sm.alive['modelV2'] and fresh(sm.recv_time['modelV2'], now, .35))
@@ -249,7 +258,7 @@ def main(fd, spas=False, ble=False):
     boundary_direction = {'left':1, 'right':2}.get(str(getattr(meta, 'manualLaneIndicator', 'none')), 0)
     boundary_commands = boundary.read(now, boundary_direction,
       getattr(meta, 'manualLaneIndicatorMonoTime', 0)/1e9,
-      allowed=(not hasattr(meta, 'observedIndicator') and not spas and mode in (1, 2) and params.get_bool('ManualLaneChangeIndicator') and
+      allowed=(not auto_paused and not hasattr(meta, 'observedIndicator') and not spas and mode in (1, 2) and params.get_bool('ManualLaneChangeIndicator') and
                ok and model_fresh and not commands and not hold and
                boundary_vehicle_allowed(cs, boundary_direction) and
                adjacent_lane(cs, sm['modelV2'], boundary_direction, now) and
@@ -265,31 +274,24 @@ def main(fd, spas=False, ble=False):
     devices = [mac for mac in status.get('grabbed', []) if fresh(status.get('time'), now) and
                settings.get('devices', {}).get(mac, {}).get('enabled') is True and
                not (learning.get('address') == mac and learning.get('until', 0) > now)]
-    # Physical, local-only service test. A fresh nonce permits one tap while
-    # parked. Keep checking P/standstill/control state for its whole lease.
-    if ble:
-      trial = read_json(RUNTIME/'b1-park-test.json', {})
-      if isinstance(trial, dict) and trial.get('id') != last_trial and fresh(trial.get('time'), now):
-        if isinstance(trial.get('id'), str) and trial['id'].startswith('park-test:') and trial.get('direction') in ('left','right'):
-          last_trial = trial['id']
-          trial_until = now + 1.
-      if now < trial_until:
-        cc, ss = sm['carControl'], sm['selfdriveState']
-        ok = (ok and str(cs.gearShifter)=='park' and cs.standstill and abs(cs.vEgo)<.01 and
-              not (cc.enabled or cc.latActive or cc.longActive or ss.enabled or ss.active))
-        commands = [trial] if ok and isinstance(trial, dict) and trial.get('id')==last_trial and fresh(trial.get('time'),now) else []
-        hold = None
     submitted = False
     try:
       sock.send(encode({'stamp': now, 'ok': bool(ok), 'events': commands, 'hold': wire_hold(hold), 'devices':devices,
                         'activated':activated_id is not None, 'relights':policy.relights,
-                        'b1_hold':ble and fingerprint != 'HYUNDAI_IONIQ_5_PE',
                         'turn_phase':automatic.reason, 'turn_position':bool(automatic.journey.active and automatic.journey.active['target'] is not None),
                         'tbt_phase':tbt.reason, 'observation_phase':observed_source,
                         'indicator_origin':hold['source'] if hold else None}))
       submitted = True
     except BlockingIOError:
       pass  # Never buffer commands for delivery after congestion.
+    if voice_hold and hold and hold['id'] == voice_hold['id']:
+      # The board's own lamp observation can supply the missing carState lamp sample.
+      receiver_hold = feedback.get('accepted_id') if ble and feedback.get('lamps') is not None else activated_id
+      confirmation = submitted and ok and acknowledged and voice.confirmed(hold, receiver_hold, feedback, cs)
+      atomic_json(ASSISTANT_LANE_ROOT/'signal.json', {
+        'id': voice.request, 'route': voice.route, 'direction': voice.direction, 'time': now, 'confirmed': bool(confirmation),
+        'board_lamp': bool(ble and confirmation and feedback.get('lamps') is not None),
+        'tap': voice_tap.sent(now, feedback, submitted and ok)})
     if mode and not spas:
       atomic_json(HOLD_PATH, {'stamp':now, 'mode':mode, 'fingerprint':fingerprint,
                              'direction':hold['direction'] if hold and activated_id == hold['id'] else None,
@@ -299,4 +301,4 @@ def main(fd, spas=False, ble=False):
 
 
 if __name__ == '__main__':
-  main(int(sys.argv[1]), 'spas' in sys.argv[2:], 'ble' in sys.argv[2:])
+  main(int(sys.argv[1]), len(sys.argv) > 2 and sys.argv[2] == 'spas')

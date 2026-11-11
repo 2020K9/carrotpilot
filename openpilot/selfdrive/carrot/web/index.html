@@ -148,7 +148,6 @@
 </head>
 
 <body class="notranslate" translate="no">
-
   <div class="wrap swipe-container" id="swipeContainer">
     <!-- ════════════ CAR SELECT ════════════ -->
     <div id="pageCar" class="page page--bounded" hidden style="display:none;">
@@ -301,10 +300,19 @@
           <div class="egpu-model-card__icon" aria-hidden="true">HB</div>
           <div class="egpu-model-card__body">
             <div class="egpu-model-card__heading">
-              <strong id="egpuModelTitle">Jetson</strong>
+              <strong id="egpuModelTitle">eGPU big model</strong>
               <span id="egpuModelState" class="egpu-model-card__state">Checking</span>
             </div>
             <p id="egpuModelDetail" class="egpu-model-card__detail"></p>
+            <p id="egpuModelRecovery" class="egpu-model-card__detail" hidden></p>
+            <div id="egpuModelProgress" class="egpu-model-card__progress" hidden>
+              <div class="egpu-model-card__track"><span id="egpuModelProgressBar"></span></div>
+            </div>
+            <div class="egpu-model-card__footer">
+              <span id="egpuModelAmount" class="egpu-model-card__amount"></span>
+              <a id="egpuModelDiagnostics" class="btn egpu-model-card__action" href="/api/egpu/model/diagnostics" download hidden>Download diagnostics</a>
+              <button id="btnEgpuCompileRestart" class="btn egpu-model-card__action" type="button" hidden>Restart &amp; compile</button>
+            </div>
           </div>
         </section>
 
@@ -315,6 +323,7 @@
           <button id="btnToolsWebSettings" class="btn" type="button">Web Settings</button>
           <button id="btnDeviceInfo" class="btn" type="button">Info</button>
           <button id="btnToolsBluetooth" class="btn" type="button" aria-haspopup="dialog">Bluetooth</button>
+          <button id="btnToolsAssistant" class="btn" type="button" aria-haspopup="dialog"><span aria-hidden="true">&#9881;</span> <span id="toolsAssistantLabel">ChatGPT 설정 도우미</span></button>
         </div>
 
         <div class="section tools-group is-open" data-tools-group="git">
