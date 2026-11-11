@@ -240,6 +240,11 @@ def torque_learn_text(perc: int | None) -> str | None:
     return None if perc >= 100 else f"토크학습 {perc}%"
 
 
+def learned_steer_ratio_text(steer_ratio: float | None) -> str:
+    """HUD line 5 (대감님 2026-11-11 17:44, replaces 토크학습 %): 학습 조향비 13.42 = liveParameters.steerRatio, -- unknown."""
+    return "학습 조향비 --" if steer_ratio is None else f"학습 조향비 {steer_ratio:.2f}"
+
+
 LANE_P_MIN = 0.6
 LANE_STD_MAX = 0.2
 LANE_W_MIN, LANE_W_MAX = 2.6, 4.4
