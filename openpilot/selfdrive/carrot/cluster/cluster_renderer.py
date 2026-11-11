@@ -616,6 +616,22 @@ uniform vec3 lightDir;
 uniform vec3 viewPos;
 uniform vec4 paintKey;
 uniform vec4 paintOverride;
+uniform float gloss;
+uniform vec3 glossPaint;
+uniform vec3 glossGlass;
+uniform vec3 glossChrome;
+uniform vec3 glossChrome2;
+uniform vec3 glossRim;
+bool glossKey(vec3 c, vec3 k) { return all(lessThan(abs(c - k), vec3(0.006))); }
+vec3 glossEnv(vec3 r) {
+    // studio sky over a dark floor with a bright horizon band (reflections of the K9 clear coat / chrome)
+    float e = r.z;
+    vec3 sky = mix(vec3(0.62, 0.68, 0.76), vec3(0.24, 0.34, 0.52), clamp(e * 1.4, 0.0, 1.0));
+    vec3 c = e > 0.0 ? sky : mix(vec3(0.36, 0.35, 0.34), vec3(0.10, 0.10, 0.10), clamp(-e * 2.0, 0.0, 1.0));
+    c += vec3(0.85) * exp(-pow((e - 0.05) / 0.035, 2.0));
+    c += vec3(0.9) * exp(-pow((e - 0.55) / 0.05, 2.0)) * smoothstep(0.2, 0.6, abs(r.y));
+    return c;
+}
 void main() {
     vec4 src = fragColor;
     if (paintOverride.a > 0.5 && all(lessThan(abs(src.rgb - paintKey.rgb), vec3(0.012)))) {
@@ -635,6 +651,19 @@ void main() {
     vec3 col = base.rgb * (0.46 + 0.50 * diff + 0.12 * fill);
     col += vec3(1.0, 0.99, 0.97) * spec * (0.10 + 0.30 * lum);
     col += vec3(0.96, 0.97, 1.0) * fres * 0.10 * lum;
+    if (gloss > 0.5) {
+        vec3 r = reflect(-v, n);
+        float ndv = max(dot(n, v), 0.0);
+        float f5 = pow(1.0 - ndv, 5.0);
+        vec3 c0 = src.rgb;
+        float hl = pow(max(dot(n, h), 0.0), 400.0);
+        if (glossKey(c0, glossPaint) || glossKey(c0, glossGlass)) {
+            float f0 = glossKey(c0, glossGlass) ? 0.08 : 0.12;
+            col = base.rgb * (0.30 + 0.45 * diff) + glossEnv(r) * (f0 + (1.0 - f0) * f5) * 1.15 + vec3(1.0) * hl * 0.35;
+        } else if (glossKey(c0, glossChrome) || glossKey(c0, glossChrome2) || glossKey(c0, glossRim)) {
+            col = mix(base.rgb * (0.5 + 0.5 * diff), base.rgb * glossEnv(r) * 1.45, 0.75) + vec3(1.0) * hl * 0.5;
+        }
+    }
     OUTCOLOR = vec4(min(col, vec3(1.0)), base.a);
 }
 """
@@ -2185,7 +2214,7 @@ class ClusterUiRenderer:
                     rl.set_shader_value(shader, loc, view, rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
             scale = ((EV6_EGO_WIDTH_M, EV6_EGO_LENGTH_M, EV6_EGO_HEIGHT_M) if key == "ev6"
                      else PARK_K9_SCALE_M if key == "k9" else (1.82, 4.35, 1.35))
-            target = rl.load_render_texture(800, 480)
+            target = rl.load_render_texture(1000 if key == "k9" else 800, 480)  # K9: long car, roof fits
             rl.begin_texture_mode(target)
             try:
                 rl.clear_background(rl.BLANK)
@@ -4234,7 +4263,7 @@ class ClusterUiRenderer:
                 model = rl.load_model_from_mesh(mesh)
                 if rl.is_model_valid(model):
                     self._park_k9_model = model
-                    self._attach_vehicle_shader(model)
+                    self._set_k9_gloss(self._attach_vehicle_shader(model))
                 else:
                     rl.unload_model(model)
             except Exception as exc:
@@ -4299,6 +4328,20 @@ class ClusterUiRenderer:
         if clean_ui_enabled() and (vehicle.source in SIDE_VEHICLE_MODEL_SOURCES or vehicle.source == "carState"):
             return True  # EV6 HUD patch v6 (carState = blind-spot car reported by the car itself)
         return vehicle.source in SIDE_VEHICLE_MODEL_SOURCES and vehicle.confidence >= SIDE_VEHICLE_MODEL_MIN_CONFIDENCE
+
+    @staticmethod
+    def _set_k9_gloss(shader) -> None:
+        # Clear-coat / chrome reflection for the K9 model only (paint, glass and chrome colours of
+        # make_k9_park_model.py); every other model keeps gloss = 0, i.e. the original shading.
+        if shader is None:
+            return
+        vec3 = rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3
+        for name, rgb in (("glossPaint", "1c1f24"), ("glossGlass", "0a0c10"), ("glossChrome", "dfe2e6"),
+                          ("glossChrome2", "9ea3a9"), ("glossRim", "c2c6cb")):
+            value = [int(rgb[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+            rl.set_shader_value(shader, rl.get_shader_location(shader, name), rl.ffi.new("float[]", value), vec3)
+        rl.set_shader_value(shader, rl.get_shader_location(shader, "gloss"), rl.ffi.new("float[]", [1.0]),
+                            rl.ShaderUniformDataType.SHADER_UNIFORM_FLOAT)
 
     def _attach_vehicle_shader(self, model):
         # One shader instance per model (UnloadModel frees its material shader).
