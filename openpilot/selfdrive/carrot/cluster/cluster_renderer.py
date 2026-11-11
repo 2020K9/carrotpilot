@@ -133,7 +133,13 @@ K9_PARK_COLORS_DARK = {"bg_top": (22, 52, 118), "bg_bot": (6, 16, 44), "text": (
                        "card": (20, 44, 96), "line": (60, 92, 150), "accent": (110, 180, 255)}
 # 대감님 11/11 21:05 "2번째처럼 비율좀 잘맞춰보지?": mock-up panel (1860x518 px) mapped to 1920x480
 K9_PARK_CAR_BOX = (856.0, 358.0, 292.0)  # car centre x, bottom y, height (photo aspect kept)
-K9_PARK_STAGE = (850, 345, 372, 78)  # round stage centre x/y, radii
+# 대감님 11/11 21:30 "차하고 아래원하고 너무 아니지않냐": the stage is placed from the car photo, not on its own.
+# Measured on his mock-up, where the same photo sits 1:1 (556x276 at 468,302): rim traced every 10 px below the car
+# (62 points), fitted as a slightly turned ellipse (error <= 0.7 px): centre (741.0, 555.6), radii 314.0 x 76.3,
+# turned 1.86 deg (right end up) -> in photo heights from the photo bottom-centre:
+K9_PARK_STAGE_REL = (-0.0180, -0.0811, 1.1377, 0.2766, -1.86)  # centre dx, dy, radius x, radius y, turn deg
+K9_PARK_PROFILE_STEP = 3  # photo px per column of the thin contact shadow along the car's bottom outline
+K9_PARK_WHEELS = ((310, 275), (505, 199))  # photo px: front / rear tyre contact (lowest alpha), reflection axis
 K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (selfdrive/car/k9_fuel.py)
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
@@ -2346,6 +2352,112 @@ class ClusterUiRenderer:
             sprite = self._k9_park_sprite
         return sprite or None
 
+    def _k9_park_bottom_profile(self) -> list:
+        # photo px (column centre x, lowest opaque y) along the car's bottom outline; read once from the PNG
+        prof = getattr(self, "_k9_park_profile", None)
+        if prof is None:
+            prof = []
+            try:
+                from PIL import Image
+                alpha = np.asarray(Image.open(K9_PARK_CAR_SPRITE_PATH).convert("RGBA"))[..., 3]
+                step = K9_PARK_PROFILE_STEP
+                for x0 in range(0, alpha.shape[1] - step + 1, step):
+                    rows = np.nonzero((alpha[:, x0:x0 + step] > 160).any(axis=1))[0]
+                    if rows.size:
+                        prof.append((x0 + step / 2, float(rows[-1])))
+            except Exception as exc:
+                print(f"K9 parked screen: no bottom outline for the contact shadow: {exc}", flush=True)
+            self._k9_park_profile = prof
+        return prof
+
+    @staticmethod
+    def k9_park_stage_geometry(car_cx: float, car_bottom: float, car_h: float) -> tuple[float, float, float, float, float]:
+        dx, dy, rx, ry, turn = K9_PARK_STAGE_REL
+        return car_cx + dx * car_h, car_bottom + dy * car_h, rx * car_h, ry * car_h, turn
+
+    def _k9_draw_park_stage(self, sprite, car_cx: float, car_bottom: float, car_h: float, dark: bool) -> None:
+        # K9 (대감님 11/11 21:30): round stage the car stands on, like the mock-up: soft blue floor inside a thin
+        # bright rim, dark contact shadow under the tyres and a faint mirror image, all drawn before the photo.
+        sx, sy, srx, sry, turn = self.k9_park_stage_geometry(car_cx, car_bottom, car_h)
+        rl.rl_push_matrix()  # floor in the stage frame (centre, turned like the mock-up rim)
+        rl.rl_translatef(sx, sy, 0.0)
+        rl.rl_rotatef(turn, 0.0, 0.0, 1.0)
+        try:
+            for i in range(8):  # floor: faint blue, a little brighter towards the rim
+                f = 1.0 - i * 0.03
+                rl.draw_ellipse(0, 0, srx * f, sry * f, rl.Color(70, 120, 230, 11 if dark else 7))
+        finally:
+            rl.rl_pop_matrix()
+        scale = car_h / max(1, sprite.height)
+        car_w = sprite.width * scale
+        left, top = car_cx - car_w / 2, car_bottom - car_h
+        (fx, fy), (bx, by) = K9_PARK_WHEELS
+        # mirror image: the photo flipped about the ground line through the tyre contacts, fading downwards. Drawn as
+        # one textured strip (no columns) so the sloped tyre line has no steps.
+        cols, bands, depth = 139, 10, 92.0
+        cw = sprite.width / cols
+        sw, sh = float(sprite.width), float(sprite.height)
+        def axis_at(x: float) -> float:
+            return fy if x < fx else (by if x > bx else fy + (by - fy) * (x - fx) / (bx - fx))
+        def strength_at(x: float) -> float:  # mock-up: tyres mirror clearly, the bumper in front only faintly
+            return 0.3 + 0.7 * max(0.0, min(1.0, (x - (fx - 75.0)) / 40.0))
+        rl.rl_set_texture(sprite.id)
+        rl.rl_begin(rl.RL_TRIANGLES)
+        for c in range(cols):
+            xa, xb = c * cw, (c + 1) * cw
+            for b in range(bands):
+                d0, d1 = depth * b / bands, depth * (b + 1) / bands
+                corners = []
+                for x in (xa, xb):
+                    ax, st = axis_at(x), strength_at(x)
+                    for d in (d0, d1):
+                        al = int(72 * st * max(0.0, 1.0 - d / depth) ** 1.5)
+                        corners.append((left + x * scale, top + (ax + d) * scale, x / sw, max(0.0, ax - d) / sh, al))
+                p00, p01, p10, p11 = corners  # (x a/b) x (depth near/far)
+                for vx, vy, u, v, al in (p00, p01, p11, p00, p11, p10):
+                    rl.rl_color4ub(150, 175, 225, al)
+                    rl.rl_tex_coord2f(u, v)
+                    rl.rl_vertex2f(vx, vy)
+        rl.rl_end()
+        rl.rl_set_texture(rl.rl_get_texture_id_default())  # back to the plain white texture for the shapes below
+        # 대감님 11/11 22:07 "옆면아래 동그란그림자 이질적이야": no round blobs under the doors/sill any more; only a
+        # thin contact shadow hugging the photo's bottom outline, darkest where the tyres touch the floor
+        prof = self._k9_park_bottom_profile()
+        strip = []  # (x, top y, bottom y, alpha) per outline column, smoothed so the edge does not step
+        for k, (px, _py) in enumerate(prof):
+            py = sorted(q for _x, q in prof[max(0, k - 2):k + 3])[len(prof[max(0, k - 2):k + 3]) // 2]
+            ground = fy if px < fx else (by if px > bx else fy + (by - fy) * (px - fx) / (bx - fx))
+            near = max(math.exp(-((px - fx) / 38.0) ** 2), math.exp(-((px - bx) / 34.0) ** 2))
+            # mock-up: dark floor right under the sill down to the tyre line, the bumper in front only faintly
+            a = (165 + 80 * near) * (1.0 if px >= fx - 45 else 0.35)
+            strip.append((left + px * scale, top + (py - 3) * scale,
+                          top + (max(py, ground) + 7.0 + 5.0 * near) * scale, a))
+        if len(strip) > 1:
+            rl.rl_begin(rl.RL_TRIANGLES)
+            for (x0, t0, b0, a0), (x1, t1, b1, a1) in zip(strip, strip[1:]):
+                for x, y, al in ((x0, t0, a0), (x0, b0, 0), (x1, b1, 0), (x0, t0, a0), (x1, b1, 0), (x1, t1, a1)):
+                    rl.rl_color4ub(0, 2, 10, int(al))
+                    rl.rl_vertex2f(x, y)
+            rl.rl_end()
+        n = 120
+        tc, ts = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+        def at(f: float, i: int):
+            ex, ey = srx * f * math.cos(2 * math.pi * i / n), sry * f * math.sin(2 * math.pi * i / n)
+            return rl.Vector2(sx + ex * tc - ey * ts, sy + ex * ts + ey * tc)
+        pts = [at(1.0, i) for i in range(n + 1)]
+        def light(i: int) -> float:  # rim brightness traced on the mock-up: even, a bit brighter in front, gone at the left end
+            deg = 360.0 * (i + 0.5) / n  # 0 right end, 90 front, 180 left end
+            fade = min(1.0, max(0.0, (186.0 - deg) / 14.0) + max(0.0, (deg - 236.0) / 14.0))
+            front = math.exp(-(((deg - 107.0 + 180.0) % 360.0 - 180.0) / 35.0) ** 2)
+            right = math.exp(-(((deg - 5.0 + 180.0) % 360.0 - 180.0) / 25.0) ** 2)
+            return fade * min(1.0, 0.62 + 0.25 * front + 0.12 * right)
+        inner = [at(0.88, i) for i in range(n + 1)]
+        for i in range(n):  # soft light band just inside the rim (front-right), as on the mock-up floor
+            rl.draw_line_ex(inner[i], inner[i + 1], 0.12 * sry * 2, rl.Color(90, 130, 230, int(16 * light(i) ** 2)))
+        for width, color in ((9.0, (70, 140, 255, 14)), (5.0, (90, 160, 255, 34)), (2.2, (125, 185, 245, 185))):
+            for i in range(n):
+                rl.draw_line_ex(pts[i], pts[i + 1], width, rl.Color(color[0], color[1], color[2], int(color[3] * light(i))))
+
     @staticmethod
     def k9_range_text(fraction) -> str:
         if fraction is None or not 0.0 < fraction <= 1.0:
@@ -2525,15 +2637,8 @@ class ClusterUiRenderer:
             sprite = self._k9_park_sprite_texture() if is_k9 else None
             if sprite is not None:  # photo car on a round stage, like the mock-up
                 car_cx, car_bottom, car_h = K9_PARK_CAR_BOX
-                stage_x, stage_y, stage_rx, stage_ry = K9_PARK_STAGE
-                for i in range(10):
-                    k = 1.0 - i * 0.07
-                    rl.draw_ellipse(stage_x, stage_y, int(stage_rx * k), int(stage_ry * k),
-                                    rl.Color(90, 150, 255, 7 if theme.is_dark else 5))
-                for rx, ry, alpha in ((stage_rx + 2, stage_ry + 1, 60), (stage_rx, stage_ry, 230),
-                                      (stage_rx - 1, stage_ry - 1, 200), (stage_rx - 3, stage_ry - 2, 60)):
-                    rl.draw_ellipse_lines(stage_x, stage_y, rx, ry, rl.Color(120, 190, 255, alpha))
-            for i in range(12):
+                self._k9_draw_park_stage(sprite, car_cx, car_bottom, car_h, theme.is_dark)
+            for i in range(12 if sprite is None else 0):  # K9 photo: its own contact shadow on the stage
                 k = 1.0 - i * 0.045
                 rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
                                 rl.Color(0, 0, 0, 8 if theme.is_dark else 7))
