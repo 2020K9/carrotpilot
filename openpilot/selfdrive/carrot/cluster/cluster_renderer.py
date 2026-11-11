@@ -132,8 +132,8 @@ K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
 # 대감님 11/12 04:34 "화면 너무 파란색인데 좀 더 어둡게 해봐": the blue background and the floor layer under the car get
 # the same darkening (brightness x DIM, blue pulled part of the way towards grey) so their seam does not show;
 # bright floor pixels (the rim light) are spared on a ramp so the rim stays visible. Car photo, text, numbers unchanged.
-K9_PARK_DIM = float(os.environ.get("K9_PARK_DIM", "0.60"))
-K9_PARK_SAT = float(os.environ.get("K9_PARK_SAT", "0.80"))
+K9_PARK_DIM = float(os.environ.get("K9_PARK_DIM", "0.40"))
+K9_PARK_SAT = float(os.environ.get("K9_PARK_SAT", "0.70"))
 K9_PARK_RIM_KEEP = (120.0, 200.0)  # floor max channel: below = full darkening, above = untouched, linear in between
 
 
