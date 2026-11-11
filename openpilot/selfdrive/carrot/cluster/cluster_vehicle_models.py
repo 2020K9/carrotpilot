@@ -11,6 +11,7 @@ EGO_MODEL_FINGERPRINTS = {
     "KIA_CARNIVAL_4TH_GEN": "carnival",
     "KIA_EV9": "ev9",
     "KIA_SPORTAGE_5TH_GEN": "sportage",
+    "KIA_K9": "k9",  # 2020 K9 RJ: parked screen only (assets/models/k9), 대감님 11/11 18:24
 }
 
 

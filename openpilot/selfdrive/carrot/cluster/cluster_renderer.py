@@ -124,6 +124,9 @@ KAIGEN_GOTHIC_KR_BOLD_FONT_PATH = OPENPILOT_FONT_DIR / "KaiGenGothicKR-Bold.ttf"
 JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
 PARK_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "ev6" / "ev6_cluster.obj"
+# K9 parked screen (대감님 11/11 18:24): original 2020 RJ model from make_k9_park_model.py, P screen only
+PARK_K9_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "k9" / "k9_cluster.obj"
+PARK_K9_SCALE_M = (1.915, 5.12, 1.49)  # K9 RJ width x length x height
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
@@ -1143,6 +1146,22 @@ EV6_REVERSE_CAR_IMAGE = "/data/ev6_reverse_car.png"  # optional replacement for 
 EV6_REVERSE_SPRITE_SUPERSAMPLE = 2
 EV6_REVERSE_STEER_RATIO = 16.0
 EV6_REVERSE_WHEELBASE_M = 2.90
+# Reverse path geometry per car (노비 11/11 18:46): K9 uses its own CarParams values (opendbc KIA_K9 CarSpecs
+# wheelbase 3.105 m, steerRatio 14.5), never the EV6 numbers; unknown cars keep the upstream EV6 values.
+REVERSE_GEOMETRY_FALLBACK = {"KIA_K9": (3.105, 14.5)}
+
+
+def reverse_geometry(car_fingerprint: str = "") -> tuple[float, float]:
+    """(wheelbase_m, steer_ratio) for the reverse path: opendbc CarSpecs (= CarParams wheelbase/steerRatio)."""
+    if car_fingerprint and car_fingerprint != "KIA_EV6":
+        try:
+            from opendbc.car.hyundai.values import CAR as _HYUNDAI_CAR
+            specs = getattr(_HYUNDAI_CAR, car_fingerprint).config.specs
+            return float(specs.wheelbase), float(specs.steerRatio)
+        except Exception:
+            if car_fingerprint in REVERSE_GEOMETRY_FALLBACK:
+                return REVERSE_GEOMETRY_FALLBACK[car_fingerprint]
+    return EV6_REVERSE_WHEELBASE_M, EV6_REVERSE_STEER_RATIO
 EV6_REVERSE_REAR_AXLE_Y_M = -1.44
 EV6_REVERSE_REAR_BUMPER_Y_M = -2.34
 EV6_REVERSE_HALF_WIDTH_M = 0.95
@@ -1384,6 +1403,7 @@ class ClusterUiRenderer:
         self._vehicle_model_load_attempted = False
         self._ego_car_texture = None
         self._park_vehicle_model = None
+        self._park_k9_model = None
         self._park_vehicle_models_loaded = False
         self._other_vehicle_models: list[object] = []
         self._other_vehicle_names: list[str] = []
@@ -1881,6 +1901,9 @@ class ClusterUiRenderer:
         if self._park_vehicle_model is not None:
             rl.unload_model(self._park_vehicle_model)
             self._park_vehicle_model = None
+        if getattr(self, "_park_k9_model", None) is not None:
+            rl.unload_model(self._park_k9_model)
+            self._park_k9_model = None
         self._park_vehicle_models_loaded = False
         for other_model in self._other_vehicle_models:
             rl.unload_model(other_model)
@@ -2108,6 +2131,8 @@ class ClusterUiRenderer:
             index = names.index(name)
             self._set_other_paint(index, None)
             return self._other_vehicle_models[index], name
+        if name == "k9" and getattr(self, "_park_k9_model", None) is not None:
+            return self._park_k9_model, "k9"
         return self._park_vehicle_model, "ev6"
 
     def _close_park_textures(self) -> None:
@@ -2159,7 +2184,7 @@ class ClusterUiRenderer:
                 if loc >= 0:
                     rl.set_shader_value(shader, loc, view, rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
             scale = ((EV6_EGO_WIDTH_M, EV6_EGO_LENGTH_M, EV6_EGO_HEIGHT_M) if key == "ev6"
-                     else (1.82, 4.35, 1.35))
+                     else PARK_K9_SCALE_M if key == "k9" else (1.82, 4.35, 1.35))
             target = rl.load_render_texture(800, 480)
             rl.begin_texture_mode(target)
             try:
@@ -2340,6 +2365,28 @@ class ClusterUiRenderer:
         text(f"{int(level)}%", x + w + 16, cy, 34, "text")
 
     @staticmethod
+    def k9_fuel_text(fraction) -> str:
+        # carState.fuelGauge (0..1]; cluster_live passes None when the car does not report it (K9 CAN: not decoded).
+        if fraction is None or not 0.0 < fraction <= 1.0:
+            return "--"
+        return f"{int(round(fraction * 100.0))}%"
+
+    def _k9_draw_fuel(self, fraction, x: float, cy: float, colors: dict, text) -> None:
+        # Fuel pump icon in the battery's place, same 34 px value text (no smaller text, 대감님 11/11 18:33).
+        muted = rl_color(colors["muted"])
+        self._rounded_rect(x, cy - 15, 22, 30, 3, colors["card"], colors["muted"], 2)
+        rl.draw_rectangle_rounded(rl.Rectangle(x + 5, cy - 10, 12, 8), 0.3, 4, muted)
+        rl.draw_line_ex(rl.Vector2(x + 22, cy - 8), rl.Vector2(x + 30, cy - 2), 3, muted)
+        rl.draw_line_ex(rl.Vector2(x + 30, cy - 2), rl.Vector2(x + 30, cy + 10), 3, muted)
+        value = self.k9_fuel_text(fraction)
+        if value != "--":
+            level = float(value[:-1])
+            color = (255, 59, 48) if level < 15 else (255, 159, 10) if level < 30 else (52, 199, 89)
+            rl.draw_rectangle_rounded(rl.Rectangle(x + 3, cy + 15 - 28 * level / 100.0 + 1, 16, 28 * level / 100.0 - 2),
+                                      0.2, 4, rl_color(color))
+        text(value, x + 46, cy, 34, "text")
+
+    @staticmethod
     def _ev6_park_duration_text(seconds: float, korean: bool = True) -> str:
         minutes = int(round(max(0.0, seconds) / 60.0))
         if korean:
@@ -2379,6 +2426,8 @@ class ClusterUiRenderer:
             soc = state.fuel_gauge if state.energy_gauge_label == "battery" else None
             if soc is not None:
                 self._ev6_draw_battery(soc, 236, gear_y + 2, colors, text)
+            elif state.energy_gauge_label == "fuel":  # K9 (대감님 11/11 18:24): fuel level instead of the battery
+                self._k9_draw_fuel(state.fuel_gauge, 236, gear_y + 2, colors, text)
 
             # centre: car photo on a soft floor shadow
             car_cx, car_bottom, car_h = 790.0, 412.0, 350.0
@@ -2441,10 +2490,11 @@ class ClusterUiRenderer:
         return not self._ev6_reverse_off
 
     @staticmethod
-    def ev6_reverse_path(steering_angle_deg: float) -> list[tuple[float, float, float]]:
+    def ev6_reverse_path(steering_angle_deg: float, car_fingerprint: str = "") -> list[tuple[float, float, float]]:
         # Rear-axle path while reversing (kinematic bicycle model): x right, y forward, heading clockwise from +y.
         # Positive steering angle = wheel turned left, which swings the rear to the car's left.
-        curvature = math.tan(math.radians(steering_angle_deg / EV6_REVERSE_STEER_RATIO)) / EV6_REVERSE_WHEELBASE_M
+        wheelbase_m, steer_ratio = reverse_geometry(car_fingerprint)
+        curvature = math.tan(math.radians(steering_angle_deg / steer_ratio)) / wheelbase_m
         step = EV6_REVERSE_PATH_LENGTH_M / EV6_REVERSE_PATH_STEPS
         x, y, heading = 0.0, EV6_REVERSE_REAR_AXLE_Y_M, 0.0
         points = []
@@ -2553,7 +2603,7 @@ class ClusterUiRenderer:
         steering_deg = float(getattr(state, "steering_angle_deg", None) or 0.0)
         left_bsd = bool(getattr(state, "left_blindspot", False))
         right_bsd = bool(getattr(state, "right_blindspot", False))
-        points = self.ev6_reverse_path(steering_deg)
+        points = self.ev6_reverse_path(steering_deg, str(getattr(state, "car_fingerprint", "") or ""))
         accent = colors["accent"]
         warn = EV6_REVERSE_WARN
 
@@ -4177,6 +4227,18 @@ class ClusterUiRenderer:
                     rl.unload_model(model)
             except Exception as exc:
                 print(f"Parked EV6 fallback model load failed: {exc}")
+        if PARK_K9_MODEL_PATH.exists():  # K9: own model, never added to the lead / side vehicle list
+            try:
+                mesh = self._load_obj_mesh(PARK_K9_MODEL_PATH, park_materials=True)
+                rl.upload_mesh(rl.ffi.addressof(mesh), False)
+                model = rl.load_model_from_mesh(mesh)
+                if rl.is_model_valid(model):
+                    self._park_k9_model = model
+                    self._attach_vehicle_shader(model)
+                else:
+                    rl.unload_model(model)
+            except Exception as exc:
+                print(f"Parked K9 model load failed: {exc}")
         self._other_vehicle_models = self._load_other_vehicle_models()
 
     def _load_other_vehicle_models(self) -> list[object]:
