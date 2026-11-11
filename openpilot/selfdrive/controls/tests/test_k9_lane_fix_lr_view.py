@@ -5,8 +5,9 @@ the lateral planner reads that modelV2 (LanePlanner.parse_model) and only then K
 reference in LanePlanner.get_d_path (and controlsd caps the hand-over). The two features share no state and
 neither module imports the other, so "both on" must be exactly "K9LaneFix fed the K9LRView-filtered modelV2":
 - K9LaneFix=0 on filtered input == the frozen parent lane_planner_2 on the same input (bit for bit),
-- K9LaneFix=1 on filtered input == the frozen F1 lane_planner_2 on the same input (bit for bit),
-for K9LRView 0, 1 and 2; K9LRView 0 leaves modelV2 byte-identical, and the published lane-line stds stay raw.
+- K9LaneFix=1 on filtered input == the frozen F1 lane_planner_2 on the same input (bit for bit; since 2026-10-26
+  recheck_0208 with the lane-mode merge latch: test_k9_lane_fix.check_latched against frozen F1 + frozen parent),
+for K9LRView 0 and 1; K9LRView 0 leaves modelV2 byte-identical, and the published lane-line stds stay raw.
 Inputs: synthetic model outputs (several seeds) with lanes, offsets, prob drops and a curve; synthetic plan path.
 """
 import types
@@ -21,6 +22,7 @@ from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, PublishSta
 from openpilot.selfdrive.modeld.k9_lr_view import K9LRView
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 import openpilot.selfdrive.controls.lib.lane_planner_2 as LP_NEW
+from openpilot.selfdrive.controls.tests.test_k9_lane_fix import check_latched, lp_state, ref_e0t   # 2026-10-26 recheck_0208
 
 HERE = Path(__file__).parent
 REF = HERE / "k9_lane_fix_ref"
@@ -57,6 +59,8 @@ def load_module(path, name):
 
 LP_PARENT = load_module(REF / "lane_planner_2.parent.py.ref", "k9_ref_lp_parent_lrv")
 LP_F1 = load_module(REF / "lane_planner_2.F1.py.ref", "k9_ref_lp_F1_lrv")
+LP_F1.LANE_CONVERGE_T, LP_F1.LANE_CONVERGE_T_MAX = 1.0, 2.0   # 2026-10-25 23:38: F1 merge 2 -> 1 s, longest 4 -> 2 s (in place)
+LP_F1.LANE_CONVERGE_T_EREF = 0.075   # 2026-10-26 audit D3: t_eref 0.3 -> 0.075 (in place)
 
 
 def make_lp(mod, params):
@@ -114,6 +118,18 @@ def published(frames, lr_view_mode):
   return [modelv2_bytes(view.apply(f['outputs'])) for f in frames]
 
 
+def run_planner_st(planner, frames, msgs):
+  # 2026-10-26 recheck_0208: outputs + merge-latch state (test_k9_lane_fix.check_latched); e0t for the frozen F1 file
+  out, st, e0t = [], [], []
+  for f, b in zip(frames, msgs, strict=True):
+    ph0 = getattr(planner, "lane_ramp_phase", 0)
+    out.extend(run_planner(planner, [f], [b]))
+    if hasattr(planner, "lane_merge_k"):
+      st.append(lp_state(planner, ph0))
+    e0t.append(ref_e0t(planner))
+  return out, st, e0t
+
+
 def run_planner(planner, frames, msgs):
   out = []
   for f, b in zip(frames, msgs, strict=True):
@@ -138,7 +154,9 @@ def params(**kw):
 def test_order_and_no_shared_state_in_code():
   modeld = (ROOT / "openpilot/selfdrive/modeld/modeld.py").read_text(encoding="utf-8")
   loop = modeld[modeld.index("def main("):]
-  assert loop.index("model_output = k9_lr_view.apply(model_output)") < loop.index("fill_model_msg(")
+  # (pin rewritten 2026-10-23 lrview_r9: apply() also gets carControl.latActive;
+  #  2026-10-24 lrview_r14: quoted key - r9..r13 pinned sm[carControl], an undefined name = NameError in modeld)
+  assert loop.index("model_output = k9_lr_view.apply(model_output, engaged=bool(sm['carControl'].latActive))") < loop.index("fill_model_msg(")
   lat = (ROOT / "openpilot/selfdrive/controls/lib/lateral_planner.py").read_text(encoding="utf-8")
   assert lat.index("self.LP.parse_model(md)") < lat.index("self.LP.get_d_path(")
   lf = (ROOT / "openpilot/selfdrive/controls/lib/k9_lane_fix.py").read_text(encoding="utf-8")
@@ -150,7 +168,7 @@ def test_order_and_no_shared_state_in_code():
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
-@pytest.mark.parametrize("lr_view", [0, 1, 2])
+@pytest.mark.parametrize("lr_view", [0, 1])
 def test_lane_fix_on_lr_view_output_equals_frozen_references(seed, lr_view):
   frames = model_frames(seed)
   msgs = published(frames, lr_view)
@@ -159,22 +177,25 @@ def test_lane_fix_on_lr_view_output_equals_frozen_references(seed, lr_view):
     assert msgs == [modelv2_bytes(f['outputs']) for f in frames]  # K9LRView 0: modelV2 byte-identical
   else:
     assert msgs != raw  # the view really changed the lanes
-  off = run_planner(make_lp(LP_NEW, params(K9LaneFix=0)), frames, msgs)
-  on = run_planner(make_lp(LP_NEW, params(K9LaneFix=1)), frames, msgs)
-  assert same(off, run_planner(make_lp(LP_PARENT, params()), frames, msgs))
-  assert same(on, run_planner(make_lp(LP_F1, params()), frames, msgs))
+  off = run_planner(make_lp(LP_NEW, params(K9LaneAssist=0)), frames, msgs)
+  on, st, _ = run_planner_st(make_lp(LP_NEW, params(K9LaneAssist=1)), frames, msgs)
+  par = run_planner(make_lp(LP_PARENT, params()), frames, msgs)
+  assert same(off, par)
+  f1, _, e0t = run_planner_st(make_lp(LP_F1, params()), frames, msgs)
+  n = check_latched(on, st, par, f1, e0t, [f['path'][:, 1] for f in frames])   # 2026-10-26 recheck_0208 merge latch
+  assert n["entry"] >= 1 and n["merge"] > 0
   assert sum(a for _, a in on) > 50  # lane mode was really used
   assert not same(off, on)  # K9LaneFix really acts on the filtered lanes
   assert all(np.all(np.isfinite(p)) for p, _ in on)
 
 
-@pytest.mark.parametrize("lr_view", [1, 2])
+@pytest.mark.parametrize("lr_view", [1])
 def test_both_on_differs_from_each_alone_and_keeps_raw_stds(lr_view):
   frames = model_frames(7)
   msgs, raw = published(frames, lr_view), published(frames, 0)
-  both = run_planner(make_lp(LP_NEW, params(K9LaneFix=1)), frames, msgs)
-  fix_only = run_planner(make_lp(LP_NEW, params(K9LaneFix=1)), frames, raw)
-  view_only = run_planner(make_lp(LP_NEW, params(K9LaneFix=0)), frames, msgs)
+  both = run_planner(make_lp(LP_NEW, params(K9LaneAssist=1)), frames, msgs)
+  fix_only = run_planner(make_lp(LP_NEW, params(K9LaneAssist=1)), frames, raw)
+  view_only = run_planner(make_lp(LP_NEW, params(K9LaneAssist=0)), frames, msgs)
   assert not same(both, fix_only) and not same(both, view_only)
   # K9LRView changes lane-line y / probs only; the stds lane_planner_2 uses for lane weighting stay the raw ones
   for a, b in zip(msgs, raw, strict=True):

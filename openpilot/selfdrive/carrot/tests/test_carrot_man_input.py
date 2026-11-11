@@ -27,6 +27,7 @@ def clock(monkeypatch):
 
 def planner():
   value = CarrotPlanner.__new__(CarrotPlanner)
+  value.trafficState_carrot = 0
   value.soft_hold_active = 0
   value.xState = XState.e2eCruise
   return value
@@ -55,20 +56,21 @@ def test_received_navigation_preserves_existing_speed_cap(speed, expected):
   assert planner()._update_carrot_man(SubMaster(speed=speed), 60, 80) == (expected, False)
 
 
-def test_navigation_loss_clears_turn_state_and_traffic_light_has_no_effect():
+def test_navigation_loss_clears_turn_and_red_signal_state_and_recovers():
   sm = SubMaster(speed=30)
   sm['carState'].leftBlinker = True
   sm['carrotMan'].activeCarrot = 3
   sm['carrotMan'].xDistToTurn = 50
   sm['carrotMan'].atcType = 'turn left'
-  sm['carrotMan'].trafficState = 1  # navigation traffic-light state is ignored
+  sm['carrotMan'].trafficState = 1
   value = planner()
   assert value._update_carrot_man(sm, 60, 80) == (30, True)
-  assert not hasattr(value, 'carrot_stay_stop')
+  assert value.carrot_stay_stop
 
   sm.recv_time['carrotMan'] = 98.9
   assert value._update_carrot_man(sm, 60, 80) == (80, False)
-  assert value.activeCarrot == value.xDistToTurn == 0
+  assert not value.carrot_stay_stop
+  assert value.trafficState_carrot == value.activeCarrot == value.xDistToTurn == 0
   assert value.atcType == ''
   assert value.xState == XState.e2eCruise
 

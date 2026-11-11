@@ -18,11 +18,14 @@ from cluster_models import (
     ModelPathPoint,
     NaviDebugInfo,
     NaviGuidanceImage,
+    NaviTrafficLightInfo,
 )
 from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_speed_limit
 from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
+from cluster_lat_values import LaneOffsetFilter, applied_steer_delay_s, applied_steer_ratio, lane_gaps_m, lane_offset_m, live_parameters_usable
+from cluster_lat_values import applied_torque, learned_delay, learned_torque_filtered
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -107,6 +110,7 @@ LIVE_SERVICES_BASE = (
     "wideRoadCameraState",
 )
 LIVE_CAN_SERVICES = ("can", "sendcan")
+NAVI_TRAFFIC_LIGHT_HOLD_SECONDS = 10.0
 
 
 def live_route_parser() -> RouteLogParser:
@@ -114,6 +118,102 @@ def live_route_parser() -> RouteLogParser:
     # liveTracks here duplicates radard's per-track motion pipeline and makes
     # the external HUD cost grow sharply with dense radar scenes.
     return RouteLogParser(recompute_cutins=False)
+
+
+class TaxiSpeedSampleReader:
+    """Every carState (not the conflated latest) for the K9ExtHud=1 taxi meter: a separate
+    non-conflated socket, opened on first use (K9ExtHud=1 only) and closed when the meter is off."""
+
+    def __init__(self, messaging: Any) -> None:
+        self._messaging = messaging
+        self._sock: Any | None = None
+
+    def drain(self) -> list[tuple[float, float]]:
+        if self._sock is None:
+            try:
+                self._sock = self._messaging.sub_sock("carState", conflate=False)
+            except Exception:
+                self._sock = None
+            return []
+        out: list[tuple[float, float]] = []
+        try:
+            msgs = self._messaging.drain_sock(self._sock)
+        except Exception:
+            return out
+        for msg in msgs:
+            try:
+                out.append((int(msg.logMonoTime) * 1e-9, float(msg.carState.vEgo)))
+            except Exception:
+                continue
+        return out
+
+    def stop(self) -> None:
+        self._sock = None
+
+
+class TaxiOccupantReader:
+    """K9ExtHud=1 C1 meter: passenger-seat occupant flag from CAN 0x500 (ACU14 CF_TTL_Ind, bits 2-3) on bus 0.
+    Own non-conflated 'can' socket, opened on first use (K9ExtHud=1 only), read-only. Cost cap: raw messages
+    are received every frame but only the newest OCC_PARSE_TAIL (~150 ms of CAN at 100 Hz; 0x500 is ~10 Hz)
+    are parsed, at most every OCC_PARSE_PERIOD_S."""
+
+    OCC_PARSE_TAIL = 15
+    OCC_PARSE_PERIOD_S = 0.25
+    MAX_RAW_PER_CALL = 400
+
+    def __init__(self, messaging: Any) -> None:
+        self._messaging = messaging
+        self._sock: Any | None = None
+        self._tail: list = []
+        self._next_parse = 0.0
+        self.last: tuple[float, bool] | None = None   # (logMonoTime s, present)
+        self._new_t: float | None = None               # logMonoTime of the frame poll_new() returned last
+
+    def poll(self, now: float | None = None) -> tuple[float, bool] | None:
+        if self._sock is None:
+            try:
+                self._sock = self._messaging.sub_sock("can", conflate=False)
+            except Exception:
+                self._sock = None
+            return None
+        try:
+            for _ in range(self.MAX_RAW_PER_CALL):
+                dat = self._sock.receive(non_blocking=True)
+                if dat is None:
+                    break
+                self._tail.append(dat)
+                if len(self._tail) > self.OCC_PARSE_TAIL:
+                    del self._tail[0]
+        except Exception:
+            return self.last
+        now = time.monotonic() if now is None else now
+        if now < self._next_parse or not self._tail:
+            return self.last
+        self._next_parse = now + self.OCC_PARSE_PERIOD_S
+        tail, self._tail = self._tail, []
+        for dat in reversed(tail):
+            try:
+                msg = self._messaging.log_from_bytes(dat)
+                for c in msg.can:
+                    if c.address == 0x500 and c.src == 0 and len(c.dat) >= 1:
+                        self.last = (int(msg.logMonoTime) * 1e-9, ((c.dat[0] >> 2) & 0x3) == 1)
+                        return self.last
+            except Exception:
+                continue
+        return self.last
+
+    def poll_new(self, now: float | None = None) -> tuple[float, bool] | None:
+        """poll(), but only a frame newer than the one poll_new() returned last time; None = no new 0x500 frame."""
+        last = self.poll(now)
+        if last is None or (self._new_t is not None and last[0] <= self._new_t):
+            return None
+        self._new_t = last[0]
+        return last
+
+    def stop(self) -> None:
+        self._sock = None
+        self._tail = []
+        self._new_t = None
 
 
 class OpenpilotLiveSource:
@@ -135,6 +235,7 @@ class OpenpilotLiveSource:
             self.log = None
         self.services = list(LIVE_SERVICES_BASE + (LIVE_CAN_SERVICES if include_can else ()))
         self.sm = messaging.SubMaster(self.services)
+        self._taxi_speed_reader: TaxiSpeedSampleReader | None = None
         self.parser = live_route_parser()
         self.parser.trip_report_tracker.set_onroad(False)
         self.timeout_ms = max(0, int(timeout_ms))
@@ -151,6 +252,8 @@ class OpenpilotLiveSource:
         self._cached_live_debug: LiveDebugInfo | None = None
         self._cached_navi_debug: NaviDebugInfo | None = None
         self._cached_navi_image: NaviGuidanceImage | None = None
+        self._held_navi_traffic_light: NaviTrafficLightInfo | None = None
+        self._held_navi_traffic_light_received_t: float | None = None
         self._show_plot_mode = 0
         self._egpu_active = False
         self._next_egpu_param_read_t = 0.0
@@ -282,6 +385,28 @@ class OpenpilotLiveSource:
     def _profile_add(self, name: str, start_time: float) -> None:
         if self.profile_enabled:
             self._profile_samples.append((name, (time.perf_counter() - start_time) * 1000.0))
+
+    def drain_taxi_speed_samples(self) -> list[tuple[float, float]]:
+        """K9ExtHud=1: every carState (logMonoTime s, vEgo m/s) since the last call."""
+        if self._taxi_speed_reader is None:
+            self._taxi_speed_reader = TaxiSpeedSampleReader(self.messaging)
+        return self._taxi_speed_reader.drain()
+
+    def stop_taxi_speed_samples(self) -> None:
+        if self._taxi_speed_reader is not None:
+            self._taxi_speed_reader.stop()
+            self._taxi_speed_reader = None
+        if getattr(self, "_taxi_occ_reader", None) is not None:
+            self._taxi_occ_reader.stop()
+            self._taxi_occ_reader = None
+
+    def poll_taxi_occupant(self) -> tuple[float, bool] | None:
+        """K9ExtHud=1: (logMonoTime s, passenger present) of a NEW CAN 0x500 bus0 frame since the last call,
+        None = no new frame. (The reader keeps its last value; handing that on again every frame would hide a
+        lost signal from the 2 s stale check of the C1 meter.)"""
+        if getattr(self, "_taxi_occ_reader", None) is None:
+            self._taxi_occ_reader = TaxiOccupantReader(self.messaging)
+        return self._taxi_occ_reader.poll_new()
 
     def update(self) -> ClusterUiState:
         profile_stage = self._profile_start()
@@ -456,6 +581,26 @@ class OpenpilotLiveSource:
 
         left_lane_line_confidence, right_lane_line_confidence = self._live_lane_line_confidence(now)
 
+        try:
+            applied_sr, applied_sad = self._live_lat_values(now)
+        except Exception:
+            applied_sr, applied_sad = None, None
+        try:
+            (d_perc, d_s), (t_perc, t_af, t_fr) = self._live_learn_values(now)
+        except Exception:
+            (d_perc, d_s), (t_perc, t_af, t_fr) = (None, None), (None, None, None)
+        try:
+            t_af_learned, t_fr_learned = self._live_torque_learned()
+        except Exception:
+            t_af_learned, t_fr_learned = None, None
+        try:
+            learned_sr = self._live_learned_steer_ratio()
+        except Exception:
+            learned_sr = None
+        try:
+            k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = self._live_lane_values(now)
+        except Exception:
+            k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = None, None, None, None, None
         return replace(
             state,
             onroad=onroad,
@@ -480,7 +625,100 @@ class OpenpilotLiveSource:
             cruise_override_color_mode=cruise_override_color_mode,
             left_lane_line_confidence=left_lane_line_confidence,
             right_lane_line_confidence=right_lane_line_confidence,
+            applied_steer_ratio=applied_sr,
+            applied_steer_delay_s=applied_sad,
+            delay_learn_perc=d_perc,
+            delay_learn_s=d_s,
+            torque_learn_perc=t_perc,
+            torque_learn_lat_accel_factor=t_af,
+            torque_learn_friction=t_fr,
+            torque_filtered_lat_accel_factor=t_af_learned,
+            torque_filtered_friction=t_fr_learned,
+            learned_steer_ratio=learned_sr,
+            k9_lane_offset_m=k9_lane_offset,
+            k9_lane_state=k9_lane_state,
+            k9_lane_accel=k9_lane_accel,
+            k9_lane_gap_left_m=k9_gap_l,
+            k9_lane_gap_right_m=k9_gap_r,
         )
+
+    def _live_lane_values(self, now: float) -> tuple[float | None, int | None, float | None, float | None, float | None]:
+        """치우침 / 보정 / 좌·우 차선 간격 for the lines above SR / SAD (display only, see cluster_lat_values)."""
+        filt = getattr(self, "_lane_offset_filter", None)
+        if filt is None:
+            filt = self._lane_offset_filter = LaneOffsetFilter()
+            self._lane_gap_filters = (LaneOffsetFilter(), LaneOffsetFilter())
+        model = None
+        if self._service_alive("modelV2"):
+            receive_t = self._service_receive_time("modelV2") if hasattr(self, "_service_receive_time") else now
+            if receive_t is not None and 0.0 <= now - receive_t <= LANE_LINE_CONFIDENCE_MAX_AGE_S:
+                model = self._service_data("modelV2")
+        offset = filt.update(lane_offset_m(model), now)
+        gl, gr = lane_gaps_m(model)
+        gap_l = self._lane_gap_filters[0].update(gl, now)
+        gap_r = self._lane_gap_filters[1].update(gr, now)
+        controls_state = self._service_data("controlsState") if self._service_alive("controlsState") else None
+        state = safe_get(controls_state, "k9LaneState") if controls_state is not None else None
+        accel = safe_get(controls_state, "k9LaneAccel") if controls_state is not None else None
+        try:
+            state = int(state) if state is not None else None
+        except (TypeError, ValueError):
+            state = None
+        return offset, state, finite_float(accel) if accel is not None else None, gap_l, gap_r
+
+    def _live_learn_values(self, now: float | None = None) -> tuple[tuple[int | None, float | None],
+                                                                     tuple[int | None, float | None, float | None]]:
+        """지연학습 / 토크학습 lines (display only, see cluster_lat_values.learned_delay / applied_torque).
+        LateralTorqueCustom / LateralTorqueAccelFactor / LateralTorqueFriction re-read once per second."""
+        now = time.monotonic() if now is None else now
+        if now >= getattr(self, "_next_torque_param_read_t", 0.0):
+            params = getattr(self, "params", None)
+            values = []
+            for key in ("LateralTorqueCustom", "LateralTorqueAccelFactor", "LateralTorqueFriction"):
+                try:
+                    values.append(float(params.get_float(key)) if params is not None else None)
+                except Exception:
+                    values.append(None)
+            self._torque_params = tuple(values)
+            self._next_torque_param_read_t = now + 1.0
+        custom, custom_laf, custom_fr = getattr(self, "_torque_params", (None, None, None))
+        live_delay = self._service_data("liveDelay") if self._service_alive("liveDelay") else None
+        live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
+        return learned_delay(live_delay), applied_torque(live_torque, custom, custom_laf, custom_fr)
+
+    def _live_torque_learned(self) -> tuple[float | None, float | None]:
+        """학습 line: liveTorqueParameters Filtered as torqued publishes it, whatever LateralTorqueCustom is (display only)."""
+        live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
+        return learned_torque_filtered(live_torque)
+
+    def _live_learned_steer_ratio(self) -> float | None:
+        """학습 조향비 line: liveParameters.steerRatio (display only)."""
+        live_parameters = self._service_data("liveParameters") if self._service_alive("liveParameters") else None
+        return safe_optional_float(live_parameters, "steerRatio") if live_parameters is not None else None
+
+    def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
+        """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""
+        if now >= getattr(self, "_next_lat_param_read_t", 0.0):
+            params = getattr(self, "params", None)
+            values = []
+            for key in ("CustomSR", "SteerRatioRate", "SteerActuatorDelay"):
+                try:
+                    values.append(float(params.get_float(key)) if params is not None else None)
+                except Exception:
+                    values.append(None)
+            self._lat_params = tuple(values)
+            self._next_lat_param_read_t = now + 1.0
+        custom_sr, sr_rate, sad_param = getattr(self, "_lat_params", (None, None, None))
+        live_parameters = self._service_data("liveParameters") if self._service_alive("liveParameters") else None
+        live_ok = live_parameters_usable(live_parameters)
+        parser = getattr(self, "parser", None)
+        # parser.steer_ratio = CarParams.steerRatio once CarParams was read (car_brand set), else unknown
+        nominal_sr = getattr(parser, "steer_ratio", None) if getattr(parser, "car_brand", "") else None
+        sr = applied_steer_ratio(safe_get(live_parameters, "steerRatio") if live_ok else None, live_ok,
+                                 nominal_sr, sr_rate, custom_sr)
+        live_delay = self._service_data("liveDelay") if self._service_alive("liveDelay") else None
+        sad = applied_steer_delay_s(sad_param, safe_get(live_delay, "lateralDelay") if live_delay is not None else None)
+        return sr, sad
 
     def _live_lane_line_confidence(self, now: float) -> tuple[float | None, float | None]:
         # modelV2.laneLineProbs is [outer left, inner left, inner right, outer right].
@@ -869,9 +1107,11 @@ class OpenpilotLiveSource:
 
     def _navi_debug_info(self) -> NaviDebugInfo | None:
         self._refresh_debug_params()
+        traffic_light = self._held_navi_traffic_light_at(time.monotonic())
         if self._cached_navi_debug is not None:
             return replace(
                 self._cached_navi_debug,
+                traffic_light=traffic_light,
                 guidance_image=self._cached_navi_image,
             )
         route_count = len(self._nav_route_coords)
@@ -880,6 +1120,7 @@ class OpenpilotLiveSource:
             title="NAVI receiver",
             lines=lines,
             severity="normal",
+            traffic_light=traffic_light,
             guidance_image=self._cached_navi_image,
         )
 
@@ -906,11 +1147,20 @@ class OpenpilotLiveSource:
         raw_lines = data.get("lines", ())
         lines = tuple(str(line)[:80] for line in raw_lines if str(line).strip()) if isinstance(raw_lines, list) else ()
         speed_limit_kph = self._parse_positive_int(data.get("speedLimitKph"), maximum=300)
+        now = time.monotonic()
+        received_t = finite_float(data.get("receivedMono"))
+        if received_t is None:
+            received_t = now
+        parsed_traffic_light = self._parse_navi_traffic_light(data.get("trafficLight"))
+        if parsed_traffic_light is not None:
+            self._update_held_navi_traffic_light(parsed_traffic_light, received_t, now)
+        traffic_light = self._held_navi_traffic_light_at(now)
         return NaviDebugInfo(
             title=title[:80],
             lines=lines[:12],
             severity=severity[:16],
             speed_limit_kph=speed_limit_kph,
+            traffic_light=traffic_light,
             guidance_image=self._cached_navi_image,
         )
 
@@ -955,6 +1205,60 @@ class OpenpilotLiveSource:
             height=height,
         )
 
+    def _parse_navi_traffic_light(self, value: Any) -> NaviTrafficLightInfo | None:
+        if not isinstance(value, dict):
+            return None
+        return NaviTrafficLightInfo(
+            distance_m=self._parse_positive_int(value.get("distanceM"), maximum=10000),
+            red_s=self._parse_positive_int(value.get("redS"), maximum=999),
+            straight_s=self._parse_positive_int(value.get("straightS"), maximum=999),
+            left_s=self._parse_positive_int(value.get("leftS"), maximum=999),
+            right_s=self._parse_positive_int(value.get("rightS"), maximum=999),
+            uturn_s=self._parse_positive_int(value.get("uturnS"), maximum=999),
+            red_on=self._parse_optional_bool(value.get("redOn")),
+            straight_on=self._parse_optional_bool(value.get("straightOn")),
+            left_on=self._parse_optional_bool(value.get("leftOn")),
+            right_on=self._parse_optional_bool(value.get("rightOn")),
+            uturn_on=self._parse_optional_bool(value.get("uturnOn")),
+        )
+
+    def _update_held_navi_traffic_light(
+        self,
+        traffic_light: NaviTrafficLightInfo,
+        received_t: float,
+        now: float,
+    ) -> None:
+        if now - received_t > NAVI_TRAFFIC_LIGHT_HOLD_SECONDS:
+            return
+        self._held_navi_traffic_light = traffic_light
+        self._held_navi_traffic_light_received_t = received_t
+
+    def _held_navi_traffic_light_at(self, now: float) -> NaviTrafficLightInfo | None:
+        traffic_light = self._held_navi_traffic_light
+        received_t = self._held_navi_traffic_light_received_t
+        if traffic_light is None or received_t is None:
+            return None
+        age_s = max(0.0, now - received_t)
+        if age_s > NAVI_TRAFFIC_LIGHT_HOLD_SECONDS:
+            self._held_navi_traffic_light = None
+            self._held_navi_traffic_light_received_t = None
+            return None
+        elapsed_s = int(age_s)
+
+        def countdown(seconds: int | None) -> int | None:
+            if seconds is None:
+                return None
+            return max(0, int(seconds) - elapsed_s)
+
+        return replace(
+            traffic_light,
+            red_s=countdown(traffic_light.red_s),
+            straight_s=countdown(traffic_light.straight_s),
+            left_s=countdown(traffic_light.left_s),
+            right_s=countdown(traffic_light.right_s),
+            uturn_s=countdown(traffic_light.uturn_s),
+        )
+
     @staticmethod
     def _parse_positive_int(value: Any, maximum: int) -> int | None:
         try:
@@ -964,6 +1268,23 @@ class OpenpilotLiveSource:
         if parsed <= 0 or parsed > maximum:
             return None
         return parsed
+
+    @staticmethod
+    def _parse_optional_bool(value: Any) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("1", "true", "yes", "on"):
+                return True
+            if normalized in ("0", "false", "no", "off"):
+                return False
+        try:
+            return bool(int(value))
+        except Exception:
+            return None
 
     def _update_nav_route(self, data: Any) -> None:
         coords = safe_get(data, "coordinates")

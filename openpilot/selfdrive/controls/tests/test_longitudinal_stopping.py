@@ -32,12 +32,19 @@ def test_planner_uses_current_mpc_or_model_stop_without_early_override(mode, mpc
                and any(isinstance(x, ast.Assign) and any(ast.unparse(t) == 'self.output_should_stop' for t in x.targets)
                        for x in n.body))
   state = SimpleNamespace(mpc=SimpleNamespace(mode=mode))
+  coasting_calls = []
+  # update() ends by handing the final stop decision to update_coasting(); record it instead of running it.
+  state.update_coasting = lambda *args: coasting_calls.append(state.output_should_stop)
+  coasting_args = ('sm', 'carrot', 'v_cruise_kph', 'v_cruise', 'reset_state',
+                   'force_slow_decel', 'coasting_turn_blocked', 'cutin_predecel_limit')
   ns = {'self': state, 'output_should_stop_mpc': mpc_stop, 'output_should_stop_e2e': model_stop,
         'output_a_target_mpc': -.3, 'output_a_target_e2e': -.5, 'output_a_target_base': -.3,
-        'output_v_target_mpc': .6, 'output_v_target_now_e2e': .4}
+        'output_v_target_mpc': .6, 'output_v_target_now_e2e': .4, **dict.fromkeys(coasting_args)}
   state.j_desired_trajectory = [0.]
   exec(compile(ast.Module(body=update.body[start:], type_ignores=[]), str(path), 'exec'), ns)
-  assert state.output_should_stop == (mpc_stop if mode == 'acc' else mpc_stop or model_stop)
+  expected = mpc_stop if mode == 'acc' else mpc_stop or model_stop
+  assert state.output_should_stop == expected
+  assert coasting_calls == [expected]
 
 
 def test_controlsd_publishes_new_longitudinal_state_in_same_cycle():

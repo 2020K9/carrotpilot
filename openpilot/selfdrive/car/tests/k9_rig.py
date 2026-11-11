@@ -12,11 +12,21 @@ from pathlib import Path
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.hyundai import carcontroller
-from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import BASE_PARAMS, MemoryParams, make_ci_state, make_cp
+from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import BASE_PARAMS, MemoryParams, make_cp
+from openpilot.selfdrive.car.tests.test_k9_stop_soft_brake_removed import make_ci_state as _base_ci_state
 
 __all__ = ["BASE_PARAMS", "MemoryParams", "make_cp", "make_ci_state"]
 
 LCS = structs.CarControl.Actuators.LongControlState
+
+
+def make_ci_state():
+  """2026-10-25: with .cp = None like the real hyundai CarState before its first update (K9StopMode 1, the v12 page code,
+  reads CS.cp directly); everything else as test_k9_stop_soft_brake_removed.make_ci_state."""
+  cs = _base_ci_state()
+  cs.cp = None
+  return cs
+
 ROOT = Path(__file__).resolve().parents[4]
 CC_REL = "opendbc_repo/opendbc/car/hyundai/carcontroller.py"
 HY = "opendbc_repo/opendbc/car/hyundai"
@@ -32,9 +42,12 @@ class Rig:
     self.frame = 0
     self.can = []
     self.scc14 = []
+    self.scc12 = []  # (frame, v, decoded SCC12) of frames that sent SCC12
+    self.inputs = []  # (longControlState, v, lead or None, lead_visible) of every step, index = frame
 
   def step(self, accel, state, v, standstill=False, a_target=None, gas=False, brake=False, a_ego=None, lead=None,
            lead_visible=True):
+    self.inputs.append((state, v, lead, lead_visible))
     cc = structs.CarControl(enabled=True, longActive=True)
     cc.actuators.accel, cc.actuators.aTarget = accel, accel if a_target is None else a_target
     cc.actuators.longControlState = state
@@ -51,6 +64,7 @@ class Rig:
       self.parser.update([self.frame * 10_000_000, scc])
       if any(m[0] == 1057 for m in scc):
         sent = dict(self.parser.vl["SCC12"])
+        self.scc12.append((self.frame, v, sent))
       if any(m[0] == 905 for m in scc):
         self.scc14.append((self.frame, v, dict(self.parser.vl["SCC14"])))
     self.frame += 1
@@ -120,7 +134,78 @@ def load_frozen_cc(commit, tmp_dir, tag):
   Everything else under opendbc_repo must be byte-identical to the working tree (asserted)."""
   changed = subprocess.run(["git", "diff", "--name-only", commit, "--", "opendbc_repo"], cwd=ROOT, check=True,
                            capture_output=True, text=True).stdout.split()
-  assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py"}, changed
+  changed = [f for f in changed if "/tests/" not in f]  # test files are never imported by the controller
+  # car data shared by all brands (e.g. c6736bca removed KIA_K5_DL3_24_HEV) may differ when the K9 is not touched
+  car_data = {f"{HY}/values.py", f"{HY}/fingerprints.py", "opendbc_repo/opendbc/car/fingerprints.py",
+              "opendbc_repo/opendbc/car/torque_data/params.toml"}
+  for f in set(changed) & car_data:
+    diff = subprocess.run(["git", "diff", commit, "--", f], cwd=ROOT, check=True, capture_output=True, text=True).stdout
+    # 2026-10-26 (brake_v13): fd0f3cd8 changed only the KIA_K9 CarSpecs line (wheelbase 3.105, mass 2015). Car specs reach
+    # both controllers the same way (through the CP of make_cp, built from this tree's values.py), so a hunk near the K9 may
+    # change CarSpecs(...) lines only; any other changed line in a hunk that mentions K9 still stops the frozen load.
+    for hunk in diff.split("\n@@")[1:]:
+      if "K9" in hunk:
+        body = [ln[1:] for ln in hunk.splitlines()[1:] if ln[:1] in "+-"]
+        assert body and all(ln.strip().startswith("CarSpecs(") for ln in body), f
+  changed = [f for f in changed if f not in car_data]
+  # b6696b37 committed two generated corner-radar dbc files with only the generator's header comments added (CAN-FD
+  # corner radar, never loaded by the K9 controller): ignore a *_generated.dbc whose diff adds/removes comment lines only
+  for f in [f for f in changed if f.startswith("opendbc_repo/opendbc/dbc/") and f.endswith("_generated.dbc")]:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", f], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln[1:] for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    assert all(not ln.strip() or ln.startswith("CM_ \"") for ln in body), f
+    changed.remove(f)
+  # 2026-10-26 (brake_v13): the f29102fa upstream merge (6f05191c) changed hyundaicanfd.py inside create_acc_control_scc2
+  # only (CAN-FD SCC_CONTROL, never built for the non-CAN-FD K9); accept that file only while every hunk is in that function.
+  canfd = f"{HY}/hyundaicanfd.py"
+  if canfd in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", canfd], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    heads = [ln for ln in diff if ln.startswith("@@")]
+    # 2026-11-11 (ec79cae3 via upstream merge 3cc3c4b0): create_ccnc_messages (CAN-FD CCNC, built only under
+    # `if self.CP.flags & HyundaiFlags.CANFD:` like scc2) may change exactly these two lines; any other line there stops.
+    ccnc_old = ['        hold = _blink_hold_side(md, desire, create_ccnc_messages.__dict__.setdefault("_blink_hold", {}))']
+    ccnc_new = ['        hold_desire = 0 if getattr(CS.out, "cruiseCancelState", False) else desire',
+                '        hold = _blink_hold_side(md, hold_desire, create_ccnc_messages.__dict__.setdefault("_blink_hold", {}))']
+    hunks = []
+    for ln in diff:
+      if ln.startswith("@@"):
+        hunks.append((ln, [], []))
+      elif hunks and ln[:1] == "-" and not ln.startswith("---"):
+        hunks[-1][1].append(ln[1:])
+      elif hunks and ln[:1] == "+" and not ln.startswith("+++"):
+        hunks[-1][2].append(ln[1:])
+    assert heads, canfd
+    for head, minus, plus in hunks:
+      fn = head.split("@@")[2].strip()
+      assert fn.startswith("def create_acc_control_scc2(") or (fn.startswith("def create_ccnc_messages(") and
+                                                               minus == ccnc_old and plus == ccnc_new), canfd
+    changed.remove(canfd)
+  # 2026-11-11 (ec79cae3): car.capnp may only append the CarState field cruiseCancelState @115 (a new ordinal changes no
+  # existing field layout; the K9 path never reads it). Exactly this one added line and nothing removed, else stop.
+  capnp = "opendbc_repo/opendbc/car/car.capnp"
+  if capnp in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", capnp], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    assert body == ["+  cruiseCancelState @115 :Bool; # Carrot cruise CANCEL latch, cleared by SET/RES or +/-."], capnp
+    changed.remove(capnp)
+  # 2026-10-28 (K9CenterToFront, 실험중 메뉴): interface.py may change only the centerToFront assignment (lateral vehicle
+  # model; nothing in the longitudinal path under test reads CP.centerToFront). Any other changed line stops the frozen load.
+  iface = f"{HY}/interface.py"
+  if iface in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", iface], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln[1:].strip() for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    ok = ("ret.centerToFront = ret.wheelbase * 0.4", "ret.centerToFront = ret.wheelbase * (ctf / 100.0)",
+          "if ctf != 40 and 30 <= ctf <= 80:", "else:",
+          # 2026-10-28 23:45 x0.001 unit (400 = 0.4, 405 = 0.405; old x0.01 30..80 still read the same)
+          "if ctf != 400 and 300 <= ctf <= 800:", "ret.centerToFront = ret.wheelbase * (ctf / 1000.0)",
+          "elif ctf != 40 and 30 <= ctf <= 80:  # old x0.01 value (653441e2), manager_init moves it to x0.001")
+    assert body and all(ln in ok or ln.startswith('ctf = params.get_int("K9CenterToFront")') for ln in body), iface
+    changed.remove(iface)
+  assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
 

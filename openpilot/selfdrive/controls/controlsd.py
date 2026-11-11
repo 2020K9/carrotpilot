@@ -15,8 +15,10 @@ from collections import deque
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
+from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
+from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -36,10 +38,11 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.carrot.carrot_controls import CarrotControls
 from openpilot.selfdrive.carrot.carrot_man_input import get_carrot_man
 from openpilot.selfdrive.monitoring.dm_alerts import driver_monitoring_hud_alert
+from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader
+from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
-LaneChangeDirection = log.LaneChangeDirection
 LAT_CURVATURE_SATURATION_ACCEL = 0.1  # infiniteCable2 LatControlCurvature: 곡률 기반 steer_limited 임계 (m/s^2 환산)
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
@@ -61,6 +64,7 @@ class Controls:
     cloudlog.info("controlsd got CarParams")
 
     self.CI = interfaces[self.CP.carFingerprint](self.CP)
+    self.physical_blinker_hold = HoldReader(self.CP.carFingerprint, self.params)
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'carState', 'carOutput',
@@ -123,6 +127,7 @@ class Controls:
     sr = resolve_vehicle_model_steer_ratio(lp.steerRatio,
                                            self.params.get_float("SteerRatioRate"),
                                            self.params.get_float("CustomSR"))
+    self.VM.update_geometry(getattr(lp, "centerToFrontRatio", 0.0))
     self.VM.update_params(x, sr)
 
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
@@ -158,6 +163,7 @@ class Controls:
     # Wait only for the first readiness confirmation, including AlwaysLateral.
     CC.latActive = CC.latActive and lateral_ready
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
+    inhibit_faulted_controls(CC, self.sm['onroadEvents'])
 
     # AlwaysLateral must also stop while manager drains workers for this reboot.
     if self.params.get_bool("ImpactDashcamReboot"):
@@ -165,10 +171,7 @@ class Controls:
 
     actuators = CC.actuators
 
-    # Enable blinkers while lane changing
-    if model_v2.meta.laneChangeState != LaneChangeState.off:
-      CC.leftBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.left
-      CC.rightBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.right
+    set_lane_change_blinkers(CC, model_v2.meta)
 
     if not CC.latActive:
       self.LaC.reset()
@@ -201,6 +204,28 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    # K9OneLaneHold (experimental, see controls/lib/k9_one_lane_hold.py): 0 / unknown = off -> k9_olh_add is 0.0 and the
+    # laneless command below is computed exactly as before.
+    from openpilot.selfdrive.controls.lib.k9_one_lane_hold import k9_one_lane_hold_step
+    k9_olh_add = k9_one_lane_hold_step(self, CS, CC, model_v2, LaneChangeState.off)
+    # K9LaneCenter (experimental, see controls/lib/k9_lane_center.py): 0 / unknown = off -> k9_lc_add is 0.0 and the
+    # laneless command below is computed exactly as before.
+    from openpilot.selfdrive.controls.lib.k9_lane_center import k9_lane_center_step
+    k9_lc_add = k9_lane_center_step(self, CS, CC, model_v2, LaneChangeState.off)
+    # K9LaneAssist 1 (k9_lane_mix, 보노보노 2026-10-25 23:38): one of the two holds pushes at a time, hand-over without a step,
+    # combined caps 0.25 m/s^2 (0.6 inside the one-line minimum gap) / 0.15 m/s^3. Both 0.0 (switch 0) -> 0.0.
+    from openpilot.selfdrive.controls.lib.k9_lane_mix import k9_lane_mix_step
+    k9_lane_add = k9_lane_mix_step(self, k9_lc_add, k9_olh_add, CS.vEgo)
+    # K9LaneAssist HUD values (display only, controlsState.k9LaneState / k9LaneAccel; nothing reads them back)
+    mix = getattr(self, 'k9_mix', None)
+    if getattr(self, 'k9_lc_mode', 0) != 1:
+      self.k9_lane_state = 0
+    elif mix is not None and mix.owner in (2, 3) and (k9_lane_add != 0.0 or mix.owner == 3 and self.k9_olh.active
+                                                      or mix.owner == 2 and self.k9_lc.active):
+      self.k9_lane_state = mix.owner
+    else:
+      self.k9_lane_state = 1
+    self.k9_lane_accel = k9_lane_add * float(CS.vEgo) ** 2
     lane_cmd_active = False
     if not CC.latActive:
       new_desired_curvature = self.curvature
@@ -220,9 +245,16 @@ class Controls:
         new_desired_curvature = self.curvature
       else:
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
+        if k9_lane_add != 0.0:
+          # K9LaneAssist 1 (2026-10-26 conflict audit C1): laneless -> lane mode, the hold push ramps out at its jerk limit
+          # (the holds see laneless False) instead of dropping in one tick. 0.0 with the switch off / nothing to ramp out.
+          curvature = curvature + k9_lane_add
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+      dc_model = model_v2.action.desiredCurvature
+      if k9_lane_add != 0.0:
+        dc_model = dc_model + k9_lane_add   # K9LaneAssist 1: lane-centre hold, both lines or one line (laneless only)
+      new_desired_curvature = smooth_value(dc_model, self.desired_curvature, 0.1)
 
     # K9LaneFix (experimental, see controls/lib/k9_lane_fix.py): read every control tick like the other lateral params
     # here; a changed number restarts the hand-over state. 0 / unknown = off (fix is None and nothing below runs).
@@ -335,6 +367,7 @@ class Controls:
       setSpeed = speeds[-1] / vCluRatio
 
     hudControl = CC.hudControl
+    hudControl.physicalBlinkerHold = self.physical_blinker_hold.read(CS.canValid)
 
     hudControl.activeCarrot = self.sm['carrotMan'].activeCarrot
     hudControl.atcDistance = self.sm['carrotMan'].xDistToTurn
@@ -406,6 +439,12 @@ class Controls:
     hudControl.leadRelSpeed = leadOne.vRel if leadOne.status else 0
     hudControl.leadRadar = 1 if leadOne.radar else 0
     hudControl.leadDPath = leadOne.dPath
+    hudControl.signalStopObject = signal_stop_object_requested(
+      self.CP, CS, CC, lp, radarState,
+      inputs_ready=self.sm.all_checks(['longitudinalPlan', 'radarState']) and
+                   0 <= (self.sm.frame - self.sm.recv_frame['longitudinalPlan']) * DT_CTRL <= 0.2 and
+                   0 <= (self.sm.frame - self.sm.recv_frame['radarState']) * DT_CTRL <= 0.2,
+    )
 
     meta = self.sm['modelV2'].meta
     if False: # command
@@ -478,6 +517,8 @@ class Controls:
       cs.lateralControlState.torqueState = lac_log
 
     cs.activeLaneLine = self.lanefull_mode_enabled
+    cs.k9LaneState = int(getattr(self, 'k9_lane_state', 0))
+    cs.k9LaneAccel = float(getattr(self, 'k9_lane_accel', 0.0))
     self.pm.send('controlsState', dat)
 
     # carControl

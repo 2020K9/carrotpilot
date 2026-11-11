@@ -94,7 +94,7 @@ class SubMaster(dict):
 
 def make_cp(fingerprint=CAR.KIA_K9, flags=K9_FLAGS):
   return structs.CarParams(brand="hyundai", carFingerprint=fingerprint, flags=flags, openpilotLongitudinalControl=True,
-                           pcmCruise=False, wheelbase=3.15, steerRatio=14.5, stopAccel=-2.0, stoppingDecelRate=0.8,
+                           pcmCruise=False, wheelbase=3.105, steerRatio=14.5, stopAccel=-2.0, stoppingDecelRate=0.8,
                            vEgoStarting=0.1, startingState=False,
                            longitudinalTuning=structs.CarParams.LongitudinalPIDTuning(kpBP=[0.], kpV=[1.], kiBP=[0.], kiV=[0.], kf=1.))
 

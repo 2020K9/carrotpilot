@@ -534,6 +534,7 @@ class RouteReplayFrame:
     ev_mode_valid: bool = False
     ev_mode_active: bool = False
     display_speed_kph: float | None = None
+    traffic_state: int = 0
     driving_mode: int | None = None
     planned_speed_kph: float | None = None
     planned_accel_mps2: float | None = None
@@ -608,6 +609,7 @@ class RouteReplayFrame:
     memory_used_percent: float | None = None
     disk_used_percent: float | None = None
     alert: ClusterAlert | None = None
+    car_fingerprint: str = ""
 
 
 @dataclass
@@ -1577,6 +1579,7 @@ class RouteLogParser:
         self.longitudinal_plan_should_stop = False
         self.longitudinal_plan_allow_throttle: bool | None = None
         self.longitudinal_plan_allow_brake: bool | None = None
+        self.traffic_state = 0
         self.driving_mode: int | None = None
         self.longitudinal_t_follow_s: float | None = None
         self.longitudinal_desired_distance_m: float | None = None
@@ -1618,6 +1621,7 @@ class RouteLogParser:
         self.adrv_lane_changing_t = -999.0
         self.corner_radar_supported = False
         self.car_brand = ""
+        self.car_fingerprint = ""
         self.corner_radar_tracks_seen = False
         self.raw_corner_tracker = StableCornerObjectTracker()
         self.raw_corner_objects: dict[tuple[str, int], RawCornerObject] = {}
@@ -1771,6 +1775,7 @@ class RouteLogParser:
         )
 
         return RouteReplayFrame(
+            car_fingerprint=self.car_fingerprint,
             t=event_t,
             speed_kph=speed_kph,
             accel_mps2=accel_mps2,
@@ -1829,6 +1834,7 @@ class RouteLogParser:
             ev_mode_valid=ev_mode_valid,
             ev_mode_active=ev_mode_active,
             display_speed_kph=display_speed_kph,
+            traffic_state=self.traffic_state,
             driving_mode=self.driving_mode,
             planned_speed_kph=self.planned_speed_kph,
             planned_accel_mps2=self.planned_accel_mps2,
@@ -2072,6 +2078,9 @@ class RouteLogParser:
         self.longitudinal_plan_allow_brake = bool(
             safe_get(longitudinal_plan, "allowBrake", self.longitudinal_plan_allow_brake)
         )
+        traffic_state = safe_optional_int(longitudinal_plan, "trafficState")
+        if traffic_state in (0, 1, 2):
+            self.traffic_state = traffic_state
         driving_mode = safe_optional_int(longitudinal_plan, "myDrivingMode")
         self.driving_mode = driving_mode if valid and driving_mode in (1, 2, 3, 4) else None
         t_follow = safe_optional_float(longitudinal_plan, "tFollow")
@@ -2227,6 +2236,7 @@ class RouteLogParser:
 
     def _update_car_params(self, car_params: Any) -> None:
         self.car_brand = str(safe_get(car_params, "brand", "") or "").lower()
+        self.car_fingerprint = str(safe_get(car_params, "carFingerprint", "") or "")
         wheelbase_m = safe_optional_float(car_params, "wheelbase")
         if wheelbase_m is not None and 1.5 <= wheelbase_m <= 5.0:
             self.wheelbase_m = wheelbase_m
@@ -3797,6 +3807,7 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
     )
 
     return ClusterUiState(
+        car_fingerprint=frame.car_fingerprint,
         speed_kph=frame.speed_kph,
         accel_mps2=frame.accel_mps2,
         steering=frame.steering,
@@ -3912,6 +3923,7 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         lateral_plan_curvatures=frame.lateral_plan_curvatures,
         lateral_plan_curvature_rates=frame.lateral_plan_curvature_rates,
         display_speed_kph=frame.display_speed_kph,
+        traffic_state=frame.traffic_state,
         driving_mode=frame.driving_mode,
         trip_report=frame.trip_report,
         cpu_usage_percent=frame.cpu_usage_percent,
@@ -4010,6 +4022,7 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
     else:
         lane_change_progress = discrete.lane_change_progress
     return RouteReplayFrame(
+        car_fingerprint=discrete.car_fingerprint,
         t=lerp(left.t, right.t),
         speed_kph=lerp(left.speed_kph, right.speed_kph),
         display_speed_kph=lerp_optional(left.display_speed_kph, right.display_speed_kph),
@@ -4022,6 +4035,7 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
         cruise_display_state=discrete.cruise_display_state,
         gear_text=discrete.gear_text,
         cruise_gap=discrete.cruise_gap,
+        traffic_state=discrete.traffic_state,
         driving_mode=discrete.driving_mode,
         lfa_active=discrete.lfa_active,
         active_lane_line=discrete.active_lane_line,
