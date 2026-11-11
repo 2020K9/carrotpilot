@@ -88,10 +88,10 @@ def _lat_state(perc=61, unknown=False):
   if unknown:
     return NS(applied_steer_ratio=None, applied_steer_delay_s=None, delay_learn_perc=None, delay_learn_s=None,
               torque_learn_perc=None, torque_learn_lat_accel_factor=None, torque_learn_friction=None,
-              torque_filtered_lat_accel_factor=None, torque_filtered_friction=None)
+              torque_filtered_lat_accel_factor=None, torque_filtered_friction=None, learned_steer_ratio=None)
   return NS(applied_steer_ratio=12.9, applied_steer_delay_s=0.2, delay_learn_perc=63, delay_learn_s=0.24,
             torque_learn_perc=perc, torque_learn_lat_accel_factor=2.5, torque_learn_friction=0.13,
-            torque_filtered_lat_accel_factor=2.745, torque_filtered_friction=0.1046)
+            torque_filtered_lat_accel_factor=2.745, torque_filtered_friction=0.1046, learned_steer_ratio=13.4167)
 
 
 def test_renderer_fixed_slots():
@@ -101,14 +101,14 @@ def test_renderer_fixed_slots():
   r._draw_text_with_stroke = lambda text, x, y, *a, **k: calls.append((text, y))
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(61))
   assert calls == list(zip(("조향비 12.90  지연설정 0.20초", "지연학습 63%  0.24초", "학습 횡가속 2745  마찰 105",
-                            "적용 횡가속 2500  마찰 130", "토크학습 61%"), cr.LAT_VALUES_SLOT_Y, strict=True))
-  first = calls[:4]
+                            "적용 횡가속 2500  마찰 130", "학습 조향비 13.42  학습지연 0.24초"), cr.LAT_VALUES_SLOT_Y, strict=True))
+  first = list(calls)
   calls.clear()
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(100))
-  assert calls == first                                   # % line gone at 100 %, the other four stay in their slots
+  assert calls == first                                   # 2026-11-11: 토크학습 % line removed, torque calPerc changes nothing
   calls.clear()
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(unknown=True))
-  assert [t for t, _ in calls][2:] == ["학습 횡가속 -  마찰 -", "적용 횡가속 -  마찰 -", "토크학습 -"]
+  assert [t for t, _ in calls][2:] == ["학습 횡가속 -  마찰 -", "적용 횡가속 -  마찰 -", "학습 조향비 --  학습지연 --"]
   ys = list(cr.LAT_VALUES_SLOT_Y)
   assert ys == sorted(ys) and ys[-1] < cr.TPMS_STATUS_CAR_CENTER_Y - cr.TPMS_STATUS_ICON_H * 0.5
   assert cr.LAT_VALUES_SLOT_Y[:3] == cr.LAT_VALUES_LINE_Y and cr.LAT_VALUES_SLOT_Y[3:] == cr.TORQUE_LINE_Y
@@ -166,9 +166,7 @@ def test_torque_lines_fixed_slots_no_overlap():
         for i, y in enumerate(cr.LAT_VALUES_SLOT_Y):
           band = (drive[0], int(round((y - half) * sy)), drive[2], int(round((y + half) * sy)))
           b = diff.crop(band).getbbox()
-          if name == "100" and i == 4:
-            assert b is None, (layout, name, i, b)          # no % line at 100 %
-            continue
+          # 2026-11-11: line 5 is 학습 조향비 now, drawn in every case (토크학습 % line removed)
           assert b is not None, (layout, name, i)
           box = (b[0] + band[0], b[1] + band[1], b[2] + band[0], b[3] + band[1])
           # at least one empty row between neighbouring lines (a line running into the next slot would close it)
