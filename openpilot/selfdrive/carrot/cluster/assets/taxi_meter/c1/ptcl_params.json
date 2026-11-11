@@ -1,0 +1,124 @@
+{
+ "note": "입자 층 파라미터 (C1 776x456 좌표). 모양 = ptcl_sprites.png 칸 순서 petal leaf ginkgo snow fly (칸당 64px, 4배). 움직임 식 = c1bg.js draw(): 떨어지는 것 y=((i*53+t*sp)%500)-22, x=(i*83.7+sin(t*.9+i*1.7)*sway+t*drift)%800-12, sp snow 22+(i%4)*5 / petal 18+(i%3)*5 / leaf 24+(i%3)*6, sway snow 10 else 22, drift snow 3 else 9, 회전 (t*(60+i*13)+i*40)%360 (눈 0); 반딧불 x=x0+(i*97)%xw+sin(t*.5+i*2.3)*26, y=y0+(i*37)%yh+sin(t*.7+i*1.3)*14, 밝기 .25+.75*max(0,sin(t*1.6+i*1.9)). 요금 숫자 칸(14<x<410, 84<y<222)에선 투명.",
+ "front": "bg_<season>_<tod>_front.png = 캐릭터 앞에 그리는 앞층(투명). 순서: 배경 → 입자 → 캐릭터 → 앞층 → 글자",
+ "seasons": {
+  "spring": {
+   "day": {
+    "k": "petal",
+    "n": 10,
+    "c": [
+     "#ffc0d6",
+     "#ffd6e4",
+     "#ff9ec0"
+    ]
+   },
+   "sunset": {
+    "k": "petal",
+    "n": 8,
+    "c": [
+     "#f6a0b8",
+     "#ffc0a8",
+     "#e890b0"
+    ]
+   },
+   "night": {
+    "k": "petal",
+    "n": 6,
+    "c": [
+     "#d8a8c8",
+     "#c898b8",
+     "#e8c0d8"
+    ]
+   }
+  },
+  "summer": {
+   "day": {
+    "k": "fly",
+    "n": 0,
+    "c": [
+     "#fff"
+    ]
+   },
+   "sunset": {
+    "n": 0
+   },
+   "night": {
+    "k": "fly",
+    "n": 9,
+    "c": [
+     "#e8ff8a",
+     "#f4ffb0",
+     "#d8f070"
+    ],
+    "x0": 30,
+    "xw": 540,
+    "y0": 238,
+    "yh": 76
+   }
+  },
+  "autumn": {
+   "day": {
+    "k": [
+     "leaf",
+     "ginkgo"
+    ],
+    "n": 10,
+    "c": [
+     "#e8642c",
+     "#f6c030",
+     "#c8402a",
+     "#ffd84a"
+    ]
+   },
+   "sunset": {
+    "k": [
+     "leaf",
+     "ginkgo"
+    ],
+    "n": 8,
+    "c": [
+     "#ff7a3a",
+     "#ffb040",
+     "#e05a2a",
+     "#ffc860"
+    ]
+   },
+   "night": {
+    "k": [
+     "leaf",
+     "ginkgo"
+    ],
+    "n": 7,
+    "c": [
+     "#b85a3a",
+     "#c8a050",
+     "#a04a30",
+     "#d0b060"
+    ]
+   }
+  },
+  "winter": {
+   "day": {
+    "k": "snow",
+    "n": 10,
+    "c": [
+     "#ffffff"
+    ]
+   },
+   "sunset": {
+    "k": "snow",
+    "n": 9,
+    "c": [
+     "#fff0f4"
+    ]
+   },
+   "night": {
+    "k": "snow",
+    "n": 12,
+    "c": [
+     "#f4f8ff"
+    ]
+   }
+  }
+ }
+}

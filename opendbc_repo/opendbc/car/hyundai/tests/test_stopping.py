@@ -133,9 +133,88 @@ def send(camera, controller, CS, *, enabled=True, override=False, stopping=True,
     assert values["InfoDisplay"] == 0
   assert packed >> 74 & 7 == values["InfoDisplay"]
   assert packed >> 184 & 3 == values["StopReq"]
+  assert packed >> 108 & 7 == values["HUD_LEAD_INFO"]  # OEM SCC_ObjSta
   assert ((packed >> 152) & 127) * 0.1 == pytest.approx(values["JerkUpperLimit"])
   assert (packed >> 176 & 63) * 0.02 == pytest.approx(values["AccelLimitBandLower"])
   return values
+
+
+@pytest.mark.parametrize("camera", [True, False])
+def test_no_object_state_trial_follows_final_stop_request_without_latching(camera):
+  cs = make_cs()
+  stock = dict(cs.scc_control)
+  controller = CanfdStopping()
+  # shouldStop can be true while the approach gate still sends StopReq=0.
+  for stopping, speed, expected_stop in [(False, 2., 0), (True, 1., 0), (True, .3, 1),
+                                          (True, 0., 1), (True, .4, 1), (False, .4, 0)]:
+    cs.out.vEgo = cs.out.vEgoRaw = speed
+    cs.out.wheelSpeeds = SimpleNamespace(fl=speed, fr=speed, rl=speed, rr=speed)
+    values = send(camera, controller, cs, stopping=stopping)
+    assert values["StopReq"] == expected_stop
+    assert values["HUD_LEAD_INFO"] == (2 if camera and expected_stop else 0)
+    # Do not invent a distance or relative speed to accompany the state trial.
+    assert values["ACC_ObjDist"] == pytest.approx(204.6 if camera else 1.)
+    assert values["ACC_ObjRelSpd"] == pytest.approx(239.4 if camera else -170.)
+    assert cs.scc_control == stock  # never write the synthetic state into RX
+
+
+@pytest.mark.parametrize("relative_speed", [-.4, 0., .3, .31, .6])
+def test_stop_trial_preserves_real_lead_and_restores_no_lead_after_release(relative_speed):
+  cs = make_cs()
+  cs.radarState = SimpleNamespace(leadOne=SimpleNamespace(status=True, dRel=7.4, yRel=.2, vRel=relative_speed),
+                                  leadTwo=None)
+  controller = CanfdStopping()
+  values = send(True, controller, cs)
+  assert values["StopReq"] == 1
+  assert values["HUD_LEAD_INFO"] == 2
+  assert values["ACC_ObjDist"] == 7.4
+  assert values["ACC_ObjRelSpd"] == pytest.approx(relative_speed, abs=.051)
+  assert values["ACC_ObjLatPos"] == pytest.approx(-.2)
+  released = send(True, controller, cs, stopping=False)
+  assert released["StopReq"] == 0
+  assert released["HUD_LEAD_INFO"] == (1 if relative_speed > .3 else 2)
+  # A disappearing lead during the stop uses the trial state, but its genuine
+  # distance/speed are immediately cleared. Release must clear the trial too.
+  cs.radarState.leadOne.status = False
+  stopped = send(True, controller, cs)
+  assert stopped["HUD_LEAD_INFO"] == 2
+  assert stopped["ACC_ObjDist"] == pytest.approx(204.6)
+  released = send(True, controller, cs, stopping=False)
+  assert released["StopReq"] == released["HUD_LEAD_INFO"] == 0
+
+
+@pytest.mark.parametrize("scenario", ["approach", "disabled", "override", "brake", "gas", "can_invalid", "reverse", "legacy", "soft_hold"])
+@pytest.mark.parametrize("which", ["leadOne", "leadTwo"])
+def test_receding_lead_stop_state_follows_final_admission(scenario, which):
+  cs = make_cs()
+  lead = SimpleNamespace(status=True, dRel=5.1, yRel=.1, vRel=.6)
+  cs.radarState = SimpleNamespace(leadOne=None, leadTwo=None)
+  setattr(cs.radarState, which, lead)
+  controller = CanfdStopping()
+  kwargs = {}
+  if scenario == "approach":
+    cs.out.vEgo = cs.out.vEgoRaw = 1.
+    cs.out.wheelSpeeds = SimpleNamespace(fl=1., fr=1., rl=1., rr=1.)
+  elif scenario == "disabled":
+    kwargs["enabled"] = False
+  elif scenario == "override":
+    kwargs["override"] = True
+  elif scenario == "legacy":
+    controller = None
+  elif scenario == "soft_hold":
+    cs.softHoldActive = 1
+    kwargs.update(enabled=False, stopping=False)
+  else:
+    field, value = {"brake": ("brakePressed", True), "gas": ("gasPressed", True),
+                    "can_invalid": ("canValid", False), "reverse": ("gearShifter", "reverse")}[scenario]
+    setattr(cs.out, field, value)
+  before = dict(cs.scc_control)
+  values = send(True, controller, cs, **kwargs)
+  assert values["HUD_LEAD_INFO"] == (2 if scenario == "soft_hold" else 1)
+  assert values["ACC_ObjDist"] == pytest.approx(5.1)
+  assert values["ACC_ObjRelSpd"] == pytest.approx(.6)
+  assert cs.scc_control == before
+  assert lead.vRel == .6 and lead.dRel == 5.1
 
 
 @pytest.mark.parametrize("camera", [True, False])
@@ -205,6 +284,7 @@ def test_base_packet_builder_without_controller_preserves_legacy_fields(camera, 
     assert values["AccelLimitBandLower"] == pytest.approx(0)
     assert values["InfoDisplay"] == (5 if camera and stock_info == 5 else 4)
     assert values["ZEROS_7"] == (1 if camera else 0)
+    assert values["HUD_LEAD_INFO"] == 0
 
 
 @pytest.mark.parametrize("camera", [True, False])
@@ -269,6 +349,7 @@ def test_interlocks_and_motion_sources(camera, stopping, block):
     cs.out.vEgo = float("nan")
   values = send(camera, controller, cs, enabled=block != "disabled", override=block == "override", stopping=stopping)
   assert values["StopReq"] == 0
+  assert values["HUD_LEAD_INFO"] == 0
   assert values["aReqRaw"] == pytest.approx(0)
   assert values["aReqValue"] == pytest.approx(0)
   assert values["AccelLimitBandLower"] == 0.
@@ -330,6 +411,7 @@ def test_soft_hold_zeros_requests_without_preparation(camera, brake_pressed):
     values = send(camera, controller, cs, enabled=False, stopping=False, accel=-2.,
                   previous_value=previous, previous_target=previous_target)
     assert values['ACCMode'] == values['StopReq'] == 1
+    assert values['HUD_LEAD_INFO'] == (2 if camera else 0)
     assert values['aReqRaw'] == 0.
     assert values['aReqValue'] == 0.
     previous, previous_target = values['aReqValue'], -2.

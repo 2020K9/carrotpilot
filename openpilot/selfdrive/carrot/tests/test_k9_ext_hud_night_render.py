@@ -44,6 +44,7 @@ def test_night_lamp_lit_only_at_night_and_only_in_the_panel():
   try:
     s = _state()
     r.set_taxi_meter_enabled(True)
+    r.taxi_meter_command("start")   # meter_empty2: 빈차 has its own screen now; the lamp is on the meter card (주행)
     panel = r._taxi_meter_panel
     clock = [100.0]
     panel._clock = lambda: clock[0]
@@ -55,7 +56,7 @@ def test_night_lamp_lit_only_at_night_and_only_in_the_panel():
     day = _rgb(r.render_to_png_bytes(s))
     hour[0] = 23
     night = _rgb(r.render_to_png_bytes(s))
-    assert panel.night_rate == pytest.approx(0.2) and panel.step_won == 240
+    assert panel.night_rate == pytest.approx(0.3) and panel.step_won == 130   # C1 = 경기 일반(중형) 2023-5572: 심야 30%, 100원 step (res)
     px = r._information_panel_x(NAVI_LIVE_PANEL_X)
     lamp = (int(px + CARD_OFFSET_X + NIGHT_LAMP_X), int(NAVI_LIVE_PANEL_Y + CARD_OFFSET_Y + NIGHT_LAMP_Y),
             int(px + CARD_OFFSET_X + NIGHT_LAMP_X + NIGHT_LAMP_W) + 1, int(NAVI_LIVE_PANEL_Y + CARD_OFFSET_Y + NIGHT_LAMP_Y + NIGHT_LAMP_H) + 1)

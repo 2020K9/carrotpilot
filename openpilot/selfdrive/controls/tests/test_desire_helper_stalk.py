@@ -11,6 +11,39 @@ LCS = log.LaneChangeState
 LCD = log.LaneChangeDirection
 
 
+def test_manual_turn_signal_remains_isolated_during_acceleration_with_atc_off():
+  from openpilot.cereal import car
+
+  for lateral_active in (False, True):
+    harness = TestDesireHelperStalkRequest()
+    harness.setup_method()
+    helper = harness.helper
+    helper.boundary_indicator_supported = True
+    helper.manual_turn_indicator_enabled = True
+    cs = car.CarState.new_message(canValid=True, gearShifter='drive', vEgo=5.)
+    md = log.ModelDataV2.new_message()
+    md.laneLines = [{'x': [0., 5., 10., 15.], 'y': [y] * 4} for y in (-5., -1.8, 1.8, 5.)]
+    md.laneLineProbs = [0.] * 4
+    md.meta.desireState = [1., 0., 0., 0., 0., 0., 0., 0.]
+    saw_request = False
+    with patch('openpilot.selfdrive.controls.lib.desire_helper.read_json', return_value={}):
+      for i in range(90):
+        now = 10 + i * .05
+        md.frameId = i
+        cs.steeringPressed = 25 <= i < 55
+        cs.steeringTorque = 400. if cs.steeringPressed else 0.
+        cs.steeringAngleDeg = min(100., max(0, i - 25) * 8.)
+        cs.vEgo = 12. if i >= 55 else 5.
+        cs.leftBlinker = i >= 50
+        with patch('openpilot.selfdrive.controls.lib.desire_helper.time.monotonic', return_value=now):
+          helper.update(cs, md, lateral_active, 0., harness.carrot_man, SimpleNamespace(),
+                        indicator_valid=True, indicator_yaw_rate=-.2 if i >= 29 else 0.)
+        saw_request |= helper.model_indicator.active is not None
+        assert helper.lane_change_state == LCS.off
+        assert helper.desire == log.Desire.none
+    assert saw_request and helper.model_indicator.active.source == 'manual_turn'
+
+
 class TestDesireHelperStalkRequest:
   """Turn-signal lever presses (carState.*BlinkerStalkCount) as explicit next-lane-change requests."""
 
@@ -340,3 +373,48 @@ class TestLaneChangeLeverWait:
     self.press()
     assert self.wait(LEVER_REQUEST_WAIT_S + 1.0) == LCS.preLaneChange
     assert self.helper.blinker_hold_direction == LCD.none
+
+
+class TestAtcPhysicalIndicator:
+  setup_method = TestDesireHelperStalkRequest.setup_method
+  update = TestDesireHelperStalkRequest.update
+  start_and_cross = TestDesireHelperStalkRequest.start_and_cross
+  def test_turn_origin_persists_through_lamp_feedback_and_ends_with_desire(self):
+    self.carrot_man.atcType = "turn left"
+    self.helper.left.dist_to_edge_far = 8.0
+    self.update(left_blinker=False, v_kph=10)
+    self.update(left_blinker=False, v_kph=10)
+    assert self.helper.desire == log.Desire.turnLeft
+    assert self.helper.auto_turn_signal == LCD.left
+    assert not self.helper.auto_turn_signal_lane_change
+    self.update(left_blinker=True, v_kph=10)
+    assert self.helper.auto_turn_signal == LCD.left
+    self.helper.turn_disable_count = 20
+    self.update(left_blinker=True, v_kph=10)
+    assert self.helper.desire != log.Desire.turnLeft
+    assert self.helper.auto_turn_signal == LCD.none
+
+  def test_driver_lane_change_does_not_become_atc_indicator(self):
+    self.start_and_cross()
+    assert self.helper.auto_turn_signal == LCD.none
+
+  def test_atc_waits_until_actual_start_and_holds_through_finishing(self):
+    self.carrot_man.atcType = "atc right"
+    self.update(left_blinker=False)
+    self.update(left_blinker=False)
+    assert self.helper.lane_change_state == LCS.preLaneChange
+    for _ in range(5):
+      self.update(left_blinker=False)
+      assert self.helper.auto_turn_signal == LCD.none
+    self.helper.right.lane_line_info_edge_detect = True
+    self.update(left_blinker=False)
+    assert self.helper.lane_change_state == LCS.laneChangeStarting
+    assert self.helper.auto_turn_signal == LCD.right
+    assert self.helper.auto_turn_signal_lane_change
+    for _ in range(12):
+      self.update(left_blinker=False,lane_change_prob=0.)
+    assert self.helper.lane_change_state == LCS.laneChangeFinishing
+    assert self.helper.auto_turn_signal == LCD.right
+    for _ in range(24):
+      self.update(left_blinker=False,lane_change_prob=0.)
+    assert self.helper.auto_turn_signal == LCD.none

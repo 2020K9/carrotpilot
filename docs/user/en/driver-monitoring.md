@@ -7,8 +7,6 @@
 
 ## Enabling and disabling monitoring
 
-The 2026-10-20 traffic-light removal deleted only the separate traffic-light observer process. Driver-monitoring policy, the separate driver-monitoring model (`dmonitoringmodeld`) and driver-camera behavior are unchanged.
-
 `DriverMonitoringEnabled` is on by default and appears only through Carrot Web setting search. Search for `DriverMonitoringEnabled` to find it. The OFF option is intended for an absent or failed DM camera; leaving the default ON unchanged is recommended. With monitoring on, an unavailable camera automatically uses interaction monitoring. Turning the setting off stops use of the driver-monitoring model and policy during normal driving, including interaction monitoring, driver-monitoring alerts, monitoring-triggered force deceleration, and lockout. Driver View may still run the model solely for face preview, while alert, deceleration, and lockout enforcement remains neutral. It does not change the selected `DriverMonitoringMode` or the independent `CarrotVisionEnabled` road-video setting.
 
 File backups, QR backups, restores and setting profiles do not transfer `DriverMonitoringEnabled`. Restoring settings from another device therefore cannot turn monitoring off; a persistent OFF must be selected directly on the current device.
@@ -98,3 +96,9 @@ The inset appears while engaged or with Always On DM enabled, and hides during d
 Warnings progress from a silent visual notice to the first audible warning and then the final audible warning. **The first sound has a 70% minimum gain; the final sound always uses 100%.** General/engagement volume settings and ambient-noise attenuation cannot reduce these levels.
 
 This sound policy applies to modes 0 and 1 with camera or interaction monitoring. Navigation and other events sharing the same sound assets retain their existing volume; percentages describe software output gain, not measured speaker sound pressure.
+
+## Confirmed stationary holds
+
+SoftHold pauses driver assessment. The same pause applies during a fresh, confirmed signal stop or stop behind a stationary lead with active longitudinal control, standstill, raw and filtered speed below 0.1 m/s, and no accelerator input. A lead stop additionally requires a valid stationary lead within 40 m.
+
+The camera continues running; accumulated warnings and lockout are not cleared. Departure, a green signal, lead movement, or stale/invalid inputs resumes assessment on the next update. Stopping alone does not qualify.

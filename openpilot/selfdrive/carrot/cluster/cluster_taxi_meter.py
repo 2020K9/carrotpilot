@@ -59,14 +59,22 @@ class TaxiFare:
   time_unit_won: int
   # (start_hour, end_hour, rate) in local time; end exclusive; wraps midnight. 확인 필요.
   night_surcharges: tuple[tuple[int, int, float], ...]
+  # 0 = 기준속도 from the two units (distance_unit_m / time_unit_s); > 0 = the notice's own speed, time fare at or
+  # below it (경기 중형: "15km/h이하 주행 시", 경기도 공고 제2019-5429호, unchanged by 제2023-5572호)
+  time_below_kph: float = 0.0
+  out_of_area_rate: float = 0.0   # 시계외(사업구역외) 할증 - listed, not applied (the meter has no area boundary)
 
   @property
   def time_fare_below_mps(self) -> float:
     """기준속도: below it the meter counts time, at or above it distance (144 m / 35 s)."""
+    if self.time_below_kph > 0.0:
+      return self.time_below_kph / 3.6
     return self.distance_unit_m / self.time_unit_s
 
   @property
   def time_fare_below_kph(self) -> float:
+    if self.time_below_kph > 0.0:
+      return self.time_below_kph
     return self.time_fare_below_mps * 3.6
 
 
@@ -84,15 +92,23 @@ TAXI_FARE_SIHEUNG = {
     time_unit_s=35.0, time_unit_won=200,
     night_surcharges=((TAXI_NIGHT_HOURS[0], TAXI_NIGHT_HOURS[1], TAXI_NIGHT_RATE_DELUXE),),
   ),
-  # 중형
+  # 일반(중형), 표준형 15개 시 (시흥 포함) -- 경기도 공고 제2023-5572호 (2023-05-26 공고, 2023-07-01 04:00 시행)
+  # 원문 PDF https://www.gg.go.kr/cmmn/download.do?idx=812608 : "기본요금(1.6㎞) : 4,800원", "거리요금 : 131m당 100원",
+  # "시간요금 : 30초당 100원", "23:00～04:00 사이에 운행한 요금에 대하여 30% 할증", 시계외 "20% 할증".
+  # 시간요금 속도: "15km/h이하 주행 시" (제2019-5429호; 2023 공고는 속도를 다시 적지 않음). (res 10/24 17:52)
   "midsize": TaxiFare(
-    name="보노 중형택시 요금",
+    name="보노 일반택시 요금",
     base_fare_won=4800, base_distance_m=1600.0,
     distance_unit_m=131.0, distance_unit_won=100,
     time_unit_s=30.0, time_unit_won=100,
-    night_surcharges=((0, 2, 0.30), (23, 4, 0.20)),  # first match wins; 출처 블로그, 확인 필요
+    night_surcharges=((23, 4, 0.30),),
+    time_below_kph=15.0, out_of_area_rate=0.20,
   ),
 }
+# K9ExtHud=1 C1 meter = 일반(중형) (보노보노 10/24 17:52 '미터기 금액 일반택시로 변경'); the old bd09c076 panel keeps deluxe.
+TAXI_METER_C1_FARE = TAXI_FARE_SIHEUNG["midsize"]
+TAXI_METER_C1_FOOTER_TITLE = "보노 일반택시 요금"
+TAXI_METER_C1_FOOTER_TEXT = "기본 4,800원 (1.6km) · 거리 131m당 100원 · 시간 30초당 100원 (15km/h 이하) · 심야 23~04시 30%"
 TAXI_METER_DEFAULT_FARE = TAXI_FARE_SIHEUNG["deluxe"]
 TAXI_METER_FOOTER_TITLE = "보노 모범택시 요금"
 TAXI_METER_FOOTER_TEXT = (
@@ -210,7 +226,8 @@ class TaxiMeter:
     self.elapsed_s += dt
     driven = v * dt
     self.distance_m += driven
-    if speed < self.fare.time_fare_below_kph:   # same km/h scale as the caller: no rounding flip at the edge
+    thr = self.fare.time_fare_below_kph
+    if speed < thr or (self.fare.time_below_kph > 0.0 and speed <= thr):   # notice speed: "이하" = inclusive
       self.metered_m += dt * self.fare.distance_unit_m / self.fare.time_unit_s
       self.mode = "time"
     else:

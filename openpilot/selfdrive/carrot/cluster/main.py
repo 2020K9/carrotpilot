@@ -82,7 +82,7 @@ from cluster_simulator import ClusterSimulator, RandomInputSource
 from cluster_system_monitor import ClusterProcessCoreUsageSampler, NetworkAddressProvider
 from cluster_usb_display import TuringUsbDisplay, find_supported_usb_product, product_id_for_hud_mode, _set_cluster_hud_connected
 from cluster_usb_pipeline import AsyncJpegUsbPipeline
-from openpilot.common.display_scheduling import DisplayScheduler
+from openpilot.common.display_scheduling import CLUSTER_MIN_NICE, DisplayScheduler
 from openpilot.selfdrive.controls.lib.cutin_alert import CutinAlertCandidate, CutinAlertTracker
 
 DEFAULT_FPS = 0.0
@@ -523,6 +523,16 @@ class ClusterHudModeParamReader:
             return False
         return taxi_meter_selected(self._params)
 
+    def read_meter_season(self) -> int:
+        """K9MeterSeason (read only): 0 auto / 1 spring / 2 summer / 3 autumn / 4 winter; other = 0."""
+        from cluster_taxi_c1 import normalize_meter_season
+        if self._params is None:
+            return 0
+        try:
+            return normalize_meter_season(self._params.get_int("K9MeterSeason"))
+        except Exception:
+            return 0
+
 
 def sync_taxi_meter_panel(renderer, selected: bool) -> bool:
     """Periodic K9ExtHud read -> renderer. A change of the read value (previous -> new) switches the
@@ -552,7 +562,39 @@ def feed_taxi_meter_speed(renderer, source) -> int:
         return 0
     samples = drain()
     renderer.feed_taxi_meter_speed_samples(samples)
+    poll_occ = getattr(source, "poll_taxi_occupant", None) if taxi_occupant_enabled() else None
+    if poll_occ is not None:
+        occ = poll_occ()
+        if occ is not None:
+            renderer.feed_taxi_meter_occupant(occ[1])
+    feed_taxi_meter_buttons(renderer, source)
     return len(samples)
+
+
+def taxi_occupant_enabled() -> bool:
+    """21:59: the passenger sensor (CAN 0x500) no longer drives the C1 meter, so its reader is not started."""
+    import cluster_taxi_c1   # same module the renderer uses (cluster dir on sys.path, as feed_taxi_meter_buttons)
+    return bool(cluster_taxi_c1.OCCUPANT_ENABLED)
+
+
+def feed_taxi_meter_buttons(renderer, source, now: float | None = None) -> None:
+    """K9ExtHud=1: meter remote app presses (carrot k9_meter_link -> memory param K9MeterCmd) -> the C1 meter, and the
+    meter state back (K9MeterState). Sources without memory params (simulator, replays) skip this."""
+    params_memory = getattr(source, "params_memory", None)
+    command = getattr(renderer, "taxi_meter_command", None)
+    if params_memory is None or command is None:
+        return
+    link = getattr(source, "_k9_meter_button_link", None)
+    if link is None:
+        from cluster_taxi_c1 import MeterButtonLink
+        link = MeterButtonLink(params_memory)
+        source._k9_meter_button_link = link
+    for cmd in link.poll(time.monotonic() if now is None else now):
+        print(f"K9 meter remote: {cmd}", flush=True)
+        command(cmd)
+    state = getattr(renderer, "taxi_meter_state", lambda: None)()
+    if state:
+        link.publish(state, now)
 
 
 class ClusterHudOutputGateParamReader:
@@ -731,8 +773,9 @@ def run_demo(
     hud_encoder_watch: int | None,
     language: str | None,
     is_metric: bool | None,
+    usb_h264_ffmpeg_threads: int = 0,
 ) -> None:
-    scheduler = DisplayScheduler(4, enabled=TICI)
+    scheduler = DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE)
     scheduler.update(False, force=True)
     profile = ProfileReporter(profile_render, profile_interval_s)
     gc_hook = GcProfileHook(profile) if profile_render else None
@@ -899,6 +942,8 @@ def run_demo(
         language=active_language,
         is_metric=active_is_metric,
     )
+    if hud_mode_param_reader is not None:
+        renderer.set_taxi_meter_season(hud_mode_param_reader.read_meter_season())
     if hud_mode_param_reader is not None and hud_mode_param_reader.read_taxi_meter():
         renderer.set_taxi_meter_enabled(True)
         print("K9ExtHud initial: 1 (taxi meter panel)", flush=True)
@@ -1116,6 +1161,7 @@ def run_demo(
                 usb_h264_dump,
                 usb_h264_debug,
                 usb_h264_diagnose_interval_s,
+                ffmpeg_threads=usb_h264_ffmpeg_threads,
             )
             profile_stage = time.perf_counter()
             h264_pipeline.start()
@@ -1330,6 +1376,7 @@ def run_demo(
                     break
                 if hud_mode_param_reader is not None:
                     sync_taxi_meter_panel(renderer, hud_mode_param_reader.read_taxi_meter())
+                    renderer.set_taxi_meter_season(hud_mode_param_reader.read_meter_season())
                 next_hud_encoder = hud_encoder_param_reader.read() if hud_encoder_param_reader is not None else None
                 if next_hud_encoder is not None and next_hud_encoder != hud_encoder_watch:
                     print(
@@ -1699,15 +1746,16 @@ def run_demo(
                         profile.add_elapsed("main.usb_async.submit_rgba", profile_stage)
                     else:
                         profile_stage = time.perf_counter()
-                        with renderer.render_to_rgba_buffer(state, portrait_upload=True) as (
+                        with renderer.render_to_rgba_frame(state, portrait_upload=True) as (
                             rgba,
                             image_width,
                             image_height,
+                            unchanged,
                         ):
                             profile.add_elapsed("main.usb.render_rgba_total", profile_stage)
 
                             profile_stage = time.perf_counter()
-                            jpeg = usb_display.encode_jpeg(rgba, image_width, image_height)
+                            jpeg = usb_display.encode_jpeg(rgba, image_width, image_height, unchanged=unchanged)
                             profile.add_elapsed("main.usb.encode_jpeg", profile_stage)
 
                         profile_stage = time.perf_counter()
@@ -2162,6 +2210,13 @@ def parse_args() -> argparse.Namespace:
             "ffmpeg H264 encoder for --usb-h264-backend ffmpeg. "
             "Default libx264; auto prefers h264_v4l2m2m, then h264_omx, then libx264."
         ),
+    )
+    parser.add_argument(
+        "--usb-h264-ffmpeg-threads",
+        type=int,
+        choices=range(17),
+        default=0,
+        help="libx264 encoder and conversion threads (0: automatic; 1: minimum CPU concurrency).",
     )
     parser.add_argument(
         "--usb-h264-device",
@@ -2708,6 +2763,7 @@ def main(*, exit_on_error: bool = True) -> None:
             args.cluster_hud_encoder,
             args.language,
             args.is_metric,
+            usb_h264_ffmpeg_threads=args.usb_h264_ffmpeg_threads,
         )
     except KeyboardInterrupt:
         print("\nStopped.")

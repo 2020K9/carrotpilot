@@ -188,7 +188,10 @@ def test_autorun_read_hud_mode():
 def test_menu_and_keys():
   data = json.loads((OP / "selfdrive" / "carrot_settings.json").read_text(encoding="utf-8"))
   exp = [g for g in _walk(data["menu"]) if g.get("id") == "EXPERIMENTAL"]
-  assert len(exp) == 1 and exp[0]["params"][-1] == "K9ExtHud"
+  # 11:51 K9MeterSeason is the sub-option right under K9ExtHud (registration pin updated deliberately);
+  # 2026-10-25 lane menu merge: the lane switches K9OneLaneHold / K9LaneCenter are K9LaneAssist (+ K9LaneCenterGain) before it
+  # 2026-10-29 K9CenterToFront removed again; K9MeterSeason is last in EXPERIMENTAL (registration pin updated deliberately)
+  assert len(exp) == 1 and exp[0]["params"][-5:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]
   p = next(x for x in data["params"] if x["name"] == "K9ExtHud")
   assert (p["min"], p["max"], p["default"], p["control"]) == (-1, 1, -1, "select")
   assert all(len(p["options"][loc]) == 3 for loc in ("ko", "en", "zh"))
@@ -278,7 +281,8 @@ def test_night_surcharge_and_rounding():
   d = TAXI_FARE_SIHEUNG["deluxe"]
   assert [night_surcharge_rate(d, h) for h in (22, 23, 0, 3, 4, 12)] == [0.0, 0.2, 0.2, 0.2, 0.0, 0.0]
   mid = TAXI_FARE_SIHEUNG["midsize"]
-  assert [night_surcharge_rate(mid, h) for h in (23, 0, 1, 2, 3, 4)] == [0.2, 0.3, 0.3, 0.2, 0.2, 0.0]
+  # res 10/24: 경기도 공고 제2023-5572호 원문 = 23:00~04:00 30% (one band; the old pin was the blog table 0.2/0.3/0.2)
+  assert [night_surcharge_rate(mid, h) for h in (23, 0, 1, 2, 3, 4)] == [0.3, 0.3, 0.3, 0.3, 0.3, 0.0]
   m = TaxiMeter()
   m.reset(hour=23)
   assert m.fare_won == 8400

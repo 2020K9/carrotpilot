@@ -273,6 +273,9 @@ class TuringUsbDisplay:
         self._turbojpeg = None
         self._turbojpeg_unavailable = False
         self._jpeg_buffer = BytesIO()
+        self._last_jpeg: bytes | None = None
+        self._last_jpeg_key = None
+        self.jpeg_reused_frames = 0
         self._h264_chunk_gap_s = 0.0
         # Keep sync + setting atomic with frame writes.
         self._usb_lock = threading.RLock()
@@ -788,7 +791,24 @@ class TuringUsbDisplay:
         except Exception as exc:
             raise RuntimeError(f"TURZX USB H264 chunk upload failed: {exc}") from exc
 
-    def encode_jpeg(self, rgba: Any, width: int, height: int) -> bytes:
+    def encode_jpeg(self, rgba: Any, width: int, height: int, *, unchanged: bool = False) -> bytes:
+        """JPEG of one RGBA frame. unchanged=True (the caller compared the pixels: they equal the previous frame's)
+        returns the previous JPEG when it was made at the same size / quality / encoder: same input, same bytes, no
+        encode (meter_improve). The TURZX upload command only takes whole frames (CMD_UPLOAD_JPEG = size + bytes,
+        no x/y), so a frame is always sent whole; only the work of encoding an unchanged one is saved."""
+        key = (int(width), int(height), int(self.jpeg_quality), self.jpeg_encoder, self._turbojpeg_unavailable)
+        if unchanged and self._last_jpeg is not None and self._last_jpeg_key == key:
+            profile_stage = self._profile_start()
+            self.jpeg_reused_frames += 1
+            self._profile_add("usb.encode.reuse_previous", profile_stage)
+            return self._last_jpeg
+        jpeg = self._encode_jpeg_any(rgba, width, height)
+        self._last_jpeg = jpeg
+        self._last_jpeg_key = (int(width), int(height), int(self.jpeg_quality), self.jpeg_encoder,
+                               self._turbojpeg_unavailable)
+        return jpeg
+
+    def _encode_jpeg_any(self, rgba: Any, width: int, height: int) -> bytes:
         if self.jpeg_encoder == "turbojpeg" or (
             self.jpeg_encoder == "auto" and not self._turbojpeg_unavailable
         ):
