@@ -129,7 +129,23 @@ PARK_K9_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "k9" / "k9_cluster.obj"
 PARK_K9_SCALE_M = (1.915, 5.12, 1.49)  # K9 RJ width x length x height
 # K9 parked screen photo (대감님 11/11 20:37): car cut out of his mock-up, plate blanked; drawn instead of the model
 K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
-K9_PARK_COLORS_DARK = {"bg_top": (22, 52, 118), "bg_bot": (6, 16, 44), "text": (240, 244, 250), "muted": (150, 172, 210),
+# 대감님 11/12 04:34 "화면 너무 파란색인데 좀 더 어둡게 해봐": the blue background and the floor layer under the car get
+# the same darkening (brightness x DIM, blue pulled part of the way towards grey) so their seam does not show;
+# bright floor pixels (the rim light) are spared on a ramp so the rim stays visible. Car photo, text, numbers unchanged.
+K9_PARK_DIM = float(os.environ.get("K9_PARK_DIM", "0.60"))
+K9_PARK_SAT = float(os.environ.get("K9_PARK_SAT", "0.80"))
+K9_PARK_RIM_KEEP = (120.0, 200.0)  # floor max channel: below = full darkening, above = untouched, linear in between
+
+
+def k9_park_darken(rgb, keep: float = 0.0):
+    r, g, b = (float(c) for c in rgb[:3])
+    grey = 0.299 * r + 0.587 * g + 0.114 * b
+    k = K9_PARK_DIM + (1.0 - K9_PARK_DIM) * keep
+    sat = K9_PARK_SAT + (1.0 - K9_PARK_SAT) * keep
+    return tuple(int(round(max(0.0, min(255.0, k * (grey + sat * (c - grey)))))) for c in (r, g, b))
+
+
+K9_PARK_COLORS_DARK = {"bg_top": k9_park_darken((22, 52, 118)), "bg_bot": k9_park_darken((6, 16, 44)), "text": (240, 244, 250), "muted": (150, 172, 210),
                        "card": (20, 44, 96), "line": (60, 92, 150), "accent": (110, 180, 255)}
 # 대감님 11/11 21:05 "2번째처럼 비율좀 잘맞춰보지?": mock-up panel (1860x518 px) mapped to 1920x480
 K9_PARK_CAR_BOX = (856.0, 358.0, 292.0)  # car centre x, bottom y, height (photo aspect kept)
@@ -2363,7 +2379,21 @@ class ClusterUiRenderer:
             self._k9_park_floor = False
             try:
                 if K9_PARK_FLOOR_PATH.is_file():
-                    texture = rl.load_texture(str(K9_PARK_FLOOR_PATH))
+                    image = rl.load_image(str(K9_PARK_FLOOR_PATH))
+                    try:  # same darkening as the background (k9_park_darken), rim light spared
+                        rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+                        px = np.frombuffer(rl.ffi.buffer(image.data, image.width * image.height * 4),
+                                           dtype=np.uint8).reshape(image.height, image.width, 4)
+                        rgb = px[..., :3].astype(np.float32)
+                        lo, hi = K9_PARK_RIM_KEEP
+                        keep = np.clip((rgb.max(axis=2, keepdims=True) - lo) / (hi - lo), 0.0, 1.0)
+                        grey = (rgb * np.array([0.299, 0.587, 0.114], np.float32)).sum(axis=2, keepdims=True)
+                        k = K9_PARK_DIM + (1.0 - K9_PARK_DIM) * keep
+                        sat = K9_PARK_SAT + (1.0 - K9_PARK_SAT) * keep
+                        px[..., :3] = np.clip(np.rint(k * (grey + sat * (rgb - grey))), 0, 255).astype(np.uint8)
+                        texture = rl.load_texture_from_image(image)
+                    finally:
+                        rl.unload_image(image)
                     if texture is not None and getattr(texture, "id", 0) > 0:
                         rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
                         self._k9_park_floor = texture
