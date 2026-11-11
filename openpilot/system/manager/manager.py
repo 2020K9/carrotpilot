@@ -13,14 +13,16 @@ import openpilot.system.sentry as sentry
 from openpilot.common.utils import atomic_write
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params, ParamKeyFlag
+from openpilot.common.atc_params import migrate_atc_params
+from openpilot.common.lateral_geometry_params import migrate_lateral_geometry_params
 from openpilot.common.stopping_params import get_stopping_speed
 from openpilot.common.repo_update import release_boot_lock
 from openpilot.common.text_window import TextWindow
 from openpilot.system.hardware import HARDWARE
 from openpilot.system.manager.camera_config import configure_wide_camera
 from openpilot.selfdrive.monitoring.config import configure_monitoring
-from openpilot.selfdrive.carrot.traffic_stop import migrate_model_stop_prediction
 from openpilot.selfdrive.car.k9_stop_mode_migration import migrate_k9_stop_mode
+from openpilot.selfdrive.controls.lib.k9_lane import migrate_k9_lane
 from openpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
@@ -78,6 +80,7 @@ def manager_init() -> UpdateStatus:
   params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
   params.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
   params.clear_all(ParamKeyFlag.CLEAR_ON_IGNITION_ON)
+  Params('/dev/shm/params').remove('NavDestinationTemporary')
   if build_metadata.release_channel:
     params.clear_all(ParamKeyFlag.DEVELOPMENT_ONLY)
 
@@ -85,8 +88,10 @@ def manager_init() -> UpdateStatus:
     params.put_bool("RecordFront", True)
 
   configure_monitoring(params)
-  migrate_model_stop_prediction(params)
   migrate_k9_stop_mode(params)  # before card starts (it reads K9StopMode live); 2026-10-24 menu trim
+  migrate_k9_lane(params)  # before modeld / controlsd start; 2026-10-25 lane menu merge (old 4 switches -> K9LaneAssist)
+  migrate_atc_params(params)
+  migrate_lateral_geometry_params(params)
 
   # set unset params to their default value
   for k in params.all_keys():
@@ -216,6 +221,7 @@ def manager_thread(update_status: UpdateStatus) -> None:
       params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
     elif not started and started_prev:
       params.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
+      Params('/dev/shm/params').remove('NavDestinationTemporary')
 
     ignition = any(ps.ignitionLine or ps.ignitionCan for ps in sm['pandaStates'] if ps.pandaType != log.PandaState.PandaType.unknown)
     if ignition and not ignition_prev:

@@ -82,7 +82,7 @@ from cluster_simulator import ClusterSimulator, RandomInputSource
 from cluster_system_monitor import ClusterProcessCoreUsageSampler, NetworkAddressProvider
 from cluster_usb_display import TuringUsbDisplay, find_supported_usb_product, product_id_for_hud_mode, _set_cluster_hud_connected
 from cluster_usb_pipeline import AsyncJpegUsbPipeline
-from openpilot.common.display_scheduling import DisplayScheduler
+from openpilot.common.display_scheduling import CLUSTER_MIN_NICE, DisplayScheduler
 from openpilot.selfdrive.controls.lib.cutin_alert import CutinAlertCandidate, CutinAlertTracker
 
 DEFAULT_FPS = 0.0
@@ -773,8 +773,9 @@ def run_demo(
     hud_encoder_watch: int | None,
     language: str | None,
     is_metric: bool | None,
+    usb_h264_ffmpeg_threads: int = 0,
 ) -> None:
-    scheduler = DisplayScheduler(4, enabled=TICI)
+    scheduler = DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE)
     scheduler.update(False, force=True)
     profile = ProfileReporter(profile_render, profile_interval_s)
     gc_hook = GcProfileHook(profile) if profile_render else None
@@ -1160,6 +1161,7 @@ def run_demo(
                 usb_h264_dump,
                 usb_h264_debug,
                 usb_h264_diagnose_interval_s,
+                ffmpeg_threads=usb_h264_ffmpeg_threads,
             )
             profile_stage = time.perf_counter()
             h264_pipeline.start()
@@ -2210,6 +2212,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--usb-h264-ffmpeg-threads",
+        type=int,
+        choices=range(17),
+        default=0,
+        help="libx264 encoder and conversion threads (0: automatic; 1: minimum CPU concurrency).",
+    )
+    parser.add_argument(
         "--usb-h264-device",
         default=DEFAULT_H264_DEVICE,
         help=f"V4L2 hardware encoder device path. Default: {DEFAULT_H264_DEVICE}.",
@@ -2754,6 +2763,7 @@ def main(*, exit_on_error: bool = True) -> None:
             args.cluster_hud_encoder,
             args.language,
             args.is_metric,
+            usb_h264_ffmpeg_threads=args.usb_h264_ffmpeg_threads,
         )
     except KeyboardInterrupt:
         print("\nStopped.")

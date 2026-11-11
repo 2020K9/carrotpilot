@@ -42,14 +42,23 @@ def test_fix_constants_are_the_old_v11_guard(prev_cc):
   assert (kc.V12_DOWN_LIM, kc.V12_UP_LIM_BP, kc.V12_UP_LIM_V, kc.V12_UP_LIM_SPEED) == (0.004, [-0.05, 0.10], [0.0035, 0.0008], 0.52)
 
 
+def _in_zone(kw):
+  """2026-10-26 (the driver's approval 08:54): the zone where menu 2 may move StopReq and change the decel against v11 -
+  stopping input below kc.V12K9_ZONE_SPEED with no lead within kc.V12K9_ZONE_LEAD."""
+  lead_in = (kw["lead_visible"] or kw["lead_distance"] != 0.0) and kw["lead_distance"] <= kc.V12K9_ZONE_LEAD
+  return bool(kw["stopping"] and kw["v_ego"] < kc.V12K9_ZONE_SPEED and not lead_in)
+
+
 @pytest.mark.parametrize("seed", range(8))
 def test_never_brakes_less_than_v11_for_the_same_inputs(prev_cc, seed):
   """Open loop, same inputs every frame: v12k9 sends a command at or below (as much or more braking than) the old v11 and
-  the same StopReq on every frame."""
+  the same StopReq on every frame outside the zone (_in_zone, 2026-10-26)."""
   old, new = prev_cc.K9Creep(PREV_V11), K9Creep(V12K9)
   rng = random.Random(f"k9-v12k9-fix-{seed}")
   for kw, i in _random_inputs(rng, 4000):
     ro, rn = old.update(**kw), new.update(**kw)
+    if _in_zone(kw):
+      continue
     assert ro[1] == rn[1], (i, kw)
     if math.isnan(ro[0]) or math.isnan(rn[0]):
       assert math.isnan(ro[0]) and math.isnan(rn[0]), (i, kw)
@@ -117,8 +126,11 @@ def _kw(mode):
 
 
 @pytest.mark.parametrize("fingerprint", [CAR.KIA_K9, CAR.KIA_K7])
-@pytest.mark.parametrize("mode", [None, 0, 1, 3, 99, -1])
-def test_menus_other_than_2_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mode, fingerprint):
+@pytest.mark.parametrize("mode", [None, 0, 6, 99, -1])  # 3 -> 4 on 2026-10-26: 3 = v13 original (new), 4 acts as 0; 2026-10-28:
+# 3 = v14 original, 4 still acts as 0; 2026-10-29 04:48: 1 and 2 swapped methods, pinned across numbers below;
+# 2026-10-29 07:10: the v14 original left the menu and kind 15 moved 4 -> 3, so 4 acts as 0 again and is back in this list
+# 2026-10-30: 4 (kind 14) and 5 (kind 17) are menu values again, so 6 stands for "acts as 0"
+def test_menus_other_than_the_k9_menu_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mode, fingerprint):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=fingerprint), module=pushed_cc, **_kw(mode)))
     monkeypatch.undo()
@@ -127,10 +139,10 @@ def test_menus_other_than_2_can_identical_to_f9cd0960(monkeypatch, pushed_cc, mo
     assert len(new.can) > 400 and ref.can == new.can and ref.scc14 == new.scc14
 
 
-def test_menu2_other_cars_can_identical_to_f9cd0960(monkeypatch, pushed_cc):
+def test_menu1_other_cars_can_identical_to_f9cd0960(monkeypatch, pushed_cc):
   for seq in (mixed_sequence, edge_sequence, gentle_sequence):
     ref = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), module=pushed_cc, K9StopMode=2))
     monkeypatch.undo()
-    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=2))
+    new = seq(Rig(monkeypatch, cp=make_cp(fingerprint=CAR.KIA_K7), K9StopMode=1))
     monkeypatch.undo()
     assert ref.can == new.can

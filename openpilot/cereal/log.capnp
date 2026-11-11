@@ -142,8 +142,8 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     audioTurn @122;
     radarCutin @123;
     radarStationaryLead @124;
-    trafficSignGreen @100; # DEPRECATED 2026-10-20: never emitted
-    trafficSignChanged @101; # DEPRECATED 2026-10-20: never emitted
+    trafficSignGreen @100;
+    trafficSignChanged @101;
     turningLeft @102;
     turningRight @103;
     audio1 @104;
@@ -164,6 +164,10 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     systemReady @127;
     impactDetected @128;
     impactDashcamReboot @129;
+    teslaTrafficStopWarning @130;
+    teslaTrafficStopTakeover @131;
+    pandaCanFault @132;
+    stockSccFault @133;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -825,6 +829,10 @@ struct SelfdriveState {
   personality @11 :LongitudinalPersonality;
   distanceTraveled @13 :Float32;
 
+  # Latched cue from the audioTurn event, not the priority-selected alert sound.
+  atcTurnStartMonoTime @14 :UInt64;
+  atcTurnDirection @15 :LaneChangeDirection;
+
   enum OpenpilotState @0xdbe58b96d2d1ac61 {
     disabled @0;
     preEnabled @1;
@@ -860,6 +868,10 @@ struct ControlsState @0x97ff69c53601abf1 {
   forceDecel @51 :Bool;
 
   activeLaneLine @67 : Bool;
+  # K9LaneAssist (experimental, display only): 0 switch off, 1 on but not holding, 2 both-lines centre hold,
+  # 3 one-line hold; k9LaneAccel = lateral accel the holds add [m/s^2], + = toward the right
+  k9LaneState @68 :UInt8;
+  k9LaneAccel @69 :Float32;
 
   lateralControlState :union {
     pidState @53 :LateralPIDState;
@@ -1100,6 +1112,22 @@ struct ModelDataV2 {
     laneChangeAvailableRight @19 :Bool;
     laneChangeBlinkerHold @20 :LaneChangeDirection;  # carrot: hold this turn signal while a lever-requested change waits or is queued
     leverTurn @21 :Bool;  # carrot: the turn desire comes from a latched lever (BlinkerLatchedTurn)
+    autoTurnSignal @22 :LaneChangeDirection;  # ATC-originated maneuver only; no steering request
+    autoTurnSignalLaneChange @23 :Bool;
+    autoTurnSignalDirection @24 :LaneChangeDirection;
+    autoTurnSignalRequestId @25 :UInt64;
+    manualLaneIndicator @26 :LaneChangeDirection;  # Lamp only; its feedback is excluded from driver lane requests.
+    manualLaneIndicatorMonoTime @27 :UInt64;
+    observedIndicator @28 :LaneChangeDirection; # Lamp-only observation; never steering admission.
+    observedIndicatorMonoTime @29 :UInt64;
+    observedIndicatorSource @30 :Text;
+    indicatorIsolationMask @31 :UInt8;
+    indicatorJournalMonoTime @32 :UInt64;
+    indicatorPrepareDirection @33 :LaneChangeDirection; # Display only; never an actuation request.
+    indicatorPrepareSource @34 :Text;
+    assistantLaneSignalId @35 :Text; # Set only after ordinary lane-change admission; direction is laneChangeDirection.
+    assistantLaneSignalRoute @36 :Text; # Empty outside voice maneuvers, otherwise ordinary, native or the selected adapter instance.
+
 
     deprecated :group {
       brakeDisengageProb @2 :Float32;
@@ -1221,7 +1249,7 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   allowBrake @39: Bool;
 
   xState @40: Int32;
-  trafficState @41: Int32; # model-native stop prediction only (1 stop, 2 go); not a traffic light
+  trafficState @41: Int32;
   events @42:List(OnroadEvent);
   vTargetNow @43: Float32;
   cruiseTarget @44: Float32;
@@ -1253,9 +1281,9 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   # Optional overspeed brake relief. Zero target/percent preserves legacy control.
   cruiseCoastingTarget @62 :Float32;  # fixed physical m/s reference; 0 when ineligible
   cruiseCoastingPercent @63 :UInt8;
-  signalDetectionSuspended @64 :Bool; # DEPRECATED 2026-10-20: traffic-light removal, never populated
-  signalObservationColor @65 :UInt8; # DEPRECATED 2026-10-20: traffic-light removal, never populated
-  signalAssistAction @66 :UInt8; # DEPRECATED 2026-10-20: traffic-light removal, never populated
+  signalDetectionSuspended @64 :Bool; # fresh vNavi motorway/urban expressway classification
+  signalObservationColor @65 :UInt8; # helper current evidence: 0 unknown, 1 red, 2 green, 3 mixed
+  signalAssistAction @66 :UInt8; # actual helper action: 0 none, 1 departure veto, 2 preparation, 3 confirmed green transition
 
   solverExecutionTime @35 :Float32;
 
@@ -1512,6 +1540,7 @@ struct ProcLog {
     memPssAnon @18 :UInt64;    # Pss_Anon — private anonymous (heap, stack)
     memPssShmem @19 :UInt64;   # Pss_Shmem — proportional MSGQ/tmpfs share
     memPssMonoTime @20 :UInt64; # scan start in monotonic ns; 0 means unavailable (also older logs)
+    memPrivateDirty @21 :UInt64; # bytes from the same completed scan; absent in older logs
   }
 
   struct CPUTimes {
@@ -2349,6 +2378,7 @@ struct LiveParametersData {
   angleOffsetAverageValid @18 :Bool = true;
   steerRatioValid @19 :Bool = true;
   stiffnessFactorValid @20 :Bool = true;
+  centerToFrontRatio @21 :Float32;  # Applied geometry; 0 in legacy messages.
 
 
   struct FilterState {
@@ -2544,6 +2574,7 @@ struct NavInstruction {
 
 struct NavRoute {
   coordinates @0 :List(Coordinate);
+  carrotRouteId @1 :UInt64;  # stable across route heartbeats; changes on source/geometry replacement
 
   struct Coordinate {
     latitude @0 :Float32;

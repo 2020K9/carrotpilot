@@ -16,11 +16,19 @@ from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig, edge_sequence, gentle
 from openpilot.selfdrive.car.tests.test_k9_creep_mode import bl_stop_sequence
 
 BASE = "badf1ea7bf1e72ccb5d512bfc2aa7f0ae311e7ed"
-MENUS = (None, 0, 1, 2, 3)
+MENUS = (None, 0, 1, 2, 3, 4, 5, 6)
 # 2026-10-25 menu 0 base / 1 v12 original / 2 v12k9 (3 acts as 0): None / 0 / 3 against badf1ea7 menu 0 (unchanged base
 # braking); 1 and 2 are new stop methods, so against this tree with the hard-brake cap switched off (same inputs, same
 # checks: the ease-off changes JerkUpperLimit only and nothing outside it).
-BASE_MENU = {None: None, 0: 0, 3: 0}
+# 2026-10-26: 3 = v13 original, a new stop method like 1 / 2 (this tree, cap off); 4 now stands for "other values act as 0".
+# 2026-10-28: 3 = v14 original instead (a stop method, this tree, cap off); 4 C1 / 5 C1+ of 2026-10-27 gone, 4 acts as 0.
+# 2026-10-29 05:40: 4 = kind 15 (a stop method, this tree, cap off) now that the v12 original left the menu, so 5 is the
+# value that stands for "other values act as 0".
+# 2026-10-29 07:10: the v14 original left the menu with its code and kind 15 moved to 3, so 1 / 2 / 3 are the stop methods
+# (this tree, cap off) and both 4 and 5 stand for "other values act as 0" (badf1ea7 menu 0).
+# 2026-10-30 (보노보노 17:29 / 17:31): 4 (kind 14, moved from 2) and 5 (kind 17) are stop methods again (this tree, cap off),
+# so 6 stands for "other values act as 0".
+BASE_MENU = {None: None, 0: 0, 6: 0}
 
 
 def base_and_new(monkeypatch, tmp_path, menu, tag):

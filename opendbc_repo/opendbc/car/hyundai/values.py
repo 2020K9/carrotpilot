@@ -84,6 +84,7 @@ class HyundaiSafetyFlags(IntFlag):
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
   CANFD_CLUSTER_DIRECT_TX = 2048
+  CANFD_SPAS_BLINKERS = 4096
 
 
 class HyundaiFlags(IntFlag):
@@ -139,6 +140,8 @@ class HyundaiFlags(IntFlag):
 
   ALT_LIMITS_2 = 2 ** 26
   CANFD_CLUSTER_DIRECT_TX = 2 ** 27
+
+  CANFD_SPAS_BLINKERS = 2 ** 28
 
   CC_ONLY_CAR = 2 ** 31
 
@@ -800,7 +803,7 @@ class CAR(Platforms):
   )
   KIA_K9 = HyundaiPlatformConfig(
     [HyundaiCarDocs("Kia K9 2016-2019", "All", car_parts=CarParts.common([CarHarness.hyundai_h]))],
-    CarSpecs(mass=2075, wheelbase=3.15, steerRatio=14.5, tireStiffnessFactor=0.7),
+    CarSpecs(mass=2010, wheelbase=3.105, steerRatio=14.5, tireStiffnessFactor=0.7),  # K9 RJ 3.8 AWD 19인치: 축거 3,105 mm, 공차 2,010 kg (신고값, 보노보노 10/28 21:34); 조향비 14.5 그대로 (차는 CustomSR 129 = 12.9, 보노보노 10/28 21:48 "바꾸지마라")
     flags=HyundaiFlags.LEGACY,
   )
   KIA_EV_SK3 = HyundaiPlatformConfig(
@@ -1074,6 +1077,12 @@ def bosch_mrrevo14f_bus(candidate, flags: int, fingerprint: dict, buses) -> int 
 
 
 DBC = CAR.create_dbc_map()
+
+# This fork removed the Ray pedal interceptor (0bc09563); upstream callers keep
+# working with the pedal path disabled.
+def is_ray_pedal_control(CP) -> bool:
+  return False
+
 
 if __name__ == "__main__":
   cars = []

@@ -107,10 +107,11 @@ def test_read_mode_never_raises_and_maps_old_numbers():
     def __init__(self, v):
       self.v = v
     def get_int(self, key):
-      assert key == "K9LRView"
+      assert key == "K9LaneAssist"   # 2026-10-25 lane menu merge (old K9LRView 1/2/3 -> K9LaneAssist 1 by k9_lane.migrate_k9_lane)
       return self.v
   assert read_mode(Bad()) == 0
-  assert [read_mode(Stored(v)) for v in (0, 1, 2, 3, 4, -1)] == [0, 1, 1, 1, 0, 0]
+  assert [read_mode(Stored(v)) for v in (0, 1, 2, 3, 4, -1)] == [0, 1, 0, 0, 0, 0]
+  assert [normalize_mode(v) for v in (0, 1, 2, 3, 4, -1)] == [0, 1, 1, 1, 0, 0]
 
 
 def test_only_two_values_in_code():
@@ -405,11 +406,14 @@ def test_switching_off_and_on_restarts_state_and_old_numbers_do_not():
 
 # ---------------------------------------------------------------- (d) menu / params
 def test_menu_and_param_registered_0_1_default_off():
+  # 2026-10-25 lane menu merge (pin rewritten deliberately): the tracker is part of the single 0/1 switch K9LaneAssist;
+  # the old K9LRView key stays registered (migration only, no effect) but is no longer in the menu
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   driving = next(m for m in catalog["menu"] if m["id"] == "DRIVING")
   experimental = next(g for g in driving["groups"] if g["id"] == "EXPERIMENTAL")
-  assert "K9LRView" in experimental["params"]
-  entry = next(p for p in catalog["params"] if p["name"] == "K9LRView")
+  assert "K9LaneAssist" in experimental["params"] and "K9LRView" not in experimental["params"]
+  assert not any(p["name"] == "K9LRView" for p in catalog["params"])
+  entry = next(p for p in catalog["params"] if p["name"] == "K9LaneAssist")
   assert (entry["min"], entry["max"], entry["default"]) == (0, 1, 0)
   assert [len(entry["options"][lang]) for lang in ("ko", "en", "zh")] == [2, 2, 2]
   for lang in ("ko", "en", "zh"):
@@ -421,10 +425,10 @@ def test_menu_and_param_registered_0_1_default_off():
       assert gone not in text, (key, gone)
   for lang in ("ko", "en"):
     doc = (ROOT / f"docs/user/{lang}/settings.md").read_text(encoding="utf-8")
-    row = next(line for line in doc.splitlines() if "| `K9LRView` |" in line)
+    row = next(line for line in doc.splitlines() if "| `K9LaneAssist` |" in line)
     assert "`0`" in row and "`1`" in row and "`2`" not in row and "`3`" not in row and "P1g" not in row and "P2m" not in row
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
-  assert '{"K9LRView", {PERSISTENT, INT, "0"}}' in keys
+  assert '{"K9LRView", {PERSISTENT, INT, "0"}}' in keys and '{"K9LaneAssist", {PERSISTENT, INT, "0"}}' in keys
 
 
 def test_on_prob_always_bit_identical_to_previous_tracker():
@@ -763,7 +767,7 @@ def test_apply_and_read_one_lane_hold():
   class P:
     def __init__(self, v): self.v = v
     def get_int(self, k):
-      assert k == "K9OneLaneHold"
+      assert k == "K9LaneAssist"   # 2026-10-25 lane menu merge
       if isinstance(self.v, Exception):
         raise self.v
       return self.v
