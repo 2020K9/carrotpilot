@@ -5,7 +5,7 @@
 2 v12k9 (K9StopModeVer 3). card reads K9StopMode live (CarController, every 0.5 s), so this runs in manager_init before any
 managed process starts and therefore before the first drive on the new code.
 
-Rules, applied once while K9StopModeVer is not STOP_MODE_VER (4 since 2026-10-28, 3 before):
+Rules, applied once while K9StopModeVer is not LEGACY_STOP_MODE_VER (4 since 2026-10-28, 3 before):
 - K9StopModeVer 2 (the 0-3 menu): 1 / 2 / 3 -> 2 (v12k9: every deleted method was a K9-fitted stop feathering, v12k9 is the
   K9-fitted successor of the old 3 v11; the v12 original is a Niro EV patch the driver must pick himself); 0 unchanged;
 - no / other K9StopModeVer (the 0-6 menu before 2026-10-24 evening, never migrated): 1-6 -> 2 for the same reason; 0 unchanged;
@@ -46,7 +46,7 @@ menu 4 (his table + the extra braking 1 s after the stop) moved into the free sl
   (base: that method is gone from the tree); 0 base, 1 his own stop table and 2 the improved table unchanged;
 - an older / absent marker first runs its own tables above, the 1 <-> 2 swap and the v12-original drop to land on the
   K9StopModeVer 6 numbering, then this table.
-A marker that is already STOP_MODE_VER means the value is on the new menu and is never touched again. The swap and the
+A marker that is already LEGACY_STOP_MODE_VER means the value is on the new menu and is never touched again. The swap and the
 07:10 move are the rules that are not idempotent (the move would drop the new 3 to 0 if it ran twice), so for each of
 them the pre-rule value is written into the marker (SWAP_PENDING_BASE + value, MOVE_PENDING_BASE + value) before the
 value itself is rewritten: whatever a power loss interrupts, the next start recomputes the same new value from the
@@ -106,7 +106,7 @@ STOP_MODE_KEY = "K9StopMode"
 STOP_MODE_VER_KEY = "K9StopModeVer"
 # 9 = the 2026-11-03 06:08 numbering 0-3 (K9StopModeVer 10 since 17:10)
 # still 11 after 2026-11-06 06:21 (3 / 4 of a082dc0d folded into 1 / 2 by MERGE_V12, idempotent, no new marker)
-STOP_MODE_VER = 11  # (11 since 2026-11-05 07:16, 10 = the 2026-11-03 17:10 numbering 0 / 3 / 5) K9StopModeVer after this migration (8 = the 2026-10-30 numbering 0-5, 7 = the 2026-10-29 07:10 numbering 0-3 with 2 = the improved
+LEGACY_STOP_MODE_VER = 11  # (11 since 2026-11-05 07:16, 10 = the 2026-11-03 17:10 numbering 0 / 3 / 5) K9StopModeVer after this migration (8 = the 2026-10-30 numbering 0-5, 7 = the 2026-10-29 07:10 numbering 0-3 with 2 = the improved
 # table, 6 = the 2026-10-29 05:40 numbering with 3 = v14 original and 4 = his table + the 1 s extra braking,
 # 5 = the 04:48 numbering with 2 = v12 original, 4 = the 2026-10-28 0-3 menu
 # before the 1 <-> 2 swap, 3 = the 2026-10-25..27 menus up to 0-5, 2 = the 2026-10-24 evening 0-3 menu,
@@ -152,13 +152,13 @@ MOVE11_PENDING_BASE = 100  # K9StopModeVer 100 + v: the 07:16 move is pending, p
 MERGE_V12 = {0: 0, 1: 1, 2: 2, 3: 1, 4: 2}  # on K9StopModeVer 11: 3 -> 1, 4 -> 2 (same kinds 15 / 17)
 
 
-def migrate_k9_stop_mode(params) -> bool:
+def _migrate_legacy_k9_stop_mode(params) -> bool:
   """Returns True if K9StopMode was rewritten. Never raises (manager start must not fail on a bad stored value)."""
   try:
     ver = params.get(STOP_MODE_VER_KEY)
   except Exception:
     ver = None
-  if ver == STOP_MODE_VER:  # on the current numbering: only the 2026-11-06 fold of 3 / 4 (a082dc0d) into 1 / 2
+  if ver == LEGACY_STOP_MODE_VER:  # on the current numbering: only the 2026-11-06 fold of 3 / 4 (a082dc0d) into 1 / 2
     return _merge12(params)
   changed = False
   is_int = isinstance(ver, int) and not isinstance(ver, bool)
@@ -241,7 +241,7 @@ def migrate_k9_stop_mode(params) -> bool:
 
 
 def _finish_move(params, ver, changed: bool) -> bool:
-  """Apply MOVE_V7 to the pre-move value recorded in the marker, then write STOP_MODE_VER. Never raises."""
+  """Apply MOVE_V7 to the pre-move value recorded in the marker, then write LEGACY_STOP_MODE_VER. Never raises."""
   old = ver - MOVE_PENDING_BASE
   new = MOVE_V7[old]
   if new != old:
@@ -342,14 +342,14 @@ def _finish_move10(params, ver, changed: bool) -> bool:
 
 def _mark_done11(params, changed: bool) -> bool:
   """The value is on the K9StopModeVer 10 numbering: apply MOVE_V11 (pre-move value into the marker first), then write
-  STOP_MODE_VER. Never raises."""
+  LEGACY_STOP_MODE_VER. Never raises."""
   try:
     cur = params.get(STOP_MODE_KEY)
   except Exception:
     cur = None  # unreadable: left as stored (acts as 0)
   if not (isinstance(cur, int) and not isinstance(cur, bool) and cur in MOVE_V11):
     try:
-      params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)  # outside the table: it acted as 0 and still acts as 0
+      params.put_int(STOP_MODE_VER_KEY, LEGACY_STOP_MODE_VER)  # outside the table: it acted as 0 and still acts as 0
     except Exception:
       pass
     return changed
@@ -361,7 +361,7 @@ def _mark_done11(params, changed: bool) -> bool:
 
 
 def _finish_move11(params, ver, changed: bool) -> bool:
-  """Apply MOVE_V11 to the pre-move value recorded in the marker, then write STOP_MODE_VER. Never raises."""
+  """Apply MOVE_V11 to the pre-move value recorded in the marker, then write LEGACY_STOP_MODE_VER. Never raises."""
   old = ver - MOVE11_PENDING_BASE
   new = MOVE_V11[old]
   if new != old:
@@ -371,7 +371,7 @@ def _finish_move11(params, ver, changed: bool) -> bool:
     except Exception:
       return changed  # the marker still says "move pending": the next start finishes it
   try:
-    params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)
+    params.put_int(STOP_MODE_VER_KEY, LEGACY_STOP_MODE_VER)
   except Exception:
     pass
   return changed
@@ -390,3 +390,31 @@ def _merge12(params) -> bool:
   except Exception:
     return False  # not written: the next start applies the same table again
   return True
+
+
+STOP_MODE_VER = 12  # menu 3 now means half-gap, not the retired -1.00 stopping-accel variant
+
+def migrate_k9_stop_mode(params) -> bool:
+  """Finish historical migrations before enabling the newly selectable mode 3.
+
+  Write version 12 only after old 3/4 have folded into 1/2. Interrupted writes
+  retry idempotently; version-12 selections (including new 3) remain untouched.
+  """
+  try:
+    ver = params.get(STOP_MODE_VER_KEY)
+  except Exception:
+    return False
+  if ver == STOP_MODE_VER:
+    return False
+  changed = _migrate_legacy_k9_stop_mode(params)
+  try:
+    if params.get(STOP_MODE_VER_KEY) != LEGACY_STOP_MODE_VER:
+      return changed
+    changed = _merge12(params) or changed
+    cur = params.get(STOP_MODE_KEY)
+    if isinstance(cur, int) and not isinstance(cur, bool) and cur in (3, 4):
+      return changed  # value write failed; never activate half-gap from an old selection
+    params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)
+  except Exception:
+    pass
+  return changed

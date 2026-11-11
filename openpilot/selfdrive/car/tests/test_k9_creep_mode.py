@@ -1,3 +1,4 @@
+# 2026-11-08: menu 3 is half-gap (kind 18), current marker 12; historical inputs stay unchanged.
 """K9StopMode single selector (2026-10-25 menu): 0 base braking, 1 v12 original (the creep_fix v12 page code unchanged), 2 v12k9
 (kind V12K9); both are tested in test_k9_stop_v12.py. Other values act as 0.
 2026-10-26 (보노보노 "v12그냥놓아두고 v13추가하는걸로"): 3 = v13 original (test_k9_stop_v13.py). Menu-set pins only: MODES (1, 2, 3),
@@ -76,7 +77,7 @@ PREV_MENU = "1d0961da"  # K9StopMode 0 base, 1 v9, 2 v10, 3 v9 + shudder fix
 PREV_OF_NEW = {None: None, 0: 0}  # 1d0961da K9StopMode of the new menu value (new 1 / 2 are new)
 ALL = (V9,)
 ALL_KINDS = (V9,)
-INVALID = (3, 4, 5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))  # 3 = v14 original since 2026-10-28;
+INVALID = (4, 5, 6, 7, 8, 99, -1, -4, float("nan"), "nan", float("inf"))  # 3 = v14 original since 2026-10-28;
 # 2026-11-05 07:16: menu 0 / 1 / 2 (number pin), so 3 / 4 / 5 are here and 1 / 2 left
 # 2026-10-29 05:40: 4 is a menu value (kind 15, 원본2 + the 1 s hold), so it left this list; 07:10: the v14 original
 # left the menu with its code and kind 15 moved to 3, so 4 is back here
@@ -163,18 +164,18 @@ def test_constants_match_source_and_mode2():
   assert kc._up_step(0.05, 0.0) == 0.0032 and kc._up_step(0.2, 0.02) == 0.0 and kc._up_step(0.2, -0.08) == 0.0032
   # 2026-10-29 05:40: the v12 original left the menu with its code, so V12_ORIG_MENU is gone and 4 is a menu value;
   # 07:10 the v14 original left the same way, so V14_ORIG_MENU is gone too and kind 15 moved from menu 4 to menu 3
-  assert kc.MODES == (1, 2) and (V9, V12K9) == (1, 8) and not hasattr(kc, "V12_ORIG_MENU")
+  assert kc.MODES == (1, 2, 3) and (V9, V12K9) == (1, 8) and not hasattr(kc, "V12_ORIG_MENU")
   assert not hasattr(kc, "V13_ORIG_MENU") and not hasattr(kc, "V14_ORIG_MENU")
   # 2026-10-29 bono1739 원본: menu 2 = kind 13 (kind 8 + the driver's own 17:39:14 stop table); kind 8 stays a kind (its own pins)
   # 2026-10-30 (17:29 / 17:31): 2 = 격차수정 (kind 16), 4 = 끝 구간 개선 (kind 14, moved from 2), 5 = kind 17
   # 2026-11-03 (대감님 06:08): 2 (kind 16) and 4 (kind 14, deleted with its code) left the menu, 3 -> 2, 5 -> 3; kind 16 stays
   # a kind (the base of kind 17)
   # 2026-11-03 17:10 (대감님 "0.3번5번만 남겨두고 삭제"): 0 / 3 / 5 only, the 9df95178c numbers; kind 13 off the menu
-  assert kc.MENU == {1: kc.V12K9OH, 2: kc.V12K9OGR} and V12K9O not in kc.MENU.values()
-  assert kc.KINDS == ALL_KINDS + (V12K9, V12K9O, kc.V12K9OH, kc.V12K9OG, kc.V12K9OGR) and not hasattr(kc, "V12K9OS")
+  assert kc.MENU == {1: kc.V12K9OH, 2: kc.V12K9OGR, 3: kc.V12K9OGR_HALF} and V12K9O not in kc.MENU.values()
+  assert kc.KINDS == ALL_KINDS + (V12K9, V12K9O, kc.V12K9OH, kc.V12K9OG, kc.V12K9OGR, kc.V12K9OGR_HALF) and not hasattr(kc, "V12K9OS")
   assert (kc.V12K9OH, kc.V12K9OG, kc.V12K9OGR) == (15, 16, 17)
   assert not any(hasattr(K9Creep(m), "shudder_fix") for m in kc.KINDS)
-  for bad in (0, 2, 3, 4, 5, 6, 7, 9, 12, 14, 18, -1):  # kinds 14 / 15 are real since 2026-10-29 05:40, 16 / 17 since 2026-10-30; 14 gone 2026-11-03
+  for bad in (0, 2, 3, 4, 5, 6, 7, 9, 12, 14, 19, -1):  # kinds 14 / 15 are real since 2026-10-29 05:40, 16 / 17 since 2026-10-30; 14 gone 2026-11-03
     with pytest.raises(AssertionError):
       K9Creep(bad)
 
@@ -434,8 +435,8 @@ def test_live_mode_switch_within_half_second(monkeypatch):
   assert seen is not None and seen <= 50  # read every 0.5 s
   # pin updated 2026-10-25 brake_v12k9_live_fix: menu 2 now sends the original ComfortBand below 2.5 m/s (was 0)
   assert r.cc.hyundai_jerk.cb_upper == pytest.approx(float(np.clip(0.9 + 0.2 * acc, 0, 1.2)))
-  for value in (3, 4, 5, 6, 7, 8, float("nan"), -1):  # 2026-11-03 17:10: 1 / 2 / 4 act as 0, 5 = kind 17 again
-    for back in (1, 2):  # 2026-11-05 07:16 numbers
+  for value in (4, 5, 6, 7, 8, float("nan"), -1):  # 2026-11-03 17:10: 1 / 2 / 4 act as 0, 5 = kind 17 again
+    for back in (1, 2, 3):  # 2026-11-05 07:16 numbers
       r.params.values["K9StopMode"] = back
       for _ in range(51):
         r.step(-0.6, LCS.pid, 1.0, a_target=-0.4, a_ego=-0.3)
@@ -717,8 +718,8 @@ def test_setting_registered_single_selector_old_keys_deleted():
   catalog = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in catalog["params"] if p["name"] == "K9StopMode")
   # 2026-11-03 17:10: max 5 again, only 0 / 3 / 5 selectable (3 / 5 = kinds 15 / 17)
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 2, 0, 1) and entry["choices"] == [0, 1, 2]  # 2026-11-05 07:16
-  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [3, 3, 3]
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (0, 3, 0, 1) and entry["choices"] == [0, 1, 2, 3]  # 2026-11-05 07:16
+  assert [len(entry["options"][loc]) for loc in ("ko", "en", "zh")] == [4, 4, 4]
   assert not any(p["name"] in ("K9CreepMode", "K9CreepV9", "K9CreepV8", "K9StopTaper") for p in catalog["params"])
   keys = (ROOT / "openpilot/common/params_keys.h").read_text(encoding="utf-8")
   assert '{"K9StopMode", {PERSISTENT, INT, "0"}},' in keys and '{"K9StopModeVer", {PERSISTENT, INT}},' in keys
