@@ -5,7 +5,7 @@
 2 v12k9 (K9StopModeVer 3). card reads K9StopMode live (CarController, every 0.5 s), so this runs in manager_init before any
 managed process starts and therefore before the first drive on the new code.
 
-Rules, applied once while K9StopModeVer is not STOP_MODE_VER (4 since 2026-10-28, 3 before):
+Rules, applied once while K9StopModeVer is not LEGACY_STOP_MODE_VER (4 since 2026-10-28, 3 before):
 - K9StopModeVer 2 (the 0-3 menu): 1 / 2 / 3 -> 2 (v12k9: every deleted method was a K9-fitted stop feathering, v12k9 is the
   K9-fitted successor of the old 3 v11; the v12 original is a Niro EV patch the driver must pick himself); 0 unchanged;
 - no / other K9StopModeVer (the 0-6 menu before 2026-10-24 evening, never migrated): 1-6 -> 2 for the same reason; 0 unchanged;
@@ -46,7 +46,7 @@ menu 4 (his table + the extra braking 1 s after the stop) moved into the free sl
   (base: that method is gone from the tree); 0 base, 1 his own stop table and 2 the improved table unchanged;
 - an older / absent marker first runs its own tables above, the 1 <-> 2 swap and the v12-original drop to land on the
   K9StopModeVer 6 numbering, then this table.
-A marker that is already STOP_MODE_VER means the value is on the new menu and is never touched again. The swap and the
+A marker that is already LEGACY_STOP_MODE_VER means the value is on the new menu and is never touched again. The swap and the
 07:10 move are the rules that are not idempotent (the move would drop the new 3 to 0 if it ran twice), so for each of
 them the pre-rule value is written into the marker (SWAP_PENDING_BASE + value, MOVE_PENDING_BASE + value) before the
 value itself is rewritten: whatever a power loss interrupts, the next start recomputes the same new value from the
@@ -72,11 +72,41 @@ moved to 2 / 3, so the menu is 0-3 (K9StopModeVer 9). Rule added:
   table (_mark_done9).
 MOVE_V9 is not idempotent (a second pass would take the new 2 to 0 and the new 3 to 2), so its pre-move value goes into the
 marker first (MOVE9_PENDING_BASE + value), as for the earlier moves.
+2026-11-03 17:10 (the driver "0.3번5번만 남겨두고 삭제", 17:14 정정): the 06:08 renumbering was wrong. Only 0 / 3 / 5 stay, on
+their 9df95178c numbers (3 = kind 15, 5 = kind 17); kind 13 (menu 1) left the menu (K9StopModeVer 10). Rule added:
+- K9StopModeVer 9 (the 06:08 numbering, menu 0-3): 1 (kind 13, off the menu) -> 0; 2 (kind 15) -> 3 and 3 (kind 17) -> 5
+  (the same methods, their old numbers again); 4 / 5 (out of range there, they acted as 0) -> 0 so they never turn into a
+  stop method nobody picked; 0 unchanged; any other value is left as stored (it acted as 0 and still acts as 0);
+- an older / absent / pending marker first runs its own steps above to land on the K9StopModeVer 9 numbering, then this
+  table (_mark_done10). So a marker-8 3 (kind 15) goes 3 -> 2 -> 3 and a marker-8 5 (kind 17) 5 -> 3 -> 5; the 9 -> 10 table
+  is never applied to a value that is not on the K9StopModeVer 9 numbering.
+MOVE_V10 is not idempotent (a second pass would take the new 3 to 5 and the new 5 to 0), so its pre-move value goes into
+the marker first (MOVE10_PENDING_BASE + value), as for the earlier moves.
+2026-11-05 07:16 (the driver "메뉴 브레이크 0.3.5 말하는 거면 0.1.2로 바꿔"): the same three methods get the numbers 0 / 1 / 2
+(1 = kind 15, was 3; 2 = kind 17, was 5); no braking behaviour changed (K9StopModeVer 11). Rule added:
+- K9StopModeVer 10 (the 17:10 numbering 0 / 3 / 5): 3 -> 1 and 5 -> 2 (the same kinds, the new numbers); 1 / 2 / 4 (off the
+  menu there, they acted as 0) -> 0 so they never turn into a stop method nobody picked; 0 unchanged; any other value is
+  left as stored (it acted as 0 and still acts as 0);
+- an older / absent / pending marker first runs its own steps above to land on the K9StopModeVer 10 numbering, then this
+  table (_mark_done11). So a marker-9 2 (kind 15) goes 2 -> 3 -> 1 and a marker-9 3 (kind 17) 3 -> 5 -> 2.
+MOVE_V11 is not idempotent (a second pass would take the new 1 / 2 to 0), so its pre-move value goes into the marker first
+(MOVE11_PENDING_BASE + value), as for the earlier moves.
+2026-11-06 06:21 (the driver "브레이크3.4.제거"): menus 3 / 4 (a082dc0d, 2026-11-05 13:35: 1 / 2 + StoppingAccel -1.00 while
+picked, added with NO new marker) left the menu with their -1.00 code, again with NO new marker (K9StopModeVer stays 11).
+Rule added:
+- K9StopModeVer 11 (the 0 / 1 / 2 numbering, 3 / 4 since a082dc0d): 3 -> 1 and 4 -> 2 (the same kinds 15 / 17, now without the
+  -1.00 stopping accel); 0 / 1 / 2 unchanged; any other value is left as stored (it acted as 0 and still acts as 0);
+- an older / absent / pending marker first runs its own steps above (their outputs are already 0 / 1 / 2 or a value that
+  acted as 0), so a stored 3 / 4 on an older numbering never becomes 1 / 2 by this rule.
+MERGE_V12 is idempotent (0 / 1 / 2 are fixed points), so it runs at every start of a marker-11 device and needs no marker:
+a power loss at any point leaves 3 / 4 or 1 / 2, and the next start ends on 1 / 2 either way.
 """
 
 STOP_MODE_KEY = "K9StopMode"
 STOP_MODE_VER_KEY = "K9StopModeVer"
-STOP_MODE_VER = 9  # K9StopModeVer after this migration (8 = the 2026-10-30 numbering 0-5, 7 = the 2026-10-29 07:10 numbering 0-3 with 2 = the improved
+# 9 = the 2026-11-03 06:08 numbering 0-3 (K9StopModeVer 10 since 17:10)
+# still 11 after 2026-11-06 06:21 (3 / 4 of a082dc0d folded into 1 / 2 by MERGE_V12, idempotent, no new marker)
+LEGACY_STOP_MODE_VER = 11  # (11 since 2026-11-05 07:16, 10 = the 2026-11-03 17:10 numbering 0 / 3 / 5) K9StopModeVer after this migration (8 = the 2026-10-30 numbering 0-5, 7 = the 2026-10-29 07:10 numbering 0-3 with 2 = the improved
 # table, 6 = the 2026-10-29 05:40 numbering with 3 = v14 original and 4 = his table + the 1 s extra braking,
 # 5 = the 04:48 numbering with 2 = v12 original, 4 = the 2026-10-28 0-3 menu
 # before the 1 <-> 2 swap, 3 = the 2026-10-25..27 menus up to 0-5, 2 = the 2026-10-24 evening 0-3 menu,
@@ -110,21 +140,39 @@ MOVE8_PENDING_BASE = 70  # K9StopModeVer 70 + v: the 2026-10-30 move is pending,
 MOVE_V9 = {0: 0, 1: 1, 2: 0, 3: 2, 4: 0, 5: 3}  # from K9StopModeVer 8: 2 / 4 off the menu -> 0; 3 -> 2, 5 -> 3 (same methods)
 MOVE9_PENDING_BASE = 80  # K9StopModeVer 80 + v: the 2026-11-03 move is pending, pre-move value v (0 <= v <= 5); apart
 # from 50..53 / 60..64 / 70..75
+# 2026-11-03 17:10: back to 0 / 3 / 5 (the 9df95178c numbers); kind 13 off the menu. Applied last, on the K9StopModeVer 9 numbering.
+MOVE_V10 = {0: 0, 1: 0, 2: 3, 3: 5, 4: 0, 5: 0}  # from K9StopModeVer 9: 1 (kind 13) -> 0; 2 -> 3, 3 -> 5 (same kinds); 4 / 5 acted as 0
+MOVE10_PENDING_BASE = 90  # K9StopModeVer 90 + v: the 17:10 move is pending, pre-move value v (0 <= v <= 5); apart from
+# 50..53 / 60..64 / 70..75 / 80..85
+# 2026-11-05 07:16: 0 / 3 / 5 -> 0 / 1 / 2 (same kinds). Applied last, on the K9StopModeVer 10 numbering.
+MOVE_V11 = {0: 0, 1: 0, 2: 0, 3: 1, 4: 0, 5: 2}  # from K9StopModeVer 10: 3 -> 1, 5 -> 2 (same kinds); 1 / 2 / 4 acted as 0
+MOVE11_PENDING_BASE = 100  # K9StopModeVer 100 + v: the 07:16 move is pending, pre-move value v (0 <= v <= 5); apart from
+# 50..53 / 60..64 / 70..75 / 80..85 / 90..95
+# 2026-11-06 06:21: menus 3 / 4 removed. Applied to a K9StopModeVer 11 device at every start. Idempotent, so no marker.
+MERGE_V12 = {0: 0, 1: 1, 2: 2, 3: 1, 4: 2}  # on K9StopModeVer 11: 3 -> 1, 4 -> 2 (same kinds 15 / 17)
 
 
-def migrate_k9_stop_mode(params) -> bool:
+def _migrate_legacy_k9_stop_mode(params) -> bool:
   """Returns True if K9StopMode was rewritten. Never raises (manager start must not fail on a bad stored value)."""
   try:
     ver = params.get(STOP_MODE_VER_KEY)
   except Exception:
     ver = None
-  if ver == STOP_MODE_VER:
-    return False
+  if ver == LEGACY_STOP_MODE_VER:  # on the current numbering: only the 2026-11-06 fold of 3 / 4 (a082dc0d) into 1 / 2
+    return _merge12(params)
   changed = False
   is_int = isinstance(ver, int) and not isinstance(ver, bool)
   swap_pending = is_int and SWAP_PENDING_BASE <= ver <= SWAP_PENDING_BASE + 3
   from_v6 = ver == 6  # only a marker-6 device ever had 4 as a menu value; ver is rewritten below
   move_pending = is_int and MOVE_PENDING_BASE <= ver <= MOVE_PENDING_BASE + 4
+  if is_int and MOVE11_PENDING_BASE <= ver <= MOVE11_PENDING_BASE + 5:  # only the 2026-11-05 07:16 move is left
+    return _finish_move11(params, ver, changed)
+  if ver == 10:  # already on the 2026-11-03 17:10 numbering: only the 07:16 move
+    return _mark_done11(params, changed)
+  if is_int and MOVE10_PENDING_BASE <= ver <= MOVE10_PENDING_BASE + 5:  # only the 2026-11-03 17:10 move is left
+    return _finish_move10(params, ver, changed)
+  if ver == 9:  # already on the 2026-11-03 06:08 numbering: only the 17:10 move
+    return _mark_done10(params, changed)
   if is_int and MOVE9_PENDING_BASE <= ver <= MOVE9_PENDING_BASE + 5:  # only the 2026-11-03 move is left
     return _finish_move9(params, ver, changed)
   if ver == 8:  # already on the 2026-10-30 numbering: only the 2026-11-03 move
@@ -193,7 +241,7 @@ def migrate_k9_stop_mode(params) -> bool:
 
 
 def _finish_move(params, ver, changed: bool) -> bool:
-  """Apply MOVE_V7 to the pre-move value recorded in the marker, then write STOP_MODE_VER. Never raises."""
+  """Apply MOVE_V7 to the pre-move value recorded in the marker, then write LEGACY_STOP_MODE_VER. Never raises."""
   old = ver - MOVE_PENDING_BASE
   new = MOVE_V7[old]
   if new != old:
@@ -235,18 +283,14 @@ def _finish_move8(params, ver, changed: bool) -> bool:
 
 
 def _mark_done9(params, changed: bool) -> bool:
-  """The value is on the K9StopModeVer 8 numbering: apply MOVE_V9 (pre-move value into the marker first), then write
-  STOP_MODE_VER. Never raises."""
+  """The value is on the K9StopModeVer 8 numbering: apply MOVE_V9 (pre-move value into the marker first), then
+  _mark_done10. Never raises."""
   try:
     cur = params.get(STOP_MODE_KEY)
   except Exception:
     cur = None  # unreadable: left as stored (acts as 0)
   if not (isinstance(cur, int) and not isinstance(cur, bool) and cur in MOVE_V9):
-    try:
-      params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)  # outside the table: it acted as 0 and still acts as 0
-    except Exception:
-      pass
-    return changed
+    return _mark_done10(params, changed)  # outside the table: it acted as 0 and still acts as 0
   try:
     params.put_int(STOP_MODE_VER_KEY, MOVE9_PENDING_BASE + cur)  # record the pre-move value before moving
   except Exception:
@@ -255,7 +299,7 @@ def _mark_done9(params, changed: bool) -> bool:
 
 
 def _finish_move9(params, ver, changed: bool) -> bool:
-  """Apply MOVE_V9 to the pre-move value recorded in the marker, then write STOP_MODE_VER. Never raises."""
+  """Apply MOVE_V9 to the pre-move value recorded in the marker, then _mark_done10. Never raises."""
   old = ver - MOVE9_PENDING_BASE
   new = MOVE_V9[old]
   if new != old:
@@ -264,7 +308,112 @@ def _finish_move9(params, ver, changed: bool) -> bool:
       changed = True
     except Exception:
       return changed  # the marker still says "move pending": the next start finishes it
+  return _mark_done10(params, changed)
+
+
+def _mark_done10(params, changed: bool) -> bool:
+  """The value is on the K9StopModeVer 9 numbering: apply MOVE_V10 (pre-move value into the marker first), then
+  _mark_done11. Never raises."""
   try:
+    cur = params.get(STOP_MODE_KEY)
+  except Exception:
+    cur = None  # unreadable: left as stored (acts as 0)
+  if not (isinstance(cur, int) and not isinstance(cur, bool) and cur in MOVE_V10):
+    return _mark_done11(params, changed)  # outside the table: it acted as 0 and still acts as 0
+  try:
+    params.put_int(STOP_MODE_VER_KEY, MOVE10_PENDING_BASE + cur)  # record the pre-move value before moving
+  except Exception:
+    return changed  # marker not written: the next start redoes the same steps from the stored value
+  return _finish_move10(params, MOVE10_PENDING_BASE + cur, changed)
+
+
+def _finish_move10(params, ver, changed: bool) -> bool:
+  """Apply MOVE_V10 to the pre-move value recorded in the marker, then _mark_done11. Never raises."""
+  old = ver - MOVE10_PENDING_BASE
+  new = MOVE_V10[old]
+  if new != old:
+    try:
+      params.put_int(STOP_MODE_KEY, new)
+      changed = True
+    except Exception:
+      return changed  # the marker still says "move pending": the next start finishes it
+  return _mark_done11(params, changed)
+
+
+def _mark_done11(params, changed: bool) -> bool:
+  """The value is on the K9StopModeVer 10 numbering: apply MOVE_V11 (pre-move value into the marker first), then write
+  LEGACY_STOP_MODE_VER. Never raises."""
+  try:
+    cur = params.get(STOP_MODE_KEY)
+  except Exception:
+    cur = None  # unreadable: left as stored (acts as 0)
+  if not (isinstance(cur, int) and not isinstance(cur, bool) and cur in MOVE_V11):
+    try:
+      params.put_int(STOP_MODE_VER_KEY, LEGACY_STOP_MODE_VER)  # outside the table: it acted as 0 and still acts as 0
+    except Exception:
+      pass
+    return changed
+  try:
+    params.put_int(STOP_MODE_VER_KEY, MOVE11_PENDING_BASE + cur)  # record the pre-move value before moving
+  except Exception:
+    return changed  # marker not written: the next start redoes the same steps from the stored value
+  return _finish_move11(params, MOVE11_PENDING_BASE + cur, changed)
+
+
+def _finish_move11(params, ver, changed: bool) -> bool:
+  """Apply MOVE_V11 to the pre-move value recorded in the marker, then write LEGACY_STOP_MODE_VER. Never raises."""
+  old = ver - MOVE11_PENDING_BASE
+  new = MOVE_V11[old]
+  if new != old:
+    try:
+      params.put_int(STOP_MODE_KEY, new)
+      changed = True
+    except Exception:
+      return changed  # the marker still says "move pending": the next start finishes it
+  try:
+    params.put_int(STOP_MODE_VER_KEY, LEGACY_STOP_MODE_VER)
+  except Exception:
+    pass
+  return changed
+
+
+def _merge12(params) -> bool:
+  """The value is on the K9StopModeVer 11 numbering: apply MERGE_V12 (idempotent, no marker). Never raises."""
+  try:
+    cur = params.get(STOP_MODE_KEY)
+  except Exception:
+    return False  # unreadable: left as stored (acts as 0)
+  if not (isinstance(cur, int) and not isinstance(cur, bool) and cur in MERGE_V12 and MERGE_V12[cur] != cur):
+    return False
+  try:
+    params.put_int(STOP_MODE_KEY, MERGE_V12[cur])
+  except Exception:
+    return False  # not written: the next start applies the same table again
+  return True
+
+
+STOP_MODE_VER = 12  # menu 3 now means half-gap, not the retired -1.00 stopping-accel variant
+
+def migrate_k9_stop_mode(params) -> bool:
+  """Finish historical migrations before enabling the newly selectable mode 3.
+
+  Write version 12 only after old 3/4 have folded into 1/2. Interrupted writes
+  retry idempotently; version-12 selections (including new 3) remain untouched.
+  """
+  try:
+    ver = params.get(STOP_MODE_VER_KEY)
+  except Exception:
+    return False
+  if ver == STOP_MODE_VER:
+    return False
+  changed = _migrate_legacy_k9_stop_mode(params)
+  try:
+    if params.get(STOP_MODE_VER_KEY) != LEGACY_STOP_MODE_VER:
+      return changed
+    changed = _merge12(params) or changed
+    cur = params.get(STOP_MODE_KEY)
+    if isinstance(cur, int) and not isinstance(cur, bool) and cur in (3, 4):
+      return changed  # value write failed; never activate half-gap from an old selection
     params.put_int(STOP_MODE_VER_KEY, STOP_MODE_VER)
   except Exception:
     pass

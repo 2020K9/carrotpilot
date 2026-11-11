@@ -240,6 +240,14 @@ def torque_learn_text(perc: int | None) -> str | None:
     return None if perc >= 100 else f"토크학습 {perc}%"
 
 
+def learned_steer_ratio_text(steer_ratio: float | None, delay_s: float | None = None) -> str:
+    """HUD line 5 (대감님 2026-11-11 17:44/18:32): '학습 조향비 13.42  학습지연 0.24초'
+    = liveParameters.steerRatio + liveDelay lateralDelay (same value as line 2), -- unknown."""
+    sr = "--" if steer_ratio is None else f"{steer_ratio:.2f}"
+    dl = "--" if delay_s is None else f"{delay_s:.2f}초"
+    return f"학습 조향비 {sr}  학습지연 {dl}"
+
+
 LANE_P_MIN = 0.6
 LANE_STD_MAX = 0.2
 LANE_W_MIN, LANE_W_MAX = 2.6, 4.4

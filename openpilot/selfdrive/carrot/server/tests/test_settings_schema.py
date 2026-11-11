@@ -13,6 +13,7 @@ import pytest
 from openpilot.selfdrive.carrot.server.services.settings import (
   build_menu_categories,
   current_vehicle_brand,
+  current_vehicle_settings_context,
   filter_settings_catalog_for_brand,
   group_index,
   with_vehicle_gap_limits,
@@ -253,6 +254,89 @@ def test_vehicle_brand_does_not_hide_settings_for_other_car_name():
       return {"CarParamsPersistent": None, "CarName": "TOYOTA_RAV4"}.get(name)
 
   assert current_vehicle_brand(FakeParams()) == ""
+
+
+@pytest.mark.parametrize("fingerprint,pedal,longitudinal,expected", [
+  ("KIA_RAY_EV", True, True, True),
+  ("KIA_RAY_EV", False, True, False),
+  ("KIA_RAY_EV", True, False, False),
+  ("HYUNDAI_CASPER_EV", True, True, False),
+])
+def test_ray_pedal_catalog_uses_identified_capability(settings, fingerprint, pedal, longitudinal, expected):
+  from openpilot.cereal import car
+  from opendbc.car.hyundai.values import HyundaiFlags
+  cp = car.CarParams.new_message(brand="hyundai", carFingerprint=fingerprint,
+                                openpilotLongitudinalControl=longitudinal)
+  cp.flags = int(HyundaiFlags.CC_ONLY_CAR | (HyundaiFlags.PEDAL_INTERCEPTOR if pedal else 0))
+  class FakeParams:
+    def get(self, name):
+      return {"CarParamsPersistent": cp.to_bytes(), "CarName": fingerprint,
+              "CommaPedalEnabled": b"1"}.get(name)
+  brand, active_pedal = current_vehicle_settings_context(FakeParams())
+  assert (brand, active_pedal) == ("hyundai", expected)
+  groups, by_name, groups_list = group_index(settings)
+  categories = build_menu_categories(settings, by_name)
+  filtered, counts, menu, hidden = filter_settings_catalog_for_brand(
+    groups, groups_list, categories, brand, ray_pedal_control=active_pedal)
+  tuning = {"LongTuningKpV", "LongTuningKiV", "LongTuningKf"}
+  visible = {item["name"] for items in filtered.values() for item in items}
+  menu_names = {name for category in menu for group in category["groups"]
+                for section in group["sections"] for name in section["items"]}
+  assert (tuning <= visible) == expected
+  assert (tuning <= menu_names) == expected
+  assert tuning <= {item["name"] for items in groups.values() for item in items}
+  assert all(group["count"] == sum(not item.get("detail_parent") and not item.get("search_only")
+                                  for item in filtered[group["group"]]) for group in counts)
+  assert hidden == (set() if expected else tuning)
+
+
+@pytest.mark.parametrize("car_params", [None, b"invalid"])
+def test_pending_pedal_toggle_alone_keeps_fixed_brand_catalog(car_params):
+  class FakeParams:
+    def get(self, name):
+      return {"CarParamsPersistent": car_params, "CarName": "KIA_RAY_EV", "CommaPedalEnabled": b"1"}.get(name)
+  assert current_vehicle_settings_context(FakeParams()) == ("hyundai", False)
+
+
+def test_settings_catalog_and_snapshot_follow_ray_capability_changes(monkeypatch, settings):
+  import importlib.util
+  import sys
+  import types
+  # Load the real settings feature independently of unrelated device/IPC routes.
+  package = "openpilot.selfdrive.carrot.server.features"
+  directory = Path(__file__).resolve().parents[1] / "features"
+  namespace = types.ModuleType(package)
+  namespace.__path__ = [str(directory)]
+  monkeypatch.setitem(sys.modules, package, namespace)
+  spec = importlib.util.spec_from_file_location(package + ".settings", directory / "settings.py")
+  feature = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(feature)
+  groups, by_name, groups_list = group_index(settings)
+  parts = settings, groups, by_name, groups_list
+  monkeypatch.setattr(feature, "get_settings_cached", lambda: parts)
+  monkeypatch.setitem(feature.settings_cache, "categories", build_menu_categories(settings, by_name))
+  monkeypatch.setattr(feature, "HAS_PARAMS", False)
+  for name, result in (
+    ("get_ssh_key_status", {}), ("read_setting_favorites", {"favorites": ["LongTuningKiV"]}),
+    ("read_setting_profiles", {}), ("read_popular_values_memory", {}), ("read_setting_unit_index", {}),
+    ("get_device_network_snapshot", {}), ("get_device_setting_group_names", []),
+  ):
+    monkeypatch.setattr(feature, name, lambda result=result: result)
+  monkeypatch.setattr(feature, "get_device_setting_values", lambda status: {})
+  monkeypatch.setattr(feature, "observe_param_values", lambda values: None)
+  monkeypatch.setattr(feature, "get_param_values", lambda names, defaults: {
+    name: 50 if name == "LongTuningKiV" else defaults[name] for name in names})
+  tuning = {"LongTuningKpV", "LongTuningKiV", "LongTuningKf"}
+  for active in (True, False, True):
+    monkeypatch.setattr(feature, "current_vehicle_settings_context", lambda active=active: ("hyundai", active))
+    catalog = feature._settings_catalog_payload()
+    snapshot = feature._settings_snapshot_payload()
+    visible = {item["name"] for items in catalog["items_by_group"].values() for item in items}
+    assert (tuning <= visible) == active
+    assert (tuning <= snapshot["values"].keys()) == active
+    assert snapshot["favorites"] == (["LongTuningKiV"] if active else [])
+    if active:
+      assert snapshot["values"]["LongTuningKiV"] == 50
 
 
 def test_c3x_lite_hardware_setting_is_exposed(settings, params):
@@ -603,9 +687,15 @@ def test_declared_numeric_bounds_stay_intact(params):
   assert by_name["TFollowDecelBoost"]["unit"] == 10
 
 
-def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
+def test_k9_stop_mode_is_one_click_select_with_four_choices(settings, params):
   stop = next(p for p in params if p["name"] == "K9StopMode")
-  assert (stop["min"], stop["max"], stop["default"], stop["unit"]) == (0, 3, 0, 1)
+  # 2026-11-03 17:10 (대감님 "0.3번5번만 남겨두고 삭제"): max 5 with only 0 / 3 / 5 selectable (choices); 1 / 2 / 4 keep
+  # a label only so the labels stay indexed from min, the web list and the server clamp offer / store 0 / 3 / 5 only
+  # 2026-11-05 07:16 (대감님 "0.3.5 ... 0.1.2로 바꿔"): number pins only, 0 / 1 / 2 = the old 0 / 3 / 5
+  assert (stop["min"], stop["max"], stop["default"], stop["unit"]) == (0, 3, 0, 1) and stop["choices"] == [0, 1, 2, 3]
+  from openpilot.selfdrive.carrot.server.services.params import clamp_numeric
+  assert clamp_numeric(1, stop) == 1 and clamp_numeric(2, stop) == 2 and clamp_numeric(0, stop) == 0
+  assert clamp_numeric(3, stop) == 3 and clamp_numeric(9, stop) == 3 and clamp_numeric(-2, stop) == 0
   assert stop["control"] == "select" and stop["title"] == "K9 정차 방식 선택 (실험)"
   # history of this pin: 2026-10-23..24 the 0-6 menu and the 0-3 menu (v10 / v10 + light / v11), web text short since
   # 2026-10-24 (보노보노 "웹설명 너무길게말고 짧고 간단하게"; details only in docs/user/{ko,en}/settings.md, docs/k9_menus_zh.md).
@@ -628,27 +718,29 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   # 5 = 격차수정 + harder below 1 km/h (kind 17); max 5, 6 labels, the "4: bono1739" ban narrowed to the old 4 label
   # 2026-11-03 (대감님 06:08 "2번 4번 메뉴 지워"): 2 (kind 16) and 4 (kind 14) left the menu, 3 -> 2, 5 -> 3; max 3, 4 labels,
   # "3" allowed only as the new 3 label, the old 2 / 4 labels banned, "4 이상" acts as 0 in the manual
-  assert stop["options"] == {"ko": ["0 기본 제동", "1 bono1739 원본2", "2 bono1739 원본2 + 선 뒤 1초 뒤 더 세게",
-                                    "3 격차수정 + 1 km/h 아래 서서히 더 잡기"],
-                             "en": ["0 Base braking", "1 bono1739 original2", "2 bono1739 original2 + harder 1 s after the stop",
-                                    "3 Gap fix + gradually harder below 1 km/h"],
-                             "zh": ["0 基本制动", "1 bono1739原版2", "2 bono1739原版2＋停后1秒起加压",
-                                    "3 差距修正＋1 km/h以下逐渐加大制动"]}
-  only_3 = {"descr": "3 격차수정", "edescr": "3 Gap fix", "cdescr": "3 差距修正"}  # the one label a "3" may appear in
+  # 2026-11-03 17:10: back to the 9df95178c numbers, 3 = 원본2 + harder after 1 s, 5 = gap fix + harder below 1 km/h
+  assert {loc: labels[:3] for loc, labels in stop["options"].items()} == {"ko": ["0 기본 제동", "1 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "2 격차수정 + 1 km/h 아래 서서히 더 잡기"],
+                             "en": ["0 Base braking", "1 bono1739 original2 + harder 1 s after the stop",
+                                    "2 Gap fix + gradually harder below 1 km/h"],
+                             "zh": ["0 基本制动", "1 bono1739原版2＋停后1秒起加压", "2 差距修正＋1 km/h以下逐渐加大制动"]}
+  assert all(len(stop["options"][loc]) == 4 and stop["options"][loc][3].startswith("3 ") for loc in ("ko", "en", "zh"))
+  only_3 = {"descr": "1 원본2", "edescr": "1 original2", "cdescr": "1 原版2"}  # 2026-11-05 07:16: no "3" label any more
   for key in ("descr", "edescr", "cdescr"):
     assert "K9StopTaper" not in stop[key] and "K9CreepMode" not in stop[key]
-    rest = stop[key].replace(only_3[key], "")
-    assert "v8" not in stop[key] and "3:" not in rest and "3：" not in rest and "3 " not in rest
+    rest = stop[key].replace(only_3[key], "").replace("0·1·2", "").replace("0, 1 and 2", "").replace("0、1、2", "")
+    assert "v8" not in stop[key] and "3:" not in rest and "3：" not in rest and rest.count("3 ") == 1
     assert "v9" not in stop[key] and "v10" not in stop[key] and "0.2" not in stop[key]
     for jargon in ("ComfortBand", "StopReq", "aReq", "m/s", "jerk", "Kalman", "래치", "latch"):
       assert jargon not in stop[key], (key, jargon)
   assert len(stop["descr"]) <= 300 and len(stop["cdescr"]) <= 300 and len(stop["edescr"]) <= 600
-  for label in ("0 기본", "1 bono1739 원본2", "2 원본2", "3 격차수정"):
+  for label in ("0 기본", "1 원본2", "2 격차수정", "3 격차 반만", "50%"):
     assert label in stop["descr"], label
-  for label in ("0 Base", "1 bono1739 original2", "2 original2", "3 Gap fix"):
+  for label in ("0 Base", "1 original2", "2 Gap fix", "3 Half gap", "50%"):
     assert label in stop["edescr"], label
-  for label in ("0 基本", "1 bono1739原版2", "2 原版2", "3 差距修正"):
+  for label in ("0 基本", "1 原版2", "2 差距修正", "3 半差距", "50%"):
     assert label in stop["cdescr"], label
+  for key, gone in (("descr", "1 bono1739"), ("edescr", "1 bono1739"), ("cdescr", "1 bono1739")):
+    assert gone not in stop[key], (key, gone)  # kind 13 left the menu 2026-11-03 17:10
   for key, gone in (("descr", "v12 원본"), ("edescr", "v12 original"), ("cdescr", "v12原版")):
     assert gone not in stop[key], (key, gone)  # the v12 original left the menu 2026-10-29 05:40
   for key in ("descr", "edescr", "cdescr"):
@@ -661,16 +753,18 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   doc_en = (SETTINGS_PATH.parents[2] / "docs" / "user" / "en" / "settings.md").read_text(encoding="utf-8")
   row_ko = next(line for line in doc_ko.splitlines() if "| `K9StopMode` |" in line)
   row_en = next(line for line in doc_en.splitlines() if "| `K9StopMode` |" in line)
-  assert "0: 기본 제동" in row_ko and "1: bono1739 원본2" in row_ko
-  assert "3: 격차수정 + 1 km/h 아래 서서히 더 잡기" in row_ko
-  assert "바탕 v12k9" in row_ko and "2: bono1739 원본2 + 선 뒤 1초 뒤 더 세게" in row_ko
-  assert "0: base braking" in row_en and "1: bono1739 original2" in row_en
-  assert "3: gap fix + gradually harder below 1 km/h" in row_en
-  assert "Base v12k9" in row_en and "2: bono1739 original2 + harder 1 s after the stop" in row_en
-  for gone in ("2: 격차수정 |", "4: bono1739 끝 구간 개선", "5: 격차수정"):  # 2026-11-03
+  # 2026-11-03 17:10: 0 / 3 / 5 with the 9df95178c numbers; kind 13 (bono1739 원본2) is "옛 1", off the menu
+  assert "0: 기본 제동" in row_ko and "옛 1(2026-11-03 17:10 메뉴에서 빠짐, 3·5의 바탕): bono1739 원본2" in row_ko
+  assert "2: 격차수정 + 1 km/h 아래 서서히 더 잡기" in row_ko and "0·1·2 중 하나" in row_ko  # 2026-11-05 07:16 numbers
+  assert "바탕 v12k9" in row_ko and "1: bono1739 원본2 + 선 뒤 1초 뒤 더 세게" in row_ko
+  assert "0: base braking" in row_en and "Old 1 (off the menu since 2026-11-03 17:10, the base of 3 and 5): bono1739 original2" in row_en
+  assert "2: gap fix + gradually harder below 1 km/h" in row_en and "choice of 0, 1 or 2" in row_en
+  assert "Base v12k9" in row_en and "1: bono1739 original2 + harder 1 s after the stop" in row_en
+  for gone in ("1: bono1739 원본2 |", "2: bono1739 원본2", "2: 격차수정 |", "3: 격차수정", "4: bono1739 끝 구간 개선"):  # 2026-11-03
     assert gone not in row_ko, gone
-  for gone in ("4: bono1739 end window improved", "5: gap fix"):
+  for gone in ("1: bono1739 original2 |", "2: bono1739 original2", "3: gap fix", "4: bono1739 end window improved"):
     assert gone not in row_en, gone
+  assert "K9StopModeVer 11" in row_ko and "K9StopModeVer 11" in row_en
   # 2026-10-27 evening / 2026-10-28 / 05:40 / 07:10 (the v14 original left the menu and 4 moved into its slot); 2026-10-30:
   # 4 is the end-window improvement (kind 14) again, so only the old 4 label "4: bono1739 원본2" stays banned
   for gone in ("3: v13 원본", "4: C1", "5: C1+", "1: v12 원본", "2: v12 원본", "3: v14 원본", "4: bono1739 원본2"):
@@ -685,12 +779,16 @@ def test_k9_stop_mode_is_one_click_select_with_three_choices(settings, params):
   assert "K9StopModeVer 3" in row_ko and "K9StopModeVer 3" in row_en
   assert "일반 CAN(CAN-FD 아님) 카메라 SCC" in row_ko and "non-CAN-FD camera-SCC" in row_en
   assert "즉시 원래 명령" in row_ko and "returns the original command at once" in row_en
-  assert "4 이상" in row_ko and "(4 or more, negative)" in row_en  # 6+ 2026-10-30..11-03, 4+ until 2026-10-30, 5 or more between 2026-10-29 05:40 and 07:10
+  # 1 / 2 / 4 / 6+ since 2026-11-03 17:10, 4+ 06:08..17:10, 6+ 2026-10-30..11-03, 4+ until 2026-10-30,
+  # 5 or more between 2026-10-29 05:40 and 07:10
+  assert "3·4·5, 6 이상" in row_ko and "(3, 4, 5, 6 or more, negative)" in row_en  # 2026-11-05 07:16
   assert "0에서 시작" in row_ko and "starts at 0" in row_en
   assert "changelog.html" in row_ko and "changelog.html" in row_en
   zh = (SETTINGS_PATH.parents[2] / "docs" / "k9_menus_zh.md").read_text(encoding="utf-8")
-  assert "1：bono1739原版2" in zh and "2：bono1739原版2＋停后1秒起加压" in zh and "3：差距修正＋1 km/h以下逐渐加大制动" in zh
-  assert "4：bono1739末段改良" not in zh and "5：差距修正" not in zh  # removed 2026-11-03
+  # 2026-11-03 17:10: 0 / 3 / 5 (the 9df95178c numbers), kind 13 is "原1" off the menu
+  assert "原1（2026-11-03 17:10移出菜单，3·5的基础）：bono1739原版2" in zh and "1：bono1739原版2＋停后1秒起加压" in zh
+  assert "2：差距修正＋1 km/h以下逐渐加大制动" in zh and "K9StopModeVer 11" in zh  # 2026-11-05 07:16 numbers
+  assert "4：bono1739末段改良" not in zh and zh.count("1：bono1739原版2") == zh.count("1：bono1739原版2＋停后1秒起加压") and "2：bono1739原版2" not in zh
   assert "基础v12k9" in zh and "尚未经实车确认" in zh and "原1·2·3→2（v12k9）" in zh
   assert "3：v13原版" not in zh and "4：C1" not in zh and "5：C1+" not in zh  # removed 2026-10-28
   assert "1：v12原版" not in zh and "2：v12原版" not in zh  # the v12 original left the menu 2026-10-29 05:40

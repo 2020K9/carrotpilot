@@ -594,6 +594,10 @@ class OpenpilotLiveSource:
         except Exception:
             t_af_learned, t_fr_learned = None, None
         try:
+            learned_sr = self._live_learned_steer_ratio()
+        except Exception:
+            learned_sr = None
+        try:
             k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = self._live_lane_values(now)
         except Exception:
             k9_lane_offset, k9_lane_state, k9_lane_accel, k9_gap_l, k9_gap_r = None, None, None, None, None
@@ -630,6 +634,7 @@ class OpenpilotLiveSource:
             torque_learn_friction=t_fr,
             torque_filtered_lat_accel_factor=t_af_learned,
             torque_filtered_friction=t_fr_learned,
+            learned_steer_ratio=learned_sr,
             k9_lane_offset_m=k9_lane_offset,
             k9_lane_state=k9_lane_state,
             k9_lane_accel=k9_lane_accel,
@@ -685,6 +690,11 @@ class OpenpilotLiveSource:
         """학습 line: liveTorqueParameters Filtered as torqued publishes it, whatever LateralTorqueCustom is (display only)."""
         live_torque = self._service_data("liveTorqueParameters") if self._service_alive("liveTorqueParameters") else None
         return learned_torque_filtered(live_torque)
+
+    def _live_learned_steer_ratio(self) -> float | None:
+        """학습 조향비 line: liveParameters.steerRatio (display only)."""
+        live_parameters = self._service_data("liveParameters") if self._service_alive("liveParameters") else None
+        return safe_optional_float(live_parameters, "steerRatio") if live_parameters is not None else None
 
     def _live_lat_values(self, now: float) -> tuple[float | None, float | None]:
         """SR / SAD for the text above the TPMS car (display only, see cluster_lat_values)."""

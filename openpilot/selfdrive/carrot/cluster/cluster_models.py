@@ -397,6 +397,7 @@ class ClusterUiState:
     surround_view_active: bool
     lanes: tuple[LaneMarking, ...]
     onroad: bool = False
+    car_fingerprint: str = ""
     active_lane_line: bool | None = None
     camera_view_mode: int = 0
     extra_left_lane_visible: bool = False
@@ -539,6 +540,8 @@ class ClusterUiState:
     # 2026-10-30: liveTorqueParameters Filtered (what torqued learned), shown above the applied values
     torque_filtered_lat_accel_factor: float | None = None
     torque_filtered_friction: float | None = None
+    # 2026-11-11: liveParameters.steerRatio (learned steer ratio), HUD line 5
+    learned_steer_ratio: float | None = None
     # K9LaneAssist line above SR / SAD (cluster_lat_values.lane_values_text): lane-centre offset [m]
     # (+ right, None = '--'), controlsState.k9LaneState (None = unknown) and k9LaneAccel [m/s^2].
     k9_lane_offset_m: float | None = None

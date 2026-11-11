@@ -1078,6 +1078,12 @@ def bosch_mrrevo14f_bus(candidate, flags: int, fingerprint: dict, buses) -> int 
 
 DBC = CAR.create_dbc_map()
 
+# This fork removed the Ray pedal interceptor (0bc09563); upstream callers keep
+# working with the pedal path disabled.
+def is_ray_pedal_control(CP) -> bool:
+  return False
+
+
 if __name__ == "__main__":
   cars = []
   for platform in CAR:

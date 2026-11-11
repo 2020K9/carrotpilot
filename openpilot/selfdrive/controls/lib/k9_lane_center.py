@@ -36,13 +36,13 @@ from openpilot.selfdrive.controls.lib.k9_lane import K9_LANE_PARAM, k9_lane_gain
 
 K9_LANE_CENTER_PARAM = K9_LANE_PARAM   # was "K9LaneCenter" (migrated by k9_lane.migrate_k9_lane)
 DT = 0.01                    # controlsd tick
-P_ON, P_OFF, STD_MAX = 0.7, 0.6, 0.2
+P_ON, P_OFF, STD_MAX = 0.7, 0.6, 0.3
 W_MIN, W_MAX = 2.6, 4.2      # plausible lane width [m]; 2.6 admits confident narrow urban lanes (same as k9_one_lane_hold)
 W_JUMP, W_AHEAD = 0.3, 0.4   # width step vs filtered / width change 0 -> X_FAR m (merge, split)
 W_RATE = 0.15                # filtered |d width / dt| above = a line is moving (merge, split, branch) [m/s]
 X_FAR = 30.0
 LINE_JUMP, JIT_MAX = 0.3, 0.06
-BOTH_T = 1.0
+BOTH_T = 0.5                 # was 1.0 (11/03: centre push started late on the 11/03 morning log)
 V_MIN, V_FULL = 0.28, 1.4    # m/s (1 -> 5 km/h) push fade-in (was 3.0 -> 5.0, 11 -> 18 km/h)
 V_I0, V_I1 = 3.0, 5.0        # m/s (11 -> 18 km/h): the slow integral learns only above this (speed weight as before)
 K_MAX = 2.0e-3               # |push| cap [1/m] (~4.6 deg steering wheel at L 3.105 m, SR 12.9); binds only below ~36 km/h
@@ -59,7 +59,7 @@ ZETA, KI, I_MAX = 0.9, 0.05, 0.25
 I_RATE = 0.05                # the integral only learns while the car is quasi-steady (|d offset/dt| below) [m/s]
 TAU_LEAK = 30.0              # integral leak while holding [s]: it represents a slow bias, not a transient swing
 A_MAX, J_MAX = 0.20, 0.15
-RAMP_T, RAMP_OUT = 1.0, 1.0
+RAMP_T, RAMP_OUT = 1.0, 0.3  # RAMP_OUT was 1.0: with BOTH_T 0.5 the push left after the lines dropped out lasted too long
 TAU_E, TAU_RATE, TAU_W, TAU_I = 0.5, 0.3, 1.0, 5.0
 TAU_WR = 1.0                 # width-rate filter [s] (20 Hz width noise ~2 cm/frame)
 STALE_T = 0.3
@@ -90,6 +90,7 @@ class LaneCenter:
     self.y0 = [None, None]
     self.ydot = [0.0, 0.0]
     self.jit = [0.0, 0.0]
+    self.e_last = 0.0            # offset of the latest good model frame (unfiltered)
     self.e_f = None              # filtered offset of the car from the lane centre (right +) [m]
     self.u_f = 0.0               # filtered d e / dt [m/s]
     self.w_f = None
@@ -148,6 +149,7 @@ class LaneCenter:
       self.meas_ok = False; self.both_t = 0.0; self.e_f = None; self.u_f = 0.0
       return
     self.w_f = _lpf(self.w_f, w0, dt, TAU_W)
+    self.e_last = e
     e_prev = self.e_f
     self.e_f = _lpf(self.e_f, e, dt, TAU_E)
     if e_prev is not None and dt > 0.0:
@@ -171,7 +173,10 @@ class LaneCenter:
           self.e_f is not None and abs(model_curv) < K_TURN and gate > 0.0)
     if ok:
       e = self.e_f - self.off if self.off != 0.0 else self.e_f    # PathOffset: offset from the hold target (right +)
-      s = float(np.sign(e)) * max(abs(e) - DB, 0.0)
+      # push size from the smaller of filtered / latest offset, none when they are on opposite sides: the 0.5 s filter lags
+      # when the car moves back over the centre and would otherwise keep pushing it past (1fb--10 t 42.7 s)
+      el = self.e_last - self.off if self.off != 0.0 else self.e_last
+      s = float(np.sign(e)) * max(min(abs(e), abs(el)) - DB, 0.0) if el * e > 0.0 else 0.0
       s = float(np.clip(s, -S_MAX, S_MAX))
       if abs(self.u_f) < I_RATE and v > V_I0:
         g_i = float(np.clip((v - V_I0) / (V_I1 - V_I0), 0.0, 1.0)) * float(np.clip((A_TURN1 - alat) / (A_TURN1 - A_TURN0), 0.0, 1.0))
@@ -191,6 +196,8 @@ class LaneCenter:
         # line-estimate noise in u is not amplified by 1 / v near standstill
         k_c = float(np.interp(v, K_C_BP, K_C_V))
         self.k_raw = -(k_c * (s + self.integ) + 2.0 * ZETA * np.sqrt(k_c) * u / V_D)
+      if self.k_raw * e > 0.0:     # the smaller offset above can leave the damping term alone: it may brake, never push away
+        self.k_raw = 0.0
       if self.gain != 1.0:
         self.k_raw *= self.gain    # K9LaneCenterGain (caps / rate limits unchanged)
       self.w = min(self.w + DT / RAMP_T, 1.0)
