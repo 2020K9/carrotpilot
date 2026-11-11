@@ -2432,15 +2432,19 @@ class ClusterUiRenderer:
             # 대감님 11/11 22:39 "그림자는왜빼ㅁ?": the 22:07 strip (7 px, fading straight to 0) was hidden under the photo
             # and too faint to see; keep its shape (darkest at the tyres, 35 % under the front bumper) but darker,
             # deeper below the outline and holding its darkness for the first part before it fades
-            a = min(255.0, 215 + 40 * near) * (1.0 if px >= fx - 45 else 0.35)
+            # 대감님 11/11 22:48 "여전히 안 보여 차가 떠 보인다": the mock-up is the reference = solid black right under
+            # the whole bottom (front bumper too, no 35 % cut), tyres the blackest, soft fade outwards; the two ends
+            # of the outline taper in x so there is no hard vertical edge
+            end = min(1.0, (px - prof[0][0]) / 18.0, (prof[-1][0] - px) / 18.0)
+            a = 255.0 * max(0.0, end)
             strip.append((left + px * scale, top + (py - 3) * scale,
-                          top + (max(py, ground) + 22.0 + 10.0 * near) * scale, a))
+                          top + (max(py, ground) + 34.0 + 12.0 * near) * scale, a))
         if len(strip) > 1:
             rl.rl_begin(rl.RL_TRIANGLES)
             for (x0, t0, b0, a0), (x1, t1, b1, a1) in zip(strip, strip[1:]):
-                m0, m1 = t0 + (b0 - t0) * 0.45, t1 + (b1 - t1) * 0.45  # dark core, then soft fade
-                for (ya0, aa0, ya1, aa1, yb0, ab0, yb1, ab1) in ((t0, a0, t1, a1, m0, a0 * 0.8, m1, a1 * 0.8),
-                                                                (m0, a0 * 0.8, m1, a1 * 0.8, b0, 0, b1, 0)):
+                m0, m1 = t0 + (b0 - t0) * 0.68, t1 + (b1 - t1) * 0.68  # black core, then soft fade
+                for (ya0, aa0, ya1, aa1, yb0, ab0, yb1, ab1) in ((t0, a0, t1, a1, m0, a0 * 0.92, m1, a1 * 0.92),
+                                                                (m0, a0 * 0.92, m1, a1 * 0.92, b0, 0, b1, 0)):
                     for x, y, al in ((x0, ya0, aa0), (x0, yb0, ab0), (x1, yb1, ab1),
                                      (x0, ya0, aa0), (x1, yb1, ab1), (x1, ya1, aa1)):
                         rl.rl_color4ub(0, 2, 10, int(al))
