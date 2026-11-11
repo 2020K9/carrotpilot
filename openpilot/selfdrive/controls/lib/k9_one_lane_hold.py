@@ -1,8 +1,9 @@
 """K9OneLaneHold: laneless one-lane-line gap hold (experimental menu, sim only, NOT vehicle-validated).
 
-Param K9OneLaneHold (int, default 0):
-  0 (or anything else): off - controlsd.py behaves exactly as before (this module is not called).
-  1: on. Only while controlsd follows the laneless model command (model desiredCurvature):
+Switch (2026-10-25 menu merge, see k9_lane.py): K9LaneAssist (int, default 0) - the old K9OneLaneHold menu item is gone.
+  0 (or anything else): off - controlsd.py behaves exactly as before (this module returns 0.0, no state).
+  1: on. K9LaneCenterGain % scales the push (100 = as validated) and PathOffset (cm, +-30) moves the target off the
+     lane centre (+ right); both read live with the switch (0.1 s). Only while controlsd follows the laneless model command (model desiredCurvature):
      1) While both lane lines are reliable, the gaps car edge <-> left line and car edge <-> right line are measured
         (car width K9 1.915 m, low-pass filtered). The centre target gap (lane width / 2 - half car width) and the
         minimum gap (smaller of the two filtered gaps, at least MIN_GAP_FLOOR, at most the target) are remembered.
@@ -31,10 +32,17 @@ Param K9OneLaneHold (int, default 0):
         r6: while ramping out the push only shrinks (never grows, never changes sign: r5 kept moving toward the frozen last
         target, DASH 160), and the push is scaled by the visible line probability (0 at P_OFF -> 1 at P_FULL; weak lines
         pushed the car shortly before they were lost, R20 1a3 / MERGE 167).
+        r7 (2026-10-25 lane_unify_finish): lane estimate jumping = no hold. Over the last UNST_T s, if a lane line with
+        probability >= UNST_P moved by more than UNST_M at the car (max - min of its x=0 point), or the lane width
+        (both lines >= UNST_P) did, the hold is off for UNST_HOLD (10) s after the last such frame: push target cut to 0 at
+        once (output still jerk limited) and the memory dropped (1c9 17:30:10-30: the model lane estimate swung
+        +-30 cm in 1 s and the hold pushed after it; closed-loop roll>=1.8 p95 30.4 -> 32.1 cm vs K9LaneCenter only).
 """
 import numpy as np
 
-K9_ONE_LANE_HOLD_PARAM = "K9OneLaneHold"
+from openpilot.selfdrive.controls.lib.k9_lane import K9_LANE_PARAM, k9_lane_gain, k9_lane_offset_m
+
+K9_ONE_LANE_HOLD_PARAM = K9_LANE_PARAM   # was "K9OneLaneHold" (migrated by k9_lane.migrate_k9_lane)
 DT = 0.01                    # controlsd tick
 HALF_W = 1.915 / 2.0         # Kia K9 (RJ) overall width 1,915 mm
 P_ON, P_OFF, STD_MAX = 0.6, 0.45, 0.2
@@ -67,6 +75,7 @@ ONE_GAP = 0.3               # one-line episode survives a measurement gap up to 
 BOTH_T, STALE_T = 1.0, 0.3      # both lines steady before remembering / model frame older than this = no measurement
 TAU_GAP, TAU_W, TAU_RATE = 0.5, 1.0, 0.3
 X_NEAR, X_FAR = 20.0, 30.0
+UNST_T, UNST_M, UNST_P, UNST_HOLD = 1.0, 0.3, 0.3, 10.0   # r7: lane estimate jump window [s] / range [m] / min prob / hold-off [s] (2 s still pushed 6 s after the 1c9 17:30:14 jumps)
 P_FULL, P_POW = 0.9, 2.0   # r6: push scale by the visible line probability ((p - P_OFF) / (P_FULL - P_OFF)) ** P_POW
 
 
@@ -121,6 +130,7 @@ class OneLaneHold:
     self.k_raw = 0.0
     self.k_out = 0.0
     self.active = False
+    self.close = False            # inside the remembered minimum gap this tick (k9_lane_mix: 0.6 cap)
     self.recede_t = 0.0
     self.prev = None                # previous frame (line fits, path x, path y) for the line-moved detector
     self.ib = [0.0, 0.0]            # learned innovation bias [m/s] per line
@@ -133,6 +143,12 @@ class OneLaneHold:
     self.hv = 0.0                   # r5: integral of the hold lateral accel in this episode = its own share of the lateral velocity [m/s]
     self.mk_prev = None; self.bj = 0.0      # filtered model command lateral jerk [m/s^3]
     self.pf = 1.0                   # r6: push scale from the visible line probability
+    self.gain = 1.0                 # K9LaneCenterGain / 100 (set by k9_one_lane_hold_step)
+    self.off = 0.0                  # PathOffset (+-0.30 m, + right): target position right of the lane centre
+    self.hist = []                  # r7: (t, y0 left or None, y0 right or None, width or None) over the last UNST_T s
+    self.ht = 0.0                   # r7: model frame clock [s]
+    self.unst_t = 0.0               # r7: hold-off left after the lane estimate jumped [s]
+    self.unst = False               # r7: the lane estimate jumped in this frame
 
   # ---- model frame (20 Hz) ----
   def _frame(self, md, v, dt):
@@ -154,6 +170,17 @@ class OneLaneHold:
         e_ = fits[i][0] - (float(np.polyval(self.prev[0][i], s_)) - pth)
         inn[i] = e_ if abs(e_) <= INN_JUMP else None
     self.prev = (coefs, px, py)
+    # r7: lane estimate jumping (max - min over UNST_T s of each line at the car / of the lane width) -> no hold
+    self.ht += dt
+    yl = fits[0][0] if probs[0] >= UNST_P else None; yr = fits[1][0] if probs[1] >= UNST_P else None
+    self.hist.append((self.ht, yl, yr, (yr - yl) if (yl is not None and yr is not None) else None))
+    while self.hist and self.hist[0][0] < self.ht - UNST_T - 1e-6:
+      self.hist.pop(0)
+    self.unst = False
+    for j in (1, 2, 3):
+      vals = [h[j] for h in self.hist if h[j] is not None]
+      if len(vals) >= 2 and max(vals) - min(vals) > UNST_M:
+        self.unst = True
     jump = False
     for i in (0, 1):
       y0, a = fits[i]
@@ -223,6 +250,11 @@ class OneLaneHold:
         self.rel = [False, False]; self.meas = None
       self.frame_dt = 0.0
     self.block_t = max(self.block_t - DT, 0.0)
+    if self.unst:
+      self.unst = False; self.unst_t = UNST_HOLD
+      self.w = 0.0; self.cut = True; self.mem = None; self.recede_t = 0.0   # r7: like the watch: target cut to 0 at once
+    else:
+      self.unst_t = max(self.unst_t - DT, 0.0)
     if self.moved:
       self.w = 0.0       # r4: push target cut to 0 at once (the output still moves at the jerk limit)
       self.cut = True
@@ -235,7 +267,7 @@ class OneLaneHold:
     m = self.meas if self.frame_dt <= STALE_T else None
     self.gap_t = 0.0 if m is not None else self.gap_t + DT
     self.one_t = self.one_t + DT if m is not None else (self.one_t if self.gap_t <= ONE_GAP else 0.0)
-    ok = (laneless and not lane_change and not pressed and v >= V_MIN and abs(model_curv) < K_TURN and self.block_t <= 0.0
+    ok = (laneless and not lane_change and not pressed and v >= V_MIN and abs(model_curv) < K_TURN and self.block_t <= 0.0 and self.unst_t <= 0.0
           and self.one_t >= T_PROBE and self.mem is not None and m is not None and m[3] and -0.2 <= m[1] <= self.mem["target"] + S_MAX + 0.5)
     v2 = max(v, V_MIN) ** 2
     if self.mk_prev is not None:
@@ -245,6 +277,9 @@ class OneLaneHold:
     if ok:
       i, gap, sd = m[0], m[1], m[2]
       tg, mg = self.mem["target"], self.mem["min_gap"]
+      if self.off != 0.0:          # PathOffset: left gap target + off, right gap target - off (+ = right of the centre)
+        tg = tg + self.off if i == 0 else tg - self.off
+        mg = min(mg, max(tg, MIN_GAP_FLOOR))
       s = (tg - gap) if i == 0 else (gap - tg)
       pushing = (self.w >= 0.99 and abs(self.k_out) * v2 >= 0.4 * A_MAX and self.k_out * s > 0.0 and s * sd > 0.0
                  and abs(sd) > RECEDE_RATE)
@@ -264,6 +299,8 @@ class OneLaneHold:
       if u * s > 0.0:              # moving toward the target: damp only the hold's own share of that velocity
         u = float(np.sign(u)) * min(abs(u), max(self.hv * float(np.sign(u)), 0.0))
       self.k_raw = (OMEGA ** 2 * (s + self.integ) - 2.0 * ZETA * OMEGA * u) / v2
+      if self.gain != 1.0:
+        self.k_raw *= self.gain    # K9LaneCenterGain (caps / jerk limit unchanged)
       self.w = min(self.w + DT / RAMP_T, 1.0)
     else:
       self.integ *= 0.99
@@ -275,6 +312,7 @@ class OneLaneHold:
     if self.w <= 0.0 and not ok and abs(self.k_out) <= dk:
       self.k_out = 0.0; self.integ = 0.0; self.cut = False; self.hv = 0.0
       return 0.0
+    self.close = close
     amax = (A_MAX_CLOSE if close else A_MAX) / v2
     g = self.w * self.w * (3.0 - 2.0 * self.w)
     fade = 1.0
@@ -303,6 +341,8 @@ def k9_one_lane_hold_step(controls, CS, CC, model_v2, lane_change_off):
   n = getattr(controls, 'k9_olh_read_n', 0)
   if n <= 0:
     controls.k9_olh_mode = k9_one_lane_hold_mode(controls.params)
+    controls.k9_olh_gain = k9_lane_gain(controls.params) if controls.k9_olh_mode == 1 else 1.0
+    controls.k9_olh_off = k9_lane_offset_m(controls.params) if controls.k9_olh_mode == 1 else 0.0
     n = 10
   controls.k9_olh_read_n = n - 1
   if controls.k9_olh_mode != 1:
@@ -310,7 +350,12 @@ def k9_one_lane_hold_step(controls, CS, CC, model_v2, lane_change_off):
     return 0.0
   if getattr(controls, 'k9_olh', None) is None:
     controls.k9_olh = OneLaneHold()
+  controls.k9_olh.gain = getattr(controls, 'k9_olh_gain', 1.0); controls.k9_olh.off = getattr(controls, 'k9_olh_off', 0.0)
   laneless = bool(CC.latActive) and not controls.is_vw_meb and not controls.lanefull_mode_enabled
   lane_change = model_v2.meta.laneChangeState != lane_change_off or bool(CS.leftBlinker) or bool(CS.rightBlinker)
+  # 2026-10-26 conflict audit C4: a model desire (ATC turn without blinker, keep / turn desires) also turns the hold off
+  desire = getattr(model_v2.meta, 'desire', None)
+  if desire is not None and str(desire) not in ('none', '0'):
+    lane_change = True
   return controls.k9_olh.update(model_v2, float(CS.vEgo), laneless, lane_change, bool(CS.steeringPressed),
                                 float(model_v2.action.desiredCurvature))

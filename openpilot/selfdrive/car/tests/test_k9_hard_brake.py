@@ -1,7 +1,6 @@
 """K9 hard-brake ease-off (opendbc/car/hyundai/k9_hard_brake.py, 2026-10-24 evening): the module alone and through the real
 CarController against the frozen badf1ea7 controller (every K9StopMode value). Model-only harness with synthetic inputs: it
 checks the source logic and the SCC12/SCC14 encoding, not K9 vehicle behaviour (실차 미검증)."""
-import math
 import random
 
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from opendbc.can import CANParser
 from opendbc.car import DT_CTRL, structs
 from opendbc.car.hyundai import carcontroller
-from opendbc.car.hyundai import k9_creep
 from opendbc.car.hyundai import k9_hard_brake as hb
 from opendbc.car.hyundai.k9_hard_brake import K9HardBrake
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
@@ -18,7 +16,30 @@ from openpilot.selfdrive.car.tests.k9_rig import LCS, Rig, edge_sequence, gentle
 from openpilot.selfdrive.car.tests.test_k9_creep_mode import bl_stop_sequence
 
 BASE = "badf1ea7bf1e72ccb5d512bfc2aa7f0ae311e7ed"
-MENUS = (None, 0, 1, 2, 3)
+MENUS = (None, 0, 1, 2, 3, 4, 5, 6)
+# 2026-10-25 menu 0 base / 1 v12 original / 2 v12k9 (3 acts as 0): None / 0 / 3 against badf1ea7 menu 0 (unchanged base
+# braking); 1 and 2 are new stop methods, so against this tree with the hard-brake cap switched off (same inputs, same
+# checks: the ease-off changes JerkUpperLimit only and nothing outside it).
+# 2026-10-26: 3 = v13 original, a new stop method like 1 / 2 (this tree, cap off); 4 now stands for "other values act as 0".
+# 2026-10-28: 3 = v14 original instead (a stop method, this tree, cap off); 4 C1 / 5 C1+ of 2026-10-27 gone, 4 acts as 0.
+# 2026-10-29 05:40: 4 = kind 15 (a stop method, this tree, cap off) now that the v12 original left the menu, so 5 is the
+# value that stands for "other values act as 0".
+# 2026-10-29 07:10: the v14 original left the menu with its code and kind 15 moved to 3, so 1 / 2 / 3 are the stop methods
+# (this tree, cap off) and both 4 and 5 stand for "other values act as 0" (badf1ea7 menu 0).
+# 2026-10-30 (보노보노 17:29 / 17:31): 4 (kind 14, moved from 2) and 5 (kind 17) are stop methods again (this tree, cap off),
+# so 6 stands for "other values act as 0".
+BASE_MENU = {None: None, 0: 0, 6: 0}
+
+
+def base_and_new(monkeypatch, tmp_path, menu, tag):
+  kw = {} if menu is None else {"K9StopMode": menu}
+  if menu in BASE_MENU:
+    bm = BASE_MENU[menu]
+    r0 = Rig(monkeypatch, module=load_frozen_cc(BASE, tmp_path, tag), **({} if bm is None else {"K9StopMode": bm}))
+  else:
+    r0 = Rig(monkeypatch, **kw)
+    r0.cc.k9_hard_brake.jerk_u_cap = lambda: None  # the same controller without the ease-off
+  return r0, Rig(monkeypatch, **kw)
 CLOSING = (20.0, -2.0)
 
 
@@ -127,9 +148,7 @@ def decode(rig_can, addr, names):
 
 @pytest.mark.parametrize("menu", MENUS)
 def test_through_carcontroller_only_jerk_upper_changes(monkeypatch, tmp_path, menu):
-  kw = {} if menu is None else {"K9StopMode": menu}
-  base = load_frozen_cc(BASE, tmp_path, f"hb_{menu}")
-  r0, r1 = Rig(monkeypatch, module=base, **kw), Rig(monkeypatch, **kw)
+  r0, r1 = base_and_new(monkeypatch, tmp_path, menu, f"hb_{menu}")
   o0, o1 = hard_sequence(r0), hard_sequence(r1)
   assert [x[2] for x in o0] == [x[2] for x in o1]  # sent accel identical
   for f0, f1 in zip(r0.can, r1.can):
@@ -167,11 +186,8 @@ def highway_no_cap(rig):
 @pytest.mark.parametrize("seq", [mixed_sequence, edge_sequence, gentle_sequence, bl_stop_sequence, highway_no_cap])
 @pytest.mark.parametrize("menu", MENUS)
 def test_identical_to_badf1ea7_outside_the_ease_off(monkeypatch, tmp_path, seq, menu):
-  # menu 2's own stop floor (k9_creep.LIGHT_MIN_DECEL, 2026-10-24 20:26) is tested in test_k9_stop_v10_light_floor.py
-  monkeypatch.setattr(k9_creep, "LIGHT_MIN_DECEL", math.inf)
-  kw = {} if menu is None else {"K9StopMode": menu}
-  base = load_frozen_cc(BASE, tmp_path, f"nh_{menu}_{seq.__name__}")
-  r0, r1 = Rig(monkeypatch, module=base, **kw), Rig(monkeypatch, **kw)
+  # 2026-10-25: the old menu 2 stop floor (LIGHT_MIN_DECEL) was deleted with the old menu
+  r0, r1 = base_and_new(monkeypatch, tmp_path, menu, f"nh_{menu}_{seq.__name__}")
   seq(r0)
   seq(r1)
   assert r0.can == r1.can

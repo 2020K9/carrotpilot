@@ -64,10 +64,10 @@ def test_sad_fixed_or_learned():
 
 
 def test_text():
-  assert lat_values_text(12.9, 0.23) == "SR 12.90  SAD 0.23s"
-  assert lat_values_text(14.7342, 0.2871) == "SR 14.73  SAD 0.29s"
-  assert lat_values_text(None, None) == "SR -  SAD -"
-  assert lat_values_text(float("nan"), 0.2) == "SR -  SAD 0.20s"
+  assert lat_values_text(12.9, 0.23) == "조향비 12.90  지연설정 0.23초"   # 2026-10-26 Korean labels (k9-hud-ld-lt)
+  assert lat_values_text(14.7342, 0.2871) == "조향비 14.73  지연설정 0.29초"
+  assert lat_values_text(None, None) == "조향비 -  지연설정 -"
+  assert lat_values_text(float("nan"), 0.2) == "조향비 -  지연설정 0.20초"
 
 
 class _Params:
@@ -165,8 +165,10 @@ def test_line_stays_in_its_box_above_tpms():
           x0, y0, x1, y1 = box
           assert x1 <= panel_edge, (box, panel_edge)          # never into the right/left info panel
           assert y1 <= icon_top + 1, (box, icon_top)           # never on the TPMS car / badges
-          assert y0 >= (cr.TPMS_STATUS_CAR_CENTER_Y - 90.0) * sy, box
-          assert x0 >= (shift + cr.TPMS_STATUS_CENTER_X - 260.0) * sx, box
+          # 2026-10-26 (k9-hud-ld-lt): _draw_lat_values draws lines 1..3 of five (조향비 / 지연학습 / 토크학습), the top one
+          # 80 px above the old SR / SAD line, the 토크학습 line is the widest
+          assert y0 >= (cr.TPMS_STATUS_CAR_CENTER_Y - 150.0) * sy, box
+          assert x0 >= (shift + cr.TPMS_STATUS_CENTER_X - 430.0) * sx, box
           # nothing else is drawn under the line (no other text / icon there)
           under = without.crop(box).convert("L")
           bright = sum(under.histogram()[91:])
