@@ -12,6 +12,8 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.navi_speedcam import SpeedcamPolicy
 from opendbc.car.hyundai.section_average import DISTANCE_SCALE as SECTION_DISTANCE_SCALE, SectionAverage
 from opendbc.car.hyundai.steering_touch import HyundaiSteeringTouch
+from opendbc.car.hyundai.rear_gap import tbt_bsd_inputs
+from opendbc.car.hyundai.lane_line_time import lane_line_time
 from opendbc.car.hyundai.vehicle_gps import VehicleGPS, register_vehicle_gps
 from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, Buttons, CarControllerParams, CAMERA_SCC_CAR, HyundaiExtFlags, \
                                        EV_MODE_ACTIVE_VALUES, EV_MODE_STATUS_ADDR, EV_MODE_STATUS_DLC, EV_MODE_STATUS_MSG, \
@@ -354,9 +356,11 @@ class CarState(CarStateBase):
       self.manual_main_off_latched = not self.main_enabled
       print(f"main_enabled = {self.main_enabled}")
 
-    # Camera SCC reports the MAIN change after the physical button release.
-    # Do not let that stale state immediately undo an explicit manual MAIN off.
-    if self.CP.openpilotLongitudinalControl and self.MainMode_ACC and not self.manual_main_off_latched:
+    # CameraSCC MAIN can be requested automatically for cluster objects. Driver
+    # intent comes from AutoEngage initialization and the physical buttons above.
+    # Importing that OEM state would raise cruiseState.available and arm steering.
+    if (self.CP.openpilotLongitudinalControl and not self.CP.flags & HyundaiFlags.CAMERA_SCC
+        and self.MainMode_ACC and not self.manual_main_off_latched):
       self.main_enabled = True
 
   def _update_camera_scc_hint(self, cp_cam, canfd):
@@ -639,6 +643,7 @@ class CarState(CarStateBase):
       aeb_braking = cp_cruise.vl[aeb_src]["CF_VSM_DecCmdAct"] != 0 or cp_cruise.vl[aeb_src][aeb_sig] != 0
       if self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV and aeb_src == "FCA11":
         fca_fault = cp_cruise.vl["FCA11"]["FCA_Failinfo"] != 0 or cp_cruise.vl["FCA11"]["FCA_Status"] == 3
+        ret.stockSccFault = fca_fault
         if fca_fault:
           aeb_warning = False
           aeb_braking = False
@@ -1461,6 +1466,11 @@ class CarState(CarStateBase):
       ret.cruiseState.standstill = cp_cruise_info.vl["SCC_CONTROL"]["InfoDisplay"] >= 4
       ret.cruiseState.speed = cp_cruise_info.vl["SCC_CONTROL"]["VSetDis"] * speed_factor
 
+    # The optional 250m trigger uses OEM BSD independently of corner display data.
+    if self.CP.enableBsm:
+      ret.tbtRearInputsAvailable, ret.tbtRightRearBlocked = tbt_bsd_inputs(
+        self.cp_bsm, max(cp._last_update_nanos, cp_cam._last_update_nanos))
+
     speed_limit_cam = False
     corner = False
     corner_infos = [info for info in (self.adrv_0x1ea, self.ccnc_0x162) if info is not None]
@@ -1518,6 +1528,7 @@ class CarState(CarStateBase):
     ret.gearStep = cp.vl["GEAR_ALT"]["GEAR_STEP"] if self.GEAR_ALT else ret.gearStep
 
     lane_info = self.cam_0x2a4 if self.cam_0x2a4 is not None else self.cam_0x362
+    ret.laneLineInfoMonoTime = lane_line_time((self.cp_cam, self.cp_alt), lane_info)
 
     if lane_info is not None:
       left_lane_prob = lane_info["LEFT_LANE_PROB"]

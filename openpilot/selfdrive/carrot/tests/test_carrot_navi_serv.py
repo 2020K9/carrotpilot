@@ -47,6 +47,7 @@ def _serv():
   serv.carrot_navi_has_control = False
   serv.carrot_navi_road_limit_valid = False
   serv.carrot_navi_off_route = False
+  serv.carrot_navi_traffic_active = False
   serv.carrot_navi_control = None
   serv.active_count = 0
   serv.active_sdi_count = 0
@@ -258,20 +259,20 @@ def test_applies_7714_vehicle_route_traffic_and_secondary_sdi():
   assert (serv.nGoPosDist, serv.nGoPosTime) == (12500, 1320)
   assert (serv.nSdiBlockType, serv.nSdiBlockSpeed, serv.nSdiBlockDist) == (2, 40, 390)
   assert (serv.nSdiPlusType, serv.nSdiPlusDist) == (22, 93)
-  assert all(key != "TrafficLight" for key, *_ in serv.params_memory.writes)  # traffic lights are not displayed
-  writes = len(serv.params_memory.writes)
+  assert serv.params_memory.writes[-1][0] == "TrafficLight"
+  assert '"lamp": "red"' in serv.params_memory.writes[-1][1]
 
   first_gps_update = serv.last_update_gps_time_navi
   assert serv._update_carrot_navi(sm)
   assert serv.last_update_gps_time_navi == first_gps_update
-  assert len(serv.params_memory.writes) == writes
+  assert len(serv.params_memory.writes) == 2
 
   data["connected"] = False
   assert not serv._update_carrot_navi(sm)
   assert serv.last_update_gps_time_navi == 0
   assert serv.szPosRoadName == ""
   assert (serv.nGoPosDist, serv.nGoPosTime) == (0, 0)
-  assert "TrafficLight" not in serv.params_memory.removed
+  assert serv.params_memory.removed[-1] == "TrafficLight"
 
 
 @pytest.mark.parametrize("receipt_ns", (0, 9_800_000_000))

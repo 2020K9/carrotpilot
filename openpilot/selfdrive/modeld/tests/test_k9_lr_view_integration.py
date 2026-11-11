@@ -131,7 +131,7 @@ def _run_modeld(monkeypatch, n_frames, params_at, lat_active, real_model_buf=Non
   from openpilot.selfdrive.modeld.parse_model_outputs import Parser
   from openpilot.selfdrive.modeld.tests.test_k9_lr_view import OUTPUT_SLICES
 
-  store = {"K9LRView": 1, "K9OneLaneHold": 0, "VEgoStopping": 50}
+  store = {"K9LaneAssist": 1, "VEgoStopping": 50}
   store.update(params_at(0))
   fake_params = _FakeParams(store)
   monkeypatch.setattr(MD, "Params", lambda *a, **k: fake_params)
@@ -218,11 +218,12 @@ def _run_modeld(monkeypatch, n_frames, params_at, lat_active, real_model_buf=Non
 
 
 def test_modeld_main_loop_runs_k9_lr_view(monkeypatch):
-  # K9LRView 1; K9OneLaneHold 0 -> 1 at frame 31, read error at 61, 1 at 71, 2 (not 1 = off) at 85;
-  # K9LRView 1 -> 0 at frame 50 (main() re-reads it at frame 100); latActive on for frames 11..60 and 81..
+  # 2026-10-25 lane menu merge: one switch K9LaneAssist for both reads (one-lane flag every 2nd frame, tracker mode
+  # every 100th). K9LaneAssist 1 at start, 0 at frame 50, read error at 61, 1 at 71, 2 (not 1 = off) at 85;
+  # latActive on for frames 11..60 and 81..
   def params_at(f):
-    return {31: {"K9OneLaneHold": 1}, 61: {"K9OneLaneHold": ValueError("bad")}, 71: {"K9OneLaneHold": 1},
-            85: {"K9OneLaneHold": 2}, 50: {"K9LRView": 0}}.get(f, {})
+    return {50: {"K9LaneAssist": 0}, 61: {"K9LaneAssist": ValueError("bad")}, 71: {"K9LaneAssist": 1},
+            85: {"K9LaneAssist": 2}}.get(f, {})
   def lat(f):
     return 11 <= f <= 60 or f >= 81
   calls, sent = _run_modeld(monkeypatch, 104, params_at, lat)
@@ -231,9 +232,9 @@ def test_modeld_main_loop_runs_k9_lr_view(monkeypatch):
   assert [f for f, _ in sent] == list(range(1, 105))           # and every modelV2 was published
   for f, engaged, olh, mode, same, _ in calls:
     assert engaged is lat(f)                                    # engaged = this frame's carControl.latActive
-    # K9OneLaneHold read at start and on even frames (0.1 s), a read error = off
-    assert olh is (32 <= f <= 61 or 72 <= f <= 85), f
-    assert mode == (1 if f < 100 else 0), f                     # K9LRView re-read every 100 frames
+    # one-lane flag read at start and on even frames (0.1 s), a read error = off
+    assert olh is (f <= 51 or 72 <= f <= 85), f
+    assert mode == (1 if f < 100 else 0), f                     # tracker mode re-read every 100 frames (2 at 100 -> off)
     assert same is (mode == 0)                                  # 0: the model output object passes through untouched
   # with K9LRView 1 the published near lines are the tracker's, with 0 the raw model's
   for (_, _, _, _, _, y), (_, sent_y) in zip(calls, sent, strict=True):
@@ -241,7 +242,7 @@ def test_modeld_main_loop_runs_k9_lr_view(monkeypatch):
 
 
 def test_modeld_main_loop_off_publishes_the_raw_model(monkeypatch):
-  calls, sent = _run_modeld(monkeypatch, 6, lambda f: {"K9LRView": 0} if f == 0 else {}, lambda f: f % 2 == 0)
+  calls, sent = _run_modeld(monkeypatch, 6, lambda f: {"K9LaneAssist": 0} if f == 0 else {}, lambda f: f % 2 == 0)
   assert len(calls) == 6 and all(c[3] == 0 and c[4] for c in calls)
   assert [c[1] for c in calls] == [False, True, False, True, False, True]
 
@@ -272,10 +273,10 @@ def test_reads_with_the_real_params(tmp_path):
   from openpilot.selfdrive.controls.lib.k9_one_lane_hold import k9_one_lane_hold_mode
   p = Params(str(tmp_path))
   assert read_one_lane_hold(p) is False and read_mode(p) == 0           # nothing stored = off
-  for v in (0, 1, 2, -1):
-    p.put_int("K9OneLaneHold", v)
+  for v in (0, 1, 2, -1):   # 2026-10-25 lane menu merge: K9LaneAssist
+    p.put_int("K9LaneAssist", v)
     assert read_one_lane_hold(p) is (v == 1)
     assert read_one_lane_hold(p) is (k9_one_lane_hold_mode(p) == 1)      # same reading as controlsd
   for v, expect in ((0, 0), (1, 1)):
-    p.put_int("K9LRView", v)
+    p.put_int("K9LaneAssist", v)
     assert read_mode(p) == expect

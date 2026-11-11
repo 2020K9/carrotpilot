@@ -50,6 +50,7 @@ def _open(season, hour):
   r = ClusterUiRenderer(language="ko", theme_mode="dark")
   r.open(hidden=True)
   r.set_taxi_meter_enabled(True)
+  r.taxi_meter_command("start")   # meter_empty2: 빈차 has its own screen now; these check the meter card (주행)
   r.set_taxi_meter_season(season)
   p = r._taxi_meter_panel
   p._local_hour = lambda: hour

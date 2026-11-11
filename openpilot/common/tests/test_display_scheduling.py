@@ -142,3 +142,27 @@ def test_c3_checks_each_big_core_independently(fake_scheduler, monkeypatch, onli
   assert all(w == {'aff': {0, 1, 2, 3} | online, 'nice': 19, 'policy': 0} for w in f.workers.values())
   f.scheduler.update(False)
   assert all(w == {'aff': {0, 1, 2, 3}, 'nice': 0, 'policy': 0} for w in f.workers.values())
+
+
+def test_cluster_min_nice_floor_offroad_and_onroad(fake_scheduler):
+  # carrot cluster (external HUD, 보노보노 2026-10-26 18:12): never above nice CLUSTER_MIN_NICE; onroad still DISPLAY_NICE
+  f = fake_scheduler
+  f.scheduler.min_nice = ds.CLUSTER_MIN_NICE
+  f.scheduler.update(False, force=True)
+  assert all(w['nice'] == ds.CLUSTER_MIN_NICE == 10 for w in f.workers.values())
+  f.scheduler.update(True)
+  assert all(w == {'aff': {6}, 'nice': 19, 'policy': 0} for w in f.workers.values())
+  f.scheduler.update(False)
+  assert all(w == {'aff': {0, 1, 2, 3}, 'nice': 10, 'policy': 0} for w in f.workers.values())
+  assert ds.DisplayScheduler(6, enabled=False).min_nice == 0      # ui / others unchanged
+
+
+def test_cluster_processes_use_the_floor():
+  from pathlib import Path
+  root = Path(ds.__file__).resolve().parents[1] / "selfdrive" / "carrot"
+  for rel, call in (("cluster_autorun.py", 'DisplayScheduler(4, enabled=TICI, min_nice=getattr(display_scheduling, "CLUSTER_MIN_NICE", 10))'),
+                    ("cluster_run.py", "DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE)"),
+                    ("cluster/main.py", "DisplayScheduler(4, enabled=TICI, min_nice=CLUSTER_MIN_NICE)")):
+    src = (root / rel).read_text(encoding="utf-8")
+    assert call in src, rel
+    assert "DisplayScheduler(4, enabled=TICI)" not in src, rel

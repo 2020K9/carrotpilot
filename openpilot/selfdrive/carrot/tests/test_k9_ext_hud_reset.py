@@ -6,6 +6,8 @@
   still starts from the base fare, unchanged).
 - The HUD process restarting while K9ExtHud is 0 (or -1) starts with no meter; nothing is stored
   on disk, so there is nothing stale to carry over.
+meter_empty2 (보노보노 2026-10-24 21:59 "손님탐도없애"): the meter only counts after the app's 시작 (no passenger
+sensor, no onroad edge), so the rig presses 시작 where these used to rely on onroad; a reset = 빈차 (not counting).
 """
 from __future__ import annotations
 
@@ -78,6 +80,9 @@ class Rig:
       if self.renderer.taxi_meter_enabled and self.renderer._taxi_meter_panel is not None:
         self.renderer._taxi_meter_panel.update(State(speed_kph, onroad))   # = _prepare_taxi_meter_cache
 
+  def start(self):
+    self.renderer.taxi_meter_command("start")   # the app's 시작 (applied on the next update)
+
   def set(self, value):
     self.params.values["K9ExtHud"] = value
 
@@ -100,6 +105,7 @@ def _assert_counted(meter):
 @pytest.mark.parametrize("off_value", [0, -1])
 def test_1_off_1_resets_the_meter(off_value):
   rig = Rig(1)
+  rig.start()
   rig.drive(300.0)                       # 5 min at 60 km/h = 5 km
   _assert_counted(rig.meter)
   rig.set(off_value)
@@ -109,7 +115,11 @@ def test_1_off_1_resets_the_meter(off_value):
   assert rig.poll() is True
   _assert_fresh(rig.meter)               # 1 -> 0 -> 1: fare 7000, distance 0, time 0
   assert rig.renderer._taxi_meter_panel.anim.phase == 0.0
-  rig.drive(60.0)                        # counts again from the base fare
+  rig.drive(30.0)                        # meter_empty2: 빈차 after the reset - driving alone counts nothing
+  _assert_fresh(rig.meter)
+  assert rig.renderer._taxi_meter_panel.meter_state == "EMPTY"
+  rig.start()
+  rig.drive(60.0)                        # 시작: counts again from the base fare
   m = rig.meter
   assert m.distance_m == pytest.approx(60.0 / 3.6 * 59.5, rel=1e-6)   # first onroad frame starts the drive
   assert m.elapsed_s == pytest.approx(59.5)
@@ -118,6 +128,7 @@ def test_1_off_1_resets_the_meter(off_value):
 
 def test_reset_shows_base_fare_even_when_offroad():
   rig = Rig(1)
+  rig.start()
   rig.drive(300.0)
   rig.drive(5.0, onroad=False)           # parked: meter holds the last value (current design)
   _assert_counted(rig.meter)
@@ -128,12 +139,16 @@ def test_reset_shows_base_fare_even_when_offroad():
   _assert_fresh(rig.meter)
   rig.drive(10.0, onroad=False)          # still parked: stays at the base fare, no counting
   _assert_fresh(rig.meter)
-  rig.drive(10.0, speed_kph=0.0)         # drive starts (onroad), stopped: time fare from 0
+  rig.drive(10.0, speed_kph=0.0)         # meter_empty2: onroad alone starts nothing
+  _assert_fresh(rig.meter)
+  rig.start()
+  rig.drive(10.0, speed_kph=0.0)         # 시작, stopped: time fare from 0
   assert rig.meter.elapsed_s == pytest.approx(9.5) and rig.meter.fare_won == BASE_FARE
 
 
 def test_value_held_at_1_keeps_counting():
   rig = Rig(1)
+  rig.start()
   checkpoints = []
   for _ in range(10):                    # many periodic reads, value stays 1
     rig.drive(60.0)
@@ -147,12 +162,18 @@ def test_value_held_at_1_keeps_counting():
 
 
 def test_value_held_at_1_new_drive_still_starts_from_base_fare():
-  """Unchanged design: with K9ExtHud kept at 1, each drive (onroad rising edge) starts at the base fare."""
+  """With K9ExtHud kept at 1, each drive starts at the base fare. meter_empty2: a drive = the app's 시작 (the onroad
+  rising edge no longer starts one: the count goes on through it)."""
   rig = Rig(1)
+  rig.start()
   rig.drive(300.0)
   _assert_counted(rig.meter)
   rig.drive(10.0, onroad=False)
   _assert_counted(rig.meter)             # parked: last value held
+  before = rig.meter.elapsed_s
+  rig.drive(10.0)
+  assert rig.meter.elapsed_s == pytest.approx(before + 10.0)   # onroad edge: same drive
+  rig.start()
   rig.drive(10.0)
   assert rig.meter.elapsed_s == pytest.approx(9.5) and rig.meter.fare_won == BASE_FARE
 
@@ -163,6 +184,7 @@ def test_0_to_1_starts_fresh_and_hud_restart_while_0_keeps_nothing():
   rig.set(1)
   assert rig.poll() is True
   _assert_fresh(rig.meter)
+  rig.start()
   rig.drive(300.0)
   _assert_counted(rig.meter)
   rig.set(0)
@@ -181,6 +203,9 @@ def test_0_to_1_starts_fresh_and_hud_restart_while_0_keeps_nothing():
 def test_minus1_to_1_process_start_is_fresh():
   rig = Rig(1)                           # -1 -> 1 starts the HUD process: initial read = 1
   _assert_fresh(rig.meter)
+  rig.drive(120.0)
+  _assert_fresh(rig.meter)               # meter_empty2: 빈차 until 시작
+  rig.start()
   rig.drive(120.0)
   assert rig.meter.distance_m > 0
 

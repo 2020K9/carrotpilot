@@ -30,6 +30,7 @@ from openpilot.common.realtime import Ratekeeper, set_core_affinity
 from openpilot.common.params import Params, ParamKeyType
 from openpilot.system.hardware import PC, TICI
 from openpilot.selfdrive.navd.helpers import Coordinate
+from openpilot.selfdrive.navigation.source import RouteSource, coordinates as route_coordinates
 from openpilot.common.constants import CV
 
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
@@ -55,7 +56,7 @@ except ImportError:
 NetworkType = log.DeviceState.NetworkType
 NAVI_HTTP_PORT = 7713
 NAVI_HTTP_MAX_BODY_SIZE = 16 * 1024 * 1024
-NAVI_EVENT_TYPES = ("complexCrossroad", "rgdata", "vrtx", "route")
+NAVI_EVENT_TYPES = ("complexCrossroad", "rgdata", "vrtx", "ssinf", "sinf", "route")
 NAVI_DEBUG_PARAM = "CarrotNaviDebug"
 NAVI_IMAGE_PARAM = "CarrotNaviImage"
 NAVI_IMAGE_BASE64_MAX_CHARS = 6 * 1024 * 1024
@@ -333,9 +334,9 @@ class CarrotMan:
     self.navi_points_start_index = 0
     self.navi_points_active = False
     self.navd_active = False
-    self.carrot_navi_route_session_id = ""
-    self.carrot_navi_route_sequence = -1
-    self.carrot_navi_route_owned = False
+    self.route_source = RouteSource()
+    self.nav_route_id = 0
+    self.nav_route_next = 0.
 
     self.active_carrot_last = False
 
@@ -401,16 +402,11 @@ class CarrotMan:
     while self.is_running:
       try:
         self.sm.update(0)
-        navd_route_updated = self.sm.updated['navRouteNavd']
-        if navd_route_updated:
-          self.send_routes(self.sm['navRouteNavd'].coordinates, True)
+        if self.sm.updated['navRouteNavd']:
+          self.route_source.mapbox = route_coordinates(self.sm['navRouteNavd'].coordinates) if self.sm.valid['navRouteNavd'] else ()
         carrot_navi_service_active = self.sm.alive['carrotNavi'] and self.sm.valid['carrotNavi']
-        if (
-          self.sm.updated['carrotNavi'] or navd_route_updated
-          or (self.carrot_navi_route_session_id and not carrot_navi_service_active)
-        ):
-          carrot_navi = parse_carrot_navi_control(self.sm['carrotNavi']) if carrot_navi_service_active else None
-          self._update_carrot_navi_route(carrot_navi, force=navd_route_updated)
+        carrot_navi = parse_carrot_navi_control(self.sm['carrotNavi']) if carrot_navi_service_active else None
+        self._select_navigation_route(carrot_navi)
         remote_addr = self.remote_addr
         remote_ip = remote_addr[0] if remote_addr is not None else ""
         vturn_speed = self.carrot_curve_speed(self.sm)
@@ -489,67 +485,27 @@ class CarrotMan:
         time.sleep(1)
 
 
-  def _update_carrot_navi_route(self, navi: CarrotNaviControl | None, force: bool = False):
-    previous_session = self.carrot_navi_route_session_id
-    route_owned = self.carrot_navi_route_owned
-    if navi is None:
-      if not previous_session:
-        return
-      self.carrot_navi_route_session_id = ""
-      self.carrot_navi_route_sequence = -1
-      if force:
-        self.carrot_navi_route_owned = False
-        return
-      if not route_owned:
-        return
-      points = ()
-    else:
-      new_session = navi.session_id != previous_session
-      route = navi.route
-      if not force and not new_session and route.sequence == self.carrot_navi_route_sequence:
-        route_available = route.present and bool(route.polyline)
-        if not route_available or self.navi_points_active or not self.params.get_bool("IsOnroad"):
-          return
-      self.carrot_navi_route_session_id = navi.session_id
-      self.carrot_navi_route_sequence = route.sequence
-      points = route.polyline if route.present else ()
-      if not points and force:
-        self.carrot_navi_route_owned = False
-        return
-      if not points and not route_owned:
-        return
-
-    coords = [
-      {"latitude": latitude, "longitude": longitude}
-      for latitude, longitude in points
-    ]
-    self.navi_points = [(point["longitude"], point["latitude"]) for point in coords]
-    self.navi_points_start_index = 0
-    self.navi_points_active = bool(self.navi_points)
-    self.carrot_navi_route_owned = self.navi_points_active
-    # Keep the existing route consumer alive without asking navd to calculate a
-    # different route from the app's destination.
-    self.navd_active = self.navi_points_active
-    self.send_routes(coords)
+  def _select_navigation_route(self, carrot_navi):
+    selected = self.route_source.select(self.carrot_serv._external_navigation_connected(), carrot_navi)
+    if selected is not None:
+      self.navi_points = [(c['longitude'], c['latitude']) for c in selected]
+      self.navi_points_start_index = 0
+      self.navi_points_active = bool(selected)
+      self.navd_active = bool(selected)
+      self.nav_route_id = time.monotonic_ns()
+      self.nav_route_next = time.monotonic() + 2.
+      self.send_routes(selected, selected=True)
+    elif time.monotonic() >= getattr(self, 'nav_route_next', 0.):
+      self.nav_route_next = time.monotonic() + 2.
+      # Late-starting/restarted model, maps and UI clients receive the current route.
+      self.send_routes([{'latitude': lat, 'longitude': lon} for lat, lon in self.route_source.selected[1]], selected=True)
 
   def carrot_navi_route(self):
 
-    if self.carrot_serv.active_carrot > 1:
-      if False and self.navd_active:  # mabox always active
-        self.navd_active = False
-        self.params.remove("NavDestination")
     is_onroad = self.params.get_bool("IsOnroad")
     if not is_onroad or not self.navi_points_active or not SHAPELY_AVAILABLE or (self.carrot_serv.active_carrot <= 1 and not self.navd_active):
-      #print(f"navi_points_active: {self.navi_points_active}, active_carrot: {self.carrot_serv.active_carrot}")
-      if self.navi_points_active:
-        print("navi_points_active: ", self.navi_points_active, "active_carrot: ", self.carrot_serv.active_carrot, "navd_active: ", self.navd_active)
-        #haversine_cache.clear()
-        #curvature_cache.clear()
-        self.navi_points = []
-        self.navi_points_active = False
-        if self.active_carrot_last > 1:
-          #self.params.remove("NavDestination")
-          pass
+      # RouteSource owns geometry lifetime. Pausing computation offroad must not
+      # consume a route received before the car starts.
       self.active_carrot_last = self.carrot_serv.active_carrot
       return [],[],300
 
@@ -1317,37 +1273,18 @@ class CarrotMan:
     return struct.unpack('!f', float_data)[0]
 
 
-  def send_routes(self, coords, from_navd=False):
-    original_count = len(coords)
+  def send_routes(self, coords, from_navd=False, selected=False):
     coords = limit_route_points(coords, NAVI_ROUTE_MAX_POINTS)
-    if original_count > len(coords):
-      print(f"Route points limited: {original_count} -> {len(coords)}")
-
-    if from_navd:
-      if len(coords) > 0:
-        self.navi_points = [(c.longitude, c.latitude) for c in coords]
-        self.navi_points_start_index = 0
-        self.navi_points_active = True
-        print("Received points from navd:", len(self.navi_points))
-        self.navd_active = True
-
-        # 경로수신 -> carrotman active되고 약간의 시간지연이 발생함..
-        if not from_navd:
-          self.carrot_serv.active_count = 80
-          self.carrot_serv.active_sdi_count = self.carrot_serv.active_sdi_count_max
-          self.carrot_serv.active_carrot = 2
-
-        coords = [{"latitude": c.latitude, "longitude": c.longitude} for c in coords]
-        #print("navdNaviPoints=", self.navi_points)
+    if not selected:
+      route = route_coordinates(coords)
+      if from_navd:
+        self.route_source.mapbox = route
       else:
-        print("Received points from navd: 0")
-        self.navi_points = []
-        self.navi_points_start_index = 0
-        self.navi_points_active = False
-        self.navd_active = False
-
+        self.route_source.legacy = route
+      return
     msg = messaging.new_message('navRoute', valid=True)
     msg.navRoute.coordinates = coords
+    msg.navRoute.carrotRouteId = self.nav_route_id
     self.pm.send('navRoute', msg)
 
   def carrot_route(self):
@@ -1373,53 +1310,21 @@ class CarrotMan:
               continue
             try:
               total_size = struct.unpack('!I', total_size_bytes)[0]
+              if total_size > NAVI_ROUTE_MAX_POINTS * 8 or total_size % 8:
+                raise ValueError('invalid legacy route size')
               # 전체 데이터를 한 번에 수신
               all_data = self.recvall(conn, total_size)
               if all_data is None:
                   print("Connection closed or incomplete data received")
                   continue
 
-              self.navi_points = []
-              points = []
+              if total_size > NAVI_ROUTE_MAX_POINTS * 8 or total_size % 8:
+                raise ValueError("invalid legacy route size")
+              coords = []
               for i in range(0, len(all_data), 8):
-                x, y = struct.unpack('!ff', all_data[i:i+8])
-                self.navi_points.append((x, y))
-                coord = Coordinate.from_mapbox_tuple((x, y))
-                points.append(coord)
-              coords = [c.as_dict() for c in points]
-              self.navi_points_start_index = 0
-              self.navi_points_active = len(coords) > 0
-              print("Received points:", len(self.navi_points))
-              #print("Received points:", self.navi_points)
-
+                lon, lat = struct.unpack('!ff', all_data[i:i+8])
+                coords.append({'longitude': lon, 'latitude': lat})
               self.send_routes(coords)
-              """
-              try:
-                module_name = "route_engine"
-                class_name = "RouteEngine"
-                moduel = importlib.import_module(module_name)
-                cls = getattr(moduel, class_name)
-                route_engine_instance = cls(name="Loaded at Runtime")
-
-                route_engine_instance.send_route_coords(coords, True)
-              except Exception as e:
-                print(f"route_engine error: {e}")
-
-              #msg = messaging.new_message('navRoute', valid=True)
-              #msg.navRoute.coordinates = coords
-              #self.pm.send('navRoute', msg)
-              """
-
-              if len(coords):
-                dest = coords[-1]
-                dest['place_name'] = "External Navi"
-                self.params.put("NavDestination", json.dumps(dest))
-              else:
-                self.navi_points = []
-                self.navi_points_start_index = 0
-                self.navd_active = False
-                self.params.remove("NavDestination")
-
             except Exception as e:
               print(e)
     except Exception as e:
@@ -1562,60 +1467,107 @@ class CarrotMan:
   def handle_route(self, payload: Any):
     points = self._extract_route_points(payload)
     if points is None:
-      print(f"Received route: unsupported payload type={type(payload).__name__}")
       return
     points = self._limited_route_points(points)
+    self.send_routes([{'latitude': lat, 'longitude': lon} for lon, lat in points])
 
-    arr = [{"x": lon, "y": lat, "valid": True} for lon, lat in points]
-    if not arr:
-      print("Received route: 0")
-      # navd route가 비어오면 비활성 처리
-      self.navi_points = []
-      self.navi_points_start_index = 0
-      self.navi_points_active = False
-      self.navd_active = False
+  def _put_traffic_light(self, lamp: str, remain: Any, distance: Any = 0, lat: Any = None, lon: Any = None):
+    try:
+      remain_int = int(float(remain or 0))
+    except Exception:
+      remain_int = 0
+
+    if remain_int <= 0:
       return
 
-    # valid만 필터 (필요 없으면 제거)
-    valid_pts = [p for p in arr if isinstance(p, dict) and p.get("valid", True)]
-    if not valid_pts:
-      print("Received route: 0 valid")
-      self.navi_points = []
-      self.navi_points_start_index = 0
-      self.navi_points_active = False
-      self.navd_active = False
+    try:
+      distance_int = int(float(distance or 0))
+    except Exception:
+      distance_int = 0
+
+    traffic_light = {
+      "distance": distance_int,
+      "lamp": lamp,
+      "remain": remain_int,
+      "ts": time.monotonic(),
+    }
+
+    try:
+      if lat is not None:
+        traffic_light["lat"] = float(lat)
+      if lon is not None:
+        traffic_light["lon"] = float(lon)
+    except Exception:
+      pass
+
+    self.params_memory.put_nonblocking("TrafficLight", json.dumps(traffic_light))
+
+  def handle_traffic_light(self, d: dict):
+    if not isinstance(d, dict):
       return
 
-    # x=lon, y=lat
-    coords = []
-    navi_points = []
+    # {'distance': 120, 'greenLightRemainTime': 0, 'leftLightRemainTime': 0, 'location': {'coordString': 'x:127.045286, y:37.477032', 'latitude': 37.47703188722564, 'longitude': 127.04528634430659},
+    #       'redLightRemainTime': 15, 'rightLightRemainTime': 0, 'uturnLightRemainTime': 0, 'greenLightOn': False, 'leftLightOn': False, 'redLightOn': True, 'rightLightOn': False, 'uturnLightOn': False}
+    lamp = None
+    remain = 0
 
-    for p in valid_pts:
-      try:
-        lon = float(p.get("x"))
-        lat = float(p.get("y"))
-      except Exception:
-        continue
+    if d.get("redLightOn"):
+      lamp = "red"
+      remain = d.get("redLightRemainTime", 0)
+    elif d.get("leftLightOn"):
+      lamp = "left"
+      remain = d.get("leftLightRemainTime", 0)
+    elif d.get("greenLightOn"):
+      lamp = "green"
+      remain = d.get("greenLightRemainTime", 0)
+    elif d.get("rightLightOn"):
+      lamp = "right"
+      remain = d.get("rightLightRemainTime", 0)
+    elif d.get("uturnLightOn"):
+      lamp = "uturn"
+      remain = d.get("uturnLightRemainTime", 0)
 
-      navi_points.append((lon, lat))
-      coords.append({"latitude": lat, "longitude": lon})
+    if lamp is None:
+      return
 
-    self.navi_points = navi_points
-    self.navi_points_start_index = 0
-    self.navi_points_active = True
-    self.navd_active = True
+    location = d.get("location", {})
+    lat = None
+    lon = None
+    try:
+      if isinstance(location, dict):
+        if location.get("latitude") is not None:
+          lat = float(location.get("latitude"))
+        if location.get("longitude") is not None:
+          lon = float(location.get("longitude"))
+    except Exception:
+      pass
+    self._put_traffic_light(lamp, remain, d.get("distance", 0), lat, lon)
 
-    print("Received points:", len(self.navi_points))
+  def handle_traffic_light_detail(self, d: dict):
+    if not isinstance(d, dict):
+      return
 
-    self.send_routes(coords)
+    green_checks = (
+      ("left", "left", "left_remain_time"),
+      ("straight", "green", "straight_remain_time"),
+      ("right", "right", "right_remain_time"),
+      ("uturn", "uturn", "uturn_remain_time"),
+    )
+    for field, lamp, remain_field in green_checks:
+      if str(d.get(field, "")).upper() == "GREEN_LIGHT_ON":
+        self._put_traffic_light(lamp, d.get(remain_field, 0), d.get("distance", 0), d.get("lat"), d.get("lon"))
+        return
 
-    if coords:
-      dest = dict(coords[-1])
-      dest["place_name"] = "External Navi"
-      try:
-        self.params.put("NavDestination", json.dumps(dest))
-      except Exception as e:
-        print("NavDestination put error:", e)
+    red_remain = 0
+    for field in ("straight", "left", "right", "uturn"):
+      if str(d.get(field, "")).upper() == "RED_LIGHT_ON":
+        try:
+          red_remain = max(red_remain, int(d.get(f"{field}_remain_time", 0) or 0))
+        except Exception:
+          pass
+
+    if red_remain > 0:
+      self._put_traffic_light("red", red_remain, d.get("distance", 0), d.get("lat"), d.get("lon"))
 
   def handle_complex_crossroad(self, d: dict):
     if not isinstance(d, dict):
@@ -1673,6 +1625,47 @@ class CarrotMan:
 
   def _remaining_time(self, value: Any) -> Optional[int]:
     return self._safe_int_or_none(value, minimum=1, maximum=999)
+
+  def _traffic_light_debug_from_sinf(self, sinf: dict) -> Dict[str, Any]:
+    return {
+      "distanceM": self._safe_int_or_none(sinf.get("distance"), minimum=0),
+      "redS": self._remaining_time(sinf.get("redLightRemainTime")),
+      "straightS": self._remaining_time(sinf.get("greenLightRemainTime")),
+      "leftS": self._remaining_time(sinf.get("leftLightRemainTime")),
+      "rightS": self._remaining_time(sinf.get("rightLightRemainTime")),
+      "uturnS": self._remaining_time(sinf.get("uturnLightRemainTime")),
+      "redOn": bool(sinf.get("redLightOn")),
+      "straightOn": bool(sinf.get("greenLightOn")),
+      "leftOn": bool(sinf.get("leftLightOn")),
+      "rightOn": bool(sinf.get("rightLightOn")),
+      "uturnOn": bool(sinf.get("uturnLightOn")),
+    }
+
+  def _traffic_light_debug_from_ssinf(self, ssinf: dict) -> Dict[str, Any]:
+    red_remaining = []
+    for signal_key, remain_key in (
+      ("straight", "straight_remain_time"),
+      ("left", "left_remain_time"),
+      ("right", "right_remain_time"),
+      ("uturn", "uturn_remain_time"),
+    ):
+      if str(ssinf.get(signal_key, "")).upper() == "RED_LIGHT_ON":
+        remaining = self._remaining_time(ssinf.get(remain_key))
+        if remaining is not None:
+          red_remaining.append(remaining)
+    return {
+      "distanceM": self._safe_int_or_none(ssinf.get("distance"), minimum=0),
+      "redS": max(red_remaining) if red_remaining else None,
+      "straightS": self._remaining_time(ssinf.get("straight_remain_time")),
+      "leftS": self._remaining_time(ssinf.get("left_remain_time")),
+      "rightS": self._remaining_time(ssinf.get("right_remain_time")),
+      "uturnS": self._remaining_time(ssinf.get("uturn_remain_time")),
+      "redOn": bool(red_remaining),
+      "straightOn": str(ssinf.get("straight", "")).upper() == "GREEN_LIGHT_ON",
+      "leftOn": str(ssinf.get("left", "")).upper() == "GREEN_LIGHT_ON",
+      "rightOn": str(ssinf.get("right", "")).upper() == "GREEN_LIGHT_ON",
+      "uturnOn": str(ssinf.get("uturn", "")).upper() == "GREEN_LIGHT_ON",
+    }
 
   def _write_navi_image_param(self, crossroad: dict, image_hash: str):
     image_base64 = crossroad.get("imageBase64")
@@ -1745,6 +1738,23 @@ class CarrotMan:
       })
     elif event_type in ("vrtx", "route"):
       summary.update(self._route_summary(obj.get(event_type)))
+    elif event_type == "sinf" and isinstance(obj.get("sinf"), dict):
+      sinf = obj["sinf"]
+      summary.update({
+        "distance": sinf.get("distance"),
+        "redLightOn": sinf.get("redLightOn"),
+        "greenLightOn": sinf.get("greenLightOn"),
+        "leftLightOn": sinf.get("leftLightOn"),
+      })
+    elif event_type == "ssinf" and isinstance(obj.get("ssinf"), dict):
+      ssinf = obj["ssinf"]
+      summary.update({
+        "distance": ssinf.get("distance"),
+        "straight": ssinf.get("straight"),
+        "left": ssinf.get("left"),
+        "straightRemain": ssinf.get("straight_remain_time"),
+        "leftRemain": ssinf.get("left_remain_time"),
+      })
     elif event_type == "complexCrossroad" and isinstance(obj.get("complexCrossroad"), dict):
       crossroad = obj["complexCrossroad"]
       image_base64 = crossroad.get("imageBase64")
@@ -1798,6 +1808,7 @@ class CarrotMan:
     severity = "normal"
     lines: List[str] = []
     speed_limit_kph: Optional[int] = None
+    traffic_light: Optional[Dict[str, Any]] = None
 
     if isinstance(obj, dict) and event_type == "rgdata" and isinstance(obj.get("rgdata"), dict):
       rgdata = self._normalize_rgdata(obj["rgdata"])
@@ -1835,6 +1846,35 @@ class CarrotMan:
       else:
         lines.append("Route points: 0")
 
+    elif isinstance(obj, dict) and event_type == "sinf" and isinstance(obj.get("sinf"), dict):
+      sinf = obj["sinf"]
+      title = "Traffic light"
+      traffic_light = self._traffic_light_debug_from_sinf(sinf)
+      if sinf.get("redLightOn"):
+        severity = "stop"
+      elif sinf.get("leftLightOn") or sinf.get("greenLightOn"):
+        severity = "go"
+      lines.extend((
+        self._navi_debug_line("Distance", f"{sinf.get('distance', '--')}m"),
+        self._navi_debug_line("Red", f"{sinf.get('redLightOn')} {sinf.get('redLightRemainTime', '--')}s"),
+        self._navi_debug_line("Green", f"{sinf.get('greenLightOn')} {sinf.get('greenLightRemainTime', '--')}s"),
+        self._navi_debug_line("Left", f"{sinf.get('leftLightOn')} {sinf.get('leftLightRemainTime', '--')}s"),
+      ))
+
+    elif isinstance(obj, dict) and event_type == "ssinf" and isinstance(obj.get("ssinf"), dict):
+      ssinf = obj["ssinf"]
+      title = "Traffic light detail"
+      traffic_light = self._traffic_light_debug_from_ssinf(ssinf)
+      red_active = any(str(ssinf.get(key, "")).upper() == "RED_LIGHT_ON" for key in ("straight", "left", "right", "uturn"))
+      green_active = any(str(ssinf.get(key, "")).upper() == "GREEN_LIGHT_ON" for key in ("straight", "left", "right", "uturn"))
+      severity = "stop" if red_active else "go" if green_active else "normal"
+      lines.extend((
+        self._navi_debug_line("Distance", f"{ssinf.get('distance', '--')}m"),
+        self._navi_debug_line("Straight", f"{ssinf.get('straight', '--')} {ssinf.get('straight_remain_time', '--')}s"),
+        self._navi_debug_line("Left", f"{ssinf.get('left', '--')} {ssinf.get('left_remain_time', '--')}s"),
+        self._navi_debug_line("Right", f"{ssinf.get('right', '--')} {ssinf.get('right_remain_time', '--')}s"),
+      ))
+
     elif isinstance(obj, dict) and event_type == "complexCrossroad" and isinstance(obj.get("complexCrossroad"), dict):
       crossroad = obj["complexCrossroad"]
       title = "Complex crossroad"
@@ -1858,6 +1898,7 @@ class CarrotMan:
       "severity": severity,
       "lines": [line for line in lines if line],
       "speedLimitKph": speed_limit_kph,
+      "trafficLight": traffic_light,
     }
 
   def _write_navi_debug_param(self, obj: Any, event_type: str, event_time_ms: int):
@@ -1946,8 +1987,15 @@ class CarrotMan:
       self._safe_dispatch_handler("vrtx", self.handle_route, obj["vrtx"])
       handled = True
 
-    if "ssinf" in obj or "sinf" in obj:
-      handled = True  # traffic-light packets from the navigation app are intentionally ignored
+    if "ssinf" in obj:
+      print(f"[NAVI ssinf RX] {json.dumps(obj['ssinf'], ensure_ascii=False)}", flush=True)
+      self._safe_dispatch_handler("ssinf", self.handle_traffic_light_detail, obj["ssinf"])
+      handled = True
+
+    if "sinf" in obj:
+      print(f"[NAVI sinf RX] {json.dumps(obj['sinf'], ensure_ascii=False)}", flush=True)
+      self._safe_dispatch_handler("sinf", self.handle_traffic_light, obj["sinf"])
+      handled = True
 
     if "route" in obj:
       self._safe_dispatch_handler("route", self.handle_route, obj["route"])
@@ -2126,6 +2174,9 @@ def main():
   threading.Thread(target=carrot_man.kisa_app_thread, daemon=True).start()
   threading.Thread(target=carrot_man.carrot_navi_thread, daemon=True).start()
   threading.Thread(target=carrot_man.carrot_navi_http_thread, daemon=True).start()
+  # K9ExtHud=1 taxi meter remote app (UDP 7720, opened only while K9ExtHud=1; k9_meter_link.py)
+  from openpilot.selfdrive.carrot.k9_meter_link import K9MeterUdp
+  threading.Thread(target=K9MeterUdp(carrot_man.params, carrot_man.params_memory).run, daemon=True).start()
 
   while True:
     try:

@@ -44,6 +44,7 @@ def test_night_lamp_lit_only_at_night_and_only_in_the_panel():
   try:
     s = _state()
     r.set_taxi_meter_enabled(True)
+    r.taxi_meter_command("start")   # meter_empty2: 빈차 has its own screen now; the lamp is on the meter card (주행)
     panel = r._taxi_meter_panel
     clock = [100.0]
     panel._clock = lambda: clock[0]
