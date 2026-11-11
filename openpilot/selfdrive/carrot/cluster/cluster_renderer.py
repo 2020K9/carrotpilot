@@ -127,6 +127,11 @@ PARK_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "ev6" / "ev6_clust
 # K9 parked screen (대감님 11/11 18:24): original 2020 RJ model from make_k9_park_model.py, P screen only
 PARK_K9_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "k9" / "k9_cluster.obj"
 PARK_K9_SCALE_M = (1.915, 5.12, 1.49)  # K9 RJ width x length x height
+# K9 parked screen photo (대감님 11/11 20:37): car cut out of his mock-up, plate blanked; drawn instead of the model
+K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
+K9_PARK_COLORS_DARK = {"bg_top": (22, 52, 118), "bg_bot": (6, 16, 44), "text": (240, 244, 250), "muted": (150, 172, 210),
+                       "card": (20, 44, 96), "line": (60, 92, 150), "accent": (110, 180, 255)}
+K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (selfdrive/car/k9_fuel.py)
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
@@ -2178,6 +2183,9 @@ class ClusterUiRenderer:
         self._park_model_texture = None
         self._park_model_key = None
         self._park_model_retry_t = 0.0
+        if getattr(self, "_k9_park_sprite", None):
+            rl.unload_texture(self._k9_park_sprite)
+        self._k9_park_sprite = None
         failure = None
         for texture in textures:
             try:
@@ -2318,6 +2326,29 @@ class ClusterUiRenderer:
                         rl.unload_texture(texture)
         return textures[1 if dark else 0]
 
+    def _k9_park_sprite_texture(self):
+        # Loaded once per GL context; False = tried and failed (falls back to the rendered model).
+        sprite = getattr(self, "_k9_park_sprite", None)
+        if sprite is None:
+            self._k9_park_sprite = False
+            try:
+                if K9_PARK_CAR_SPRITE_PATH.is_file():
+                    texture = rl.load_texture(str(K9_PARK_CAR_SPRITE_PATH))
+                    if texture is not None and getattr(texture, "id", 0) > 0:
+                        rl.gen_texture_mipmaps(texture)
+                        rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+                        self._k9_park_sprite = texture
+            except Exception as exc:
+                print(f"K9 parked screen: could not load {K9_PARK_CAR_SPRITE_PATH}: {exc}", flush=True)
+            sprite = self._k9_park_sprite
+        return sprite or None
+
+    @staticmethod
+    def k9_range_text(fraction) -> str:
+        if fraction is None or not 0.0 < fraction <= 1.0:
+            return ""
+        return f"{int(round(fraction * K9_DTE_FULL_KM))} km"
+
     def _ev6_draw_top_view_car(self, cx: float, cy: float, dark: bool, colors: dict) -> None:
         # EV6 HUD patch v16: small top-view car (front up) for the tyre pressures, instead of a plain box
         tyre = rl_color((88, 92, 100) if dark else (70, 74, 82))
@@ -2426,6 +2457,9 @@ class ClusterUiRenderer:
         theme = self._current_theme()
         korean = self.language == CLUSTER_LANGUAGE_KO
         colors = EV6_PARK_COLORS_DARK if theme.is_dark else EV6_PARK_COLORS_LIGHT
+        is_k9 = ego_model_name(getattr(state, "car_fingerprint", "")) == "k9"
+        if is_k9 and theme.is_dark:
+            colors = K9_PARK_COLORS_DARK
         rl.clear_background(rl_color(colors["bg_bot"]))
         rl.rl_push_matrix()
         rl.rl_scalef(self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT, 1.0)
@@ -2457,9 +2491,22 @@ class ClusterUiRenderer:
                 self._ev6_draw_battery(soc, 236, gear_y + 2, colors, text)
             elif state.energy_gauge_label == "fuel":  # K9 (대감님 11/11 18:24): fuel level instead of the battery
                 self._k9_draw_fuel(state.fuel_gauge, 236, gear_y + 2, colors, text)
+                range_text = self.k9_range_text(state.fuel_gauge) if is_k9 else ""
+                if range_text:  # km to empty from the cluster (CF_Clu_DTE), same source as the %
+                    text(range_text, 236 + 46 + 104, gear_y + 2, 34, "muted")
 
             # centre: car photo on a soft floor shadow
             car_cx, car_bottom, car_h = 790.0, 412.0, 350.0
+            sprite = self._k9_park_sprite_texture() if is_k9 else None
+            if sprite is not None:  # photo car on a round stage, like the mock-up
+                car_cx, car_bottom, car_h = 810.0, 400.0, 250.0
+                stage_y = int(car_bottom - 28)
+                for i in range(10):
+                    k = 1.0 - i * 0.07
+                    rl.draw_ellipse(int(car_cx), stage_y, int(300 * k), int(46 * k),
+                                    rl.Color(90, 150, 255, 7 if theme.is_dark else 5))
+                for rx, ry, alpha in ((300, 46, 170), (297, 45, 70), (240, 36, 40)):
+                    rl.draw_ellipse_lines(int(car_cx), stage_y, rx, ry, rl.Color(120, 190, 255, alpha))
             for i in range(12):
                 k = 1.0 - i * 0.045
                 rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
@@ -2467,6 +2514,8 @@ class ClusterUiRenderer:
             texture = self._park_model_texture
             if ego_model_name(state.car_fingerprint) == "ev6":
                 texture = self._ev6_park_car_texture(theme.is_dark) or texture
+            elif sprite is not None:
+                texture = sprite
             if texture is not None:
                 car_w = car_h * texture.width / max(1, texture.height)
                 rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
@@ -2485,7 +2534,7 @@ class ClusterUiRenderer:
             # right: this trip
             trip = getattr(state, "trip_report", None)
             x0, x1 = 1420, 1860
-            text("이번 주행" if korean else "This trip", x0, 70, 30, "muted")
+            text(("주행 정보" if is_k9 else "이번 주행") if korean else ("Trip info" if is_k9 else "This trip"), x0, 70, 30, "muted")
             rows = (
                 ("거리" if korean else "Distance", format_trip_distance(trip.distance_m, self.is_metric) if trip else "--"),
                 ("시간" if korean else "Time", self._ev6_park_duration_text(trip.duration_s, korean) if trip else "--"),
