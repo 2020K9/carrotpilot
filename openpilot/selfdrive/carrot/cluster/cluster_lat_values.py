@@ -366,3 +366,113 @@ def lane_values_text(offset_m: float | None, lane_state: Any = None, gap_left_m:
     """HUD lines 4 and 5 joined by ' / ' (manual / tests): '치우침 → 12cm / 좌 1.87m   우 1.63m'. Shown whatever
     K9LaneAssist is; lane_state (보정) is no longer shown on the external HUD (2026-10-26), the argument is kept for callers."""
     return f"{lane_offset_text(offset_m)} / {lane_gap_text(gap_left_m, gap_right_m)}"
+
+
+# ---- 치우침 / 좌·우 steady on screen (대감님 11/13 05:12 "치우침 좌우 유지시켜라 존나깜빡이내") -----------------------------
+# Display only, nothing here goes to control. The old path (lane_offset_m -> LaneOffsetFilter) shows '--' on every single weak
+# frame and flips ← / 가운데 / → around 0 every frame. LaneTextHold sits after the same model fields:
+#   - hysteresis on line quality: a shown value stays while prob >= HOLD_P_OFF / std <= HOLD_STD_OFF (on: LANE_P_MIN / LANE_STD_MAX)
+#   - a short drop keeps the last value for HOLD_S, only then '--' (대기)
+#   - 가운데 band with two edges (in < HOLD_CENTER_IN, out > HOLD_CENTER_OUT); ← <-> → only after the new side held HOLD_FLIP_S
+#   - shown numbers change only by >= HOLD_STEP (cm / m) or after HOLD_REFRESH_S
+HOLD_P_OFF, HOLD_STD_OFF = 0.45, 0.3
+HOLD_S = 1.5
+HOLD_CENTER_IN, HOLD_CENTER_OUT = 0.015, 0.035
+HOLD_FLIP_S = 0.4
+HOLD_OFFSET_STEP, HOLD_GAP_STEP, HOLD_REFRESH_S = 0.02, 0.03, 0.6
+
+
+def _lines_at_car(model: Any | None, p_min: float, std_max: float) -> tuple[float | None, float | None]:
+    """y [m, + right] of lane lines 1 / 2 at the car, None per line weaker than p_min / std_max."""
+    out = []
+    for i in (1, 2):
+        try:
+            p = float(model.laneLineProbs[i])
+            stds = model.laneLineStds
+            s = float(stds[i]) if len(stds) > i else 0.0
+            y = float(model.laneLines[i].y[0])
+        except Exception:
+            out.append(None)
+            continue
+        out.append(y if all(math.isfinite(v) for v in (p, s, y)) and p >= p_min and s <= std_max else None)
+    return out[0], out[1]
+
+
+class _HeldNumber:
+    def __init__(self, step: float):
+        self.step = step
+        self.lp = LaneOffsetFilter()
+        self.shown: float | None = None
+        self.shown_t = 0.0
+        self.seen_t: float | None = None
+
+    def update(self, value: float | None, now: float) -> float | None:
+        if value is None:
+            if self.seen_t is None or now - self.seen_t > HOLD_S or now < self.seen_t:
+                self.lp.value = self.lp.t = None
+                self.shown = self.seen_t = None
+            return self.shown
+        if self.seen_t is not None and (now - self.seen_t > HOLD_S or now < self.seen_t):
+            self.lp.value = self.lp.t = None
+            self.shown = None
+        self.seen_t = now
+        v = self.lp.update(value, now)
+        if self.shown is None or abs(v - self.shown) >= self.step or now - self.shown_t >= HOLD_REFRESH_S:
+            self.shown, self.shown_t = v, now
+        return self.shown
+
+
+class LaneTextHold:
+    """(치우침 m + right, 좌 m, 우 m) for the HUD text rows, steady; None = 대기 / --."""
+
+    def __init__(self):
+        self.offset = _HeldNumber(HOLD_OFFSET_STEP)
+        self.gaps = (_HeldNumber(HOLD_GAP_STEP), _HeldNumber(HOLD_GAP_STEP))
+        self.side = 0           # shown side: -1 ←, 0 가운데, +1 →
+        self.other_since: float | None = None
+
+    def _offset_raw(self, model: Any | None) -> float | None:
+        if model is None:
+            return None
+        shown = self.offset.shown is not None
+        y1, y2 = _lines_at_car(model, HOLD_P_OFF if shown else LANE_P_MIN, HOLD_STD_OFF if shown else LANE_STD_MAX)
+        if y1 is None or y2 is None or not LANE_W_MIN <= y2 - y1 <= LANE_W_MAX:
+            return None
+        return -(y1 + y2) / 2.0
+
+    def _gap_raw(self, model: Any | None, i: int) -> float | None:
+        if model is None:
+            return None
+        shown = self.gaps[i].shown is not None
+        y = _lines_at_car(model, HOLD_P_OFF if shown else LANE_P_MIN, HOLD_STD_OFF if shown else LANE_STD_MAX)[i]
+        g = None if y is None else (-y if i == 0 else y)
+        return g if g is not None and GAP_MIN_M <= g <= GAP_MAX_M else None
+
+    def update(self, model: Any | None, now: float) -> tuple[float | None, float | None, float | None]:
+        off = self.offset.update(self._offset_raw(model), now)
+        gl = self.gaps[0].update(self._gap_raw(model, 0), now)
+        gr = self.gaps[1].update(self._gap_raw(model, 1), now)
+        if off is None:
+            self.side, self.other_since = 0, None
+            return None, gl, gr
+        a = abs(off)
+        want = self.side
+        if self.side == 0:
+            if a > HOLD_CENTER_OUT:
+                want = 1 if off > 0 else -1
+        elif a < HOLD_CENTER_IN:
+            want = 0
+        elif (off > 0) != (self.side > 0):
+            want = 1 if off > 0 else -1
+        if want == self.side:
+            self.other_since = None
+        elif want == 0 or self.side == 0:
+            self.side, self.other_since = want, None   # into / out of 가운데 at the band edges
+        else:
+            if self.other_since is None:
+                self.other_since = now
+            if now - self.other_since >= HOLD_FLIP_S:
+                self.side, self.other_since = want, None
+        if self.side == 0:
+            return 0.0, gl, gr
+        return self.side * max(a, CENTER_BAND_M), gl, gr

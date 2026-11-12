@@ -108,6 +108,7 @@ from cluster_scene import (
     clean_ui_enabled,
     cluster_scene_state_key,
 )
+from cluster_k9_lanesm import K9LaneSmoother
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_k9_hold import K9RoadHold
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
@@ -7117,6 +7118,29 @@ class ClusterUiRenderer:
             prev = cur
             f += 3.0 if f < 0.0 else (1.5 if f < 20.0 else 2.5)
 
+    def _k9_lanesm(self, key: str, pts: list[tuple[float, float]], conf: float | None = None) -> list[tuple[float, float]]:
+        """K9 D road lines smoothed for drawing only (대감님 11/13 04:59 "D단 차선 흐물흐물"); see cluster_k9_lanesm"""
+        if len(pts) < 2:
+            return pts
+        sm = getattr(self, "_k9_lanesm_state", None)
+        if sm is None:
+            sm = self._k9_lanesm_state = K9LaneSmoother()
+        clock = getattr(self, "k9_lanesm_clock", None)
+        return sm.smooth(key, pts, float(clock() if clock is not None else time.monotonic()), conf)
+
+    def _k9_lanesm_lanes(self, state: ClusterUiState, lefts: list, rights: list) -> tuple[list, list]:
+        """(near, lane, pts) lists, outermost-left first; slots = ego line, then 1st, 2nd .. line further out"""
+        if not lefts and not rights:
+            return lefts, rights
+        lc = getattr(state, "left_lane_line_confidence", None)
+        rc = getattr(state, "right_lane_line_confidence", None)
+        n = len(lefts)
+        lefts = [(nr, ln, self._k9_lanesm("egoL" if i == n - 1 else f"adjL{n - 2 - i}", p, lc if i == n - 1 else None))
+                 for i, (nr, ln, p) in enumerate(lefts)]
+        rights = [(nr, ln, self._k9_lanesm("egoR" if i == 0 else f"adjR{i - 1}", p, rc if i == 0 else None))
+                  for i, (nr, ln, p) in enumerate(rights)]
+        return lefts, rights
+
     def _k9_navdy_sprites(self):
         """{index: (texture, w, h, anchor x, anchor y, px per m)} read once per GL context; {} = failed (old box)."""
         cache = getattr(self, "_k9_navdy_cache", None)
@@ -7265,11 +7289,12 @@ class ClusterUiRenderer:
             return self._k9_turzx_lat_at(pts, 5.0) or pts[0][1]
         lefts = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) < 0.0], key=lambda t: t[0])
         rights = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) >= 0.0], key=lambda t: t[0])
+        lefts, rights = self._k9_lanesm_lanes(state, lefts, rights)  # display-only smoothing (11/13 04:59)
         ego_l = lefts[-1] if lefts else None
         ego_r = rights[0] if rights else None
         # road surface between the road edges (else the outermost lane lines)
-        le = self._k9_turzx_points(getattr(state, "left_road_edge_points", ()))
-        re_ = self._k9_turzx_points(getattr(state, "right_road_edge_points", ()))
+        le = self._k9_lanesm("edgeL", self._k9_turzx_points(getattr(state, "left_road_edge_points", ())))
+        re_ = self._k9_lanesm("edgeR", self._k9_turzx_points(getattr(state, "right_road_edge_points", ())))
         if len(le) < 2 and lefts:
             le = lefts[0][2]
         if len(re_) < 2 and rights:
@@ -7292,7 +7317,7 @@ class ClusterUiRenderer:
                     self._k9_turzx_line(pts, self.k9_look().adj, 0.12, False, True, 0.7 * self._k9_fade(lane))
         # planned path band + arrows, ends at the lead car
         lead = self.k9_turzx_lead(state)
-        path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
+        path = self._k9_lanesm("path", self._k9_turzx_points(getattr(state, "model_path", ()), 90.0))
         end_m = None if lead is None else max(7.0, lead[0])  # band runs under the lead car (drawn on top)
         if len(path) >= 2:
             path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only, nothing behind it
@@ -7996,10 +8021,11 @@ class ClusterUiRenderer:
             return self._k9_turzx_lat_at(pts, 5.0) or pts[0][1]
         lefts = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) < 0.0], key=lambda t: t[0])
         rights = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) >= 0.0], key=lambda t: t[0])
+        lefts, rights = self._k9_lanesm_lanes(state, lefts, rights)  # display-only smoothing (11/13 04:59)
         ego_l = lefts[-1] if lefts else None
         ego_r = rights[0] if rights else None
-        le = self._k9_turzx_points(getattr(state, "left_road_edge_points", ()))
-        re_ = self._k9_turzx_points(getattr(state, "right_road_edge_points", ()))
+        le = self._k9_lanesm("edgeL", self._k9_turzx_points(getattr(state, "left_road_edge_points", ())))
+        re_ = self._k9_lanesm("edgeR", self._k9_turzx_points(getattr(state, "right_road_edge_points", ())))
         if len(le) < 2 and lefts:
             le = lefts[0][2]
         if len(re_) < 2 and rights:
@@ -8015,7 +8041,7 @@ class ClusterUiRenderer:
                 if getattr(lane, "visible", True):
                     self._k9_turzx_line(pts, self.k9_look().l_adj, 0.11, False, True, self.k9_look().l_adj_a * self._k9_fade(lane))
         lead = self.k9_turzx_lead(state)
-        path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
+        path = self._k9_lanesm("path", self._k9_turzx_points(getattr(state, "model_path", ()), 90.0))
         end_m = None if lead is None else max(7.0, lead[0])
         if len(path) >= 2:
             path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only
