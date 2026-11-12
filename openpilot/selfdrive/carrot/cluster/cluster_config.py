@@ -57,6 +57,7 @@ CLUSTER_BRIGHTNESS_PARAM = "ClusterHudBrightness"
 CLUSTER_ORIENTATION_PARAM = "ClusterHudOrientation"
 CLUSTER_ENCODER_PARAM = "ClusterHudEncoder"
 CLUSTER_HUD_MIRROR_PARAM = "ClusterHudMirror"
+CLUSTER_HUD_K9_STYLE_PARAM = "ClusterHudK9Style"  # K9 D screen: 0 cards / 1 one scene
 CLUSTER_THEME_PARAM = "ClusterHudTheme"
 CLUSTER_RADAR_INFO_PARAM = "ClusterHudRadarInfo"
 CLUSTER_RADAR_DISPLAY_PARAM = "ClusterHudRadarDisplay"

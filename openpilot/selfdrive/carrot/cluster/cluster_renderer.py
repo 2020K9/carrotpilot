@@ -278,6 +278,32 @@ K9L_LANE_BASES = (121.0, 172.0)
 K9L_RIGHT_HAIR = 198.0
 K9L_LAT_HEAD = 236.0
 K9L_LAT_BASE0, K9L_LAT_PITCH = 278.0, 40.0
+# 11/12 22:37 대감님 "두 판 모두 살려": K9 D layout chosen by the Param ClusterHudK9Style
+# (0 = card layout of b03a700cc = "윗버전", 1 = one night scene of ad691fbd7.. = "아랫버전").
+K9_HUD_STYLE_CARD, K9_HUD_STYLE_SCENE = 0, 1
+K9C_ROAD_GEO = (108.0, 467.0, 1430.0, 108.0)   # card road: horizon y, my rear bumper y, KX, ego width (b03a700cc)
+K9L_ROAD_GEO = (K9_TURZX_ROAD_HORIZON_Y, K9_TURZX_ROAD_EGO_Y, K9_TURZX_ROAD_KX, K9_TURZX_EGO_W)
+# 22:41 "1칸 3칸 맞바꿔": the left content moves to the right side and the right content to the left, middle unchanged
+K9C_SWAP_DX = K9_TURZX_RIGHT_X - K9_TURZX_LEFT_X   # card 1 (8..664) <-> card 3 (1256..1912)
+K9L_SWAP_LEFT_DX, K9L_SWAP_RIGHT_DX = 1276.0, -1304.0  # scene: left block 32..612 -> 1308..1888, right 1336..1888 -> 32..584
+K9C_IND_Y, K9L_IND_Y = 262.0, 182.0   # automatic indicator box (was y 124 = over km/h / the lane pill)
+K9L_PERC_Y_IND = 262.0                # lane % / lead row while the indicator box sits on its usual row
+K9L_NAVI_BASE2 = 336.0                # turn-by-turn distance baseline (scene, right of the road)
+K9L_CAM_X, K9L_CAM_Y, K9L_CAM_W = 626.0, 292.0, 244.0   # speed camera block (scene, left of the road)
+K9L_LANE_Y = 412.0                    # navi lane strip top (scene, left of my car)
+K9C_CAM_X, K9C_CAM_Y, K9C_CAM_W, K9C_CAM_H = 684.0, 340.0, 236.0, 60.0
+K9C_LANE_Y = 410.0
+K9_LANE_CELL_H = 46.0
+# carrot_serv._get_sdi_descr (ko), short enough for one line
+K9_SDI_NAMES = {
+    0: "신호과속", 1: "과속 (고정식)", 2: "구간단속 시작", 3: "구간단속 끝", 4: "구간단속중", 5: "꼬리물기 단속",
+    6: "신호 단속", 7: "과속 (이동식)", 8: "과속위험 구간", 9: "버스전용차로", 10: "가변 차로 단속", 11: "갓길 감시",
+    12: "끼어들기 금지", 13: "교통정보 수집", 14: "방범용 CCTV", 15: "과적차량 구간", 16: "적재 불량 단속",
+    17: "주차단속", 20: "어린이 보호구역", 22: "과속방지턱", 75: "후면 과속 단속", 76: "후면 신호·과속",
+}
+K9_NAVI_GLYPHS = "".join(("신호과속고정식구간단속시작끝중꼬리물기이동위험버스전용차로가변갓길감시끼",
+                  "어들금지교통정보수집방범과적재불량주차어린보호역방턱후면다음카메라제한대기",))
+K9L_KR_GLYPHS = "".join(sorted(set(K9L_KR_GLYPHS + K9_NAVI_GLYPHS)))
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
@@ -1690,6 +1716,7 @@ class ClusterUiRenderer:
     # K9ExtHud=1: the right information panel shows the taxi meter. Off (the
     # default, K9ExtHud -1/0) leaves every draw call exactly as before.
     taxi_meter_enabled = False
+    k9_hud_style = K9_HUD_STYLE_CARD   # ClusterHudK9Style (0 cards / 1 one scene), K9 D screen only
     _taxi_meter_panel: C1MeterPanel | None = None
     _taxi_meter_season = 0   # K9MeterSeason (0 auto / 1 봄 / 2 여름 / 3 가을 / 4 겨울)
 
@@ -2262,7 +2289,9 @@ class ClusterUiRenderer:
             profile_stage = self._profile_start()
             from openpilot.common.indicator_display import draw as draw_indicator
             # inside the middle panel under the speed box (was x 530 = over the left panel)
-            draw_indicator(int(K9_TURZX_MID_X + (K9_TURZX_MID_W - 460) * 0.5), 124, 460, self._korean_font or self._font, 24)
+            # 22:41: off the km/h line (scene) / the lane pill (cards); see K9C_IND_Y / K9L_IND_Y
+            draw_indicator(int(K9_TURZX_MID_X + (K9_TURZX_MID_W - 460) * 0.5), int(self.k9_indicator_y()), 460,
+                           self._korean_font or self._font, 24)
             self._k9_turzx_draw_alert(getattr(state, "alert", None))
             self._profile_add("render.alert", profile_stage)
             return
@@ -6227,7 +6256,7 @@ class ClusterUiRenderer:
         trip = getattr(state, "trip_report", None)
         dist = getattr(trip, "distance_m", None) if trip is not None else None
         avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        self._k9_turzx_label_value(col[1] + 20, y0 + pad, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
+        self._k9_turzx_label_value(col[1] + 20, y0 + pad, "이번 주행", self.k9_trip_km_text(dist), "km",
                                    "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
         accel = getattr(state, "accel_mps2", None)
         accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
@@ -6288,13 +6317,13 @@ class ClusterUiRenderer:
             self._k9_turzx_value_text(text, vx, vy + 8.0, 36.0, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM, anchor="center")
 
     # middle panel: 2D perspective road (TURZX-style, drawn from scratch; no code / art from the photo repo)
-    @staticmethod
-    def k9_turzx_road_project(forward_m: float, lateral_m: float) -> tuple[float, float, float]:
+    def k9_turzx_road_project(self, forward_m: float, lateral_m: float) -> tuple[float, float, float]:
         """(screen x, screen y, px per m) of a road point, design px. forward >= -Z0 * 0.5."""
         z = max(K9_TURZX_ROAD_Z0 * 0.5, forward_m + K9_TURZX_ROAD_Z0)
-        scale = K9_TURZX_ROAD_KX / z
+        hy, ego_y, kx, _ = getattr(self, "_k9_geo", K9L_ROAD_GEO)  # card or scene road (ClusterHudK9Style)
+        scale = kx / z
         return (K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5 + lateral_m * scale,
-                K9_TURZX_ROAD_HORIZON_Y + K9_TURZX_ROAD_KY / z, scale)
+                hy + (ego_y - hy) * K9_TURZX_ROAD_Z0 / z, scale)
 
     @staticmethod
     def _k9_turzx_points(points, max_m: float = K9_TURZX_ROAD_MAX_M) -> list[tuple[float, float]]:
@@ -6396,12 +6425,13 @@ class ClusterUiRenderer:
     def _k9_turzx_draw_ego(self) -> None:
         # 대감님 19:58 "내 차량은 K9 뒷꽁무니 넣어놓은 거": the owner's K9 rear render (assets/images/k9_ego_car.png,
         # 2de680aea, same sprite as the old mode-0 HUD ego car), lane-width sized, soft floor shadow
-        cx, by = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5, K9_TURZX_ROAD_EGO_Y  # rear bumper at forward 0
+        geo = getattr(self, "_k9_geo", K9L_ROAD_GEO)
+        cx, by = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5, geo[1]  # rear bumper at forward 0
         if getattr(self, "_ego_car_texture", None) is None and not getattr(self, "_k9_turzx_ego_load_tried", False):
             self._k9_turzx_ego_load_tried = True
             self._ego_car_texture = self._load_icon_texture(EGO_CAR_ICON_PATH, "K9 ego car")
         tex = getattr(self, "_ego_car_texture", None)
-        w = K9_TURZX_EGO_W
+        w = geo[3]
         rl.draw_ellipse(int(cx), int(by - 2), w * 0.66, 9.0, rl.Color(0, 0, 0, 80))
         rl.draw_ellipse(int(cx), int(by - 2), w * 0.52, 5.0, rl.Color(0, 0, 0, 140))
         if tex is None:
@@ -6448,9 +6478,10 @@ class ClusterUiRenderer:
             self._k9_turzx_line(le, K9_TURZX_CHROME, 0.08, False, False, 0.55)
             self._k9_turzx_line(re_, K9_TURZX_CHROME, 0.08, False, False, 0.55)
         # horizon haze + faint sky-blue glow on the horizon
-        rl.draw_rectangle_gradient_v(int(x0), int(K9_TURZX_ROAD_HORIZON_Y - 40), int(w), 40,
+        hy = getattr(self, "_k9_geo", K9C_ROAD_GEO)[0]
+        rl.draw_rectangle_gradient_v(int(x0), int(hy - 40), int(w), 40,
                                      rl.Color(*K9_TURZX_LANE, 0), rl.Color(*K9_TURZX_LANE, 26))
-        rl.draw_rectangle_gradient_v(int(x0), int(K9_TURZX_ROAD_HORIZON_Y - 6), int(w), 46,
+        rl.draw_rectangle_gradient_v(int(x0), int(hy - 6), int(w), 46,
                                      rl.Color(*K9_TURZX_MID_TOP, 255), rl.Color(*K9_TURZX_MID_TOP, 0))
         # adjacent lane lines: dashed, dim
         for group in (lefts[:-1], rights[1:]):
@@ -6498,7 +6529,7 @@ class ClusterUiRenderer:
             a = 1.0 if conf is None or not math.isfinite(conf) else clamp(0.35 + conf * 0.65, 0.35, 1.0)
             self._k9_turzx_line(item[2], K9_TURZX_LANE, 0.13, True, False, a)
         # depth: far road fades into the sky
-        rl.draw_rectangle_gradient_v(int(x0), int(K9_TURZX_ROAD_HORIZON_Y - 2), int(w), 110,
+        rl.draw_rectangle_gradient_v(int(x0), int(hy - 2), int(w), 110,
                                      rl.Color(*K9_TURZX_MID_TOP, 200), rl.Color(*K9_TURZX_MID_TOP, 0))
         # other cars (dim), then the lead (pink + yellow distance tag)
         others = [v for v in (getattr(state, "detected_vehicles", ()) or ())
@@ -6510,6 +6541,9 @@ class ClusterUiRenderer:
             lx, ly, lw = self._k9_turzx_draw_vehicle(lead[0], lat, K9_TURZX_LEAD, (255, 236, 196))
             tag = f"{lead[0]:.0f}m"
             tw, _ = self._measure_text(tag, 22.0, max(1.0, 22.0 * 0.02), self._font_for_text(tag))
+            tbt = getattr(self, "_k9c_tbt_rect", None)  # 22:41 taller TBT card: a far lead tag would hide under it
+            if tbt is not None and lx + tw * 0.5 + 8.0 > tbt[0] and ly - 32.0 < tbt[3]:
+                ly = self.k9_turzx_road_project(lead[0], lat)[1] + 36.0  # under the car instead
             self._rounded_rect(lx - tw * 0.5 - 7.0, ly - 31.0, tw + 16.0, 26.0, 8.0, (0, 0, 0, 90), None)
             self._rounded_rect(lx - tw * 0.5 - 8.0, ly - 32.0, tw + 16.0, 26.0, 8.0, K9_TURZX_TAG, None)
             self._draw_text(tag, lx, ly - 19.0, 22.0, (34, 26, 12), anchor="center")
@@ -6517,6 +6551,9 @@ class ClusterUiRenderer:
 
     def _k9_turzx_draw_middle(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         x0, y0, w, h = K9_TURZX_MID_X, K9_TURZX_MARGIN, K9_TURZX_MID_W, K9_TURZX_TOP_H
+        guidance, nxt, _, _ = self.k9_navi_items(state)
+        self._k9c_tbt_rect = None if guidance is None else (x0 + w - 260.0, y0 + 12.0, x0 + w - 12.0,
+                                                            y0 + 12.0 + (124.0 if nxt is not None else 100.0))
         sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
         self._k9_turzx_shadow(x0, y0, w, h, K9_TURZX_RADIUS)
         rl.begin_scissor_mode(int(x0 * sx), int(y0 * sy), int(w * sx), int(h * sy))
@@ -6559,17 +6596,34 @@ class ClusterUiRenderer:
             ax = 960.0 + side * 30.0 + 60.0
             rl.draw_triangle(rl.Vector2(ax + side * 22, by + 44), rl.Vector2(ax, by + 28) if side > 0 else rl.Vector2(ax, by + 60),
                              rl.Vector2(ax, by + 60) if side > 0 else rl.Vector2(ax, by + 28), rl_color(K9_TURZX_SIGNAL))
-        # TBT card (navi guidance only)
+        # TBT card (navi guidance only); 22:41 bigger arrow / distance, next guidance small at the bottom
         navi = getattr(state, "navi_live", None)
-        guidance = getattr(navi, "current", None) if navi is not None else None
-        if guidance is not None and guidance.distance_m > 0:
-            tx, tw = x0 + w - 12 - 228.0, 228.0
-            self._k9_turzx_glass(tx, by, tw, bh, K9_TURZX_RADIUS, K9_TURZX_MID_CARD, shadow=False)
-            self._draw_navi_turn_icon(guidance.turn_type, tx + 34, by + 34, 40.0)
-            self._draw_text(self._format_navi_distance(guidance.distance_m), tx + tw - 14, by + 32.0, 40.0, K9_TURZX_TEXT,
-                            anchor="right")
-            road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, tw - 24)
-            self._draw_text(road, tx + 14, by + 68.0, 24.0, K9_TURZX_MUTED)
+        guidance, nxt, lane, cam = self.k9_navi_items(state)
+        tbt_bottom = None
+        if guidance is not None:
+            tx, tw = x0 + w - 12 - 248.0, 248.0
+            th = 124.0 if nxt is not None else 100.0
+            self._k9_turzx_glass(tx, by, tw, th, K9_TURZX_RADIUS, K9_TURZX_MID_CARD, shadow=False)
+            self._draw_navi_turn_icon(guidance.turn_type, tx + 42, by + 40, 60.0)
+            self._draw_text(self._format_navi_distance(guidance.distance_m), tx + 84, by + 40.0, 48.0, K9_TURZX_TEXT)
+            road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, tw - 28)
+            self._draw_text(road, tx + 14, by + 84.0, 24.0, K9_TURZX_MUTED)
+            if nxt is not None:
+                self._k9_turzx_metal_h(tx + 14, by + 99.0, tw - 28, 90)
+                self._draw_text("다음", tx + 14, by + 112.0, 20.0, K9_TURZX_DIM)
+                self._draw_navi_turn_icon(nxt.turn_type, tx + 80, by + 112.0, 22.0)
+                self._draw_text(self._format_navi_distance(nxt.distance_m), tx + tw - 14, by + 112.0, 22.0,
+                                K9_TURZX_MUTED, anchor="right")
+            tbt_bottom = by + th
+        if cam is not None:
+            self._k9c_draw_camera(cam)
+        if lane is not None:
+            lx1 = x0 + w - 12.0
+            box = self._k9_lane_strip(lane, self.k9_turn_dir(guidance), lx1, K9C_LANE_Y, 216.0, "right", False)
+            if lane.distance_m > 0:
+                self._draw_text(self._format_navi_distance(lane.distance_m), lx1, K9C_LANE_Y - 14.0, 22.0, K9_TURZX_MUTED,
+                                anchor="right")
+            self._draw_text("차로", box[0], K9C_LANE_Y - 14.0, 22.0, K9_TURZX_MUTED)
         # speed limit / section enforcement
         speed = getattr(navi, "speed", None) if navi is not None else None
         sign_cx, sign_cy, r = x0 + 60.0, y0 + 178.0, 36.0
@@ -6599,6 +6653,8 @@ class ClusterUiRenderer:
                                     anchor="center")
         # bottom pills: lane % (left), lead (right)
         pill_y = y0 + 132.0  # 20:48: off the bottom so my car sits at the panel floor; under the TBT card, right side
+        if tbt_bottom is not None:
+            pill_y = max(pill_y, tbt_bottom + 32.0)  # taller TBT card: pills stay under it
         if self._lane_confidence_label_visible(state):
             lc = getattr(state, "left_lane_line_confidence", None)
             rc = getattr(state, "right_lane_line_confidence", None)
@@ -6610,6 +6666,20 @@ class ClusterUiRenderer:
         if lead is not None:
             self._k9_turzx_pill(x0 + w - 12.0, pill_y + 48.0, f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°", "right")
 
+    def _k9c_draw_camera(self, cam) -> None:
+        name, dist, limit, progress, warn = cam
+        x, y, w, h = K9C_CAM_X, K9C_CAM_Y, K9C_CAM_W, K9C_CAM_H
+        self._k9_turzx_glass(x, y, w, h, 12.0, K9_TURZX_MID_CARD, shadow=False)
+        name = self._ellipsize_text(name, 20.0, w - 84.0)
+        self._draw_text(name, x + 14, y + 17.0, 20.0, K9_TURZX_MUTED)
+        self._draw_text(self._format_navi_distance(dist), x + 14, y + 38.0, 30.0, warn or K9_TURZX_TEXT)
+        cx, cy, r = x + w - 32.0, y + h * 0.5 - 2.0, 22.0
+        rl.draw_circle_v(rl.Vector2(cx, cy), r, rl_color(RED))
+        rl.draw_circle_v(rl.Vector2(cx, cy), r - 5.0, rl_color(WHITE))
+        text = str(int(round(display_speed(limit, self.is_metric))))
+        self._draw_text(text, cx, cy, 22.0 if len(text) <= 2 else 18.0, TEXT, anchor="center")
+        self._draw_clean_progress(x + 14.0, y + h - 7.0, w - 70.0, progress, warn or K9_TURZX_PATH, K9_TURZX_DIM)
+
     def _k9_turzx_draw_right(self, state: ClusterUiState) -> None:
         # 대감님 18:30: music card removed; lane position + steering-learn lines moved here from the middle (same text)
         x0, y0, w, h = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9_TURZX_RIGHT_W, K9_TURZX_TOP_H
@@ -6619,13 +6689,11 @@ class ClusterUiRenderer:
         for ly in (y0 + 26.0, split_y + 26.0):
             rl.draw_rectangle_rounded(rl.Rectangle(x0 + 20, ly - 11.0, 3.0, 22.0), 1.0, 4, rl.Color(*K9_TURZX_CHAMPAGNE, 200))
         self._draw_text("차선 위치", x0 + 30, y0 + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        lane_texts = (
-            (lane_offset_text(getattr(state, "k9_lane_offset_m", None)), K9_TURZX_POINT),
-            (lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None)),
-             K9_TURZX_GOOD),
-        )
+        t1, t2 = self._k9_lane_rows(state)
+        lane_texts = ((t1, K9_TURZX_POINT), (t2, K9_TURZX_GOOD))
         for i, (text, color) in enumerate(lane_texts):
-            self._k9_turzx_value_text(text, x0 + 20 + i * 300.0, y0 + 84.0, K9_TURZX_LANE_TEXT_SIZE, color)
+            self._k9_turzx_value_text(text, x0 + 20 + i * 300.0, y0 + 84.0, K9_TURZX_LANE_TEXT_SIZE,
+                                      K9_TURZX_DIM if "대기" in text else color)
         self._draw_text("조향 학습", x0 + 30, split_y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
         lat_texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
@@ -6674,9 +6742,140 @@ class ClusterUiRenderer:
         rl.rl_push_matrix()
         rl.rl_scalef(sx, sy, 1.0)
         try:
-            self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign (old card methods kept)
+            self._k9_ind_active = self._k9_indicator_active()
+            if self.k9_hud_style == K9_HUD_STYLE_SCENE:
+                self._k9_geo = K9L_ROAD_GEO
+                self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
+            else:
+                self._k9_geo = K9C_ROAD_GEO
+                self._k9c_draw_hud(state, signal_lights)  # b03a700cc cards
         finally:
             rl.rl_pop_matrix()
+
+    def set_k9_hud_style(self, style) -> None:
+        try:
+            value = int(style)
+        except (TypeError, ValueError):
+            value = K9_HUD_STYLE_CARD
+        self.k9_hud_style = value if value in (K9_HUD_STYLE_CARD, K9_HUD_STYLE_SCENE) else K9_HUD_STYLE_CARD
+
+    @staticmethod
+    def _k9_indicator_active() -> bool:
+        try:
+            from openpilot.common.indicator_display import current
+            return current() is not None
+        except Exception:
+            return False
+
+    def k9_indicator_y(self) -> float:
+        return K9L_IND_Y if self.k9_hud_style == K9_HUD_STYLE_SCENE else K9C_IND_Y
+
+    @contextmanager
+    def _k9_shift(self, dx: float):
+        """draw a side block moved by dx (1칸 <-> 3칸); _k9_dx lets checks know where the text really is"""
+        rl.rl_push_matrix()
+        rl.rl_translatef(dx, 0.0, 0.0)
+        self._k9_dx = dx
+        try:
+            yield
+        finally:
+            rl.rl_pop_matrix()
+            self._k9_dx = 0.0
+
+    def _k9c_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
+        rl.draw_rectangle_gradient_v(0, 0, int(DESIGN_WIDTH), int(DESIGN_HEIGHT), rl_color(K9_TURZX_BG_TOP),
+                                     rl_color(K9_TURZX_BG))
+        rl.draw_rectangle_gradient_v(0, int(DESIGN_HEIGHT) - 24, int(DESIGN_WIDTH), 24, rl.Color(*K9_TURZX_LANE, 0),
+                                     rl.Color(*K9_TURZX_LANE, 10))
+        with self._k9_shift(K9C_SWAP_DX):
+            self._k9_turzx_draw_left(state)
+        self._k9_turzx_draw_middle(state, signal_lights)
+        with self._k9_shift(-K9C_SWAP_DX):
+            self._k9_turzx_draw_right(state)
+
+    # ---- navi items for both K9 D layouts (11/12 22:41) ------------------------------------------------------------
+    def k9_navi_items(self, state: ClusterUiState):
+        """(turn guidance, next guidance, lane info, camera) shown on the K9 D screens, None when absent.
+        camera = (name, distance m, limit kph, progress 0..1 filling while approaching, warn colour or None);
+        like the EV6 chip it shows from CLEAN_CAMERA_SHOW_M (1000 m) on and only with a speed limit."""
+        navi = getattr(state, "navi_live", None)
+        if navi is None:
+            return None, None, None, None
+        cur = navi.current if navi.current is not None and navi.current.distance_m > 0 else None
+        nxt = navi.next if navi.next is not None and navi.next.distance_m > 0 else None
+        lane = navi.lane_current
+        if (lane is None or not lane.visible) and navi.lane_ahead:
+            lane = next((item for item in navi.lane_ahead if item.visible), None)
+        if lane is not None and (not lane.visible or min(8, max(lane.count, len(lane.available), len(lane.turn_info))) <= 0):
+            lane = None
+        cam = None
+        sp = navi.speed
+        if sp is not None and sp.sdi_type is not None and sp.sdi_distance_m is not None:
+            dist, limit = sp.sdi_distance_m, sp.sdi_speed_limit_kph or 0
+            if 0 < dist <= CLEAN_CAMERA_SHOW_M and limit > 0:
+                over = (state.speed_kph or 0.0) - limit
+                warn = RED if over >= CLEAN_SPEED_OVER_RED_KPH else AMBER if over > 0 else None
+                cam = (K9_SDI_NAMES.get(sp.sdi_type, "단속 카메라"), dist, limit,
+                       clamp(1.0 - dist / CLEAN_CAMERA_SHOW_M, 0.0, 1.0), warn)
+        return cur, nxt, lane, cam
+
+    @staticmethod
+    def k9_turn_dir(guidance) -> float:
+        if guidance is None:
+            return 0.0
+        return -1.0 if guidance.turn_type in NAVI_TURN_LEFT_TYPES else 1.0 if guidance.turn_type in NAVI_TURN_RIGHT_TYPES else 0.0
+
+    def _k9_lane_strip(self, lane, turn_dir: float, x: float, y: float, w: float, anchor: str, scene: bool):
+        """one cell per lane, arrow in each; recommended lanes (available > 0) lit and bent toward the turn,
+        my lane (currentLane) underlined. Returns the box (x0, y0, x1, y1)."""
+        count = min(8, max(lane.count, len(lane.available), len(lane.turn_info)))
+        gap, h = 4.0, K9_LANE_CELL_H
+        cw = min(34.0, (w - gap * (count - 1)) / count)
+        total = cw * count + gap * (count - 1)
+        x0 = x - total if anchor == "right" else x
+        cur = lane.current_lane - 1 if 1 <= lane.current_lane <= count else -1
+        lit = K9L_ICE if scene else K9_TURZX_PATH
+        for i in range(count):
+            rec = i < len(lane.available) and lane.available[i] > 0
+            lx = x0 + i * (cw + gap)
+            cx = lx + cw * 0.5
+            if scene:
+                fill = (*lit, 46) if rec else (8, 13, 26, 150)
+                edge = (*lit, 230) if rec else (*K9L_CHAMPAGNE, 70)
+            else:
+                fill = (18, 70, 70, 230) if rec else (12, 19, 36, 220)
+                edge = (*lit, 255) if rec else (*K9_TURZX_EDGE, 255)
+            self._rounded_rect(lx, y, cw, h, 6.0, fill, edge, 2.0 if rec else 1.0)
+            col = rl_color((250, 252, 255) if rec else (K9L_DIM if scene else K9_TURZX_DIM))
+            bot, mid, top = rl.Vector2(cx, y + h - 8.0), rl.Vector2(cx, y + h * 0.52), rl.Vector2(cx, y + 9.0)
+            bend = turn_dir if rec else 0.0
+            if bend:
+                tip = rl.Vector2(cx + bend * cw * 0.32, y + 12.0)
+                rl.draw_line_ex(bot, mid, 3.0, col)
+                rl.draw_line_ex(mid, rl.Vector2(cx + bend * cw * 0.18, y + 18.0), 3.0, col)
+                self._k9_turzx_tri(tip, rl.Vector2(cx + bend * cw * 0.02, y + 15.0), rl.Vector2(cx + bend * cw * 0.26, y + 25.0), col)
+            else:
+                rl.draw_line_ex(bot, rl.Vector2(cx, y + 16.0), 3.0, col)
+                self._k9_turzx_tri(top, rl.Vector2(cx - 6.0, y + 18.0), rl.Vector2(cx + 6.0, y + 18.0), col)
+            if i == cur:
+                rl.draw_rectangle_rec(rl.Rectangle(lx + 4.0, y + h + 3.0, cw - 8.0, 3.0),
+                                      rl_color(K9L_CHAMPAGNE if scene else K9_TURZX_POINT))
+        return x0, y, x0 + total, y + h + 6.0
+
+    def _k9_lane_rows(self, state: ClusterUiState) -> tuple[str, str]:
+        """차선 위치 rows; -- (no line) reads as 대기 instead of an empty-looking dash (11/12 22:41 남은 약점)"""
+        t1 = lane_offset_text(getattr(state, "k9_lane_offset_m", None))
+        if t1 == lane_offset_text(None):
+            t1 = "치우침 대기"
+        t2 = lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None))
+        return t1, t2.replace("--", "대기")
+
+    @staticmethod
+    def k9_trip_km_text(dist_m) -> str:
+        if dist_m is None:
+            return "-"
+        km = dist_m / 1000.0
+        return f"{km:.0f}" if km >= 999.95 else f"{km:.1f}"  # 1000 km and more: no decimal (same width as 999.9)
 
     # ---- K9 TURZX luxury scene (대감님 11/12 21:44 "그게 고급짐의 한계인가?") -----------------------------------------
     # One continuous night scene instead of three cards: no card borders, information floats as type on a deep navy
@@ -6894,7 +7093,9 @@ class ClusterUiRenderer:
         trip = getattr(state, "trip_report", None)
         dist = getattr(trip, "distance_m", None) if trip is not None else None
         avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        self._k9l_item(cb, r1, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
+        trip_text = self.k9_trip_km_text(dist)
+        # 1000 km and more: the unit would run past the right screen edge (now the right side), the label says km
+        self._k9l_item(cb, r1, "이번 주행", trip_text, "km" if "." in trip_text else "",
                        "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
         accel = getattr(state, "accel_mps2", None)
         accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
@@ -7037,6 +7238,10 @@ class ClusterUiRenderer:
             tw = self._k9l_width(tag, 22.0, True)
             keep_out = self._k9l_perc_rects(state)
             out = 1.0 if lx >= 960.0 else -1.0
+            keep_out = keep_out + self._k9l_navi_rects(state)
+            if getattr(self, "_k9_ind_active", False):  # the automatic indicator box sits on the far road
+                ix = K9_TURZX_MID_X + (K9_TURZX_MID_W - 460) * 0.5
+                keep_out.append((ix, K9L_IND_Y, ix + 460.0, K9L_IND_Y + 24.0 * 2.7))
             spots = [(lx - tw * 0.5, ly - 18.0)]  # above the car, else beside it (outer, inner side)
             for side in (out, -out):
                 spots.append((lx + lw * 0.5 + 8.0 if side > 0 else lx - lw * 0.5 - 8.0 - tw, ly + lw * 0.29))
@@ -7045,8 +7250,9 @@ class ClusterUiRenderer:
                 if not (K9L_SCENE_X0 + 12.0 <= px and px + tw <= K9L_SCENE_X1 - 12.0):
                     return False
                 return all(px + tw < x0 or px > x1 or cy + 10.0 < y0 or cy - 10.0 > y1 for x0, y0, x1, y1 in keep_out)
-            px, cy = next((p for p in spots if free(*p)), spots[0])
-            self._k9l_text(tag, px, 0.0, 22.0, K9L_CHAMPAGNE, numeric=True, cap_cy=cy)
+            spot = next((p for p in spots if free(*p)), None if getattr(self, "_k9_ind_active", False) else spots[0])
+            if spot is not None:  # under the indicator box: no tag (the lead line beside the road keeps the distance)
+                self._k9l_text(tag, spot[0], 0.0, 22.0, K9L_CHAMPAGNE, numeric=True, cap_cy=spot[1])
         # the scene has no frame: the sides melt into the night field
         fw = int(K9L_SCENE_FADE)
         for yy, hh, cl, cr in getattr(self, "_k9l_side_rows", ()):
@@ -7066,7 +7272,7 @@ class ClusterUiRenderer:
     def _k9l_perc_rects(self, state: ClusterUiState) -> list[tuple[float, float, float, float]]:
         """screen boxes of the lane % / lead line (kept free by the lead distance tag)"""
         lane, lead = self._k9l_perc_texts(state)
-        py, out = K9L_PERC_Y, []
+        py, out = self._k9l_perc_y(), []
         if lane:
             out.append((960.0 - K9L_PERC_GAP - self._k9l_width(lane, 26.0) - 24.0, py - 15.0, 960.0 - K9L_PERC_GAP, py + 15.0))
         if lead:
@@ -7102,15 +7308,7 @@ class ClusterUiRenderer:
             a, b = rl.Vector2(ax, ay - 14.0), rl.Vector2(ax, ay + 14.0)
             self._k9_turzx_tri(tip, a, b, rl_color(K9_TURZX_SIGNAL))
         navi = getattr(state, "navi_live", None)
-        guidance = getattr(navi, "current", None) if navi is not None else None
-        rx = K9L_SCENE_X1 - 16.0
-        if guidance is not None and guidance.distance_m > 0:
-            # guidance on the right of the scene under the lead line (the top right belongs to MAX)
-            dist = self._format_navi_distance(guidance.distance_m)
-            dw = self._k9l_text(dist, rx, 0.0, 40.0, K9L_VALUE, anchor="right", numeric=True, base=K9L_NAVI_BASE)
-            self._draw_navi_turn_icon(guidance.turn_type, rx - dw - 32.0, K9L_NAVI_BASE - 18.0, 40.0)
-            road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, 200.0)
-            self._k9l_text(road, rx, 0.0, 24.0, K9L_MUTED, anchor="right", base=K9L_NAVI_BASE + 34.0)
+        self._k9l_draw_navi(state)
         speed = getattr(navi, "speed", None) if navi is not None else None
         sign_cx, sign_cy, r = K9L_SIGN_X, cy, 36.0
         section = speed is not None and speed.section_active and speed.section_speed_limit_kph
@@ -7132,11 +7330,15 @@ class ClusterUiRenderer:
                     d = f"{speed.section_remaining_distance_m / 1000.0:.1f} km"
                     self._k9l_text(d, sign_cx + 38.0, 0.0, 22.0, K9L_VALUE, numeric=True, cap_cy=chip_cy)
                 if speed.section_average_kph is not None:
-                    vw = self._k9l_text(f"{speed.section_average_kph:.0f}", sign_cx - 38.0, 0.0, 34.0, K9L_ICE,
-                                        anchor="right", numeric=True, cap_cy=chip_cy)
-                    self._k9l_text("평균속도", sign_cx - 46.0 - vw, 0.0, 20.0, K9L_LABEL, anchor="right", cap_cy=chip_cy)
+                    # 22:41: under the chip (left of the chip it ran into the swapped list on the left side)
+                    avg_cy = chip_cy + 30.0
+                    avg = f"{speed.section_average_kph:.0f}"
+                    lw = self._k9l_width("평균속도", 20.0) + 8.0
+                    ax0 = sign_cx - (lw + self._k9l_width(avg, 34.0, True)) * 0.5
+                    self._k9l_text("평균속도", ax0, 0.0, 20.0, K9L_LABEL, cap_cy=avg_cy)
+                    self._k9l_text(avg, ax0 + lw, 0.0, 34.0, K9L_ICE, numeric=True, cap_cy=avg_cy)
         # lane % (left) and lead (right) beside the far road, mirrored about the centre line
-        py = K9L_PERC_Y
+        py = self._k9l_perc_y()
         lane_text, lead_text = self._k9l_perc_texts(state)
         if lane_text:
             lc = getattr(state, "left_lane_line_confidence", None)
@@ -7148,6 +7350,58 @@ class ClusterUiRenderer:
             rl.draw_circle_v(rl.Vector2(tx - tw - 16.0, py), 6.0, rl_color(dot))
         if lead_text:
             self._k9l_text(lead_text, 960.0 + K9L_PERC_GAP, 0.0, 26.0, K9L_VALUE, cap_cy=py)
+
+    def _k9l_perc_y(self) -> float:
+        return K9L_PERC_Y_IND if getattr(self, "_k9_ind_active", False) else K9L_PERC_Y
+
+    def _k9l_navi_rects(self, state: ClusterUiState) -> list[tuple[float, float, float, float]]:
+        """screen boxes of the scene navi items (kept free by the lead distance tag)"""
+        guidance, nxt, lane, cam = self.k9_navi_items(state)
+        out = []
+        if guidance is not None:
+            out.append((K9L_SCENE_X1 - 200.0, K9L_NAVI_BASE2 - 62.0, K9L_SCENE_X1, K9L_NAVI_BASE2 + 72.0))
+        if cam is not None:
+            out.append((K9L_CAM_X, K9L_CAM_Y, K9L_CAM_X + K9L_CAM_W, K9L_CAM_Y + 92.0))
+        if lane is not None:
+            out.append((K9L_CAM_X, K9L_LANE_Y - 30.0, K9L_CAM_X + K9L_CAM_W, K9L_LANE_Y + K9_LANE_CELL_H + 6.0))
+        return out
+
+    def _k9l_draw_navi(self, state: ClusterUiState) -> None:
+        guidance, nxt, lane, cam = self.k9_navi_items(state)
+        rx = K9L_SCENE_X1 - 16.0
+        if guidance is not None:
+            # 22:41 bigger: 60 px arrow, 52 distance (was 40 / 40), road name under it, next guidance small below
+            base = K9L_NAVI_BASE2
+            dist = self._format_navi_distance(guidance.distance_m)
+            dw = self._k9l_text(dist, rx, 0.0, 52.0, K9L_VALUE, anchor="right", numeric=True, glow=True, base=base)
+            self._draw_navi_turn_icon(guidance.turn_type, rx - dw - 44.0, base - 24.0, 60.0)
+            road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, 220.0)
+            self._k9l_text(road, rx, 0.0, 24.0, K9L_MUTED, anchor="right", base=base + 34.0)
+            if nxt is not None:
+                nb = base + 68.0
+                nw = self._k9l_text(self._format_navi_distance(nxt.distance_m), rx, 0.0, 24.0, K9L_MUTED, anchor="right",
+                                    numeric=True, base=nb)
+                self._draw_navi_turn_icon(nxt.turn_type, rx - nw - 22.0, nb - 9.0, 26.0)
+                self._k9l_text("다음", rx - nw - 42.0, 0.0, 22.0, K9L_LABEL, anchor="right", track=K9L_TRACK, base=nb)
+        if cam is not None:
+            name, d, limit, progress, warn = cam
+            x, y, w = K9L_CAM_X, K9L_CAM_Y, K9L_CAM_W
+            self._k9l_text(name, x, 0.0, 22.0, warn or K9L_LABEL, track=0.04, base=y + 22.0)
+            self._k9l_text(self._format_navi_distance(d), x - 2.0, 0.0, 40.0, warn or K9L_VALUE, numeric=True,
+                           glow=True, base=y + 70.0)
+            cx, cy, r = x + w - 30.0, y + 50.0, 26.0
+            rl.draw_ring(rl.Vector2(cx, cy), r + 1.0, r + 2.2, 0.0, 360.0, 48, rl.Color(*K9L_CHAMPAGNE, 150))
+            rl.draw_circle_v(rl.Vector2(cx, cy), r, rl_color(RED))
+            rl.draw_circle_v(rl.Vector2(cx, cy), r - 5.0, rl.Color(246, 246, 244, 255))
+            text = str(int(round(display_speed(limit, self.is_metric))))
+            self._draw_text(text, cx, cy, 26.0 if len(text) <= 2 else 21.0, TEXT, anchor="center")
+            self._k9l_meter(x, y + 88.0, w - 66.0, progress, warn or K9L_ICE)
+        if lane is not None:
+            box = self._k9_lane_strip(lane, self.k9_turn_dir(guidance), K9L_CAM_X, K9L_LANE_Y, K9L_CAM_W, "left", True)
+            self._k9l_text("차로", box[0], 0.0, 22.0, K9L_LABEL, track=K9L_TRACK, base=K9L_LANE_Y - 10.0)
+            if lane.distance_m > 0:
+                self._k9l_text(self._format_navi_distance(lane.distance_m), box[2], 0.0, 22.0, K9L_MUTED, anchor="right",
+                               numeric=True, base=K9L_LANE_Y - 10.0)
 
     @staticmethod
     def _k9l_pairs(text: str, first_space: bool = False) -> list[tuple[str, str]]:
@@ -7174,17 +7428,16 @@ class ClusterUiRenderer:
             if name:
                 self._k9l_text(name, nx, 0.0, size, K9L_MUTED, base=base)
             if value:
-                dim = value.strip("-") == ""
+                dim = value.strip("-") == "" or value == "대기"
                 self._k9l_text(value, vx, 0.0, size, K9L_DIM if dim else K9L_VALUE, anchor="right", base=base,
                                glow=size >= K9_TURZX_LANE_TEXT_SIZE and not dim)
 
     def _k9l_draw_right(self, state: ClusterUiState) -> None:
         x0, x1 = K9L_RIGHT_X, K9L_RIGHT_X1
         self._k9l_text("차선 위치", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_HEAD)
-        self._k9l_list_row(lane_offset_text(getattr(state, "k9_lane_offset_m", None)), K9L_LANE_BASES[0],
-                           K9_TURZX_LANE_TEXT_SIZE, first_space=True)
-        self._k9l_list_row(lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None)),
-                           K9L_LANE_BASES[1], K9_TURZX_LANE_TEXT_SIZE)
+        t1, t2 = self._k9_lane_rows(state)
+        self._k9l_list_row(t1, K9L_LANE_BASES[0], K9_TURZX_LANE_TEXT_SIZE, first_space=True)
+        self._k9l_list_row(t2, K9L_LANE_BASES[1], K9_TURZX_LANE_TEXT_SIZE)
         self._k9l_hair(x0, K9L_RIGHT_HAIR, x1 - x0, 110)
         self._k9l_text("조향 학습", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_LAT_HEAD)
         lat_texts = (
@@ -7212,8 +7465,10 @@ class ClusterUiRenderer:
         finally:
             rl.end_scissor_mode()
         self._k9l_draw_top(state, signal_lights)
-        self._k9l_draw_left(state)
-        self._k9l_draw_right(state)
+        with self._k9_shift(K9L_SWAP_LEFT_DX):   # 22:41 1칸 <-> 3칸
+            self._k9l_draw_left(state)
+        with self._k9_shift(K9L_SWAP_RIGHT_DX):
+            self._k9l_draw_right(state)
 
     def _draw_alert_overlay(self, alert: ClusterAlert | None) -> None:
         if alert is None or alert.size <= 0 or not (alert.text1 or alert.text2):
