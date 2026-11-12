@@ -39,6 +39,11 @@ D_OPP = 3.8
 D_LO, D_SEEN = 1.6, 3.3
 STD_MAX = 1.2
 P_LINE_ON, P_LINE_OFF, TAU_P = 0.55, 0.70, 1.0
+P_ARM, P_CLEAR = 0.86, 0.90   # 11/12 17:30 (05:13 8.6-9.0 s, lines fading 0.8 -> 0.5 next to a seen wall): start below P_ARM, a line is clear again above P_CLEAR
+LOST_T_HOLD = 2.0             # wall lane already on: carry the wall (own motion) this long through frames it is not seen (05:13 9.1-10.8 s)
+D_OPP_HOLD = 2.6              # wall lane already on: opposite edge only needs this much (05:13 11.9-12.4 s: 3.0-3.7 m)
+STEER_START = 1               # driver steering toward a seen wall starts it while both lines are below P_ARM (05:13 8.0-9.0 s:
+                              # +200..+270 toward the left wall, lines 0.85 -> 0.5); otherwise the start needs both below P_WEAK_IN
 WALL_T, WALL_FRAC, WALL_RANGE = 1.0, 0.85, 0.8
 LOST_T = 0.5
 OUTLIER = 0.8
@@ -62,7 +67,8 @@ FE_K, FE_TAU, FE_MAX = 0.0, 0.1, 0.003   # curvature error feedforward: bend += 
 FF_TAU = 0.1
 FD_K, FD_TAU = 0.0, 0.2       # lead: bend += FD_K x d(model curvature)/dt x x^2 / 2 (filtered FD_TAU s)
 ASYM = 0                     # 1: feedforward / error bends only away from the wall
-FF_K = 0.8                   # curve feedforward: extra path bend = FF_K x model curvature x x^2 / 2
+FF_K = 0.0                   # curve feedforward: extra path bend = FF_K x model curvature x x^2 / 2
+                             # 11/12 17:30: 0 (was 0.8; with the longer hold 0.8 gave steering std 14.95 deg, 0 -> 9.97, 05:13 replay)
 
 
 def read_mode(params):
@@ -81,6 +87,7 @@ class Side:
     self.line_on = False
     self.lost = 0.0
     self.ok = False
+    self.seen = False
 
 
 def _smooth(g):
@@ -117,8 +124,9 @@ class WallLane:
     probs = list(md.laneLineProbs) if ok_in else [0.0] * 4
     for i, sd in enumerate(self.sides):
       p = float(probs[1 if i == 0 else 2])
+      first = sd.p_f is None
       sd.p_f = p if sd.p_f is None else sd.p_f + dt / (TAU_P + dt) * (p - sd.p_f)
-      sd.line_on = sd.p_f > (P_LINE_ON if sd.line_on else P_LINE_OFF)
+      sd.line_on = sd.p_f > (P_ARM if (sd.line_on or first) else P_CLEAR)
       good, y0 = False, 0.0
       if ok_in:
         ys = np.interp(x_grid, np.asarray(edges[i].x, dtype=float), np.asarray(edges[i].y, dtype=float))
@@ -134,13 +142,15 @@ class WallLane:
         # y(t-1) moved this way: median error 0.034 m vs 0.041 m without the heading term and 0.049 m with the other sign,
         # 00000227--16; 0.0210 / 0.0215 / 0.0265 m on 000001bb--16)
         sd.y = np.interp(x_grid + sx, x_grid, sd.y) - float(curv) * sx * x_grid
+      sd.seen = good
       if good:
-        sd.y = ys.copy() if sd.y is None else sd.y + dt / (TAU_EDGE + dt) * (ys - sd.y)
+        # back after a carried (unseen) stretch longer than LOST_T: take the measured wall as is, no filter lag
+        sd.y = ys.copy() if (sd.y is None or sd.lost > LOST_T) else sd.y + dt / (TAU_EDGE + dt) * (ys - sd.y)
         sd.med = (sd.med + [y0])[-5:]
         sd.lost = 0.0
       else:
         sd.lost += dt
-        if sd.lost > LOST_T:
+        if sd.lost > (LOST_T_HOLD if (self.u > 0.0 and i == self.side) else LOST_T):
           sd.y, sd.med = None, []
       sd.hist = (sd.hist + [(good, float(np.median(sd.med)) if sd.med else 0.0)])[-int(round(WALL_T / dt)):]
       n = len(sd.hist)
@@ -169,19 +179,22 @@ class WallLane:
       off = True
       if self.u > 0.0:
         self.fast_out = True
+    arm = False
     if bool(CS.steeringPressed):
       # driver steering toward the wall (the 05:13 case: +200..+300 torque to the left wall) keeps the wall lane;
       # steering away from it (or no side yet) turns it off (ramp out). steeringTorque > 0 = left.
       tq = float(getattr(CS, 'steeringTorque', 0.0))
-      toward = (self.side == 0 and tq > 0.0) or (self.side == 1 and tq < 0.0)
-      if not (toward and self.u > 0.0):
+      side = self.side if (self.side >= 0 or not STEER_START) else (0 if self.sides[0].ok else (1 if self.sides[1].ok else -1))
+      toward = (side == 0 and tq > 0.0) or (side == 1 and tq < 0.0)
+      arm = bool(STEER_START and toward and self.u <= 0.0)
+      if not (toward and (self.u > 0.0 or STEER_START)):
         off = True
     cand = []
-    if lines_weak and self.u <= 0.0 and max(sd.p_f or 0.0 for sd in self.sides) >= P_WEAK_IN:
+    if lines_weak and self.u <= 0.0 and max(sd.p_f or 0.0 for sd in self.sides) >= (P_ARM if arm else P_WEAK_IN):
       lines_weak = False
     if lines_weak and not off:
       for i, sd in enumerate(self.sides):
-        if sd.ok and sd.y is not None and self.opp_dist[i] >= D_OPP:
+        if sd.ok and sd.y is not None and self.opp_dist[i] >= (D_OPP_HOLD if (self.u > 0.0 and i == self.side) else D_OPP):
           cand.append(((-float(sd.y[0])) if i == 0 else float(sd.y[0]), i))
     self.cand = bool(cand)
     virt = None
@@ -251,6 +264,8 @@ class WallLane:
     if self.c is None:
       self.c = self.c_f = 0.0
     self.c_f += DT_MDL / (C_TAU + DT_MDL) * (c_tgt - self.c_f)
+    if not getattr(self.sides[i], 'seen', True):
+      c_tgt = self.c_f = self.c                        # wall not seen this frame (carried): hold the offset
     step = self.c_f - self.c
     lim = (C_RATE_IN if sgn * step < 0.0 else C_RATE_OUT) * DT_MDL     # sgn * step < 0: toward the wall
     self.c += float(np.clip(step, -lim, lim))
