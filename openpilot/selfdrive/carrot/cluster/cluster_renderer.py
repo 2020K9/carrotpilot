@@ -162,6 +162,29 @@ K9_PARK_WHEELS = ((310, 275), (505, 199))
 K9_PARK_FLOOR_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_floor.png"
 K9_PARK_FLOOR_OFFSET = (-72, 160)  # floor PNG top-left relative to the car photo top-left, photo px  # photo px: front / rear tyre contact (lowest alpha), reflection axis
 K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (selfdrive/car/k9_fuel.py)
+# K9 TURZX drive layout (대감님 2026-11-12 18:05, layout of GRT47/HKG_5W_TurzxMonitor photo): left car panel, middle 3D road,
+# right media panel, bottom climate bar. K9 only (car_fingerprint KIA_K9), default screen mode, not P / R. EV6 untouched.
+# Values the comma does not read (fuel %, fuel economy, music, climate) are drawn as "-", never guessed.
+K9_TURZX_MARGIN = 8.0
+K9_TURZX_TOP_H = 388.0                       # cards y 8 .. 396
+K9_TURZX_BAR_Y = 404.0                       # bottom climate bar y 404 .. 472
+K9_TURZX_BAR_H = 68.0
+K9_TURZX_LEFT_X, K9_TURZX_LEFT_W = 8.0, 656.0
+K9_TURZX_MID_X, K9_TURZX_MID_W = 672.0, 576.0  # centre 960 = ego car centre with no world shift
+K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1256.0, 656.0
+K9_TURZX_WORLD_LIFT_Y = 64.0                 # 3D road drawn 64 px higher so the ego car sits inside the middle panel
+K9_TURZX_BG = (6, 10, 18)
+K9_TURZX_CARD = (16, 24, 38)
+K9_TURZX_EDGE = (48, 64, 88)
+K9_TURZX_TEXT = (236, 242, 248)
+K9_TURZX_MUTED = (138, 152, 172)
+K9_TURZX_DIM = (78, 90, 108)
+K9_TURZX_ACCENT = (70, 170, 255)
+K9_TURZX_GOOD = (80, 222, 150)
+K9_TURZX_LABEL_SIZE = 24.0
+K9_TURZX_VALUE_SIZE = 60.0
+K9_TURZX_UNIT_SIZE = 28.0
+K9_TURZX_SUB_SIZE = 24.0
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
@@ -2136,6 +2159,19 @@ class ClusterUiRenderer:
             self._ev6_draw_park_screen(state)
         elif self._ev6_reverse_screen_active(state):
             self._ev6_draw_reverse_screen(state)
+        elif self._k9_turzx_active(state):
+            if signal_lights is None:
+                signal_lights = self._turn_signal_lights(state)
+            self._k9_turzx_frame = True
+            try:
+                profile_stage = self._profile_start()
+                self._render_world(state, signal_lights)
+                self._profile_add("render.world", profile_stage)
+                profile_stage = self._profile_start()
+                self._k9_turzx_draw_hud(state, signal_lights)
+                self._profile_add("render.hud", profile_stage)
+            finally:
+                self._k9_turzx_frame = False
         else:
             if signal_lights is None:
                 signal_lights = self._turn_signal_lights(state)
@@ -4850,8 +4886,9 @@ class ClusterUiRenderer:
         if abs(view_shift_x) > 0.001:
             driving_offset_x = self._driving_panel_offset_design_x() * self.width / DESIGN_WIDTH
         scene_offset_x = driving_offset_x - view_shift_x
-        if abs(scene_offset_x) > 0.001:
-            rl.rl_viewport(int(round(scene_offset_x)), 0, self.width, self.height)
+        lift_y = K9_TURZX_WORLD_LIFT_Y * self.height / DESIGN_HEIGHT if getattr(self, "_k9_turzx_frame", False) else 0.0
+        if abs(scene_offset_x) > 0.001 or lift_y > 0.001:
+            rl.rl_viewport(int(round(scene_offset_x)), int(round(lift_y)), self.width, self.height)
         if clean_ui_enabled() and self._vehicle_shaders:
             view_pos = rl.ffi.new("float[]", [float(camera.position.x), float(camera.position.y), float(camera.position.z)])
             for vehicle_shader, view_loc in self._vehicle_shaders:
@@ -4907,10 +4944,11 @@ class ClusterUiRenderer:
         profile_stage = self._profile_start()
         rl.end_mode_3d()
         self._profile_add("draw_scene.end_mode_3d", profile_stage)
-        if abs(scene_offset_x) > 0.001:
+        world_2d_shifted = abs(scene_offset_x) > 0.001 or lift_y > 0.001
+        if world_2d_shifted:
             rl.rl_viewport(0, 0, self.width, self.height)
             rl.rl_push_matrix()
-            rl.rl_translatef(scene_offset_x, 0.0, 0.0)
+            rl.rl_translatef(scene_offset_x, -lift_y, 0.0)
         try:
             if ego_sprite_vehicle is not None:
                 self._draw_ego_car_sprite(ego_sprite_vehicle, camera, scene.scene_shift_x_m)
@@ -4932,7 +4970,7 @@ class ClusterUiRenderer:
             )
             self._profile_add("draw_scene.vehicle_badges", profile_stage)
         finally:
-            if abs(scene_offset_x) > 0.001:
+            if world_2d_shifted:
                 rl.rl_pop_matrix()
 
     def _draw_ground(self) -> None:
@@ -4953,6 +4991,8 @@ class ClusterUiRenderer:
         rl.rl_end()
 
     def _world_view_shift_x(self, state: ClusterUiState) -> float:
+        if getattr(self, "_k9_turzx_frame", False):
+            return 0.0  # K9 TURZX layout: ego car centred in the middle panel (DESIGN_WIDTH / 2)
         screen_mode = self._effective_screen_mode(state)
         if cluster_camera_view_is_road_camera(state.camera_view_mode):
             return 0.0
@@ -5966,6 +6006,248 @@ class ClusterUiRenderer:
             profile_stage = self._profile_start()
             rl.rl_pop_matrix()
             self._profile_add("hud.pop_matrix", profile_stage)
+
+    # ---- K9 TURZX drive layout (대감님 2026-11-12 18:05) ------------------------------------------------------------
+    def _k9_turzx_active(self, state: ClusterUiState) -> bool:
+        if not str(getattr(state, "car_fingerprint", "") or "").startswith("KIA_K9"):
+            return False
+        if not getattr(state, "onroad", False) or clean_ui_enabled():
+            return False
+        if getattr(self, "screen_mode", CLUSTER_SCREEN_MODE_DEFAULT) != CLUSTER_SCREEN_MODE_DEFAULT:
+            return False
+        return str(getattr(state, "gear_text", "") or "").strip().upper() not in ("P", "R")
+
+    @staticmethod
+    def k9_turzx_range_km(fraction) -> int | None:
+        # carState.fuelGauge on the K9 = CLU13 CF_Clu_DTE / 600 km (selfdrive/car/k9_fuel.py), so this is the cluster's km.
+        if fraction is None or not 0.0 < fraction <= 1.0:
+            return None
+        return int(round(fraction * K9_DTE_FULL_KM))
+
+    @staticmethod
+    def k9_turzx_lead(state: ClusterUiState) -> tuple[float, float] | None:
+        """(distance m, bearing deg, right positive) of leadOne, None without one."""
+        for vehicle in getattr(state, "detected_vehicles", ()) or ():
+            if vehicle.primary and str(vehicle.label).upper() == "L1" and vehicle.longitudinal_m > 0.0:
+                return vehicle.longitudinal_m, math.degrees(math.atan2(vehicle.lateral_m, vehicle.longitudinal_m))
+        return None
+
+    def _k9_turzx_label_value(self, x: float, y: float, label: str, value: str, unit: str, sub: str) -> None:
+        self._draw_text(label, x, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
+        self._draw_text(value, x, y + 92.0, K9_TURZX_VALUE_SIZE, K9_TURZX_TEXT if value != "-" else K9_TURZX_DIM)
+        if unit and value != "-":
+            w, _ = self._measure_text(value, K9_TURZX_VALUE_SIZE, max(1.0, K9_TURZX_VALUE_SIZE * 0.02),
+                                      self._font_for_text(value))
+            self._draw_text(unit, x + w + 6.0, y + 102.0, K9_TURZX_UNIT_SIZE, K9_TURZX_MUTED)
+        if sub:
+            self._draw_text(sub, x, y + 168.0, K9_TURZX_SUB_SIZE, K9_TURZX_MUTED)
+
+    def _k9_turzx_bar(self, x: float, y: float, w: float, fraction: float | None, color) -> None:
+        rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, 10.0), 1.0, 6, rl_color(K9_TURZX_EDGE))
+        if fraction is not None and fraction > 0.0:
+            rl.draw_rectangle_rounded(rl.Rectangle(x, y, max(10.0, w * clamp(fraction, 0.0, 1.0)), 10.0), 1.0, 6,
+                                      rl_color(color))
+
+    def _k9_turzx_draw_left(self, state: ClusterUiState) -> None:
+        x0, y0, h = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H
+        self._rounded_rect(x0, y0, K9_TURZX_LEFT_W, h, 14.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+        col = (x0, x0 + 224.0, x0 + 448.0)
+        edge = rl_color(K9_TURZX_EDGE)
+        rl.draw_line_ex(rl.Vector2(col[1], y0 + 14), rl.Vector2(col[1], y0 + h - 14), 2.0, edge)
+        rl.draw_line_ex(rl.Vector2(col[2], y0 + 14), rl.Vector2(col[2], y0 + h - 14), 2.0, edge)
+        rl.draw_line_ex(rl.Vector2(x0 + 14, y0 + h * 0.5), rl.Vector2(col[2] - 14, y0 + h * 0.5), 2.0, edge)
+        # fuel %: K9 CF_Clu_FuelDispLvl is always 0 (k9_fuel.py), no tank level -> "-"
+        self._k9_turzx_label_value(col[0] + 20, y0, "연료 잔량", "-", "", "")
+        km = self.k9_turzx_range_km(getattr(state, "fuel_gauge", None))
+        self._k9_turzx_label_value(col[1] + 20, y0, "주행가능거리", "-" if km is None else str(km), "km", "연비 -")
+        self._k9_turzx_bar(col[1] + 20, y0 + 132.0, 184.0, None if km is None else km / K9_DTE_FULL_KM, K9_TURZX_ACCENT)
+        accel = getattr(state, "accel_mps2", None)
+        accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
+        throttle = getattr(state, "throttle", None)
+        pedal = "-" if throttle is None or not math.isfinite(throttle) else f"{int(round(clamp(throttle, 0.0, 1.0) * 100))}%"
+        y1 = y0 + h * 0.5
+        self._k9_turzx_label_value(col[0] + 20, y1, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
+        if accel_text != "-":
+            cx = col[0] + 20 + 92.0
+            rl.draw_rectangle_rounded(rl.Rectangle(col[0] + 20, y1 + 132.0, 184.0, 10.0), 1.0, 6, edge)
+            span = 92.0 * clamp(abs(accel) / 3.0, 0.0, 1.0)
+            color = K9_TURZX_GOOD if accel >= 0.0 else (255, 120, 90)
+            rl.draw_rectangle_rec(rl.Rectangle(cx if accel >= 0.0 else cx - span, y1 + 132.0, span, 10.0), rl_color(color))
+        trip = getattr(state, "trip_report", None)
+        dist = getattr(trip, "distance_m", None) if trip is not None else None
+        avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
+        self._k9_turzx_label_value(col[1] + 20, y1, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
+                                   "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
+        self._k9_turzx_draw_tpms(state, col[2], y0, K9_TURZX_LEFT_X + K9_TURZX_LEFT_W - col[2], h)
+
+    def _k9_turzx_draw_tpms(self, state: ClusterUiState, x: float, y: float, w: float, h: float) -> None:
+        self._draw_text("TPMS", x + 18, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
+        self._draw_text("psi", x + w - 18, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_GOOD, anchor="right")
+        cx, cy = x + w * 0.5, y + h * 0.5 + 14.0
+        car_w, car_h = 56.0, 150.0
+        self._rounded_rect(cx - car_w * 0.5, cy - car_h * 0.5, car_w, car_h, 22.0, K9_TURZX_BG, K9_TURZX_ACCENT, 3.0)
+        self._rounded_rect(cx - car_w * 0.5 + 8, cy - car_h * 0.5 + 30, car_w - 16, 28, 6.0, K9_TURZX_EDGE)
+        tpms = state.tpms
+        for value, sx, sy, name in ((tpms.fl, -1, -1, "FL"), (tpms.fr, 1, -1, "FR"), (tpms.rl, -1, 1, "RL"), (tpms.rr, 1, 1, "RR")):
+            vx = cx + sx * 66.0
+            vy = cy + sy * 70.0
+            self._draw_text(name, vx, vy - 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED, anchor="center")
+            text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
+            self._draw_text(text, vx, vy + 8.0, 36.0, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM, anchor="center")
+
+    def _k9_turzx_draw_middle(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
+        x0, y0, w, h = K9_TURZX_MID_X, K9_TURZX_MARGIN, K9_TURZX_MID_W, K9_TURZX_TOP_H
+        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x0, y0, w, h), 14.0 / h, 12, 2.0, rl_color(K9_TURZX_EDGE))
+        theme = self._current_theme()
+        # speed box: gear / speed / MAX (cruise set)
+        bx, by, bw, bh = x0 + 12, y0 + 12, 264.0, 88.0
+        self._rounded_rect(bx, by, bw, bh, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+        gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
+        gear = "D" if gear.isdigit() else gear
+        self._draw_text(gear, bx + 28, by + bh * 0.5, 40.0, K9_TURZX_ACCENT, anchor="center")
+        display_speed_kph = state.display_speed_kph if state.display_speed_kph is not None else state.speed_kph
+        speed_value = int(round(display_speed(clamp(display_speed_kph, 0.0, MAX_SPEED_KPH), self.is_metric)))
+        self._draw_text(str(speed_value), bx + 112, by + bh * 0.5, 64.0, K9_TURZX_TEXT, anchor="center")
+        self._draw_text("MAX", bx + 216, by + 26.0, 22.0, K9_TURZX_MUTED, anchor="center")
+        cruise = self._cruise_set_speed_text(state) if self._cruise_set_visible(state) else "-"
+        self._draw_text(cruise, bx + 216, by + 60.0, 36.0, self._cruise_set_color(state, theme) if cruise != "-"
+                        else K9_TURZX_DIM, anchor="center")
+        left_lit, right_lit = signal_lights
+        for lit, side in ((left_lit, -1.0), (right_lit, 1.0)):
+            if not lit:
+                continue
+            ax = 960.0 + side * 30.0 + 60.0
+            rl.draw_triangle(rl.Vector2(ax + side * 22, by + 44), rl.Vector2(ax, by + 28) if side > 0 else rl.Vector2(ax, by + 60),
+                             rl.Vector2(ax, by + 60) if side > 0 else rl.Vector2(ax, by + 28), rl_color(K9_TURZX_GOOD))
+        # TBT card (navi guidance only)
+        navi = getattr(state, "navi_live", None)
+        guidance = getattr(navi, "current", None) if navi is not None else None
+        if guidance is not None and guidance.distance_m > 0:
+            tx, tw = x0 + w - 12 - 228.0, 228.0
+            self._rounded_rect(tx, by, tw, bh, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+            self._draw_navi_turn_icon(guidance.turn_type, tx + 34, by + 34, 40.0)
+            self._draw_text(self._format_navi_distance(guidance.distance_m), tx + tw - 14, by + 32.0, 40.0, K9_TURZX_TEXT,
+                            anchor="right")
+            road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, tw - 24)
+            self._draw_text(road, tx + 14, by + 68.0, 24.0, K9_TURZX_MUTED)
+        # speed limit / section enforcement
+        speed = getattr(navi, "speed", None) if navi is not None else None
+        sign_cx, sign_cy, r = x0 + 56.0, y0 + 160.0, 38.0
+        section = speed is not None and speed.section_active and speed.section_speed_limit_kph
+        limit = speed.section_speed_limit_kph if section else state.speed_limit_kph
+        if limit is not None:
+            center = rl.Vector2(sign_cx, sign_cy)
+            rl.draw_circle_v(center, r, rl_color(RED))
+            rl.draw_circle_v(center, r - 7.0, rl_color(WHITE))
+            text = str(int(round(display_speed(limit, self.is_metric))))
+            self._draw_text(text, sign_cx, sign_cy, 38.0 if len(text) <= 2 else 32.0, TEXT, anchor="center")
+            if section:
+                self._draw_text("구간", sign_cx, sign_cy - r - 16.0, 22.0, K9_TURZX_TEXT, anchor="center")
+                if speed.section_remaining_distance_m is not None:
+                    self._draw_text(f"{speed.section_remaining_distance_m / 1000.0:.1f} km", sign_cx, sign_cy + r + 18.0,
+                                    22.0, K9_TURZX_TEXT, anchor="center")
+                if speed.section_average_kph is not None:
+                    self._draw_text("평균속도", sign_cx + r + 14.0, sign_cy - 16.0, 22.0, K9_TURZX_MUTED)
+                    self._draw_text(f"{speed.section_average_kph:.0f}", sign_cx + r + 14.0, sign_cy + 16.0, 34.0,
+                                    K9_TURZX_GOOD)
+        # experimental lines (조향비 / 지연학습 / 학습 / 적용 / 토크학습 %) and 치우침 / 좌·우: same text, sizes and colours as before
+        lat_texts = (
+            lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
+            delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
+            torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
+                                getattr(state, "torque_filtered_friction", None)),
+            torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
+                                getattr(state, "torque_learn_friction", None)),
+            learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
+        )
+        right_x = x0 + w - 14.0
+        for i, text in enumerate(lat_texts):
+            if text is None:
+                continue
+            self._draw_text_with_stroke(text, right_x, y0 + 124.0 + HUD_LINE_STEP * i, LAT_VALUES_FONT_SIZE,
+                                        LAT_VALUES_COLOR, (0, 0, 0), 2, anchor="right", cache=True)
+        lane_texts = (
+            (lane_offset_text(getattr(state, "k9_lane_offset_m", None)), LANE_OFFSET_COLOR),
+            (lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None)),
+             LANE_GAP_COLOR),
+        )
+        for i, (text, color) in enumerate(lane_texts):
+            self._draw_text_with_stroke(text, x0 + 14.0, y0 + 222.0 + LANE_VALUES_LINE_STEP * i, LANE_VALUES_FONT_SIZE, color,
+                                        (0, 0, 0), 2, anchor="left", cache=True)
+        # lane % beside the ego car (unchanged drawing, ego car at 960, lifted with the road)
+        if self._lane_confidence_label_visible(state):
+            rl.rl_push_matrix()
+            rl.rl_translatef(0.0, -K9_TURZX_WORLD_LIFT_Y, 0.0)
+            try:
+                self._draw_lane_confidence("left", getattr(state, "left_lane_line_confidence", None), 960.0)
+                self._draw_lane_confidence("right", getattr(state, "right_lane_line_confidence", None), 960.0)
+            finally:
+                rl.rl_pop_matrix()
+        # lead chip
+        lead = self.k9_turzx_lead(state)
+        if lead is not None:
+            text = f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°"
+            tw, _ = self._measure_text(text, 26.0, max(1.0, 26.0 * 0.02), self._font_for_text(text))
+            cx, cy = x0 + w - 14.0 - tw * 0.5 - 12.0, y0 + h - 30.0
+            self._rounded_rect(cx - tw * 0.5 - 12, cy - 18, tw + 24, 36, 10.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+            self._draw_text(text, cx, cy, 26.0, K9_TURZX_TEXT, anchor="center")
+
+    def _k9_turzx_draw_right(self) -> None:
+        x0, y0, w, h = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9_TURZX_RIGHT_W, K9_TURZX_TOP_H
+        self._rounded_rect(x0, y0, w, h, 14.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+        # no music source on the comma side: art placeholder, title / artist / time "-"
+        ax, ay, s = x0 + w - 36 - 200.0, y0 + 24, 200.0
+        self._rounded_rect(ax, ay, s, s, 18.0, (30, 40, 58), K9_TURZX_EDGE, 2.0)
+        c = rl.Vector2(ax + s * 0.5, ay + s * 0.5)
+        for radius, width in ((62.0, 3.0), (44.0, 3.0)):
+            rl.draw_ring(c, radius - width, radius, 0.0, 360.0, 48, rl_color(K9_TURZX_DIM))
+        rl.draw_ring(c, 12.0, 18.0, 0.0, 360.0, 32, rl_color(K9_TURZX_DIM))
+        self._draw_text("-", x0 + 32, y0 + 266.0, 44.0, K9_TURZX_DIM)
+        self._draw_text("-", x0 + 32, y0 + 308.0, K9_TURZX_SUB_SIZE, K9_TURZX_DIM)
+        rl.draw_rectangle_rounded(rl.Rectangle(x0 + 32, y0 + 334.0, w - 64, 8.0), 1.0, 6, rl_color(K9_TURZX_EDGE))
+        self._draw_text("-", x0 + 32, y0 + 362.0, K9_TURZX_SUB_SIZE, K9_TURZX_DIM)
+        self._draw_text("-", x0 + w - 32, y0 + 362.0, K9_TURZX_SUB_SIZE, K9_TURZX_DIM, anchor="right")
+
+    def _k9_turzx_draw_bar(self) -> None:
+        y, h = K9_TURZX_BAR_Y, K9_TURZX_BAR_H
+        # K9 DATC (climate) is not decoded on the comma: temps "-" and every chip dimmed (state unknown, not "off")
+        self._rounded_rect(8.0, y, 264.0, h, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+        self._draw_text("-°", 28.0, y + 24.0, 34.0, K9_TURZX_DIM)
+        self._draw_text("실내 -", 28.0, y + 52.0, 22.0, K9_TURZX_MUTED)
+        self._rounded_rect(280.0, y, 456.0, h, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+        self._draw_text("풍량", 304.0, y + h * 0.5, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
+        self._draw_text("-", 712.0, y + h * 0.5, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="right")
+        for i in range(8):
+            rl.draw_rectangle_rounded(rl.Rectangle(378.0 + i * 36.0, y + 26.0, 28.0, 16.0), 0.3, 4, rl_color(K9_TURZX_EDGE))
+        chips = ("AUTO", "A/C", "HEAT", "앞유리", "뒷유리", "내기", "SYNC")
+        cw, gap, cx = 116.0, 8.0, 744.0
+        for i, label in enumerate(chips):
+            x = cx + i * (cw + gap)
+            self._rounded_rect(x, y + 6.0, cw, h - 12.0, 10.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+            self._draw_text(label, x + cw * 0.5, y + h * 0.5, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="center")
+        self._rounded_rect(1648.0, y, 264.0, h, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
+        self._draw_text("-°", 1892.0, y + 24.0, 34.0, K9_TURZX_DIM, anchor="right")
+        self._draw_text("실외 -", 1892.0, y + 52.0, 22.0, K9_TURZX_MUTED, anchor="right")
+
+    def _k9_turzx_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
+        sx = self.width / DESIGN_WIDTH
+        sy = self.height / DESIGN_HEIGHT
+        rl.rl_push_matrix()
+        rl.rl_scalef(sx, sy, 1.0)
+        try:
+            bg = rl_color(K9_TURZX_BG)
+            # cover the road outside the middle panel
+            rl.draw_rectangle_rec(rl.Rectangle(0, 0, K9_TURZX_MID_X, DESIGN_HEIGHT), bg)
+            rl.draw_rectangle_rec(rl.Rectangle(K9_TURZX_MID_X + K9_TURZX_MID_W, 0, DESIGN_WIDTH, DESIGN_HEIGHT), bg)
+            rl.draw_rectangle_rec(rl.Rectangle(K9_TURZX_MID_X, 0, K9_TURZX_MID_W, K9_TURZX_MARGIN), bg)
+            rl.draw_rectangle_rec(rl.Rectangle(K9_TURZX_MID_X, K9_TURZX_MARGIN + K9_TURZX_TOP_H, K9_TURZX_MID_W,
+                                               DESIGN_HEIGHT), bg)
+            self._k9_turzx_draw_left(state)
+            self._k9_turzx_draw_middle(state, signal_lights)
+            self._k9_turzx_draw_right()
+            self._k9_turzx_draw_bar()
+        finally:
+            rl.rl_pop_matrix()
 
     def _draw_alert_overlay(self, alert: ClusterAlert | None) -> None:
         if alert is None or alert.size <= 0 or not (alert.text1 or alert.text2):
