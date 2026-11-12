@@ -130,11 +130,14 @@ PARK_K9_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "k9" / "k9_cluster.obj"
 PARK_K9_SCALE_M = (1.915, 5.12, 1.49)  # K9 RJ width x length x height
 # K9 parked screen photo (대감님 11/11 20:37): car cut out of his mock-up, plate blanked; drawn instead of the model
 K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
-# 대감님 11/12 23:13/23:14: K9 R screen = top view of the repository K9 model (make_k9_reverse_sprite.py from
-# assets/models/k9/k9_cluster.obj, 5120 x 1915 mm, PAD m margin) on the K9 P screen colours.
+# 대감님 11/12 23:13/23:14 + 23:34: K9 R screen = top-view K9 (RJ) illustration drawn in code by make_k9_reverse_sprite.py
+# (5120 x 1915 mm body, wheelbase 3105 mm, PAD m margin for mirrors / shadow / lamp glow) on the K9 P screen colours.
 K9_REVERSE_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_car.png"
 K9_REVERSE_CAR_SIZE_M = (5.12, 1.915)
-K9_REVERSE_CAR_PAD_M = 0.20
+K9_REVERSE_CAR_PAD_M = 0.30
+# K9 R screen display scale (대감님 11/12 23:34 차 더 크게): ~121 px/m on the 480 px high screen (EV6 27 deg = ~80 px/m)
+K9_REVERSE_FOVY_DEG = 18.0
+K9_REVERSE_VIEW_Y_M = -2.54
 # 대감님 11/12 04:34 "화면 너무 파란색인데 좀 더 어둡게 해봐": the blue background and the floor layer under the car get
 # the same darkening (brightness x DIM, blue pulled part of the way towards grey) so their seam does not show;
 # bright floor pixels (the rim light) are spared on a ramp so the rim stays visible. Car photo, text, numbers unchanged.
@@ -3049,10 +3052,16 @@ class ClusterUiRenderer:
             heading += curvature * step
         return points
 
-    def _ev6_reverse_camera(self):
+    def _ev6_reverse_camera(self, k9: bool = False):
         # top view, car front to the left: screen up = the car's right side
-        camera = rl.Camera3D(rl.Vector3(-2.6, -3.3, 12.5), rl.Vector3(0.0, -3.3, 0.0), rl.Vector3(1.0, 0.0, 0.0),
-                             27.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
+        if k9:
+            # 대감님 11/12 23:34: K9 car larger on screen - display scale only (narrower view, same camera height),
+            # so the reverse path, marks and blind-spot bands are drawn at the same scale as the car.
+            camera = rl.Camera3D(rl.Vector3(-2.6, K9_REVERSE_VIEW_Y_M, 12.5), rl.Vector3(0.0, K9_REVERSE_VIEW_Y_M, 0.0),
+                                 rl.Vector3(1.0, 0.0, 0.0), K9_REVERSE_FOVY_DEG, rl.CameraProjection.CAMERA_PERSPECTIVE)
+        else:
+            camera = rl.Camera3D(rl.Vector3(-2.6, -3.3, 12.5), rl.Vector3(0.0, -3.3, 0.0), rl.Vector3(1.0, 0.0, 0.0),
+                                 27.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
         if self._vehicle_shaders:
             view_pos = rl.ffi.new("float[]", [camera.position.x, camera.position.y, camera.position.z])
             for vehicle_shader, view_loc in self._vehicle_shaders:
@@ -3096,7 +3105,7 @@ class ClusterUiRenderer:
             rl.begin_texture_mode(target)
             try:
                 rl.clear_background(rl.Color(214, 216, 220, 0))
-                rl.begin_mode_3d(self._ev6_reverse_camera())
+                rl.begin_mode_3d(self._ev6_reverse_camera(name == "k9"))
                 try:
                     self._ev6_draw_reverse_car_model(state)
                 finally:
@@ -3155,7 +3164,7 @@ class ClusterUiRenderer:
                 return False
             rl.gen_texture_mipmaps(texture)
             rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
-            rect = self._k9_reverse_car_rect(self._ev6_reverse_camera(), int(self.width), int(self.height))
+            rect = self._k9_reverse_car_rect(self._ev6_reverse_camera(True), int(self.width), int(self.height))
             self._ev6_reverse_sprite = (texture, rect)
             texture = None
             return True
@@ -3171,7 +3180,8 @@ class ClusterUiRenderer:
         dark = theme.is_dark
         colors = EV6_PARK_COLORS_DARK if dark else EV6_PARK_COLORS_LIGHT
         path_accent = colors["accent"]  # reverse path colour stays the same for every car
-        k9_look = dark and ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9"
+        is_k9 = ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9"
+        k9_look = dark and is_k9
         if k9_look:
             colors = K9_PARK_COLORS_DARK  # K9 P and R are one pair: same blue background, text and lines
         rl.clear_background(rl_color(colors["bg_bot"]))
@@ -3183,13 +3193,13 @@ class ClusterUiRenderer:
         rl.rl_pop_matrix()
         if k9_look:
             # floor under the car like the P stage: soft lighter pool and a thin rim, below path and car
-            fx, fy, fw, fh = self._k9_reverse_car_rect(self._ev6_reverse_camera(), int(self.width), int(self.height))
+            fx, fy, fw, fh = self._k9_reverse_car_rect(self._ev6_reverse_camera(True), int(self.width), int(self.height))
             cx, cy = int(fx + fw / 2), int(fy + fh / 2)
             pool = k9_park_darken((70, 120, 210))
             for i in range(10):
                 k = 1.0 - i / 10.0
-                rl.draw_ellipse(cx, cy, fw * (0.34 + 0.20 * k), fh * (0.56 + 0.34 * k), rl.Color(*pool, 18))
-            rl.draw_ellipse_lines(cx, cy, fw * 0.55, fh * 0.92, rl.Color(*K9_PARK_COLORS_DARK["accent"], 60))
+                rl.draw_ellipse(cx, cy, fw * (0.34 + 0.16 * k), fh * (0.50 + 0.22 * k), rl.Color(*pool, 18))
+            rl.draw_ellipse_lines(cx, cy, fw * 0.52, fh * 0.74, rl.Color(*K9_PARK_COLORS_DARK["accent"], 60))
 
         steering_deg = float(getattr(state, "steering_angle_deg", None) or 0.0)
         left_bsd = bool(getattr(state, "left_blindspot", False))
@@ -3198,7 +3208,7 @@ class ClusterUiRenderer:
         accent = path_accent
         warn = EV6_REVERSE_WARN
 
-        camera = self._ev6_reverse_camera()
+        camera = self._ev6_reverse_camera(is_k9)
         sprite = getattr(self, "_ev6_reverse_sprite", None)
 
         def side(point, offset, z):
