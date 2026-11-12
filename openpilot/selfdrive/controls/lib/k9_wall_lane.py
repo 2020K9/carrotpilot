@@ -51,9 +51,18 @@ EGO_PRED = True
 N_PTS = 33
 FIT_X0, FIT_X1 = 0.0, 15.0   # near-field wall fit range (m)
 MERGE_T = 1.5                # path shift reaches the full offset after this many seconds of travel
-C_TAU = 0.3                  # offset low-pass (s)
+C_TAU = 1.0                  # offset low-pass (s)
 C_LOOK = 1.0                 # gap to the wall line taken on the normal path this many seconds ahead
 C_RATE_IN, C_RATE_OUT = 0.15, 0.50   # offset rate limit toward / away from the wall (m/s)
+A_TURN_MAX = 1.2             # curves (11/12 14:30): kept on up to this model lateral accel (m/s^2), was A_TURN (0.25) -> off
+FIT_X1_Q, WALL_DEG = 25.0, 2 # curved wall: quadratic fit over FIT_X0..FIT_X1_Q m
+K_TAU = 0.5                  # wall curvature time filter (s)
+K_WALL_MAX = 0.01            # |wall curvature| clip (1/m)
+FE_K, FE_TAU, FE_MAX = 0.0, 0.1, 0.003   # curvature error feedforward: bend += FE_K x (model - car curvature) x x^2 / 2
+FF_TAU = 0.1
+FD_K, FD_TAU = 0.0, 0.2       # lead: bend += FD_K x d(model curvature)/dt x x^2 / 2 (filtered FD_TAU s)
+ASYM = 0                     # 1: feedforward / error bends only away from the wall
+FF_K = 0.8                   # curve feedforward: extra path bend = FF_K x model curvature x x^2 / 2
 
 
 def read_mode(params):
@@ -92,6 +101,13 @@ class WallLane:
     self.c_f = 0.0
     self.wall_fit = (0.0, 0.0)
     self.fast_out = False
+    self.k_f = None
+    self.model_curv = 0.0
+    self.kc_f = 0.0
+    self.car_curv = 0.0
+    self.fe_f = 0.0
+    self.fd_f = 0.0
+    self.mc_prev = None
 
   def _frame(self, md, x_grid, v_ego=0.0, curv=0.0):
     dt = DT_MDL
@@ -146,7 +162,9 @@ class WallLane:
     off = (int(getattr(md.meta, 'laneChangeState', 0)) != 0 or (desire not in (0, 'none') and str(desire) not in ('none', '0'))
            or bool(CS.leftBlinker) or bool(CS.rightBlinker) or laneless_only
            or v_ego < V_ON)
-    turn = abs(model_curv) * max(v_ego, 1.0) ** 2 >= A_TURN
+    a_lat = abs(model_curv) * max(v_ego, 1.0) ** 2
+    turn = a_lat >= (A_TURN_MAX if self.u > 0.0 else A_TURN)
+    self.model_curv = float(model_curv)
     if turn:
       off = True
       if self.u > 0.0:
@@ -190,10 +208,13 @@ class WallLane:
     out = path_xyz.copy()
     out[:, 1] = path_xyz[:, 1] + _smooth(self.u) * self.delta
     if virt is not None:
-      k, b = self.wall_fit      # fitted near-field wall line (the far wall shape is noise, see _virtual_path)
-      wy = b + k * np.asarray(out[:, 0], dtype=float)
+      wy = self._wall_y(np.asarray(out[:, 0], dtype=float))
       out[:, 1] = np.maximum(out[:, 1], wy + D_MIN) if self.side == 0 else np.minimum(out[:, 1], wy - D_MIN)
     return out, True
+
+  def _wall_y(self, x):
+    k, b = self.wall_fit
+    return b + k * x + 0.5 * getattr(self, "wall_q", 0.0) * np.asarray(x, dtype=float) ** 2
 
   def _virtual_path(self, i, x_grid, LP, CS, v_ego, path_t, path_xyz):
     """Offset-only wall lane (11/12 fix of the 05:13 replay): the wall is reduced to ONE number, its near-field lateral position
@@ -210,10 +231,22 @@ class WallLane:
       k, b = np.polyfit(xs[m], wall[m], 1)
     else:
       k, b = 0.0, float(wall[0])
+    kq = 0.0
+    mq = (xs >= FIT_X0) & (xs <= FIT_X1_Q)
+    if WALL_DEG >= 2 and mq.sum() >= 3:
+      a2, k2, b2 = np.polyfit(xs[mq], wall[mq], 2)
+      kq_raw = float(np.clip(2.0 * a2, -K_WALL_MAX, K_WALL_MAX))
+      self.k_f = kq_raw if self.k_f is None else self.k_f + DT_MDL / (K_TAU + DT_MDL) * (kq_raw - self.k_f)
+      kq = self.k_f
+      # line part refitted with the filtered curvature removed
+      r = wall[mq] - 0.5 * kq * xs[mq] ** 2
+      k, b = np.polyfit(xs[mq], r, 1)
+    self.wall_q = float(kq)
     px = np.asarray(path_xyz[:, 0], dtype=float)
     py = np.asarray(path_xyz[:, 1], dtype=float)
     x_l = C_LOOK * max(v_ego, 0.0)                       # gap measured between the normal path and the wall line here
-    gap_l = sgn * (float(np.interp(x_l, px, py)) - (b + k * x_l))
+    self.wall_fit = (float(k), float(b))
+    gap_l = sgn * (float(np.interp(x_l, px, py)) - self._wall_y(x_l))
     c_tgt = sgn * (D_TGT - gap_l)                        # wanted sideways move (model frame +y = right)
     if self.c is None:
       self.c = self.c_f = 0.0
@@ -223,8 +256,22 @@ class WallLane:
     self.c += float(np.clip(step, -lim, lim))
     ramp = np.clip(px / max(MERGE_T * max(v_ego, 1.0), 1.0), 0.0, 1.0)
     y = py + self.c * ramp * ramp * (3.0 - 2.0 * ramp)
-    self.wall_fit = (float(k), float(b))
-    wl_y = b + k * px
+    if FF_K != 0.0:
+      self.kc_f += DT_MDL / (FF_TAU + DT_MDL) * (self.model_curv - self.kc_f)
+      kff = self.kc_f if not ASYM else (max(self.kc_f, 0.0) if sgn > 0 else min(self.kc_f, 0.0))
+      y = y + FF_K * kff * px ** 2 / 2.0
+    if FE_K != 0.0:
+      e = float(np.clip(self.model_curv - self.car_curv, -FE_MAX, FE_MAX))
+      self.fe_f += DT_MDL / (FE_TAU + DT_MDL) * (e - self.fe_f)
+      kfe = self.fe_f if not ASYM else (max(self.fe_f, 0.0) if sgn > 0 else min(self.fe_f, 0.0))
+      y = y + FE_K * kfe * px ** 2 / 2.0
+    if FD_K != 0.0:
+      dk_ = 0.0 if self.mc_prev is None else (self.model_curv - self.mc_prev) / DT_MDL
+      self.fd_f += DT_MDL / (FD_TAU + DT_MDL) * (dk_ - self.fd_f)
+      kfd = self.fd_f if not ASYM else (max(self.fd_f, 0.0) if sgn > 0 else min(self.fd_f, 0.0))
+      y = y + FD_K * float(np.clip(kfd, -0.02, 0.02)) * px ** 2 / 2.0
+    self.mc_prev = self.model_curv
+    wl_y = self._wall_y(px)
     return np.maximum(y, wl_y + D_MIN) if i == 0 else np.minimum(y, wl_y - D_MIN)
 
 
