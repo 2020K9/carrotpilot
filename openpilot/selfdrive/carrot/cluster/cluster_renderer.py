@@ -169,7 +169,11 @@ K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (s
 K9_TURZX_MARGIN = 8.0
 K9_TURZX_TOP_H = 464.0                       # cards y 8 .. 472 (bottom climate bar removed 19:55)
 K9_TURZX_LEFT_X, K9_TURZX_LEFT_W = 8.0, 656.0
-K9_TURZX_MID_X, K9_TURZX_MID_W = 672.0, 576.0  # centre 960 = ego car centre with no world shift
+# 대감님 11/12 23:12 "왼쪽칸 좀 줄여도 되잖아, 메인은 가운데인데": the left card (lane position / steering learn) 656 -> 464,
+# the middle road card takes the 192 px (576 -> 768), the right card stays. Road / ego car centred in the middle card.
+K9_TURZX_MID_X, K9_TURZX_MID_W = 480.0, 768.0
+K9C_CX = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5   # 864: card road / ego car centre
+K9C_LANE_W = 464.0                           # card 1 (lane position / steering learn): 8 .. 472
 K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1256.0, 656.0
 # middle panel road (대감님 18:30 "가운데 꺼 디자인이 다른데?"): flat 2D perspective road drawn from modelV2 lane lines /
 # road edges / plan path and leadOne, no 3D world, no car photo. screen y = horizon + K_Y / (forward + Z0), x = cx + K_X * lateral / (forward + Z0)
@@ -232,7 +236,11 @@ K9L_SPEED_SIZE = 100.0   # x1.25 ink = 78 px digits (old speed 66 -> 51 px)
 K9L_SPEED_CY = 74.0
 K9L_GEAR_SIZE = 40.0     # old 36
 K9L_SIDE_DX = 140.0
-K9L_SCENE_X0, K9L_SCENE_X1 = 610.0, 1310.0
+K9L_SCENE_X0, K9L_SCENE_X1 = 496.0, 1310.0   # 23:12: was 610 (left list 32..584 -> 32..472)
+K9L_CX = (K9L_SCENE_X0 + K9L_SCENE_X1) * 0.5    # 903: scene road / speed / ego car centre (was 960)
+K9L_LIST_W = 440.0                          # left list width (lane position / steering learn), was 552
+K9L_LAT_V1, K9L_LAT_N2, K9L_LAT_V2 = 222.0, 242.0, 440.0  # steering-learn row: value 1 right edge, name 2, value 2 right
+K9L_LANE_GAP, K9L_PAIR_GAP = 12.0, 30.0    # lane rows: name -> value, pair -> pair
 K9L_SCENE_FADE = 80.0
 K9L_COL_A, K9L_COL_B = 260.0, 462.0
 K9L_METER_W = 150.0
@@ -267,11 +275,11 @@ K9L_RULE_X = 244.0                     # one vertical hairline: TPMS | numbers
 K9L_SPEED_BASE = 121.0
 K9L_KMH_BASE = 152.0
 K9L_TOP_CY = 84.0                      # gear ring, limit sign centre
-K9L_SIGN_X = 724.0
-K9L_PERC_Y = 212.0                     # lane % (left) / lead (right) beside the far road, symmetric about 960
+K9L_SIGN_X = K9L_SCENE_X0 + 114.0
+K9L_PERC_Y = 212.0                     # lane % (left) / lead (right) beside the far road, symmetric about K9L_CX
 K9L_PERC_GAP = 64.0
 K9L_NAVI_BASE = 292.0
-K9L_RIGHT_X1 = 1888.0
+K9L_RIGHT_X1 = K9L_RIGHT_X + K9L_LIST_W
 K9L_RIGHT_C1 = 268.0                   # right list: column 1 value right edge (from x0), column 2 name x (from x0)
 K9L_RIGHT_C2 = 316.0
 K9L_LANE_BASES = (121.0, 172.0)
@@ -289,9 +297,9 @@ K9L_SWAP_LEFT_DX, K9L_SWAP_RIGHT_DX = 1276.0, -1304.0  # scene: left block 32..6
 K9C_IND_Y, K9L_IND_Y = 262.0, 182.0   # automatic indicator box (was y 124 = over km/h / the lane pill)
 K9L_PERC_Y_IND = 262.0                # lane % / lead row while the indicator box sits on its usual row
 K9L_NAVI_BASE2 = 336.0                # turn-by-turn distance baseline (scene, right of the road)
-K9L_CAM_X, K9L_CAM_Y, K9L_CAM_W = 626.0, 292.0, 244.0   # speed camera block (scene, left of the road)
+K9L_CAM_X, K9L_CAM_Y, K9L_CAM_W = K9L_SCENE_X0 + 16.0, 292.0, 244.0   # speed camera block (scene, left of the road)
 K9L_LANE_Y = 412.0                    # navi lane strip top (scene, left of my car)
-K9C_CAM_X, K9C_CAM_Y, K9C_CAM_W, K9C_CAM_H = 684.0, 340.0, 236.0, 60.0
+K9C_CAM_X, K9C_CAM_Y, K9C_CAM_W, K9C_CAM_H = K9_TURZX_MID_X + 12.0, 340.0, 236.0, 60.0
 K9C_LANE_Y = 410.0
 K9_LANE_CELL_H = 46.0
 # carrot_serv._get_sdi_descr (ko), short enough for one line
@@ -2290,7 +2298,7 @@ class ClusterUiRenderer:
             from openpilot.common.indicator_display import draw as draw_indicator
             # inside the middle panel under the speed box (was x 530 = over the left panel)
             # 22:41: off the km/h line (scene) / the lane pill (cards); see K9C_IND_Y / K9L_IND_Y
-            draw_indicator(int(K9_TURZX_MID_X + (K9_TURZX_MID_W - 460) * 0.5), int(self.k9_indicator_y()), 460,
+            draw_indicator(int(getattr(self, "_k9_cx", K9C_CX) - 230.0), int(self.k9_indicator_y()), 460,
                            self._korean_font or self._font, 24)
             self._k9_turzx_draw_alert(getattr(state, "alert", None))
             self._profile_add("render.alert", profile_stage)
@@ -6322,7 +6330,7 @@ class ClusterUiRenderer:
         z = max(K9_TURZX_ROAD_Z0 * 0.5, forward_m + K9_TURZX_ROAD_Z0)
         hy, ego_y, kx, _ = getattr(self, "_k9_geo", K9L_ROAD_GEO)  # card or scene road (ClusterHudK9Style)
         scale = kx / z
-        return (K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5 + lateral_m * scale,
+        return (getattr(self, "_k9_cx", K9C_CX) + lateral_m * scale,
                 hy + (ego_y - hy) * K9_TURZX_ROAD_Z0 / z, scale)
 
     @staticmethod
@@ -6426,7 +6434,7 @@ class ClusterUiRenderer:
         # 대감님 19:58 "내 차량은 K9 뒷꽁무니 넣어놓은 거": the owner's K9 rear render (assets/images/k9_ego_car.png,
         # 2de680aea, same sprite as the old mode-0 HUD ego car), lane-width sized, soft floor shadow
         geo = getattr(self, "_k9_geo", K9L_ROAD_GEO)
-        cx, by = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5, geo[1]  # rear bumper at forward 0
+        cx, by = getattr(self, "_k9_cx", K9C_CX), geo[1]  # rear bumper at forward 0
         if getattr(self, "_ego_car_texture", None) is None and not getattr(self, "_k9_turzx_ego_load_tried", False):
             self._k9_turzx_ego_load_tried = True
             self._ego_car_texture = self._load_icon_texture(EGO_CAR_ICON_PATH, "K9 ego car")
@@ -6593,7 +6601,7 @@ class ClusterUiRenderer:
         for lit, side in ((left_lit, -1.0), (right_lit, 1.0)):
             if not lit:
                 continue
-            ax = 960.0 + side * 30.0 + 60.0
+            ax = x0 + 348.0 + side * 30.0  # beside the speed box (was 960 + 60)
             rl.draw_triangle(rl.Vector2(ax + side * 22, by + 44), rl.Vector2(ax, by + 28) if side > 0 else rl.Vector2(ax, by + 60),
                              rl.Vector2(ax, by + 60) if side > 0 else rl.Vector2(ax, by + 28), rl_color(K9_TURZX_SIGNAL))
         # TBT card (navi guidance only); 22:41 bigger arrow / distance, next guidance small at the bottom
@@ -6682,18 +6690,23 @@ class ClusterUiRenderer:
 
     def _k9_turzx_draw_right(self, state: ClusterUiState) -> None:
         # 대감님 18:30: music card removed; lane position + steering-learn lines moved here from the middle (same text)
-        x0, y0, w, h = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9_TURZX_RIGHT_W, K9_TURZX_TOP_H
+        # 23:12: drawn at card 3's x and moved to card 1 (K9C_SWAP_DX), only K9C_LANE_W wide now
+        x0, y0, w, h = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9C_LANE_W, K9_TURZX_TOP_H
         self._k9_turzx_glass(x0, y0, w, h)
-        split_y = y0 + 124.0
+        split_y = y0 + 176.0  # two lane rows (치우침 / 좌·우) instead of one wide row
         self._k9_turzx_metal_h(x0 + 20, split_y, w - 40, 130)  # one soft metal line, no table grid
         for ly in (y0 + 26.0, split_y + 26.0):
             rl.draw_rectangle_rounded(rl.Rectangle(x0 + 20, ly - 11.0, 3.0, 22.0), 1.0, 4, rl.Color(*K9_TURZX_CHAMPAGNE, 200))
         self._draw_text("차선 위치", x0 + 30, y0 + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        t1, t2 = self._k9_lane_rows(state)
-        lane_texts = ((t1, K9_TURZX_POINT), (t2, K9_TURZX_GOOD))
-        for i, (text, color) in enumerate(lane_texts):
-            self._k9_turzx_value_text(text, x0 + 20 + i * 300.0, y0 + 84.0, K9_TURZX_LANE_TEXT_SIZE,
-                                      K9_TURZX_DIM if "대기" in text else color)
+        size = K9_TURZX_LANE_TEXT_SIZE
+        for i, (pairs, color) in enumerate(zip(self.k9_lane_block(state), (K9_TURZX_POINT, K9_TURZX_GOOD), strict=False)):
+            x, cy = x0 + 20.0, y0 + 84.0 + 52.0 * i
+            for name, value in pairs:
+                if name:
+                    self._k9_turzx_value_text(name, x, cy, size, K9_TURZX_MUTED)
+                    x += self._k9_turzx_value_width(name, size) + K9L_LANE_GAP
+                self._k9_turzx_value_text(value, x, cy, size, K9_TURZX_DIM if value == "대기" else color)
+                x += self._k9_turzx_value_width(value, size) + K9L_PAIR_GAP
         self._draw_text("조향 학습", x0 + 30, split_y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
         lat_texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
@@ -6704,11 +6717,11 @@ class ClusterUiRenderer:
                                 getattr(state, "torque_learn_friction", None)),
             learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
-        line_step = K9_TURZX_LAT_TEXT_SIZE + 25.0  # taller card since 19:55, font size unchanged
+        line_step = K9_TURZX_LAT_TEXT_SIZE + 19.0  # 23:12 two lane rows above: 52 -> 46 px pitch, font size unchanged
         for i, text in enumerate(lat_texts):
             if text is None:
                 continue
-            self._draw_text(text, x0 + 20, split_y + 64.0 + line_step * i, K9_TURZX_LAT_TEXT_SIZE, LAT_VALUES_COLOR)
+            self._draw_text(text, x0 + 20, split_y + 62.0 + line_step * i, K9_TURZX_LAT_TEXT_SIZE, LAT_VALUES_COLOR)
 
     def _k9_turzx_draw_alert(self, alert: ClusterAlert | None) -> None:
         # alert as a band at the top of the middle panel (was centred on the 1920 screen over the left panel)
@@ -6718,7 +6731,8 @@ class ClusterUiRenderer:
         rl.rl_push_matrix()
         rl.rl_scalef(sx, sy, 1.0)
         try:
-            x0, w = K9_TURZX_MID_X + 8.0, K9_TURZX_MID_W - 16.0
+            w = K9_TURZX_MID_W - 16.0 if self.k9_hud_style != K9_HUD_STYLE_SCENE else 560.0
+            x0 = getattr(self, "_k9_cx", K9C_CX) - w * 0.5
             title, detail = self._cluster_alert_text(alert)
             if not title and detail:
                 title, detail = detail, ""
@@ -6744,10 +6758,10 @@ class ClusterUiRenderer:
         try:
             self._k9_ind_active = self._k9_indicator_active()
             if self.k9_hud_style == K9_HUD_STYLE_SCENE:
-                self._k9_geo = K9L_ROAD_GEO
+                self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
                 self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
             else:
-                self._k9_geo = K9C_ROAD_GEO
+                self._k9_geo, self._k9_cx = K9C_ROAD_GEO, K9C_CX
                 self._k9c_draw_hud(state, signal_lights)  # b03a700cc cards
         finally:
             rl.rl_pop_matrix()
@@ -6869,6 +6883,14 @@ class ClusterUiRenderer:
             t1 = "치우침 대기"
         t2 = lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None))
         return t1, t2.replace("--", "대기")
+
+    def k9_lane_block(self, state: ClusterUiState) -> list[list[tuple[str, str]]]:
+        """차선 위치 as one block (23:12): [[('치우침', '→ 12cm')], [('좌', '1.87m'), ('우', '1.63m')]], a missing value
+        reads 대기; with no value at all a single [[('', '대기')]]"""
+        t1, t2 = self._k9_lane_rows(state)
+        if t1 == "치우침 대기" and t2 == lane_gap_text(None, None).replace("--", "대기"):
+            return [[("", "대기")]]
+        return [self._k9l_pairs(t1, first_space=True), self._k9l_pairs(t2, first_space=True)]
 
     @staticmethod
     def k9_trip_km_text(dist_m) -> str:
@@ -7001,7 +7023,7 @@ class ClusterUiRenderer:
         img = top[None, None, :] * (1.0 - t[..., None]) + bot[None, None, :] * t[..., None]
         img = np.broadcast_to(img, (h, w, 3)).copy()
         hy = K9_TURZX_ROAD_HORIZON_Y
-        dx = (x - 960.0)
+        dx = (x - K9L_CX)
         ice = np.array(K9L_ICE, np.float32)
         champ = np.array(K9L_CHAMPAGNE, np.float32)
         above = y < hy
@@ -7237,10 +7259,10 @@ class ClusterUiRenderer:
             tag = f"{lead[0]:.0f}m"
             tw = self._k9l_width(tag, 22.0, True)
             keep_out = self._k9l_perc_rects(state)
-            out = 1.0 if lx >= 960.0 else -1.0
+            out = 1.0 if lx >= K9L_CX else -1.0
             keep_out = keep_out + self._k9l_navi_rects(state)
             if getattr(self, "_k9_ind_active", False):  # the automatic indicator box sits on the far road
-                ix = K9_TURZX_MID_X + (K9_TURZX_MID_W - 460) * 0.5
+                ix = K9L_CX - 230.0
                 keep_out.append((ix, K9L_IND_Y, ix + 460.0, K9L_IND_Y + 24.0 * 2.7))
             spots = [(lx - tw * 0.5, ly - 18.0)]  # above the car, else beside it (outer, inner side)
             for side in (out, -out):
@@ -7274,9 +7296,9 @@ class ClusterUiRenderer:
         lane, lead = self._k9l_perc_texts(state)
         py, out = self._k9l_perc_y(), []
         if lane:
-            out.append((960.0 - K9L_PERC_GAP - self._k9l_width(lane, 26.0) - 24.0, py - 15.0, 960.0 - K9L_PERC_GAP, py + 15.0))
+            out.append((K9L_CX - K9L_PERC_GAP - self._k9l_width(lane, 26.0) - 24.0, py - 15.0, K9L_CX - K9L_PERC_GAP, py + 15.0))
         if lead:
-            out.append((960.0 + K9L_PERC_GAP, py - 15.0, 960.0 + K9L_PERC_GAP + self._k9l_width(lead, 26.0), py + 15.0))
+            out.append((K9L_CX + K9L_PERC_GAP, py - 15.0, K9L_CX + K9L_PERC_GAP + self._k9l_width(lead, 26.0), py + 15.0))
         return out
 
     def _k9l_draw_top(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
@@ -7284,16 +7306,16 @@ class ClusterUiRenderer:
         cy = K9L_TOP_CY
         display_speed_kph = state.display_speed_kph if state.display_speed_kph is not None else state.speed_kph
         speed_value = int(round(display_speed(clamp(display_speed_kph, 0.0, MAX_SPEED_KPH), self.is_metric)))
-        self._k9l_text(str(speed_value), 960.0, 0.0, K9L_SPEED_SIZE, K9L_VALUE, anchor="center", numeric=True, glow=True,
+        self._k9l_text(str(speed_value), K9L_CX, 0.0, K9L_SPEED_SIZE, K9L_VALUE, anchor="center", numeric=True, glow=True,
                        base=K9L_SPEED_BASE)
-        self._k9l_text("km/h", 960.0, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, anchor="center", numeric=True, track=0.06,
+        self._k9l_text("km/h", K9L_CX, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, anchor="center", numeric=True, track=0.06,
                        base=K9L_KMH_BASE)
         gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
         gear = "D" if gear.isdigit() else gear
-        gx = 960.0 - K9L_SIDE_DX
+        gx = K9L_CX - K9L_SIDE_DX
         self._k9l_text(gear, gx, 0.0, K9L_GEAR_SIZE, K9L_ICE, anchor="center", numeric=True, glow=True, cap_cy=cy)
         rl.draw_ring(rl.Vector2(gx, cy), 33.0, 34.2, 0.0, 360.0, 64, rl.Color(*K9L_CHAMPAGNE, 150))
-        mx = 960.0 + K9L_SIDE_DX
+        mx = K9L_CX + K9L_SIDE_DX
         self._k9l_text("MAX", mx, 0.0, 22.0, K9L_LABEL, anchor="center", numeric=True, track=K9L_TRACK, base=K9L_HEAD)
         cruise = self._cruise_set_speed_text(state) if self._cruise_set_visible(state) else "-"
         self._k9l_text(cruise, mx, 0.0, 36.0, self._cruise_set_color(state, theme) if cruise != "-" else K9L_DIM,
@@ -7302,7 +7324,7 @@ class ClusterUiRenderer:
         for lit, side in ((left_lit, -1.0), (right_lit, 1.0)):
             if not lit:
                 continue
-            ax = 960.0 + side * 48.0  # ◀ km/h ▶
+            ax = K9L_CX + side * 48.0  # ◀ km/h ▶
             ay = K9L_KMH_BASE - 8.0
             tip = rl.Vector2(ax + side * 24.0, ay)
             a, b = rl.Vector2(ax, ay - 14.0), rl.Vector2(ax, ay + 14.0)
@@ -7345,11 +7367,11 @@ class ClusterUiRenderer:
             rc = getattr(state, "right_lane_line_confidence", None)
             known = [c for c in (lc, rc) if c is not None and math.isfinite(c)]
             dot = (120, 130, 150) if not known else (K9_TURZX_GOOD if min(known) >= 0.5 else (255, 190, 70))
-            tx = 960.0 - K9L_PERC_GAP
+            tx = K9L_CX - K9L_PERC_GAP
             tw = self._k9l_text(lane_text, tx, 0.0, 26.0, K9L_VALUE, anchor="right", cap_cy=py)
             rl.draw_circle_v(rl.Vector2(tx - tw - 16.0, py), 6.0, rl_color(dot))
         if lead_text:
-            self._k9l_text(lead_text, 960.0 + K9L_PERC_GAP, 0.0, 26.0, K9L_VALUE, cap_cy=py)
+            self._k9l_text(lead_text, K9L_CX + K9L_PERC_GAP, 0.0, 26.0, K9L_VALUE, cap_cy=py)
 
     def _k9l_perc_y(self) -> float:
         return K9L_PERC_Y_IND if getattr(self, "_k9_ind_active", False) else K9L_PERC_Y
@@ -7419,8 +7441,8 @@ class ClusterUiRenderer:
         pairs = self._k9l_pairs(text, first_space)
         if len(pairs) == 1:
             cols = ((x0, x1),)
-        elif len(pairs) == 2:
-            cols = ((x0, x0 + K9L_RIGHT_C1), (x0 + K9L_RIGHT_C2, x1))
+        elif len(pairs) == 2:  # 23:12 tight columns (was spread over 552 px)
+            cols = ((x0, x0 + K9L_LAT_V1), (x0 + K9L_LAT_N2, x0 + K9L_LAT_V2))
         else:
             self._k9l_text(text, x0, 0.0, size, K9L_LAT, base=base)
             return
@@ -7435,9 +7457,15 @@ class ClusterUiRenderer:
     def _k9l_draw_right(self, state: ClusterUiState) -> None:
         x0, x1 = K9L_RIGHT_X, K9L_RIGHT_X1
         self._k9l_text("차선 위치", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_HEAD)
-        t1, t2 = self._k9_lane_rows(state)
-        self._k9l_list_row(t1, K9L_LANE_BASES[0], K9_TURZX_LANE_TEXT_SIZE, first_space=True)
-        self._k9l_list_row(t2, K9L_LANE_BASES[1], K9_TURZX_LANE_TEXT_SIZE)
+        # 23:12 one block: name and value side by side, 좌 / 우 on one row; nothing known -> one 대기
+        size = K9_TURZX_LANE_TEXT_SIZE
+        for pairs, base in zip(self.k9_lane_block(state), K9L_LANE_BASES, strict=False):
+            x = x0
+            for name, value in pairs:
+                if name:
+                    x += self._k9l_text(name, x, 0.0, size, K9L_MUTED, base=base) + K9L_LANE_GAP
+                dim = value == "대기"
+                x += self._k9l_text(value, x, 0.0, size, K9L_DIM if dim else K9L_VALUE, base=base, glow=not dim) + K9L_PAIR_GAP
         self._k9l_hair(x0, K9L_RIGHT_HAIR, x1 - x0, 110)
         self._k9l_text("조향 학습", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_LAT_HEAD)
         lat_texts = (
