@@ -163,19 +163,18 @@ K9_PARK_FLOOR_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_floor.png"
 K9_PARK_FLOOR_OFFSET = (-72, 160)  # floor PNG top-left relative to the car photo top-left, photo px  # photo px: front / rear tyre contact (lowest alpha), reflection axis
 K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (selfdrive/car/k9_fuel.py)
 # K9 TURZX drive layout (대감님 2026-11-12 18:05, layout of GRT47/HKG_5W_TurzxMonitor photo): left car panel, middle 3D road,
-# right media panel, bottom climate bar. K9 only (car_fingerprint KIA_K9), default screen mode, not P / R. EV6 untouched.
-# Values the comma does not read (fuel %, fuel economy, music, climate) are drawn as "-", never guessed.
+# right lane / steer-learn panel. K9 only (car_fingerprint KIA_K9), default screen mode, not P / R. EV6 untouched.
+# 대감님 11/12 19:55 "하단바 제거, 내 차는 신호 안 들어오잖아": climate bar and the no-signal items (fuel %, fuel economy)
+# removed; the three cards run down to the bottom instead. Only values the K9 actually sends are drawn.
 K9_TURZX_MARGIN = 8.0
-K9_TURZX_TOP_H = 388.0                       # cards y 8 .. 396
-K9_TURZX_BAR_Y = 404.0                       # bottom climate bar y 404 .. 472
-K9_TURZX_BAR_H = 68.0
+K9_TURZX_TOP_H = 464.0                       # cards y 8 .. 472 (bottom climate bar removed 19:55)
 K9_TURZX_LEFT_X, K9_TURZX_LEFT_W = 8.0, 656.0
 K9_TURZX_MID_X, K9_TURZX_MID_W = 672.0, 576.0  # centre 960 = ego car centre with no world shift
 K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1256.0, 656.0
 # middle panel road (대감님 18:30 "가운데 꺼 디자인이 다른데?"): flat 2D perspective road drawn from modelV2 lane lines /
 # road edges / plan path and leadOne, no 3D world, no car photo. screen y = horizon + K_Y / (forward + Z0), x = cx + K_X * lateral / (forward + Z0)
 K9_TURZX_ROAD_HORIZON_Y = 108.0
-K9_TURZX_ROAD_EGO_Y = 352.0                  # forward 0 m
+K9_TURZX_ROAD_EGO_Y = 428.0                  # forward 0 m (352 + 76 from the removed bar)
 K9_TURZX_ROAD_Z0 = 20.0
 K9_TURZX_ROAD_KY = (K9_TURZX_ROAD_EGO_Y - K9_TURZX_ROAD_HORIZON_Y) * K9_TURZX_ROAD_Z0
 K9_TURZX_ROAD_KX = 1500.0
@@ -6064,35 +6063,40 @@ class ClusterUiRenderer:
                                       rl_color(color))
 
     def _k9_turzx_draw_left(self, state: ClusterUiState) -> None:
+        # 19:55: fuel % (CF_Clu_FuelDispLvl always 0) and fuel economy (none on the K9) removed. Top row: range | trip,
+        # bottom row: accel / pedal across both columns, right column TPMS.
         x0, y0, h = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H
         self._rounded_rect(x0, y0, K9_TURZX_LEFT_W, h, 14.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
         col = (x0, x0 + 224.0, x0 + 448.0)
         edge = rl_color(K9_TURZX_EDGE)
-        rl.draw_line_ex(rl.Vector2(col[1], y0 + 14), rl.Vector2(col[1], y0 + h - 14), 2.0, edge)
+        y1 = y0 + h * 0.5
+        pad = (h * 0.5 - 184.0) * 0.5
+        rl.draw_line_ex(rl.Vector2(col[1], y0 + 14), rl.Vector2(col[1], y1 - 14), 2.0, edge)
         rl.draw_line_ex(rl.Vector2(col[2], y0 + 14), rl.Vector2(col[2], y0 + h - 14), 2.0, edge)
-        rl.draw_line_ex(rl.Vector2(x0 + 14, y0 + h * 0.5), rl.Vector2(col[2] - 14, y0 + h * 0.5), 2.0, edge)
-        # fuel %: K9 CF_Clu_FuelDispLvl is always 0 (k9_fuel.py), no tank level -> "-"
-        self._k9_turzx_label_value(col[0] + 20, y0, "연료 잔량", "-", "", "")
+        rl.draw_line_ex(rl.Vector2(x0 + 14, y1), rl.Vector2(col[2] - 14, y1), 2.0, edge)
         km = self.k9_turzx_range_km(getattr(state, "fuel_gauge", None))
-        self._k9_turzx_label_value(col[1] + 20, y0, "주행가능거리", "-" if km is None else str(km), "km", "연비 -")
-        self._k9_turzx_bar(col[1] + 20, y0 + 132.0, 184.0, None if km is None else km / K9_DTE_FULL_KM, K9_TURZX_ACCENT)
+        self._k9_turzx_label_value(col[0] + 20, y0 + pad, "주행가능거리", "-" if km is None else str(km), "km", "")
+        self._k9_turzx_bar(col[0] + 20, y0 + pad + 132.0, 184.0, None if km is None else km / K9_DTE_FULL_KM,
+                           K9_TURZX_ACCENT)
+        trip = getattr(state, "trip_report", None)
+        dist = getattr(trip, "distance_m", None) if trip is not None else None
+        avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
+        self._k9_turzx_label_value(col[1] + 20, y0 + pad, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
+                                   "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
         accel = getattr(state, "accel_mps2", None)
         accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
         throttle = getattr(state, "throttle", None)
         pedal = "-" if throttle is None or not math.isfinite(throttle) else f"{int(round(clamp(throttle, 0.0, 1.0) * 100))}%"
-        y1 = y0 + h * 0.5
-        self._k9_turzx_label_value(col[0] + 20, y1, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
+        ya = y1 + pad
+        self._k9_turzx_label_value(col[0] + 20, ya, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
         if accel_text != "-":
-            cx = col[0] + 20 + 92.0
-            rl.draw_rectangle_rounded(rl.Rectangle(col[0] + 20, y1 + 132.0, 184.0, 10.0), 1.0, 6, edge)
-            span = 92.0 * clamp(abs(accel) / 3.0, 0.0, 1.0)
+            bw = col[2] - col[0] - 40.0
+            cx = col[0] + 20 + bw * 0.5
+            rl.draw_rectangle_rounded(rl.Rectangle(col[0] + 20, ya + 132.0, bw, 10.0), 1.0, 6, edge)
+            span = bw * 0.5 * clamp(abs(accel) / 3.0, 0.0, 1.0)
             color = K9_TURZX_GOOD if accel >= 0.0 else (255, 120, 90)
-            rl.draw_rectangle_rec(rl.Rectangle(cx if accel >= 0.0 else cx - span, y1 + 132.0, span, 10.0), rl_color(color))
-        trip = getattr(state, "trip_report", None)
-        dist = getattr(trip, "distance_m", None) if trip is not None else None
-        avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        self._k9_turzx_label_value(col[1] + 20, y1, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
-                                   "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
+            rl.draw_rectangle_rec(rl.Rectangle(cx if accel >= 0.0 else cx - span, ya + 132.0, span, 10.0), rl_color(color))
+            rl.draw_line_ex(rl.Vector2(cx, ya + 126.0), rl.Vector2(cx, ya + 148.0), 2.0, rl_color(K9_TURZX_MUTED))
         self._k9_turzx_draw_tpms(state, col[2], y0, K9_TURZX_LEFT_X + K9_TURZX_LEFT_W - col[2], h)
 
     def _k9_turzx_draw_tpms(self, state: ClusterUiState, x: float, y: float, w: float, h: float) -> None:
@@ -6421,32 +6425,11 @@ class ClusterUiRenderer:
                                 getattr(state, "torque_learn_friction", None)),
             learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
-        line_step = K9_TURZX_LAT_TEXT_SIZE + 13.0
+        line_step = K9_TURZX_LAT_TEXT_SIZE + 25.0  # taller card since 19:55, font size unchanged
         for i, text in enumerate(lat_texts):
             if text is None:
                 continue
             self._draw_text(text, x0 + 20, split_y + 64.0 + line_step * i, K9_TURZX_LAT_TEXT_SIZE, LAT_VALUES_COLOR)
-
-    def _k9_turzx_draw_bar(self) -> None:
-        y, h = K9_TURZX_BAR_Y, K9_TURZX_BAR_H
-        # K9 DATC (climate) is not decoded on the comma: temps "-" and every chip dimmed (state unknown, not "off")
-        self._rounded_rect(8.0, y, 264.0, h, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
-        self._draw_text("-°", 28.0, y + 24.0, 34.0, K9_TURZX_DIM)
-        self._draw_text("실내 -", 28.0, y + 52.0, 22.0, K9_TURZX_MUTED)
-        self._rounded_rect(280.0, y, 456.0, h, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
-        self._draw_text("풍량", 304.0, y + h * 0.5, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        self._draw_text("-", 712.0, y + h * 0.5, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="right")
-        for i in range(8):
-            rl.draw_rectangle_rounded(rl.Rectangle(378.0 + i * 36.0, y + 26.0, 28.0, 16.0), 0.3, 4, rl_color(K9_TURZX_EDGE))
-        chips = ("AUTO", "A/C", "HEAT", "앞유리", "뒷유리", "내기", "SYNC")
-        cw, gap, cx = 116.0, 8.0, 744.0
-        for i, label in enumerate(chips):
-            x = cx + i * (cw + gap)
-            self._rounded_rect(x, y + 6.0, cw, h - 12.0, 10.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
-            self._draw_text(label, x + cw * 0.5, y + h * 0.5, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="center")
-        self._rounded_rect(1648.0, y, 264.0, h, 12.0, K9_TURZX_CARD, K9_TURZX_EDGE, 2.0)
-        self._draw_text("-°", 1892.0, y + 24.0, 34.0, K9_TURZX_DIM, anchor="right")
-        self._draw_text("실외 -", 1892.0, y + 52.0, 22.0, K9_TURZX_MUTED, anchor="right")
 
     def _k9_turzx_draw_alert(self, alert: ClusterAlert | None) -> None:
         # alert as a band at the top of the middle panel (was centred on the 1920 screen over the left panel)
@@ -6484,7 +6467,6 @@ class ClusterUiRenderer:
             self._k9_turzx_draw_left(state)
             self._k9_turzx_draw_middle(state, signal_lights)
             self._k9_turzx_draw_right(state)
-            self._k9_turzx_draw_bar()
         finally:
             rl.rl_pop_matrix()
 
