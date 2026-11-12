@@ -234,7 +234,7 @@ K9L_GEAR_SIZE = 40.0     # old 36
 K9L_SIDE_DX = 140.0
 K9L_SCENE_X0, K9L_SCENE_X1 = 610.0, 1310.0
 K9L_SCENE_FADE = 80.0
-K9L_COL_A, K9L_COL_B = 260.0, 440.0
+K9L_COL_A, K9L_COL_B = 260.0, 462.0
 K9L_METER_W = 150.0
 K9L_TPMS_CX = 112.0
 K9L_RIGHT_X = 1336.0  # right list x0 (content to K9L_RIGHT_X1)
@@ -260,14 +260,14 @@ K9L_ROW1, K9L_ROW2 = 62.0, 320.0       # left label baselines
 K9L_VALUE_DY = 59.0                    # label baseline -> value baseline (= speed / cruise baseline 121 on row 1)
 K9L_METER_DY = 84.0                    # label baseline -> meter line
 K9L_SUB_DY = 118.0                     # label baseline -> sub line baseline (row 2: 438 = last right row)
-K9L_TRACK = 0.14                       # wide letter spacing of the champagne headers
+K9L_TRACK = 0.10                       # wide letter spacing of the champagne headers
 K9L_TPMS_X = 128.0                     # TPMS car centre x, numbers outside each wheel
 K9L_TPMS_Y = 262.0
 K9L_RULE_X = 244.0                     # one vertical hairline: TPMS | numbers
 K9L_SPEED_BASE = 121.0
 K9L_KMH_BASE = 152.0
 K9L_TOP_CY = 84.0                      # gear ring, limit sign centre
-K9L_SIGN_X = 712.0
+K9L_SIGN_X = 724.0
 K9L_PERC_Y = 212.0                     # lane % (left) / lead (right) beside the far road, symmetric about 960
 K9L_PERC_GAP = 64.0
 K9L_NAVI_BASE = 292.0
@@ -6876,7 +6876,12 @@ class ClusterUiRenderer:
         vw = self._k9l_text(value, x - 2.0, 0.0, K9_TURZX_VALUE_SIZE, vc, numeric=True, track=0.01, glow=value != "-",
                             base=vb)
         if unit and value != "-":
-            self._k9l_text(unit, x - 2.0 + vw + 8.0, 0.0, K9_TURZX_UNIT_SIZE, K9L_MUTED, numeric=True, base=vb)
+            ub = vb
+            if unit == "°":  # degree sign hangs from the cap line of the value, not from its own small cap line
+                font, ink = self._k9l_font(value, True)
+                cap = self._k9l_metrics(font)[1]
+                ub = vb - cap * ink * (K9_TURZX_VALUE_SIZE - K9_TURZX_UNIT_SIZE)
+            self._k9l_text(unit, x - 2.0 + vw + 6.0, 0.0, K9_TURZX_UNIT_SIZE, K9L_MUTED, numeric=True, base=ub)
         if sub:
             self._k9l_text(sub, x, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, base=base + K9L_SUB_DY)
 
@@ -7029,18 +7034,44 @@ class ClusterUiRenderer:
             lat = lead[0] * math.tan(math.radians(lead[1]))
             lx, ly, lw = self._k9l_vehicle(lead[0], lat, True)
             tag = f"{lead[0]:.0f}m"
-            if ly - 32.0 >= K9L_PERC_Y + 22.0:
-                self._k9l_text(tag, lx, 0.0, 22.0, K9L_CHAMPAGNE, anchor="center", numeric=True, cap_cy=ly - 18.0)
-            else:  # far lead: beside the car (above it is the lane % / lead line, below it the path band)
-                out = 1.0 if lx >= 960.0 else -1.0
-                self._k9l_text(tag, lx + out * (lw * 0.5 + 8.0), 0.0, 22.0, K9L_CHAMPAGNE,
-                               anchor="left" if out > 0 else "right", numeric=True, cap_cy=ly + lw * 0.29)
+            tw = self._k9l_width(tag, 22.0, True)
+            keep_out = self._k9l_perc_rects(state)
+            out = 1.0 if lx >= 960.0 else -1.0
+            spots = [(lx - tw * 0.5, ly - 18.0)]  # above the car, else beside it (outer, inner side)
+            for side in (out, -out):
+                spots.append((lx + lw * 0.5 + 8.0 if side > 0 else lx - lw * 0.5 - 8.0 - tw, ly + lw * 0.29))
+
+            def free(px: float, cy: float) -> bool:
+                if not (K9L_SCENE_X0 + 12.0 <= px and px + tw <= K9L_SCENE_X1 - 12.0):
+                    return False
+                return all(px + tw < x0 or px > x1 or cy + 10.0 < y0 or cy - 10.0 > y1 for x0, y0, x1, y1 in keep_out)
+            px, cy = next((p for p in spots if free(*p)), spots[0])
+            self._k9l_text(tag, px, 0.0, 22.0, K9L_CHAMPAGNE, numeric=True, cap_cy=cy)
         # the scene has no frame: the sides melt into the night field
         fw = int(K9L_SCENE_FADE)
         for yy, hh, cl, cr in getattr(self, "_k9l_side_rows", ()):
             rl.draw_rectangle_gradient_h(int(sx0), yy, fw, hh, rl.Color(*cl, 255), rl.Color(*cl, 0))
             rl.draw_rectangle_gradient_h(int(sx1) - fw, yy, fw, hh, rl.Color(*cr, 0), rl.Color(*cr, 255))
         self._k9_turzx_draw_ego()
+
+    def _k9l_perc_texts(self, state: ClusterUiState) -> tuple[str | None, str | None]:
+        lane = None
+        if self._lane_confidence_label_visible(state):
+            lc = self._lane_confidence_text(getattr(state, "left_lane_line_confidence", None))
+            rc = self._lane_confidence_text(getattr(state, "right_lane_line_confidence", None))
+            lane = f"차선 {lc} · {rc}"
+        lead = self.k9_turzx_lead(state)
+        return lane, (None if lead is None else f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°")
+
+    def _k9l_perc_rects(self, state: ClusterUiState) -> list[tuple[float, float, float, float]]:
+        """screen boxes of the lane % / lead line (kept free by the lead distance tag)"""
+        lane, lead = self._k9l_perc_texts(state)
+        py, out = K9L_PERC_Y, []
+        if lane:
+            out.append((960.0 - K9L_PERC_GAP - self._k9l_width(lane, 26.0) - 24.0, py - 15.0, 960.0 - K9L_PERC_GAP, py + 15.0))
+        if lead:
+            out.append((960.0 + K9L_PERC_GAP, py - 15.0, 960.0 + K9L_PERC_GAP + self._k9l_width(lead, 26.0), py + 15.0))
+        return out
 
     def _k9l_draw_top(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         theme = self._current_theme()
@@ -7065,7 +7096,7 @@ class ClusterUiRenderer:
         for lit, side in ((left_lit, -1.0), (right_lit, 1.0)):
             if not lit:
                 continue
-            ax = 960.0 + side * 96.0
+            ax = 960.0 + side * 48.0  # ◀ km/h ▶
             ay = K9L_KMH_BASE - 8.0
             tip = rl.Vector2(ax + side * 24.0, ay)
             a, b = rl.Vector2(ax, ay - 14.0), rl.Vector2(ax, ay + 14.0)
@@ -7106,19 +7137,17 @@ class ClusterUiRenderer:
                     self._k9l_text("평균속도", sign_cx - 46.0 - vw, 0.0, 20.0, K9L_LABEL, anchor="right", cap_cy=chip_cy)
         # lane % (left) and lead (right) beside the far road, mirrored about the centre line
         py = K9L_PERC_Y
-        if self._lane_confidence_label_visible(state):
+        lane_text, lead_text = self._k9l_perc_texts(state)
+        if lane_text:
             lc = getattr(state, "left_lane_line_confidence", None)
             rc = getattr(state, "right_lane_line_confidence", None)
             known = [c for c in (lc, rc) if c is not None and math.isfinite(c)]
             dot = (120, 130, 150) if not known else (K9_TURZX_GOOD if min(known) >= 0.5 else (255, 190, 70))
-            text = f"차선 {self._lane_confidence_text(lc)} · {self._lane_confidence_text(rc)}"
             tx = 960.0 - K9L_PERC_GAP
-            tw = self._k9l_text(text, tx, 0.0, 26.0, K9L_VALUE, anchor="right", cap_cy=py)
+            tw = self._k9l_text(lane_text, tx, 0.0, 26.0, K9L_VALUE, anchor="right", cap_cy=py)
             rl.draw_circle_v(rl.Vector2(tx - tw - 16.0, py), 6.0, rl_color(dot))
-        lead = self.k9_turzx_lead(state)
-        if lead is not None:
-            self._k9l_text(f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°", 960.0 + K9L_PERC_GAP, 0.0, 26.0, K9L_VALUE,
-                           cap_cy=py)
+        if lead_text:
+            self._k9l_text(lead_text, 960.0 + K9L_PERC_GAP, 0.0, 26.0, K9L_VALUE, cap_cy=py)
 
     @staticmethod
     def _k9l_pairs(text: str, first_space: bool = False) -> list[tuple[str, str]]:
