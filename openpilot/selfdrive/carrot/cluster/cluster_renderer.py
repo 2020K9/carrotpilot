@@ -357,6 +357,11 @@ OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
 EGO_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "k9_ego_car.png"
+# 11/13 01:01 대감님 "당연히 d이지": Navdy grey car sprites for the cars ahead on the K9 D road (both styles).
+# car_00..24 = on-screen yaw -24..+24 deg (2 deg), 12 = straight; anchor = rear bottom centre; see navdy/SOURCE.txt
+K9_NAVDY_DIR = CLUSTER_DIR / "assets" / "images" / "navdy"
+K9_NAVDY_YAW_STEP, K9_NAVDY_MID = 2.0, 12
+K9_NAVDY_MIN_W_M = 1.9                     # same 18 px floor as the old box (w = max(18, 1.9 * px/m))
 # Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
 # the ego vehicle only. Leads/cut-ins keep the shared OBJ model.
 EGO_CAR_ICON_MAX_ROLL_DEG = 12.0
@@ -2148,6 +2153,7 @@ class ClusterUiRenderer:
         if self._owns_korean_font and self._korean_font is not None:
             rl.unload_font(self._korean_font)
         self._k9l_unload()
+        self._k9_navdy_unload()
         self._font = None
         self._owns_font = False
         self._korean_font = None
@@ -6634,7 +6640,65 @@ class ClusterUiRenderer:
             prev = cur
             f += 3.0 if f < 0.0 else (1.5 if f < 20.0 else 2.5)
 
+    def _k9_navdy_sprites(self):
+        """{index: (texture, w, h, anchor x, anchor y, px per m)} read once per GL context; {} = failed (old box)."""
+        cache = getattr(self, "_k9_navdy_cache", None)
+        if cache is not None:
+            return cache
+        self._k9_navdy_cache = {}
+        cache = {}
+        try:
+            rows = {}
+            for line in (K9_NAVDY_DIR / "meta.txt").read_text(encoding="utf-8").splitlines():
+                f = line.split()
+                if len(f) >= 10 and f[0] == "car":
+                    rows[int(f[1])] = (float(f[3]), float(f[4]), float(f[5]), float(f[6]), float(f[9]))
+            for i, (w, h, ax, ay, ppm) in sorted(rows.items()):
+                tex = rl.load_texture(str(K9_NAVDY_DIR / f"car_{i:02d}.png"))
+                if tex is None or getattr(tex, "id", 0) <= 0:
+                    raise RuntimeError(f"car_{i:02d}.png")
+                rl.gen_texture_mipmaps(tex)
+                rl.set_texture_filter(tex, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+                cache[i] = (tex, w, h, ax, ay, ppm)
+            if sorted(cache) != list(range(2 * K9_NAVDY_MID + 1)):
+                raise RuntimeError(f"{len(cache)} sprites")
+            self._k9_navdy_cache = cache
+        except Exception as exc:
+            for item in cache.values():
+                rl.unload_texture(item[0])
+            print(f"K9 D: navdy car sprites not loaded ({exc}), boxes instead", flush=True)
+        return self._k9_navdy_cache
+
+    def _k9_navdy_unload(self) -> None:
+        for item in (getattr(self, "_k9_navdy_cache", None) or {}).values():
+            rl.unload_texture(item[0])
+        self._k9_navdy_cache = None
+
+    @staticmethod
+    def k9_navdy_index(forward_m: float, lateral_m: float) -> int:
+        """sprite number of a car on the road: its bearing from the road camera (forward + Z0), 2 deg steps"""
+        yaw = math.degrees(math.atan2(lateral_m, max(1.0, forward_m + K9_TURZX_ROAD_Z0)))
+        return int(clamp(round(yaw / K9_NAVDY_YAW_STEP), -K9_NAVDY_MID, K9_NAVDY_MID)) + K9_NAVDY_MID
+
+    def _k9_navdy_vehicle(self, forward_m: float, lateral_m: float, tint) -> tuple[float, float, float] | None:
+        """grey Navdy car times the screen colour, rear bottom centre on the road point. (centre x, top y, width)"""
+        sprites = self._k9_navdy_sprites()
+        if not sprites:
+            return None
+        x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
+        tex, w, h, ax, ay, ppm = sprites[self.k9_navdy_index(forward_m, lateral_m)]
+        k = max(18.0 / K9_NAVDY_MIN_W_M, scale) / ppm  # sprite px -> screen px (meta px per m vs road px per m)
+        dw, dh = w * k, h * k
+        rl.draw_ellipse(int(x), int(y), dw * 0.40, max(3.0, dh * 0.10), rl.Color(0, 0, 0, 90))
+        left, top = x - ax * k, y - ay * k
+        rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(left, top, dw, dh),
+                            rl.Vector2(0, 0), 0.0, rl.Color(*tint[:3], 255))
+        return left + dw * 0.5, top, dw
+
     def _k9_turzx_draw_vehicle(self, forward_m: float, lateral_m: float, fill, edge) -> tuple[float, float, float]:
+        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, fill if fill == K9_TURZX_LEAD else edge)
+        if drawn is not None:
+            return drawn
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
         w = max(18.0, 1.9 * scale)
         h = w * 0.62
@@ -7351,6 +7415,9 @@ class ClusterUiRenderer:
 
     def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool) -> tuple[float, float, float]:
         """rear view of a car ahead: dark body, metal rim, a thin glowing light bar, soft floor shadow"""
+        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, K9L_CHAMPAGNE if lead else (130, 150, 186))
+        if drawn is not None:
+            return drawn
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
         w = max(18.0, 1.9 * scale)
         h = w * 0.58

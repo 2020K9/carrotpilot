@@ -1,0 +1,9 @@
+출처 메모 (2026-11-13)
+
+- 받은 곳: 대감님이 준 navdy_sprites.zip (sha256 cb27f034f45d91db2b3aaf7000245427737c0156e994f567988a84f9a127d838,
+  180 files, "나브디 v180 차량 그림 (2026-11-12)").
+- 대감님 11/13 01:01 "당연히 d이지": K9 D단 주변 차 표시에 쓰라는 지시로 넣음.
+- 묶음 안 tools/render.py 첫 줄에 "grayscale Navdy vehicle markers (mockup only)" = 시안용이라고 적혀 있음.
+  공식 원본 여부·재배포 허가 근거는 묶음 안에 없음(미확인).
+- 넣은 것: car_00~24.png(회색 원본 그대로, 손대지 않음), meta.txt(car 줄만), README.txt(원문 그대로).
+  트럭·이륜차·보행자·등 마스크는 넣지 않음: HUD 입력(DetectedVehicle)에 차종·브레이크 신호가 없음.
