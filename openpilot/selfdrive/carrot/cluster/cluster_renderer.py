@@ -10,6 +10,7 @@ import ctypes
 import ctypes.util
 import json  # EV6 HUD patch v17
 import math
+import types
 import threading  # EV6 HUD patch v17
 import os
 import time
@@ -466,6 +467,11 @@ K9_NAVDY_LEAD_TINT = (236, 238, 242)
 K9_NAVDY_ROAD = (34, 37, 44)               # dark grey asphalt
 K9_NAVDY_EGO_LANE = (34, 78, 196)          # deep blue band of my lane
 K9_NAVDY_LINE = (232, 235, 240)            # white lane lines / distance text
+# K9HudNavdy (실험중, 11/13 05:00 대감님 "실험중에 메뉴 넣어서 고급지게 안한거랑 한거랑"): 0 = the K9 D road look
+# before b7e81bbd4 (default) / 1 = the Navdy grey look. The ONLY switch point is k9_navdy_on() / k9_look().
+K9_HUD_NAVDY_PARAM = "K9HudNavdy"
+K9_NAVDY_EGO_BOTTOM_PAD = 6.0             # Navdy ego (1): whole car inside the screen, bottom edge this far up
+K9_NAVDY_EGO_TINT_LIFT = 60               # Navdy ego (1): additive lift, clearly lighter than the grey cars ahead
 # Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
 # the ego vehicle only. Leads/cut-ins keep the shared OBJ model.
 EGO_CAR_ICON_MAX_ROLL_DEG = 12.0
@@ -1689,6 +1695,18 @@ class Ev6Weather:
 
 
 EV6_WEATHER = Ev6Weather()
+
+K9_LOOK_OLD = types.SimpleNamespace(
+    lead_tint=K9_TURZX_LEAD, other_tint=None, road=K9_TURZX_ROAD, kerb=K9_TURZX_CHROME, kerb_w=0.08, kerb_a=0.55,
+    haze=K9_TURZX_LANE, haze_a=26, adj=(200, 214, 236), arrow=K9_TURZX_PATH_ARROW, arrow_a=190,
+    l_lead_tint=K9L_CHAMPAGNE, l_other_tint=(130, 150, 186), l_road=K9L_ROAD, l_kerb=K9L_CHAMPAGNE, l_kerb_a=0.6,
+    l_adj=(176, 196, 224), l_adj_a=0.55, l_arrow=(236, 246, 255), l_arrow_a=150, l_fog_a=150, l_tag=K9L_CHAMPAGNE)
+K9_LOOK_NAVDY = types.SimpleNamespace(
+    lead_tint=K9_NAVDY_LEAD_TINT, other_tint=K9_NAVDY_OTHER_TINT, road=K9_NAVDY_ROAD, kerb=K9_NAVDY_LINE, kerb_w=0.06,
+    kerb_a=0.3, haze=K9_NAVDY_LINE, haze_a=14, adj=K9_NAVDY_LINE, arrow=K9_NAVDY_LINE, arrow_a=70,
+    l_lead_tint=K9_NAVDY_LEAD_TINT, l_other_tint=K9_NAVDY_OTHER_TINT, l_road=(*K9_NAVDY_ROAD, 235), l_kerb=K9_NAVDY_LINE,
+    l_kerb_a=0.3, l_adj=K9_NAVDY_LINE, l_adj_a=0.65, l_arrow=K9_NAVDY_LINE, l_arrow_a=70, l_fog_a=110, l_tag=K9_NAVDY_LINE)
+
 
 class ClusterUiRenderer:
     # Class defaults also keep lightweight object.__new__ render probes on the
@@ -7151,8 +7169,11 @@ class ClusterUiRenderer:
         k = max(18.0 / K9_NAVDY_MIN_W_M, scale) / ppm  # sprite px -> screen px (meta px per m vs road px per m)
         dw, dh = w * k, h * k
         va = getattr(self, "_k9_va", 1.0)  # held / new car fade (cluster_k9_hold)
-        rl.draw_ellipse(int(x), int(y), dw * 0.56, max(3.0, dh * 0.13), rl.Color(0, 0, 0, int(45 * va)))
-        rl.draw_ellipse(int(x), int(y), dw * 0.44, max(2.0, dh * 0.07), rl.Color(0, 0, 0, int(85 * va)))
+        if self.k9_navdy_on():
+            rl.draw_ellipse(int(x), int(y), dw * 0.56, max(3.0, dh * 0.13), rl.Color(0, 0, 0, int(45 * va)))
+            rl.draw_ellipse(int(x), int(y), dw * 0.44, max(2.0, dh * 0.07), rl.Color(0, 0, 0, int(85 * va)))
+        else:  # K9HudNavdy 0: the shadow before b7e81bbd4
+            rl.draw_ellipse(int(x), int(y), dw * 0.40, max(3.0, dh * 0.10), rl.Color(0, 0, 0, int(90 * va)))
         left, top = x - ax * k, y - ay * k
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(left, top, dw, dh),
                             rl.Vector2(0, 0), 0.0, rl.Color(*tint[:3], int(255 * va)))
@@ -7160,7 +7181,8 @@ class ClusterUiRenderer:
 
     def _k9_turzx_draw_vehicle(self, forward_m: float, lateral_m: float, fill, edge,
                                heading_deg: float = 0.0) -> tuple[float, float, float]:
-        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, K9_NAVDY_LEAD_TINT if fill == K9_TURZX_LEAD else K9_NAVDY_OTHER_TINT, heading_deg)
+        lk = self.k9_look()
+        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, lk.lead_tint if fill == K9_TURZX_LEAD else (lk.other_tint or edge), heading_deg)
         if drawn is not None:
             return drawn
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
@@ -7181,7 +7203,7 @@ class ClusterUiRenderer:
         geo = getattr(self, "_k9_geo", K9L_ROAD_GEO)
         cx, by = getattr(self, "_k9_cx", K9C_CX), geo[1]  # rear bumper at forward 0
         sprites = self._k9_navdy_sprites()
-        if sprites:  # 11/13 01:57 "차크기 왜케크냐": Navdy straight rear, light grey, ~0.6 lane (was the 140~150 px photo)
+        if sprites and self.k9_navdy_on():  # 11/13 01:57 "차크기 왜케크냐": Navdy straight rear, light grey, ~0.6 lane (was the 140~150 px photo)
             tex, sw, sh, ax, ay, _ = sprites[K9_NAVDY_MID]
             hy, ego_y, kx, _ = geo
             dw = 3.6 * kx / K9_TURZX_ROAD_Z0 * K9_NAVDY_EGO_LANE_FRAC
@@ -7248,20 +7270,21 @@ class ClusterUiRenderer:
         if len(re_) < 2 and rights:
             re_ = rights[-1][2]
         if len(le) >= 2 and len(re_) >= 2:
-            self._k9_turzx_band(le, re_, (*K9_NAVDY_ROAD, 255))
-            self._k9_turzx_line(le, K9_NAVDY_LINE, 0.06, False, False, 0.3)
-            self._k9_turzx_line(re_, K9_NAVDY_LINE, 0.06, False, False, 0.3)
+            lk = self.k9_look()
+            self._k9_turzx_band(le, re_, (*lk.road, 255))
+            self._k9_turzx_line(le, lk.kerb, lk.kerb_w, False, False, lk.kerb_a)
+            self._k9_turzx_line(re_, lk.kerb, lk.kerb_w, False, False, lk.kerb_a)
         # horizon haze + faint sky-blue glow on the horizon
         hy = getattr(self, "_k9_geo", K9C_ROAD_GEO)[0]
         rl.draw_rectangle_gradient_v(int(x0), int(hy - 40), int(w), 40,
-                                     rl.Color(*K9_NAVDY_LINE, 0), rl.Color(*K9_NAVDY_LINE, 14))
+                                     rl.Color(*self.k9_look().haze, 0), rl.Color(*self.k9_look().haze, self.k9_look().haze_a))
         rl.draw_rectangle_gradient_v(int(x0), int(hy - 6), int(w), 46,
                                      rl.Color(*K9_TURZX_MID_TOP, 255), rl.Color(*K9_TURZX_MID_TOP, 0))
         # adjacent lane lines: dashed, dim
         for group in (lefts[:-1], rights[1:]):
             for _, lane, pts in group:
                 if getattr(lane, "visible", True):
-                    self._k9_turzx_line(pts, K9_NAVDY_LINE, 0.12, False, True, 0.7 * self._k9_fade(lane))
+                    self._k9_turzx_line(pts, self.k9_look().adj, 0.12, False, True, 0.7 * self._k9_fade(lane))
         # planned path band + arrows, ends at the lead car
         lead = self.k9_turzx_lead(state)
         path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
@@ -7270,9 +7293,13 @@ class ClusterUiRenderer:
             path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only, nothing behind it
             if path[0][0] > 0.0:
                 path.insert(0, (0.0, path[0][1]))
-            bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue, along the plan (lane changes swing it)
-            br_ = [(f, lat + 1.62) for f, lat in path]
-            self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
+            if self.k9_navdy_on():
+                bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue, along the plan (lane changes swing it)
+                br_ = [(f, lat + 1.62) for f, lat in path]
+                self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
+            else:  # K9HudNavdy 0: teal path band before b7e81bbd4
+                self._k9_old_path_band(path, end_m, 1.05, 0.5, (*K9_TURZX_PATH, 128), (170, 250, 232, 62),
+                                       (120, 255, 220), 0.10, 1.0)
             top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)
             f = 2.0
             while f < top - 2.0:
@@ -7284,7 +7311,7 @@ class ClusterUiRenderer:
                 bl = self.k9_turzx_road_project(f, lat - 0.42)
                 br = self.k9_turzx_road_project(f, lat + 0.42)
                 aw = max(1.2, 0.09 * sc)
-                col = rl.Color(*K9_NAVDY_LINE, int(70 * clamp(1.0 - max(0.0, f) / 70.0, 0.3, 1.0)))
+                col = rl.Color(*self.k9_look().arrow, int(self.k9_look().arrow_a * clamp(1.0 - max(0.0, f) / 70.0, 0.3, 1.0)))
                 rl.draw_line_ex(rl.Vector2(bl[0], bl[1]), rl.Vector2(ax, ay), aw, col)
                 rl.draw_line_ex(rl.Vector2(br[0], br[1]), rl.Vector2(ax, ay), aw, col)
                 f += 4.0 if f < 20.0 else 8.0
@@ -7294,7 +7321,10 @@ class ClusterUiRenderer:
             if item is None:
                 continue
             a = 1.0 if conf is None or not math.isfinite(conf) else clamp(0.35 + conf * 0.65, 0.35, 1.0)
-            self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
+            if self.k9_navdy_on():
+                self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
+            else:
+                self._k9_turzx_line(item[2], K9_TURZX_LANE, 0.13, True, False, a * self._k9_fade(item[1]))
         # depth: far road fades into the sky
         rl.draw_rectangle_gradient_v(int(x0), int(hy - 2), int(w), 110,
                                      rl.Color(*K9_TURZX_MID_TOP, 200), rl.Color(*K9_TURZX_MID_TOP, 0))
@@ -7309,14 +7339,20 @@ class ClusterUiRenderer:
             lat = lead[0] * math.tan(math.radians(lead[1]))
             f = self.k9_road_clear_of_ego(lead[0], lat)
             lx, ly, lw = self._k9_turzx_draw_vehicle(f, lat, K9_TURZX_LEAD, (255, 236, 196), self.k9_road_heading_deg(state, f))
-            tag = f"{lead[0]:.0f} m"
+            tag = f"{lead[0]:.0f} m" if self.k9_navdy_on() else f"{lead[0]:.0f}m"
             tw, _ = self._measure_text(tag, 22.0, max(1.0, 22.0 * 0.02), self._font_for_text(tag))
             tbt = getattr(self, "_k9c_tbt_rect", None)  # 22:41 taller TBT card: a far lead tag would hide under it
             if tbt is not None and lx + tw * 0.5 + 8.0 > tbt[0] and ly - 32.0 < tbt[3]:
                 ly = self.k9_turzx_road_project(f, lat)[1] + 36.0  # under the car instead
-            self._draw_text(tag, lx + 1.0, ly - 18.0, 22.0, (0, 0, 0, int(150 * la)), anchor="center")  # floating above the car
-            self._draw_text(tag, lx, ly - 19.0, 22.0, K9_NAVDY_LINE if la >= 1.0 else (*K9_NAVDY_LINE, int(255 * la)),
-                            anchor="center")
+            if self.k9_navdy_on():
+                self._draw_text(tag, lx + 1.0, ly - 18.0, 22.0, (0, 0, 0, int(150 * la)), anchor="center")  # floating above the car
+                self._draw_text(tag, lx, ly - 19.0, 22.0, K9_NAVDY_LINE if la >= 1.0 else (*K9_NAVDY_LINE, int(255 * la)),
+                                anchor="center")
+            else:  # K9HudNavdy 0: gold tag box before b7e81bbd4
+                self._rounded_rect(lx - tw * 0.5 - 7.0, ly - 31.0, tw + 16.0, 26.0, 8.0, (0, 0, 0, int(90 * la)), None)
+                self._rounded_rect(lx - tw * 0.5 - 8.0, ly - 32.0, tw + 16.0, 26.0, 8.0,
+                                   K9_TURZX_TAG if la >= 1.0 else (*K9_TURZX_TAG[:3], int(255 * la)), None)
+                self._draw_text(tag, lx, ly - 19.0, 22.0, (34, 26, 12) if la >= 1.0 else (34, 26, 12, int(255 * la)), anchor="center")
         self._k9_va = 1.0
         self._k9_turzx_draw_ego()
 
@@ -7524,6 +7560,35 @@ class ClusterUiRenderer:
                 self._k9c_draw_hud(state, signal_lights)  # b03a700cc cards
         finally:
             rl.rl_pop_matrix()
+
+    k9_hud_navdy = 0   # K9HudNavdy (실험중): 0 = look before b7e81bbd4 / 1 = Navdy grey, K9 D road only
+
+    def set_k9_hud_navdy(self, value) -> None:
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            v = 0
+        self.k9_hud_navdy = v if v in (0, 1) else 0
+
+    def k9_navdy_on(self) -> bool:
+        """the single K9HudNavdy switch point (later Navdy-only additions hang off this)"""
+        return self.k9_hud_navdy == 1
+
+    def k9_look(self):
+        return K9_LOOK_NAVDY if self.k9_navdy_on() else K9_LOOK_OLD
+
+    def _k9_old_path_band(self, path, end_m, outer, inner, outer_col, inner_col, edge_col, edge_w, edge_a) -> None:
+        """K9HudNavdy 0: the path band + edges before b7e81bbd4 (same calls, same order)"""
+        pl = [(f, lat - outer) for f, lat in path]
+        pr = [(f, lat + outer) for f, lat in path]
+        self._k9_turzx_band(pl, pr, outer_col, fade=True, end_m=end_m)
+        cl = [(f, lat - inner) for f, lat in path]
+        cr_ = [(f, lat + inner) for f, lat in path]
+        self._k9_turzx_band(cl, cr_, inner_col, fade=True, end_m=end_m)
+        pl_e = [(f, lat) for f, lat in pl if end_m is None or f <= end_m]
+        pr_e = [(f, lat) for f, lat in pr if end_m is None or f <= end_m]
+        self._k9_turzx_line(pl_e, edge_col, edge_w, False, False, edge_a)
+        self._k9_turzx_line(pr_e, edge_col, edge_w, False, False, edge_a)
 
     def set_k9_hud_style(self, style) -> None:
         try:
@@ -7898,7 +7963,8 @@ class ClusterUiRenderer:
     def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool,
                      heading_deg: float = 0.0) -> tuple[float, float, float]:
         """rear view of a car ahead: dark body, metal rim, a thin glowing light bar, soft floor shadow"""
-        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, K9_NAVDY_LEAD_TINT if lead else K9_NAVDY_OTHER_TINT, heading_deg)
+        lk = self.k9_look()
+        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, lk.l_lead_tint if lead else lk.l_other_tint, heading_deg)
         if drawn is not None:
             return drawn
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
@@ -7935,13 +8001,14 @@ class ClusterUiRenderer:
             re_ = rights[-1][2]
         if len(le) >= 2 and len(re_) >= 2:
             # translucent asphalt: the horizon light reflection of the background shows through it (wet road)
-            self._k9_turzx_band(le, re_, (*K9_NAVDY_ROAD, 235))
-            self._k9_turzx_line(le, K9_NAVDY_LINE, 0.06, False, False, 0.3)
-            self._k9_turzx_line(re_, K9_NAVDY_LINE, 0.06, False, False, 0.3)
+            lk = self.k9_look()
+            self._k9_turzx_band(le, re_, lk.l_road)
+            self._k9_turzx_line(le, lk.l_kerb, 0.06, False, False, lk.l_kerb_a)  # kerbs
+            self._k9_turzx_line(re_, lk.l_kerb, 0.06, False, False, lk.l_kerb_a)
         for group in (lefts[:-1], rights[1:]):
             for _, lane, pts in group:
                 if getattr(lane, "visible", True):
-                    self._k9_turzx_line(pts, K9_NAVDY_LINE, 0.11, False, True, 0.65 * self._k9_fade(lane))
+                    self._k9_turzx_line(pts, self.k9_look().l_adj, 0.11, False, True, self.k9_look().l_adj_a * self._k9_fade(lane))
         lead = self.k9_turzx_lead(state)
         path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
         end_m = None if lead is None else max(7.0, lead[0])
@@ -7949,9 +8016,12 @@ class ClusterUiRenderer:
             path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only
             if path[0][0] > 0.0:
                 path.insert(0, (0.0, path[0][1]))
-            bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue (same as the card style)
-            br_ = [(f, lat + 1.62) for f, lat in path]
-            self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
+            if self.k9_navdy_on():
+                bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue (same as the card style)
+                br_ = [(f, lat + 1.62) for f, lat in path]
+                self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
+            else:  # K9HudNavdy 0: ice path band before b7e81bbd4
+                self._k9_old_path_band(path, end_m, 1.05, 0.42, (*K9L_ICE, 120), (220, 240, 255, 54), K9L_ICE, 0.07, 0.95)
             top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)
             f = 3.0
             while f < top - 2.0:
@@ -7963,7 +8033,7 @@ class ClusterUiRenderer:
                 bl = self.k9_turzx_road_project(f, lat - 0.36)
                 br = self.k9_turzx_road_project(f, lat + 0.36)
                 aw = max(1.0, 0.06 * sc)
-                col = rl.Color(*K9_NAVDY_LINE, int(70 * clamp(1.0 - max(0.0, f) / 60.0, 0.25, 1.0)))
+                col = rl.Color(*self.k9_look().l_arrow, int(self.k9_look().l_arrow_a * clamp(1.0 - max(0.0, f) / 60.0, 0.25, 1.0)))
                 rl.draw_line_ex(rl.Vector2(bl[0], bl[1]), rl.Vector2(ax, ay), aw, col)
                 rl.draw_line_ex(rl.Vector2(br[0], br[1]), rl.Vector2(ax, ay), aw, col)
                 f += 5.0 if f < 20.0 else 9.0
@@ -7972,9 +8042,12 @@ class ClusterUiRenderer:
             if item is None:
                 continue
             a = 1.0 if conf is None or not math.isfinite(conf) else clamp(0.35 + conf * 0.65, 0.35, 1.0)
-            self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
+            if self.k9_navdy_on():
+                self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
+            else:
+                self._k9_turzx_line(item[2], K9L_LANE, 0.10, True, False, a * self._k9_fade(item[1]))
         # perspective fog: the far road dissolves into the horizon light
-        rl.draw_rectangle_gradient_v(int(sx0), int(hy + 1), int(sx1 - sx0), 90, rl.Color(*K9L_FOG, 110),
+        rl.draw_rectangle_gradient_v(int(sx0), int(hy + 1), int(sx1 - sx0), 90, rl.Color(*K9L_FOG, self.k9_look().l_fog_a),
                                      rl.Color(*K9L_FOG, 0))
         for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
             f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
@@ -7985,7 +8058,7 @@ class ClusterUiRenderer:
             lat = lead[0] * math.tan(math.radians(lead[1]))
             f = self.k9_road_clear_of_ego(lead[0], lat)
             lx, ly, lw = self._k9l_vehicle(f, lat, True, self.k9_road_heading_deg(state, f))
-            tag = f"{lead[0]:.0f} m"
+            tag = f"{lead[0]:.0f} m" if self.k9_navdy_on() else f"{lead[0]:.0f}m"
             tw = self._k9l_width(tag, 22.0, True)
             keep_out = self._k9l_perc_rects(state)
             out = 1.0 if lx >= K9L_CX else -1.0
@@ -8003,7 +8076,8 @@ class ClusterUiRenderer:
                 return all(px + tw < x0 or px > x1 or cy + 10.0 < y0 or cy - 10.0 > y1 for x0, y0, x1, y1 in keep_out)
             spot = next((p for p in spots if free(*p)), None if getattr(self, "_k9_ind_active", False) else spots[0])
             if spot is not None and la >= 0.4:  # under the indicator box: no tag (the lead line keeps the distance)
-                self._k9l_text(tag, spot[0], 0.0, 22.0, K9_NAVDY_LINE if la >= 1.0 else (*K9_NAVDY_LINE, int(255 * la)),
+                tc = self.k9_look().l_tag
+                self._k9l_text(tag, spot[0], 0.0, 22.0, tc if la >= 1.0 else (*tc, int(255 * la)),
                                numeric=True, cap_cy=spot[1])
         self._k9_va = 1.0
         # the scene has no frame: the sides melt into the night field

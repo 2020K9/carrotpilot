@@ -388,6 +388,28 @@ class ClusterHudK9StyleParamReader:
             return 0
 
 
+class K9HudNavdyParamReader:
+    """K9HudNavdy (실험중): K9 D road look, 0 = before b7e81bbd4 / 1 = Navdy grey. Read like ClusterHudK9Style."""
+
+    def __init__(self) -> None:
+        self._params = None
+        try:
+            from openpilot.common.params import Params
+
+            self._params = Params()
+        except Exception:
+            pass
+
+    def read(self) -> int:
+        if self._params is None:
+            return 0
+        try:
+            value = int(self._params.get_int("K9HudNavdy"))
+            return value if value in (0, 1) else 0
+        except Exception:
+            return 0
+
+
 class ClusterScreenModeParamReader:
     def __init__(self) -> None:
         self._params = None
@@ -829,6 +851,7 @@ def run_demo(
     hud_mirror_param_reader = ClusterHudMirrorParamReader()
     active_hud_mirror_mode = hud_mirror_param_reader.read()
     k9_style_param_reader = ClusterHudK9StyleParamReader()
+    k9_navdy_param_reader = K9HudNavdyParamReader()
 
     usb_brightness_auto_enabled = usb_brightness_param_reader is not None
     initial_usb_brightness = resolved_usb_brightness(
@@ -1077,6 +1100,7 @@ def run_demo(
     next_hud_output_gate_param_read = start_time
     next_hud_mirror_param_read = start_time + HUD_MIRROR_PARAM_POLL_SECONDS
     renderer.set_k9_hud_style(k9_style_param_reader.read())
+    renderer.set_k9_hud_navdy(k9_navdy_param_reader.read())
     report_frames = 0
     display_actual_fps: float | None = None
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -1289,6 +1313,7 @@ def run_demo(
                     active_hud_mirror_mode = next_hud_mirror_mode
                 next_hud_mirror_param_read = now + HUD_MIRROR_PARAM_POLL_SECONDS
                 renderer.set_k9_hud_style(k9_style_param_reader.read())  # same 1 s poll as the mirror mode
+                renderer.set_k9_hud_navdy(k9_navdy_param_reader.read())  # K9HudNavdy, same 1 s poll, no restart
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"

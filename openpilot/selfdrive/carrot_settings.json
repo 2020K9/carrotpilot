@@ -414,7 +414,8 @@
             "K9LaneCenterGain",
             "PathOffset",
             "K9ExtHud",
-            "K9MeterSeason"
+            "K9MeterSeason",
+            "K9HudNavdy"
           ]
         }
       ]
@@ -3811,6 +3812,24 @@
           "1 出租车计价器画面"
         ]
       }
+    },
+    {
+      "group": "외부 HUD",
+      "name": "K9HudNavdy",
+      "title": "K9 D 화면 고급 판 (실험)",
+      "descr": "K9 D단 HUD 도로 그림. 0 기존 화면(그대로). 1 나브디 양식 고급 판: 회색 나브디 차 그림, 내 차로 파란 띠, 흰 차선, 앞차 거리 흰 글자, 내 차 밝게. 운행 중 바꿔도 1초 안에 바로 바뀜. 다른 차종·P·R 무관. 실차 미확인.",
+      "egroup": "CLUSTER HUD",
+      "etitle": "K9 D Screen Premium Look (Trial)",
+      "edescr": "K9 D HUD road drawing. 0 Existing screen (unchanged). 1 Navdy-style premium look: grey Navdy cars, blue band on my lane, white lane lines, white lead distance, brighter own car. Changes within 1 s while driving, no restart. Other cars, P and R unaffected. Not tested in the car.",
+      "cgroup": "外部 HUD",
+      "ctitle": "K9 D 画面高级版（试验）",
+      "cdescr": "K9 D挡HUD道路画面。0 现有画面（不变）。1 Navdy风格高级版：灰色Navdy车辆、本车道蓝色带、白色车道线、白色前车距离、本车更亮。行驶中切换1秒内生效，无需重启。其他车型及P、R不受影响。未经实车确认。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {"ko": ["0 기존 화면", "1 나브디 고급 판"], "en": ["0 Existing screen", "1 Navdy premium look"], "zh": ["0 现有画面", "1 Navdy高级版"]}
     },
     {
       "group": "외부 HUD",

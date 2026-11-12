@@ -279,6 +279,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9LRView", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9ExtHud", {PERSISTENT, INT, "-1"}},
     {"K9MeterSeason", {PERSISTENT, INT, "0"}},
+    {"K9HudNavdy", {PERSISTENT, INT, "0"}},  // 실험중: K9 D HUD 0 기존 / 1 나브디 고급 판 (cluster_renderer k9_navdy_on)
     {"K9MeterCmd", {CLEAR_ON_MANAGER_START, STRING}},    // K9ExtHud=1 meter button press "<token>:<start|pause|settle>" (memory)
     {"K9MeterState", {CLEAR_ON_MANAGER_START, STRING}},  // K9ExtHud=1 meter state for the buttons (memory)
     {"K9OneLaneHold", {PERSISTENT, INT, "0"}},  // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
