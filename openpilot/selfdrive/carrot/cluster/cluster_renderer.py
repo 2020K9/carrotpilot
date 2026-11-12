@@ -237,6 +237,22 @@ K9_TURZX_UNIT_SIZE = 28.0
 K9_TURZX_SUB_SIZE = 24.0
 
 # K9 TURZX luxury scene (대감님 11/12 21:44). Fonts are SIL OFL 1.1 (Pretendard-LICENSE.txt covers Pretendard, Inter is OFL).
+# 대감님 11/13 00:47 "양옆 숫자들 비율안맞잖아": both K9 D side blocks (lane / steer learn and car, both styles) use one
+# three-tier type system: (a) block title, (b) item name / unit / sub, (c) value. Same tier = same size, weight and
+# baseline spacing on both sides; every value right-aligned on a unit slot, units = tier (b) (unit / value = 24 / K9T_VALUE).
+# K9T_VALUE = the largest size where the worst values fit (measured, see the commit); sizes never change with the values.
+K9T_TITLE = 24.0
+K9T_LABEL = 24.0
+K9T_UNIT = K9T_LABEL
+K9T_VALUE = 38.0
+K9T_STACK_GAP = 8.0          # item name baseline -> value cap top
+K9T_HALF_GAP = 0.0           # two items on one line: halves meet at the middle (name of the 2nd item 41 px after the 1st unit slot)
+K9T_VALUE_GAP = 16.0         # two values of one item
+K9T_UNIT_GAP = 4.0
+K9T_UNITS = ("cm", "km", "m", "초", "%", "°")
+K9T_LIST_UNITS = ("cm", "m", "초", "%")
+K9T_CAR_UNITS = ("km", "°")
+K9T_WIDE_VALUE = "999.9"     # widest car value: meters end left of it
 K9L_NUM_FONT_PATH = OPENPILOT_FONT_DIR / "Inter-Light.ttf"
 K9L_KR_FONT_PATH = OPENPILOT_FONT_DIR / "Pretendard-Medium.ttf"
 K9L_NUM_EXTRA = "°²·"
@@ -6270,52 +6286,214 @@ class ClusterUiRenderer:
             rl.draw_rectangle_rounded(rl.Rectangle(x - 2.0, y - 2.0, fw + 4.0, 14.0), 1.0, 6, rl_color(color, 50))
             rl.draw_rectangle_rounded(rl.Rectangle(x, y, fw, 10.0), 1.0, 6, rl_color(color))
 
-    def _k9c_row(self, x0: float, x1: float, cy: float, label: str, sub: str, value: str, unit: str) -> None:
-        # 00:20 one item per row: label left + sub right on one line (same 24 px), value (60 px) + unit under it
-        self._draw_text(label, x0, cy, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        if sub:
-            self._draw_text(sub, x1, cy, K9_TURZX_SUB_SIZE, K9_TURZX_DIM, anchor="right")
-        vy = cy + K9C_VALUE_DY
-        self._k9_turzx_value_text(value, x0, vy, K9_TURZX_VALUE_SIZE, K9_TURZX_TEXT if value != "-" else K9_TURZX_DIM)
-        if unit and value != "-":
-            w = self._k9_turzx_value_width(value, K9_TURZX_VALUE_SIZE)
-            self._draw_text(unit, x0 + w + 8.0, vy + 10.0, K9_TURZX_UNIT_SIZE, K9_TURZX_MUTED)
+    # ---- K9 D side blocks: one three-tier type system for both sides and both styles (11/13 00:47) -----------------
+    @staticmethod
+    def k9t_split_unit(value: str) -> tuple[str, str]:
+        """'0.20초' -> ('0.20', '초'), '← 150cm' -> ('← 150', 'cm'); values without a unit unchanged"""
+        for u in K9T_UNITS:
+            if value.endswith(u) and len(value) > len(u) and (value[-len(u) - 1].isdigit()):
+                return value[:-len(u)], u
+        return value, ""
 
-    def _k9_turzx_draw_left(self, state: ClusterUiState) -> None:
-        # 19:55: fuel % (CF_Clu_FuelDispLvl always 0) and fuel economy (none on the K9) removed.
-        # 00:20 (352 px card): range / trip / accel + pedal / steering angle one per row, meters right of the values, TPMS
-        x0, y0, h, w = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9_TURZX_LEFT_W
-        self._k9_turzx_glass(x0, y0, w, h)
-        xa, xb = x0 + 20.0, x0 + w - 20.0
-        bx = x0 + K9C_BAR_X
-        bw = xb - bx
-        ys = [y0 + K9C_ROW0 + K9C_ROW_STEP * i for i in range(4)]
-        for hy in [y - 16.0 for y in ys[1:]] + [y0 + K9C_TPMS_Y + 2.0]:
-            self._k9_turzx_metal_h(xa, hy, xb - xa, 150)
+    def _k9c_text(self, text: str, x: float, base: float, size: float, color, anchor: str = "left",
+                  value: bool = False) -> float:
+        """card (style 0) text on a baseline: KaiGen like _draw_text / _k9_turzx_value_text; returns the width"""
+        if not text:
+            return 0.0
+        font = self._font_for_text(text)
+        spacing = size * K9_TURZX_VALUE_TRACK if value else max(1.0, size * 0.02)
+        tw, th = self._measure_text(text, size, spacing, font)
+        b, _ = self._k9l_metrics(font)
+        cy = base - b * size + th * 0.5
+        if value:
+            self._k9_turzx_value_text(text, x, cy, size, color, anchor)
+        else:
+            self._draw_text(text, x, cy, size, color, anchor)
+        return tw
+
+    def _k9t_size(self, kind: str) -> float:
+        return {"title": K9T_TITLE, "label": K9T_LABEL, "unit": K9T_UNIT, "value": K9T_VALUE}[kind]
+
+    def _k9t(self, lux: bool, kind: str, text: str, x: float, base: float, color, anchor: str = "left") -> float:
+        size = self._k9t_size(kind)
+        if lux:
+            if kind == "title":
+                return self._k9l_text(text, x, 0.0, size, color, anchor=anchor, track=K9L_TRACK, base=base)
+            if kind == "value":
+                return self._k9l_text(text, x, 0.0, size, color, anchor=anchor, numeric=True, track=0.01,
+                                      glow=color != K9L_DIM, base=base)
+            return self._k9l_text(text, x, 0.0, size, color, anchor=anchor, numeric=kind == "unit", base=base)
+        return self._k9c_text(text, x, base, size, color, anchor, value=kind == "value")
+
+    def _k9t_w(self, lux: bool, kind: str, text: str) -> float:
+        size = self._k9t_size(kind)
+        if lux:
+            track = K9L_TRACK if kind == "title" else (0.01 if kind == "value" else 0.0)
+            return self._k9l_width(text, size, kind in ("value", "unit"), track)
+        font = self._font_for_text(text)
+        spacing = size * K9_TURZX_VALUE_TRACK if kind == "value" else max(1.0, size * 0.02)
+        return self._measure_text(text, size, spacing, font)[0]
+
+    def _k9t_cap(self, lux: bool, kind: str) -> float:
+        """cap height (px) of a tier: 'H' of the font its texts use"""
+        size = self._k9t_size(kind)
+        sample = "0" if kind in ("value", "unit") else "가"
+        if lux:
+            font, ink = self._k9l_font(sample, kind in ("value", "unit"))
+        else:
+            font, ink = self._font_for_text(sample), 1.0
+        return self._k9l_metrics(font)[1] * size * ink
+
+    def _k9t_slot(self, lux: bool, units) -> float:
+        return max(self._k9t_w(lux, "unit", u) for u in units) + K9T_UNIT_GAP
+
+    def _k9t_value(self, lux: bool, x1: float, base: float, value: str, color, slot: float) -> float:
+        """value + unit: number right edge on x1 - slot, unit left in the slot (degree sign hangs from the cap line);
+        returns the left x of the number"""
+        num, unit = self.k9t_split_unit(value)
+        nx = x1 - slot
+        w = self._k9t(lux, "value", num, nx, base, color, anchor="right")
+        if unit:
+            ub = base
+            if unit == "°":
+                ub = base - (self._k9t_cap(lux, "value") - self._k9t_cap(lux, "unit"))
+            self._k9t(lux, "unit", unit, nx + K9T_UNIT_GAP, ub, K9L_MUTED if lux else K9_TURZX_MUTED)
+        return nx - w
+
+    def _k9t_list(self, state: ClusterUiState, lux: bool, x0: float, x1: float, top: float, bottom: float) -> None:
+        """차선 위치 + 조향 학습 block (left on screen) in the tier system; fixed slots (2 lane lines, 5 learn lines),
+        so nothing moves or changes size with the values."""
+        muted = K9L_MUTED if lux else K9_TURZX_MUTED
+        dim = K9L_DIM if lux else K9_TURZX_DIM
+        head = K9L_LABEL if lux else K9_TURZX_MUTED
+        val = K9L_VALUE if lux else K9_TURZX_TEXT
+        ca, cb, cv = self._k9t_cap(lux, "title"), self._k9t_cap(lux, "label"), self._k9t_cap(lux, "value")
+        stack = cb + K9T_STACK_GAP + cv
+        g = (bottom - top - 2 * ca - 2 * cv - 5 * stack) / 9.0
+        slot = self._k9t_slot(lux, K9T_LIST_UNITS)
+        mid = (x0 + x1) * 0.5
+        halves = ((x0, mid - K9T_HALF_GAP * 0.5), (mid + K9T_HALF_GAP * 0.5, x1))
+        tx = x0 + (10.0 if not lux else 0.0)
+
+        def title(text, b):
+            if not lux:
+                rl.draw_rectangle_rounded(rl.Rectangle(x0, b - ca * 0.5 - 11.0, 3.0, 22.0), 1.0, 4,
+                                          rl.Color(*K9_TURZX_CHAMPAGNE, 200))
+            self._k9t(lux, "title", text, tx, b, head)
+
+        b = top + ca
+        title("차선 위치", b)
+        lane = self.k9_lane_block(state)
+        colors = (K9L_VALUE, K9L_VALUE) if lux else (K9_TURZX_POINT, K9_TURZX_GOOD)
+        for i in range(2):
+            b += g + cv
+            if i >= len(lane):
+                continue
+            pairs = lane[i]
+            if len(pairs) == 1 and not pairs[0][0]:
+                self._k9t(lux, "value", pairs[0][1], x0, b, dim)
+                continue
+            spans = [(x0, x1)] if len(pairs) == 1 else halves
+            for (name, value), (a0, a1) in zip(pairs, spans, strict=False):
+                vc = dim if value in ("대기", "-", "--") else colors[i]
+                self._k9t(lux, "label", name, a0, b, muted)
+                self._k9t_value(lux, a1, b, value, vc, slot)
+        hair = b + g
+        self._k9l_hair(x0, hair, x1 - x0, 110) if lux else self._k9_turzx_metal_h(x0, hair, x1 - x0, 130)
+        b = hair + g + ca
+        title("조향 학습", b)
+        rows: list[list[tuple[str, list[str]]]] = []
+        for name, values, second in self.k9_lat_lines(state):
+            if second and rows and len(rows[-1]) < 2:
+                rows[-1].append((name, values))
+            else:
+                rows.append([(name, values)])
+        for row in rows:
+            lb = b + g + cb
+            vb = lb + K9T_STACK_GAP + cv
+            b = vb
+            spans = [(x0, x1)] if len(row) == 1 else halves
+            for (name, values), (a0, a1) in zip(row, spans, strict=False):
+                self._k9t(lux, "label", name, a0, lb, muted)
+                vx = a1
+                for k, value in enumerate(reversed(values)):
+                    vc = dim if value.strip("-") == "" or value == "대기" else val
+                    if k == 0:
+                        vx = self._k9t_value(lux, vx, vb, value, vc, slot)
+                    else:
+                        num, unit = self.k9t_split_unit(value)
+                        uw = self._k9t_w(lux, "unit", unit) + K9T_UNIT_GAP if unit else 0.0
+                        vx = self._k9t_value(lux, vx - K9T_VALUE_GAP - (uw - slot), vb, value, vc, slot)
+
+    def _k9t_car_rows(self, state: ClusterUiState, lux: bool, x0: float, x1: float, top: float, bottom: float,
+                      meter) -> None:
+        """car block rows (range / trip / accel / steering angle): name + sub on one line, meter left and the value
+        right-aligned under it (same tiers / spacing as the lane block)"""
+        muted = K9L_MUTED if lux else K9_TURZX_MUTED
+        dim = K9L_DIM if lux else K9_TURZX_DIM
+        val = K9L_VALUE if lux else K9_TURZX_TEXT
+        cb, cv = self._k9t_cap(lux, "label"), self._k9t_cap(lux, "value")
+        stack = cb + K9T_STACK_GAP + cv
+        g = (bottom - top - 4 * stack) / 4.0
+        slot = self._k9t_slot(lux, K9T_CAR_UNITS)
+        mx1 = x1 - slot - self._k9t_w(lux, "value", K9T_WIDE_VALUE) - 16.0
         km = self.k9_turzx_range_km(getattr(state, "fuel_gauge", None))
-        self._k9c_row(xa, xb, ys[0], "주행가능거리", "", "-" if km is None else str(km), "km")
-        self._k9_turzx_bar(bx, ys[0] + K9C_VALUE_DY - 5.0, bw, None if km is None else km / K9_DTE_FULL_KM, K9_TURZX_ACCENT)
         trip = getattr(state, "trip_report", None)
         dist = getattr(trip, "distance_m", None) if trip is not None else None
         avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        self._k9c_row(xa, xb, ys[1], "이번 주행", "평균 -" if avg is None else f"평균 {avg:.0f} km/h", self.k9_trip_km_text(dist),
-                      "km")
+        trip_text = self.k9_trip_km_text(dist)
         accel = getattr(state, "accel_mps2", None)
         accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
         throttle = getattr(state, "throttle", None)
         pedal = "-" if throttle is None or not math.isfinite(throttle) else f"{int(round(clamp(throttle, 0.0, 1.0) * 100))}%"
-        self._k9c_row(xa, xb, ys[2], "가속도 m/s²", f"페달 {pedal}", accel_text, "")
-        self._k9_turzx_center_bar(bx, ys[2] + K9C_VALUE_DY - 5.0, bw,
-                                  None if accel_text == "-" else accel / 3.0, K9_TURZX_ACCENT, (255, 120, 90))
-        # 대감님 20:47 "가속도 게이지 있는 쪽에 조향각": carState.steeringAngleDeg (+ = left), bar clipped at +-90 deg
         angle = getattr(state, "steering_angle_deg", None)
         angle_ok = angle is not None and math.isfinite(angle)
         angle_text = "-" if not angle_ok else (f"{angle:+.0f}" if abs(angle) >= 99.95 else f"{angle:+.1f}")
         side = "" if not angle_ok else ("가운데" if abs(angle) < 0.5 else ("왼쪽" if angle > 0.0 else "오른쪽"))
-        self._k9c_row(xa, xb, ys[3], "조향각", side, angle_text, "°")
-        self._k9_turzx_center_bar(bx, ys[3] + K9C_VALUE_DY - 5.0, bw,
-                                  None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG, K9_TURZX_CHAMPAGNE,
-                                  K9_TURZX_CHAMPAGNE)
+        km_text = "-" if km is None else str(km)
+        rows = (
+            ("주행가능거리", "", km_text + ("km" if km is not None else ""),
+             ("plain", None if km is None else km / K9_DTE_FULL_KM)),
+            # 11/13 00:47: km also from 1000 km on (fits at K9T_VALUE: "1234 km" < the 999.9 slot)
+            ("이번 주행", "평균 -" if avg is None else f"평균 {avg:.0f} km/h",
+             trip_text + ("km" if trip_text != "-" else ""), None),
+            ("가속도 m/s²", f"페달 {pedal}", accel_text, ("accel", None if accel_text == "-" else accel / 3.0)),
+            ("조향각", side, angle_text + ("°" if angle_ok else ""),
+             ("angle", None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG)),
+        )
+        b = top
+        for i, (name, sub, value, bar) in enumerate(rows):
+            lb = b + (g * 0.5 if i == 0 else g) + cb
+            if i > 0:
+                hy = b + g * 0.5
+                self._k9l_hair(x0, hy, x1 - x0, 110) if lux else self._k9_turzx_metal_h(x0, hy, x1 - x0, 150)
+            vb = lb + K9T_STACK_GAP + cv
+            b = vb
+            self._k9t(lux, "label", name, x0, lb, muted)
+            if sub:
+                self._k9t(lux, "label", sub, x1, lb, dim, anchor="right")
+            self._k9t_value(lux, x1, vb, value, val if value != "-" else dim, slot)
+            if bar is not None:
+                meter(x0, vb - cv * 0.5, mx1 - x0, bar[0], bar[1])
+
+    def _k9_turzx_draw_left(self, state: ClusterUiState) -> None:
+        # 19:55: fuel % (CF_Clu_FuelDispLvl always 0) and fuel economy (none on the K9) removed.
+        # 11/13 00:47 (352 px card): range / trip / accel + pedal / steering angle in the K9T tiers, TPMS row
+        x0, y0, h, w = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9_TURZX_LEFT_W
+        self._k9_turzx_glass(x0, y0, w, h)
+        xa, xb = x0 + 20.0, x0 + w - 20.0
+
+        def meter(x, cy, mw, kind, fraction):
+            y = cy - 5.0
+            if kind == "plain":
+                self._k9_turzx_bar(x, y, mw, fraction, K9_TURZX_ACCENT)
+            elif kind == "accel":
+                self._k9_turzx_center_bar(x, y, mw, fraction, K9_TURZX_ACCENT, (255, 120, 90))
+            else:
+                self._k9_turzx_center_bar(x, y, mw, fraction, K9_TURZX_CHAMPAGNE, K9_TURZX_CHAMPAGNE)
+
+        self._k9t_car_rows(state, False, xa, xb, y0 + 12.0, y0 + K9C_TPMS_Y - 4.0, meter)
+        self._k9_turzx_metal_h(xa, y0 + K9C_TPMS_Y + 2.0, xb - xa, 150)
         ty = y0 + K9C_TPMS_Y
         self._k9_turzx_draw_tpms(state, x0, ty, w, y0 + h - ty, K9C_TPMS_SCALE)
 
@@ -6359,7 +6537,7 @@ class ClusterUiRenderer:
             text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
             near = cx + sx * (car_w * 0.5 + 22.0)   # number next to the wheel, name outside it
             far = cx + sx * (car_w * 0.5 + 72.0)
-            self._k9_turzx_value_text(text, near, wy, 36.0, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM,
+            self._k9_turzx_value_text(text, near, wy, K9T_VALUE, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM,
                                       anchor="right" if sx < 0 else "left")
             self._draw_text(name, far, wy, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED, anchor="right" if sx < 0 else "left")
 
@@ -6753,35 +6931,10 @@ class ClusterUiRenderer:
     def _k9_turzx_draw_right(self, state: ClusterUiState) -> None:
         # 대감님 18:30: music card removed; lane position + steering-learn lines moved here from the middle (same text)
         # 23:12: drawn at card 3's x and moved to card 1 (K9C_SWAP_DX), only K9C_LANE_W wide now
-        # 00:20 (352 px): one (name, value) per row, values right-aligned; steering learn one item per line
+        # 11/13 00:47: K9T tiers (same as the car card), steering learn as name-over-value items, two per line
         x0, y0, h, w = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9C_LANE_W
         self._k9_turzx_glass(x0, y0, w, h)
-        xa, xb = x0 + 20.0, x0 + w - 20.0
-        split_y = y0 + K9C_SPLIT_DY
-        self._k9_turzx_metal_h(xa, split_y, xb - xa, 130)  # one soft metal line, no table grid
-        for ly in (y0 + 20.0, split_y + 22.0):
-            rl.draw_rectangle_rounded(rl.Rectangle(xa, ly - 11.0, 3.0, 22.0), 1.0, 4, rl.Color(*K9_TURZX_CHAMPAGNE, 200))
-        self._draw_text("차선 위치", x0 + 30, y0 + 20.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        size = K9_TURZX_LANE_TEXT_SIZE
-        rows = [(name, value, color) for pairs, color in zip(self.k9_lane_block(state), (K9_TURZX_POINT, K9_TURZX_GOOD),
-                                                               strict=False) for name, value in pairs]
-        for i, (name, value, color) in enumerate(rows):
-            cy = y0 + K9C_LANE_ROW0 + K9C_LANE_PITCH * i
-            vc = K9_TURZX_DIM if value == "대기" else color
-            if name:
-                self._k9_turzx_value_text(name, xa, cy, size, K9_TURZX_MUTED)
-                self._k9_turzx_value_text(value, xb, cy, size, vc, anchor="right")
-            else:
-                self._k9_turzx_value_text(value, xa, cy, size, vc)
-        self._draw_text("조향 학습", x0 + 30, split_y + 22.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        lsize = K9_TURZX_LAT_TEXT_SIZE
-        for i, (name, values, second) in enumerate(self.k9_lat_lines(state)):
-            cy = split_y + K9C_LAT_ROW0 + K9C_LAT_PITCH * i
-            self._draw_text(name, xa + (16.0 if second else 0.0), cy, lsize, LAT_VALUES_COLOR)
-            vx = xb
-            for value in reversed(values):
-                self._draw_text(value, vx, cy, lsize, LAT_VALUES_COLOR, anchor="right")
-                vx -= self._measure_text(value, lsize, max(1.0, lsize * 0.02), self._font_for_text(value))[0] + 16.0
+        self._k9t_list(state, False, x0 + 20.0, x0 + w - 20.0, y0 + 12.0, y0 + h - 12.0)
 
     def _k9_turzx_draw_alert(self, alert: ClusterAlert | None) -> None:
         # alert as a band at the top of the middle panel (was centred on the 1920 screen over the left panel)
@@ -7148,56 +7301,19 @@ class ClusterUiRenderer:
         rl.draw_circle_v(p, 4.2, rl_color(c, 96))
         rl.draw_circle_v(p, 2.2, rl.Color(250, 252, 255, 255))
 
-    def _k9l_item(self, x: float, x1: float, base: float, label: str, value: str, unit: str, sub: str) -> None:
-        # one hierarchy for every item: small spaced champagne label (+ muted sub right-aligned on its baseline, 00:20) /
-        # big ice-white value (+ unit on its baseline) on the next line, all on the K9L_* baseline grid
-        self._k9l_text(label, x, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=base)
-        if sub:
-            self._k9l_text(sub, x1, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, anchor="right", base=base)
-        vb = base + K9L_ROW_VALUE_DY
-        vc = K9L_VALUE if value != "-" else K9L_DIM
-        vw = self._k9l_text(value, x - 2.0, 0.0, K9_TURZX_VALUE_SIZE, vc, numeric=True, track=0.01, glow=value != "-",
-                            base=vb)
-        if unit and value != "-":
-            ub = vb
-            if unit == "°":  # degree sign hangs from the cap line of the value, not from its own small cap line
-                font, ink = self._k9l_font(value, True)
-                cap = self._k9l_metrics(font)[1]
-                ub = vb - cap * ink * (K9_TURZX_VALUE_SIZE - K9_TURZX_UNIT_SIZE)
-            self._k9l_text(unit, x - 2.0 + vw + 6.0, 0.0, K9_TURZX_UNIT_SIZE, K9L_MUTED, numeric=True, base=ub)
-
     def _k9l_draw_left(self, state: ClusterUiState) -> None:
-        # 00:20 320 px block: range / trip / accel / steering angle one per row (meter right of the value), TPMS under them
+        # 11/13 00:47 320 px block: range / trip / accel / steering angle in the K9T tiers, TPMS under them
         x0, x1 = K9L_EDGE, K9L_EDGE + K9L_CAR_W
-        bases = [K9L_ROW0 + K9L_ROW_STEP * i for i in range(4)]
-        mx = x0 + K9L_METER_X
-        mw = x1 - mx
-        my = [b + K9L_ROW_VALUE_DY - 26.0 for b in bases]
-        km = self.k9_turzx_range_km(getattr(state, "fuel_gauge", None))
-        self._k9l_item(x0, x1, bases[0], "주행가능거리", "-" if km is None else str(km), "km", "")
-        self._k9l_meter(mx, my[0], mw, None if km is None else km / K9_DTE_FULL_KM, K9L_ICE)
-        trip = getattr(state, "trip_report", None)
-        dist = getattr(trip, "distance_m", None) if trip is not None else None
-        avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        trip_text = self.k9_trip_km_text(dist)
-        # 1000 km and more: the unit would run past the right screen edge (now the right side), the label says km
-        self._k9l_item(x0, x1, bases[1], "이번 주행", trip_text, "km" if "." in trip_text else "",
-                       "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
-        accel = getattr(state, "accel_mps2", None)
-        accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
-        throttle = getattr(state, "throttle", None)
-        pedal = "-" if throttle is None or not math.isfinite(throttle) else f"{int(round(clamp(throttle, 0.0, 1.0) * 100))}%"
-        self._k9l_item(x0, x1, bases[2], "가속도 m/s²", accel_text, "", f"페달 {pedal}")
-        self._k9l_meter(mx, my[2], mw, None if accel_text == "-" else accel / 3.0, K9L_ICE, True, (255, 120, 90))
-        angle = getattr(state, "steering_angle_deg", None)
-        angle_ok = angle is not None and math.isfinite(angle)
-        angle_text = "-" if not angle_ok else (f"{angle:+.0f}" if abs(angle) >= 99.95 else f"{angle:+.1f}")
-        side = "" if not angle_ok else ("가운데" if abs(angle) < 0.5 else ("왼쪽" if angle > 0.0 else "오른쪽"))
-        self._k9l_item(x0, x1, bases[3], "조향각", angle_text, "°", side)
-        self._k9l_meter(mx, my[3], mw, None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG, K9L_CHAMPAGNE, True,
-                        K9L_CHAMPAGNE)
-        for b in bases[1:]:
-            self._k9l_hair(x0, b - 30.0, K9L_CAR_W, 110)
+
+        def meter(x, cy, mw, kind, fraction):
+            if kind == "plain":
+                self._k9l_meter(x, cy, mw, fraction, K9L_ICE)
+            elif kind == "accel":
+                self._k9l_meter(x, cy, mw, fraction, K9L_ICE, True, (255, 120, 90))
+            else:
+                self._k9l_meter(x, cy, mw, fraction, K9L_CHAMPAGNE, True, K9L_CHAMPAGNE)
+
+        self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_TPMS_HAIR - 4.0, meter)
         self._k9l_hair(x0, K9L_TPMS_HAIR, K9L_CAR_W, 110)
         self._k9l_draw_tpms(state)
 
@@ -7227,11 +7343,11 @@ class ClusterUiRenderer:
             vx, wcy = num_x[sx], wheel_cy[row]
             anchor = "right" if sx == 0 else "left"
             text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
-            vw = self._k9l_text(text, vx, 0.0, 36.0, K9L_VALUE if text != "-" else K9L_DIM, anchor=anchor, numeric=True,
-                                base=wcy + 13.0)
+            vw = self._k9l_text(text, vx, 0.0, K9T_VALUE, K9L_VALUE if text != "-" else K9L_DIM, anchor=anchor, numeric=True,
+                                base=wcy + 13.0 * K9T_VALUE / 36.0)
             nx = vx - vw - gap if sx == 0 else vx + vw + gap  # 23:44 name beside the number (outside), not above it
             self._k9l_text(name, nx, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor=anchor, numeric=True, track=0.06,
-                           base=wcy + 13.0)
+                           base=wcy + 13.0 * K9T_VALUE / 36.0)
 
     def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool) -> tuple[float, float, float]:
         """rear view of a car ahead: dark body, metal rim, a thin glowing light bar, soft floor shadow"""
@@ -7504,30 +7620,8 @@ class ClusterUiRenderer:
         return out
 
     def _k9l_draw_right(self, state: ClusterUiState) -> None:
-        x0, x1 = K9L_RIGHT_X, K9L_RIGHT_X1
-        self._k9l_text("차선 위치", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_LIST_HEAD)
-        # 23:12 one block: name and value side by side; 00:20 one (name, value) per row, value right-aligned (344 px);
-        # nothing known -> 대기
-        size = K9_TURZX_LANE_TEXT_SIZE
-        rows = [p for pairs in self.k9_lane_block(state) for p in pairs]
-        for (name, value), base in zip(rows, K9L_LANE_BASES, strict=False):
-            dim = value == "대기"
-            vcol = K9L_DIM if dim else K9L_VALUE
-            if name:
-                self._k9l_text(name, x0, 0.0, size, K9L_MUTED, base=base)
-                self._k9l_text(value, x1, 0.0, size, vcol, anchor="right", base=base, glow=not dim)
-            else:
-                self._k9l_text(value, x0, 0.0, size, vcol, base=base, glow=not dim)
-        self._k9l_hair(x0, K9L_RIGHT_HAIR, x1 - x0, 110)
-        self._k9l_text("조향 학습", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_LAT_HEAD)
-        lsize = K9_TURZX_LAT_TEXT_SIZE
-        for i, (name, values, second) in enumerate(self.k9_lat_lines(state)):  # 00:20 one item per line
-            base = K9L_LAT_BASE0 + K9L_LAT_PITCH * i
-            self._k9l_text(name, x0 + (16.0 if second else 0.0), 0.0, lsize, K9L_MUTED, base=base)
-            vx = x1
-            for value in reversed(values):
-                dim = value.strip("-") == "" or value == "대기"
-                vx -= self._k9l_text(value, vx, 0.0, lsize, K9L_DIM if dim else K9L_VALUE, anchor="right", base=base) + 16.0
+        # 11/13 00:47: 차선 위치 + 조향 학습 in the K9T tiers (same as the car block), 344 px
+        self._k9t_list(state, True, K9L_RIGHT_X, K9L_RIGHT_X1, 8.0, 470.0)
 
     def _k9l_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         tex = self._k9l_background()
