@@ -78,6 +78,15 @@ def read_mode(params):
     return 0
 
 
+
+def _enum_int(v):
+  """capnp enums (_DynamicEnum) are not int()-able; use .raw. Unknown -> 0."""
+  r = getattr(v, 'raw', v)
+  try:
+    return int(r)
+  except (TypeError, ValueError):
+    return 0 if str(v) in ('off', '0', '') else 1
+
 class Side:
   def __init__(self):
     self.y = None       # filtered edge y on the lane x grid
@@ -169,7 +178,7 @@ class WallLane:
     self._frame(md, x_grid, v_ego, float(getattr(LP, 'curvature', 0.0) or 0.0))
     lines_weak = not (self.sides[0].line_on or self.sides[1].line_on)
     desire = getattr(md.meta, 'desire', 0)
-    off = (int(getattr(md.meta, 'laneChangeState', 0)) != 0 or (desire not in (0, 'none') and str(desire) not in ('none', '0'))
+    off = (_enum_int(getattr(md.meta, 'laneChangeState', 0)) != 0 or (desire not in (0, 'none') and str(desire) not in ('none', '0'))
            or bool(CS.leftBlinker) or bool(CS.rightBlinker) or laneless_only
            or v_ego < V_ON)
     a_lat = abs(model_curv) * max(v_ego, 1.0) ** 2
