@@ -135,9 +135,21 @@ K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
 K9_REVERSE_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_car.png"
 K9_REVERSE_CAR_SIZE_M = (5.12, 1.915)
 K9_REVERSE_CAR_PAD_M = 0.30
+# 대감님 11/12 23:56: steered front tyres drawn between the floor shadow and the body (display only: road wheel angle =
+# steering angle / K9 steer ratio 14.5, the reverse path still uses reverse_geometry()). Same frame as the body image.
+K9_REVERSE_CAR_SHADOW_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_car_shadow.png"
+K9_REVERSE_WHEEL_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_wheel.png"
+K9_REVERSE_SPRITE_PPM = 200.0  # make_k9_reverse_sprite.py PPM (wheel image px -> m)
+K9_REVERSE_FRONT_AXLE_FROM_REAR_M = 1.06 + 3.105  # rear overhang + wheelbase
+K9_REVERSE_FRONT_TRACK_M = 1.63
+K9_REVERSE_DISPLAY_STEER_RATIO = 14.5
+# 23:56: alert text on the K9 R screen goes to the right column under the blind-spot row (not over the car);
+# colours and sizes are the normal alert ones
+K9_REVERSE_ALERT_CENTER = (1680.0, 305.0)
+K9_REVERSE_ALERT_MAX_W = 400.0
 # K9 R screen display scale (대감님 11/12 23:34 차 더 크게): ~121 px/m on the 480 px high screen (EV6 27 deg = ~80 px/m)
 K9_REVERSE_FOVY_DEG = 18.0
-K9_REVERSE_VIEW_Y_M = -2.54
+K9_REVERSE_VIEW_Y_M = -2.69
 # 대감님 11/12 04:34 "화면 너무 파란색인데 좀 더 어둡게 해봐": the blue background and the floor layer under the car get
 # the same darkening (brightness x DIM, blue pulled part of the way towards grey) so their seam does not show;
 # bright floor pixels (the rim light) are spared on a ramp so the rim stays visible. Car photo, text, numbers unchanged.
@@ -1703,6 +1715,7 @@ class ClusterUiRenderer:
         self._ev6_reverse_sprite = None
         self._ev6_reverse_sprite_key = None
         self._ev6_park_textures = None
+        self._k9_reverse_layers = None  # (shadow texture, front wheel texture) for the K9 R image
         self._ev6_park_retry_t = 0.0
         self._cutin_hold: list[float] | None = None  # EV6 HUD patch v6: [colour until, x, long_m, model idx, model until]
         self._other_vehicle_paint: list[tuple[object, int] | None] = []
@@ -2365,10 +2378,13 @@ class ClusterUiRenderer:
         k9_road = self._k9_turzx_active(state)
         if not k9_road:
             self._k9_road_hold = None  # back in D later: start fresh, nothing held from before
+        alert_slot = {}
         if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
             self._ev6_draw_park_screen(state)
         elif self._ev6_reverse_screen_active(state):
             self._ev6_draw_reverse_screen(state)
+            if ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9":
+                alert_slot = {"center": K9_REVERSE_ALERT_CENTER, "max_w": K9_REVERSE_ALERT_MAX_W}
         elif k9_road:
             state = self._k9_hold_state(state)  # 11/13 01:59 screen-only hold / fade of lane lines and cars
             if signal_lights is None:
@@ -2400,7 +2416,7 @@ class ClusterUiRenderer:
         profile_stage = self._profile_start()
         from openpilot.common.indicator_display import draw as draw_indicator
         draw_indicator(530, 78, 460, self._korean_font or self._font, 24)
-        self._draw_alert_overlay(getattr(state, "alert", None))
+        self._draw_alert_overlay(getattr(state, "alert", None), **alert_slot)
         self._profile_add("render.alert", profile_stage)
 
     def _draw_nav_model_map(self):
@@ -2454,6 +2470,8 @@ class ClusterUiRenderer:
             textures.append(self._park_model_texture)
         if self._ev6_reverse_sprite:
             textures.append(self._ev6_reverse_sprite[0])
+        textures.extend(getattr(self, "_k9_reverse_layers", None) or ())
+        self._k9_reverse_layers = None
         self._ev6_reverse_sprite = None
         self._ev6_reverse_sprite_key = None
         # Detach handles first: close is idempotent, including after an interrupted unload.
@@ -3093,6 +3111,9 @@ class ClusterUiRenderer:
             return
         if self._ev6_reverse_sprite:
             rl.unload_texture(self._ev6_reverse_sprite[0])
+        for layer in getattr(self, "_k9_reverse_layers", None) or ():
+            rl.unload_texture(layer)
+        self._k9_reverse_layers = None
         self._ev6_reverse_sprite_key = key
         self._ev6_reverse_sprite = False  # Failure falls back to the live 3D model until the next context/model.
         if name == "k9" and K9_REVERSE_CAR_SPRITE_PATH.is_file() and self._k9_prepare_reverse_sprite():
@@ -3167,6 +3188,7 @@ class ClusterUiRenderer:
             rect = self._k9_reverse_car_rect(self._ev6_reverse_camera(True), int(self.width), int(self.height))
             self._ev6_reverse_sprite = (texture, rect)
             texture = None
+            self._k9_reverse_layers = self._k9_load_reverse_layers()
             return True
         except Exception as exc:
             print(f"K9 reverse car image unavailable, using the 3D model: {exc}", flush=True)
@@ -3174,6 +3196,49 @@ class ClusterUiRenderer:
         finally:
             if texture is not None:
                 rl.unload_texture(texture)
+
+    @staticmethod
+    def _k9_load_reverse_layers():
+        """Shadow and front wheel images of the K9 R car; None (body image only) if either is missing."""
+        layers = []
+        try:
+            for path in (K9_REVERSE_CAR_SHADOW_PATH, K9_REVERSE_WHEEL_PATH):
+                if not path.is_file():
+                    return None
+                layer = rl.load_texture(str(path))
+                if layer.id == 0:
+                    return None
+                layers.append(layer)
+                rl.gen_texture_mipmaps(layer)
+                rl.set_texture_filter(layer, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+            result, layers = tuple(layers), []
+            return result
+        except Exception as exc:
+            print(f"K9 reverse car layers unavailable: {exc}", flush=True)
+            return None
+        finally:
+            for layer in layers:
+                rl.unload_texture(layer)
+
+    def _k9_draw_reverse_car(self, sprite, camera, steering_deg: float) -> None:
+        """K9 R car: floor shadow, the two front tyres turned by steering / 14.5 (display only), then the body."""
+        texture, (car_x, car_y, car_w, car_h) = sprite
+        layers = getattr(self, "_k9_reverse_layers", None)
+        if layers:
+            shadow, wheel = layers
+            rl.draw_texture_pro(shadow, rl.Rectangle(0, 0, shadow.width, shadow.height),
+                                rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
+            ppm = car_w / (K9_REVERSE_CAR_SIZE_M[0] + 2 * K9_REVERSE_CAR_PAD_M)  # screen px per metre
+            w_px, h_px = wheel.width / K9_REVERSE_SPRITE_PPM * ppm, wheel.height / K9_REVERSE_SPRITE_PPM * ppm
+            # positive steering = wheels to the left: the tyre front (screen left) turns to the car's left (screen down)
+            angle = -steering_deg / K9_REVERSE_DISPLAY_STEER_RATIO
+            axle_y = EV6_REVERSE_REAR_BUMPER_Y_M + K9_REVERSE_FRONT_AXLE_FROM_REAR_M
+            for x in (-K9_REVERSE_FRONT_TRACK_M / 2, K9_REVERSE_FRONT_TRACK_M / 2):
+                c = rl.get_world_to_screen_ex(rl.Vector3(x, axle_y, 0.0), camera, int(self.width), int(self.height))
+                rl.draw_texture_pro(wheel, rl.Rectangle(0, 0, wheel.width, wheel.height),
+                                    rl.Rectangle(c.x, c.y, w_px, h_px), rl.Vector2(w_px / 2, h_px / 2), angle, rl.WHITE)
+        rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
+                            rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
 
     def _ev6_draw_reverse_screen(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
@@ -3248,15 +3313,22 @@ class ClusterUiRenderer:
                 self._ev6_draw_reverse_car_model(state)  # fallback until the car image exists
         finally:
             rl.end_mode_3d()
-        if sprite:
+        if sprite and is_k9:
+            self._k9_draw_reverse_car(sprite, camera, steering_deg)
+        elif sprite:
             texture, (car_x, car_y, car_w, car_h) = sprite
             rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
                                 rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
 
+        # 대감님 23:56 (K9): distance labels on the outer side of the bend (path turning to the car's left = screen
+        # down puts them above the path), so 1m/2m/3m stay inside the screen at any steering angle
+        label_offset = -half_w - 0.45
+        if is_k9 and steering_deg > 0.0:
+            label_offset = half_w + 0.45
         mark_labels = []
         for distance_m, _color in EV6_REVERSE_MARKS:
             point = points[self._ev6_reverse_mark_index(distance_m)]
-            screen = rl.get_world_to_screen_ex(side(point, -half_w - 0.45, 0.0), camera, int(self.width), int(self.height))
+            screen = rl.get_world_to_screen_ex(side(point, label_offset, 0.0), camera, int(self.width), int(self.height))
             mark_labels.append((f"{distance_m:.0f}m", screen.x / sx, screen.y / sy))
 
         rl.rl_push_matrix()
@@ -7888,7 +7960,8 @@ class ClusterUiRenderer:
         with self._k9_shift(K9L_SWAP_RIGHT_DX):
             self._k9l_draw_right(state)
 
-    def _draw_alert_overlay(self, alert: ClusterAlert | None) -> None:
+    def _draw_alert_overlay(self, alert: ClusterAlert | None, center: tuple[float, float] | None = None,
+                            max_w: float | None = None) -> None:
         if alert is None or alert.size <= 0 or not (alert.text1 or alert.text2):
             return
 
@@ -7917,9 +7990,13 @@ class ClusterUiRenderer:
             title, detail = self._cluster_alert_text(alert)
             if not title and detail:
                 title, detail = detail, ""
+            if max_w is not None:
+                max_text_w = max_w
             title, title_size = self._fit_alert_text(title, title_size, max_text_w, 30.0)
             detail, detail_size = self._fit_alert_text(detail, detail_size, max_text_w, 20.0)
             center_y = DESIGN_HEIGHT * 0.5
+            if center is not None:
+                panel_center_x, center_y = center
             title_color = CLUSTER_ALERT_TEXT_COLORS.get(alert.status, CLUSTER_ALERT_TEXT_COLORS[0])
             if detail:
                 title_y = center_y - (22.0 if alert.size == CLUSTER_ALERT_SIZE_SMALL else 30.0)
