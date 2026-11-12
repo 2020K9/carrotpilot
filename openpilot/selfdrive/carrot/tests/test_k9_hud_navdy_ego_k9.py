@@ -1,6 +1,6 @@
 """K9HudNavdy 0 and 1: the D road ego car is the K9 (대감님 11/13 05:46 "기본.고급판 둘다 k9으로넣어야지").
 
-0 = assets/images/k9_ego_car.png (owner K9 rear render), 1 = assets/images/k9_navdy_ego.png (same K9 in Navdy grey,
+0 = assets/images/k9_ego_car.png (owner K9 rear render), 1 = assets/images/k9_navdy_ego.png (the same K9 photo in its own colours,
 make_k9_navdy_ego.py), never the generic Navdy car_12. Render checks need a GL display (xvfb-run).
 """
 import os
@@ -42,19 +42,21 @@ def test_navdy_ego_asset_is_the_k9_rear_in_the_car_12_frame():
   assert corr(me, nv) < corr(me, k9) - 0.3
 
 
-def test_navdy_ego_asset_has_navdy_grey_tone_and_k9_lamp_band():
-  ego = np.asarray(Image.open(cr.K9_NAVDY_EGO_PATH).convert("RGBA"), dtype=float)
-  ref = np.asarray(Image.open(cr.K9_NAVDY_DIR / "car_12.png").convert("RGBA"), dtype=float)
-  m, mr = ego[..., 3] > 128, ref[..., 3] > 128
-  lum, lr = ego[..., :3][m].mean(1), ref[..., :3][mr].mean(1)
-  assert np.median(lr) - 8 <= np.median(lum) <= np.median(lr) + 25  # not the black photo: the grey of the cars ahead
-  assert lum.max() <= np.percentile(lr, 95) * 1.25 + 1
-  red = m & (ego[..., 0] > ego[..., 1] + 20) & (ego[..., 0] > ego[..., 2] + 20)
-  assert red.sum() > 500  # K9 tail lamps
-  ys = np.nonzero(red)[0]
-  assert ys.min() > ego.shape[0] * 0.35 and ys.max() < ego.shape[0] * 0.95  # lamps in the trunk band, not the roof
-  grey = m & ~red
-  assert np.abs(ego[..., 0][grey] - ego[..., 2][grey]).max() <= 1  # everything else neutral grey
+def test_navdy_ego_asset_is_the_menu_0_k9_photo_colours():
+  # 대감님 06:17 "왜 내차를 나브디로만듬?": menu 1 ego = the same K9 photo as menu 0, no grey / Navdy tone
+  ego = Image.open(cr.K9_NAVDY_EGO_PATH).convert("RGBA")
+  ref = Image.open(cr.K9_NAVDY_DIR / "car_12.png").convert("RGBA")
+  src = Image.open(cr.EGO_CAR_ICON_PATH).convert("RGBA")
+  eb, rb, sb = _alpha_box(ego), _alpha_box(ref), _alpha_box(src)
+  sh = round((sb[2] - sb[0]) * (rb[3] - rb[1]) / (rb[2] - rb[0]))
+  k9 = np.asarray(src.crop((sb[0], sb[3] - sh, sb[2], sb[3])).resize((eb[2] - eb[0], eb[3] - eb[1]), Image.LANCZOS), dtype=float)
+  me = np.asarray(ego.crop(eb), dtype=float)
+  m = (k9[..., 3] > 200) & (me[..., 3] > 200)
+  assert m.mean() > 0.5
+  assert np.abs(me[..., :3][m] - k9[..., :3][m]).mean() < 3  # same RGB as the menu-0 photo
+  assert abs(np.median(me[..., :3][m]) - np.median(k9[..., :3][m])) < 3  # not lifted to the Navdy grey
+  # source aspect kept: full width, height cut by the car_12 aspect (crop, no stretch)
+  assert abs((eb[2] - eb[0]) / (eb[3] - eb[1]) - (sb[2] - sb[0]) / sh) < 0.03
 
 
 @pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="needs a GL display (xvfb-run)")

@@ -473,7 +473,8 @@ K9_NAVDY_LINE = (232, 235, 240)            # white lane lines / distance text
 K9_HUD_NAVDY_PARAM = "K9HudNavdy"
 K9_NAVDY_EGO_BOTTOM_PAD = 28.0            # Navdy ego (1): whole car inside the screen, bottom edge this far up
 K9_NAVDY_EGO_TINT_LIFT = 60               # Navdy ego (1): additive lift, clearly lighter than the grey cars ahead
-# 대감님 11/13 05:46 "기본.고급판 둘다 k9으로넣어야지": Navdy ego (1) = the mode-0 K9 rear (k9_ego_car.png) in Navdy grey,
+# 대감님 11/13 05:46 "기본.고급판 둘다 k9으로넣어야지": Navdy ego (1) = the mode-0 K9 rear (k9_ego_car.png),
+# own colours (06:17 "왜 내차를 나브디로만듬?": no Navdy grey)
 # made by make_k9_navdy_ego.py as a drop-in for navdy car_12 (2x its frame, same visible box / anchor)
 K9_NAVDY_EGO_PATH = CLUSTER_DIR / "assets" / "images" / "k9_navdy_ego.png"
 # Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
@@ -7184,7 +7185,7 @@ class ClusterUiRenderer:
         self._k9_navdy_ego_tried = False
 
     def _k9_navdy_ego_texture(self):
-        """K9 ego in Navdy grey (K9_NAVDY_EGO_PATH), read once per GL context; None = failed (navdy car_12 instead)"""
+        """K9 ego, menu-0 photo colours (K9_NAVDY_EGO_PATH), read once per GL context; None = failed (navdy car_12 instead)"""
         if not getattr(self, "_k9_navdy_ego_tried", False):
             self._k9_navdy_ego_tried = True
             self._k9_navdy_ego_tex = None
@@ -7268,13 +7269,15 @@ class ClusterUiRenderer:
             rl.draw_ellipse(int(cx), int(by - 1), dw * 0.60, max(4.0, dh * 0.12), rl.Color(0, 0, 0, 55))
             rl.draw_ellipse(int(cx), int(by - 1), dw * 0.48, max(3.0, dh * 0.07), rl.Color(0, 0, 0, 105))
             dst = rl.Rectangle(cx - ax * k, by - ay * k, dw, dh)
-            tex = self._k9_navdy_ego_texture() or tex  # 05:46: K9, same box as car_12 (geometry above unchanged)
+            k9 = self._k9_navdy_ego_texture()
+            tex = k9 or tex  # 05:46: K9, same box as car_12 (geometry above unchanged)
             src = rl.Rectangle(0, 0, tex.width, tex.height)
             rl.draw_texture_pro(tex, src, dst, rl.Vector2(0, 0), 0.0, rl.WHITE)
-            rl.begin_blend_mode(rl.BlendMode.BLEND_ADDITIVE)
-            lift = K9_NAVDY_EGO_TINT_LIFT  # 05:02: clearly lighter than the grey cars ahead (was K9_NAVDY_EGO_LIFT 26)
-            rl.draw_texture_pro(tex, src, dst, rl.Vector2(0, 0), 0.0, rl.Color(lift, lift, lift + 4, 255))
-            rl.end_blend_mode()
+            if k9 is None:  # 06:17 "왜 내차를 나브디로만듬?": the K9 photo is drawn as is (no lift); lift only the car_12 fallback
+                rl.begin_blend_mode(rl.BlendMode.BLEND_ADDITIVE)
+                lift = K9_NAVDY_EGO_TINT_LIFT  # 05:02: clearly lighter than the grey cars ahead (was K9_NAVDY_EGO_LIFT 26)
+                rl.draw_texture_pro(tex, src, dst, rl.Vector2(0, 0), 0.0, rl.Color(lift, lift, lift + 4, 255))
+                rl.end_blend_mode()
             self._k9_ego_rect = (dst.x, dst.y, dst.x + dw, dst.y + dh)
             return
         if getattr(self, "_ego_car_texture", None) is None and not getattr(self, "_k9_turzx_ego_load_tried", False):
