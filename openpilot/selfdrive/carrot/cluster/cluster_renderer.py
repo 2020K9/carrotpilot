@@ -470,7 +470,7 @@ K9_NAVDY_LINE = (232, 235, 240)            # white lane lines / distance text
 # K9HudNavdy (실험중, 11/13 05:00 대감님 "실험중에 메뉴 넣어서 고급지게 안한거랑 한거랑"): 0 = the K9 D road look
 # before b7e81bbd4 (default) / 1 = the Navdy grey look. The ONLY switch point is k9_navdy_on() / k9_look().
 K9_HUD_NAVDY_PARAM = "K9HudNavdy"
-K9_NAVDY_EGO_BOTTOM_PAD = 6.0             # Navdy ego (1): whole car inside the screen, bottom edge this far up
+K9_NAVDY_EGO_BOTTOM_PAD = 28.0            # Navdy ego (1): whole car inside the screen, bottom edge this far up
 K9_NAVDY_EGO_TINT_LIFT = 60               # Navdy ego (1): additive lift, clearly lighter than the grey cars ahead
 # Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
 # the ego vehicle only. Leads/cut-ins keep the shared OBJ model.
@@ -7206,19 +7206,24 @@ class ClusterUiRenderer:
         if sprites and self.k9_navdy_on():  # 11/13 01:57 "차크기 왜케크냐": Navdy straight rear, light grey, ~0.6 lane (was the 140~150 px photo)
             tex, sw, sh, ax, ay, _ = sprites[K9_NAVDY_MID]
             hy, ego_y, kx, _ = geo
+            # 11/13 05:02 대감님 "d모드에 내차는어딧니?": the whole car well inside the card / screen (bottom edge
+            # K9_NAVDY_EGO_BOTTOM_PAD up), still sized by the lane width at the row where it now sits
+            limit = (8.0 + K9_TURZX_TOP_H if tuple(geo) == tuple(K9C_ROAD_GEO) else float(self.height)) - K9_NAVDY_EGO_BOTTOM_PAD
             dw = 3.6 * kx / K9_TURZX_ROAD_Z0 * K9_NAVDY_EGO_LANE_FRAC
-            for _ in range(3):  # lane width at the car's own middle row (where the eye compares it), not at the bumper
+            for _ in range(4):  # lane width at the car's own middle row (where the eye compares it), not at the bumper
                 mid_y = by - ay * dw / sw * 0.5
                 dw = 3.6 * kx * (mid_y - hy) / ((ego_y - hy) * K9_TURZX_ROAD_Z0) * K9_NAVDY_EGO_LANE_FRAC
+                by -= max(0.0, by + (sh - ay) * dw / sw - limit)
             k = dw / sw
             dh = sh * k
+            by -= max(0.0, by + dh - ay * k - limit)
             rl.draw_ellipse(int(cx), int(by - 1), dw * 0.60, max(4.0, dh * 0.12), rl.Color(0, 0, 0, 55))
             rl.draw_ellipse(int(cx), int(by - 1), dw * 0.48, max(3.0, dh * 0.07), rl.Color(0, 0, 0, 105))
             dst = rl.Rectangle(cx - ax * k, by - ay * k, dw, dh)
             src = rl.Rectangle(0, 0, tex.width, tex.height)
             rl.draw_texture_pro(tex, src, dst, rl.Vector2(0, 0), 0.0, rl.WHITE)
             rl.begin_blend_mode(rl.BlendMode.BLEND_ADDITIVE)
-            lift = K9_NAVDY_EGO_LIFT
+            lift = K9_NAVDY_EGO_TINT_LIFT  # 05:02: clearly lighter than the grey cars ahead (was K9_NAVDY_EGO_LIFT 26)
             rl.draw_texture_pro(tex, src, dst, rl.Vector2(0, 0), 0.0, rl.Color(lift, lift, lift + 4, 255))
             rl.end_blend_mode()
             self._k9_ego_rect = (dst.x, dst.y, dst.x + dw, dst.y + dh)
