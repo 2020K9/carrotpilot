@@ -160,11 +160,16 @@ K9_REVERSE_VIEW_Y_M = -2.69
 # from the same direction but PULLBACK m further back with the focal length scaled so the rear bumper keeps its size
 # (dolly zoom about the bumper). Photo px -> design px: x * SCALE + OFFSET. The 45 deg / top-view car files stay unused.
 K9_REVERSE_PHOTO_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_photo.png"
+# its own P-stage floor (navy pool + thin blue rim on the photo's ground plane), same frame as the car file, drawn
+# under the path; the P floor file is only the fallback (it carries the P car's mirror image)
+K9_REVERSE_PHOTO_FLOOR_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_photo_floor.png"
+K9_REVERSE_PHOTO_PATH_FADE_M = 0.45  # path fill / side lines fade in over this length from under the bumper
 K9_REVERSE_PHOTO_CAMERA = (1484.13, (1.68427, -0.74313, 0.56378), (1.08057, 0.72563, 3.23045), (1600.0, 901.0))
-K9_REVERSE_PHOTO_CROP = (-39.0, 89.0, 1509.0, 910.0)  # image frame in photo px (make_k9_reverse_photo.py CROP)
+K9_REVERSE_PHOTO_CROP = (-78.0, 92.0, 1688.0, 935.0)  # image frame in photo px (make_k9_reverse_photo.py CROP)
 K9_REVERSE_PHOTO_PULLBACK_M = 12.0
-K9_REVERSE_PHOTO_SCALE = 0.3456
-K9_REVERSE_PHOTO_OFFSET = (305.8, -24.4)
+# 대감님 11/13 04:02 "안다듬고?": car a little smaller and lower (roof clear of the screen top), bumper kept in place
+K9_REVERSE_PHOTO_SCALE = 0.33
+K9_REVERSE_PHOTO_OFFSET = (316.8, -6.3)
 K9_REVERSE_PHOTO_CAR_W_PX = 1334.0  # car (no shadow) width in photo px, for the P floor disc size
 K9_REVERSE_PHOTO_FLOOR_W = 1.15  # P stage floor width / car width (P: 694 / 556 = 1.25; a bit less: clear of the R text)
 K9_REVERSE_PHOTO_CAR_CX_PX = 705.0  # car (no shadow) centre x in photo px: floor disc centre x
@@ -3261,9 +3266,25 @@ class ClusterUiRenderer:
                                      accent, warn, dark: bool) -> list:
         """K9 photo R screen, design px: P stage floor disc, path from the rear bumper, 1/2/3 m marks, blind-spot
         bands, all on the floor of the photo camera; returns the distance labels (text, x, y)."""
-        floor = self._k9_park_floor_texture()
+        own = getattr(self, "_k9_reverse_photo_floor", None)
+        if own is None:
+            own = False
+            try:
+                if K9_REVERSE_PHOTO_FLOOR_PATH.is_file():
+                    texture = rl.load_texture(str(K9_REVERSE_PHOTO_FLOOR_PATH))
+                    if getattr(texture, "id", 0) > 0:
+                        rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+                        own = texture
+            except Exception as exc:
+                print(f"K9 reverse photo floor unavailable: {exc}", flush=True)
+            self._k9_reverse_photo_floor = own
+        floor = None if own else self._k9_park_floor_texture()
         centre = k9_reverse_photo_point(0.0, EV6_REVERSE_REAR_BUMPER_Y_M + 2.56, true_camera=True)
-        if floor is not None and centre is not None:
+        if own:
+            x, y, w, h = k9_reverse_photo_rect()
+            rl.draw_texture_pro(own, rl.Rectangle(0, 0, own.width, own.height), rl.Rectangle(x, y, w, h),
+                                rl.Vector2(0, 0), 0.0, rl.WHITE)
+        elif floor is not None and centre is not None:
             centre = (K9_REVERSE_PHOTO_OFFSET[0] + K9_REVERSE_PHOTO_SCALE * K9_REVERSE_PHOTO_CAR_CX_PX, centre[1])
             fw = K9_REVERSE_PHOTO_CAR_W_PX * K9_REVERSE_PHOTO_SCALE * K9_REVERSE_PHOTO_FLOOR_W
             fh = fw * floor.height / floor.width
@@ -3304,13 +3325,25 @@ class ClusterUiRenderer:
                 corners = [k9_reverse_photo_point(xx, yy, true_camera=True)
                            for xx, yy in ((inner, front), (outer, front), (outer, rear), (inner, rear))]
                 quad(*corners, rl.Color(*warn, int(170 * (1 - i / 6))))
-        fill = rl.Color(*accent, 46 if dark else 34)
+        def fade(a, b):  # soft start under the bumper instead of a hard edge
+            return min(1.0, max(0.0, (bumper - (a[1] + b[1]) / 2.0) / K9_REVERSE_PHOTO_PATH_FADE_M))
+
+        steps = []  # fade zone cut into short pieces so the ramp is smooth
         for a, b in zip(path, path[1:], strict=False):
-            quad(side(a, -half_w), side(a, half_w), side(b, half_w), side(b, -half_w), fill)
-        line = rl.Color(*accent, 230)
+            n = 1 if fade(a, b) >= 1.0 else 8
+            for i in range(n):
+                u0, u1 = i / n, (i + 1) / n
+                steps.append((tuple(a[k] + (b[k] - a[k]) * u0 for k in range(3)),
+                              tuple(a[k] + (b[k] - a[k]) * u1 for k in range(3))))
+
+        fill_a = 46 if dark else 34
+        for a, b in steps:
+            quad(side(a, -half_w), side(a, half_w), side(b, half_w), side(b, -half_w),
+                 rl.Color(*accent, int(round(fill_a * fade(a, b)))))
         for offset in (-half_w, half_w):
-            for a, b in zip(path, path[1:], strict=False):
-                quad(side(a, offset - 0.07), side(a, offset + 0.07), side(b, offset + 0.07), side(b, offset - 0.07), line)
+            for a, b in steps:
+                quad(side(a, offset - 0.07), side(a, offset + 0.07), side(b, offset + 0.07), side(b, offset - 0.07),
+                     rl.Color(*accent, int(round(230 * fade(a, b)))))
         label_offset = half_w + 0.45 if steering_deg > 0.0 else -half_w - 0.45
         labels = []
         for distance_m, color in EV6_REVERSE_MARKS:
