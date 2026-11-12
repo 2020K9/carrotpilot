@@ -108,6 +108,7 @@ from cluster_scene import (
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
+from cluster_k9_hold import K9RoadHold
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
 from cluster_lat_values import (delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
@@ -2353,11 +2354,15 @@ class ClusterUiRenderer:
         # decisions, sprites and the HUD see the original lane visibility.
         self._lane_confidence_held_indices = self._lane_confidence_hold_indices(state)
         self._road_edge_held_sides = self._road_edge_hold_sides(state)
+        k9_road = self._k9_turzx_active(state)
+        if not k9_road:
+            self._k9_road_hold = None  # back in D later: start fresh, nothing held from before
         if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
             self._ev6_draw_park_screen(state)
         elif self._ev6_reverse_screen_active(state):
             self._ev6_draw_reverse_screen(state)
-        elif self._k9_turzx_active(state):
+        elif k9_road:
+            state = self._k9_hold_state(state)  # 11/13 01:59 screen-only hold / fade of lane lines and cars
             if signal_lights is None:
                 signal_lights = self._turn_signal_lights(state)
             profile_stage = self._profile_start()
@@ -6229,6 +6234,26 @@ class ClusterUiRenderer:
         return None
 
     @staticmethod
+    def _k9_is_lead(vehicle) -> bool:
+        return bool(vehicle.primary) and str(vehicle.label).upper() == "L1" and vehicle.longitudinal_m > 0.0
+
+    def _k9_hold_state(self, state: ClusterUiState) -> ClusterUiState:
+        """K9 D road: lane lines / kerbs / cars kept briefly and faded (cluster_k9_hold), clock = k9_hold_clock
+        (log time in replay) else monotonic. Screen copy only; a still or jumping clock draws the state as given."""
+        hold = getattr(self, "_k9_road_hold", None)
+        if hold is None:
+            hold = self._k9_road_hold = K9RoadHold()
+        clock = getattr(self, "k9_hold_clock", None) or time.monotonic
+        state, self._k9_alpha = hold.update(state, float(clock()), self.k9_road_others, self._k9_is_lead)
+        return state
+
+    def _k9_fade(self, obj) -> float:
+        return getattr(self, "_k9_alpha", {}).get(id(obj), 1.0) if obj is not None else 1.0
+
+    def _k9_lead_fade(self, state: ClusterUiState) -> float:
+        return self._k9_fade(next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None))
+
+    @staticmethod
     def k9_road_others(state: ClusterUiState) -> list:
         """cars to draw besides the lead (L1), one per real car: reports of the same car merged, L1 > radar > model"""
         vs = [v for v in (getattr(state, "detected_vehicles", ()) or ()) if v.longitudinal_m > 0.0]
@@ -6765,11 +6790,12 @@ class ClusterUiRenderer:
         tex, w, h, ax, ay, ppm = sprites[self.k9_navdy_index(forward_m, lateral_m, heading_deg)]
         k = max(18.0 / K9_NAVDY_MIN_W_M, scale) / ppm  # sprite px -> screen px (meta px per m vs road px per m)
         dw, dh = w * k, h * k
-        rl.draw_ellipse(int(x), int(y), dw * 0.56, max(3.0, dh * 0.13), rl.Color(0, 0, 0, 45))
-        rl.draw_ellipse(int(x), int(y), dw * 0.44, max(2.0, dh * 0.07), rl.Color(0, 0, 0, 85))
+        va = getattr(self, "_k9_va", 1.0)  # held / new car fade (cluster_k9_hold)
+        rl.draw_ellipse(int(x), int(y), dw * 0.56, max(3.0, dh * 0.13), rl.Color(0, 0, 0, int(45 * va)))
+        rl.draw_ellipse(int(x), int(y), dw * 0.44, max(2.0, dh * 0.07), rl.Color(0, 0, 0, int(85 * va)))
         left, top = x - ax * k, y - ay * k
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(left, top, dw, dh),
-                            rl.Vector2(0, 0), 0.0, rl.Color(*tint[:3], 255))
+                            rl.Vector2(0, 0), 0.0, rl.Color(*tint[:3], int(255 * va)))
         return left + dw * 0.5, top, dw
 
     def _k9_turzx_draw_vehicle(self, forward_m: float, lateral_m: float, fill, edge,
@@ -6875,7 +6901,7 @@ class ClusterUiRenderer:
         for group in (lefts[:-1], rights[1:]):
             for _, lane, pts in group:
                 if getattr(lane, "visible", True):
-                    self._k9_turzx_line(pts, K9_NAVDY_LINE, 0.12, False, True, 0.7)
+                    self._k9_turzx_line(pts, K9_NAVDY_LINE, 0.12, False, True, 0.7 * self._k9_fade(lane))
         # planned path band + arrows, ends at the lead car
         lead = self.k9_turzx_lead(state)
         path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
@@ -6908,7 +6934,7 @@ class ClusterUiRenderer:
             if item is None:
                 continue
             a = 1.0 if conf is None or not math.isfinite(conf) else clamp(0.35 + conf * 0.65, 0.35, 1.0)
-            self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9)
+            self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
         # depth: far road fades into the sky
         rl.draw_rectangle_gradient_v(int(x0), int(hy - 2), int(w), 110,
                                      rl.Color(*K9_TURZX_MID_TOP, 200), rl.Color(*K9_TURZX_MID_TOP, 0))
@@ -6916,7 +6942,9 @@ class ClusterUiRenderer:
         # 11/13 01:29: one car per real car, turned with the road, never under the ego car (screen only)
         for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
             f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
+            self._k9_va = self._k9_fade(v)
             self._k9_turzx_draw_vehicle(f, v.lateral_m, (46, 66, 110), (96, 130, 186), self.k9_road_heading_deg(state, f))
+        self._k9_va = la = self._k9_lead_fade(state)
         if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
             lat = lead[0] * math.tan(math.radians(lead[1]))
             f = self.k9_road_clear_of_ego(lead[0], lat)
@@ -6926,8 +6954,10 @@ class ClusterUiRenderer:
             tbt = getattr(self, "_k9c_tbt_rect", None)  # 22:41 taller TBT card: a far lead tag would hide under it
             if tbt is not None and lx + tw * 0.5 + 8.0 > tbt[0] and ly - 32.0 < tbt[3]:
                 ly = self.k9_turzx_road_project(f, lat)[1] + 36.0  # under the car instead
-            self._draw_text(tag, lx + 1.0, ly - 18.0, 22.0, (0, 0, 0, 150), anchor="center")  # floating above the car
-            self._draw_text(tag, lx, ly - 19.0, 22.0, K9_NAVDY_LINE, anchor="center")
+            self._draw_text(tag, lx + 1.0, ly - 18.0, 22.0, (0, 0, 0, int(150 * la)), anchor="center")  # floating above the car
+            self._draw_text(tag, lx, ly - 19.0, 22.0, K9_NAVDY_LINE if la >= 1.0 else (*K9_NAVDY_LINE, int(255 * la)),
+                            anchor="center")
+        self._k9_va = 1.0
         self._k9_turzx_draw_ego()
 
     def _k9_turzx_draw_middle(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
@@ -7551,7 +7581,7 @@ class ClusterUiRenderer:
         for group in (lefts[:-1], rights[1:]):
             for _, lane, pts in group:
                 if getattr(lane, "visible", True):
-                    self._k9_turzx_line(pts, K9_NAVDY_LINE, 0.11, False, True, 0.65)
+                    self._k9_turzx_line(pts, K9_NAVDY_LINE, 0.11, False, True, 0.65 * self._k9_fade(lane))
         lead = self.k9_turzx_lead(state)
         path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
         end_m = None if lead is None else max(7.0, lead[0])
@@ -7582,13 +7612,15 @@ class ClusterUiRenderer:
             if item is None:
                 continue
             a = 1.0 if conf is None or not math.isfinite(conf) else clamp(0.35 + conf * 0.65, 0.35, 1.0)
-            self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9)
+            self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
         # perspective fog: the far road dissolves into the horizon light
         rl.draw_rectangle_gradient_v(int(sx0), int(hy + 1), int(sx1 - sx0), 90, rl.Color(*K9L_FOG, 110),
                                      rl.Color(*K9L_FOG, 0))
         for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
             f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
+            self._k9_va = self._k9_fade(v)
             self._k9l_vehicle(f, v.lateral_m, False, self.k9_road_heading_deg(state, f))
+        self._k9_va = la = self._k9_lead_fade(state)
         if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
             lat = lead[0] * math.tan(math.radians(lead[1]))
             f = self.k9_road_clear_of_ego(lead[0], lat)
@@ -7610,8 +7642,10 @@ class ClusterUiRenderer:
                     return False
                 return all(px + tw < x0 or px > x1 or cy + 10.0 < y0 or cy - 10.0 > y1 for x0, y0, x1, y1 in keep_out)
             spot = next((p for p in spots if free(*p)), None if getattr(self, "_k9_ind_active", False) else spots[0])
-            if spot is not None:  # under the indicator box: no tag (the lead line beside the road keeps the distance)
-                self._k9l_text(tag, spot[0], 0.0, 22.0, K9_NAVDY_LINE, numeric=True, cap_cy=spot[1])
+            if spot is not None and la >= 0.4:  # under the indicator box: no tag (the lead line keeps the distance)
+                self._k9l_text(tag, spot[0], 0.0, 22.0, K9_NAVDY_LINE if la >= 1.0 else (*K9_NAVDY_LINE, int(255 * la)),
+                               numeric=True, cap_cy=spot[1])
+        self._k9_va = 1.0
         # the scene has no frame: the sides melt into the night field
         fw = int(K9L_SCENE_FADE)
         for yy, hh, cl, cr in getattr(self, "_k9l_side_rows", ()):
