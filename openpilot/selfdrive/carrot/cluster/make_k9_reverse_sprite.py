@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Top view of the 2020 K9 (RJ) for the K9 reverse (R) screen, drawn in code (no photo, no 3D model, no plate, no logo).
 
-Surround-view style illustration: smooth tapered nose and tail with a slight waist, a long hood with soft creases,
-one smooth painted roof (black metal gradient) between the dark windshield and rear glass, side glass only as thin
-slivers under a fine chrome window line, mirrors, four tyres at the 3105 mm wheelbase / ~1630 mm track that peek a
-few px past the body, a thin full-width tail lamp line wrapping round both corners, thin white headlamps at the
-front corners and a small chrome grille line at the nose. Soft shadow, no hard light rim.
+Surround-view style illustration (2020 K9 RJ proportions): hood 1.30 m from the front panel gap to the cowl, wide
+trapezoid windshield with curved edges, roof centre 2.75 m from the nose (car centre 2.56 m, i.e. 0.19 m behind), long
+gentle fastback rear glass, trunk lid 0.90 m. Dark metal paint bright along the centre line and darker to both sides
+(hood, roof, trunk), fine shoulder and hood crease highlights, side glass wide enough to read on the R screen, glass
+with a sky reflection gradient and one thin diagonal highlight, mirrors, four tyres at the 3105 mm wheelbase /
+~1630 mm track that peek a few px past the body (front tyres are drawn by the renderer under the body), a bright red
+tail lamp line with glow wrapping round both corners, bright white headlamps at the front corners, small chrome
+grille line at the nose. Soft shadow, no hard light rim, no logo or plate.
 Plan size 5120 x 1915 mm. Drawn at SS x the output resolution, then reduced (smooth edges).
 Car front to the left, car right side up (same as the R screen camera).
 Outputs (same frame: PAD metres of margin around the body at PPM px/m):
@@ -129,16 +132,24 @@ def to_image(rgb, alpha, size):
   return Image.fromarray(out, "RGBA").resize(size, Image.LANCZOS)
 
 
-# ---- greenhouse ---------------------------------------------------------------------------------------------
-G_U = np.array([1.72, 1.95, 2.40, 3.00, 3.45, 3.80, 4.13])
-G_V = np.array([0.735, 0.785, 0.805, 0.805, 0.780, 0.730, 0.650])
-G_FRONT_BOW, G_REAR_BOW = 0.13, 0.09
-ROOF_F, ROOF_R = 2.36, 3.52  # windshield top / rear glass top
-SIDE_GLASS = 0.055  # side glass seen from above: only a thin sliver outside the roof
+# ---- greenhouse (2020 K9 RJ proportions, top view) ---------------------------------------------------------------
+# hood 0.20 -> COWL (1.30 m), windshield COWL -> ROOF_F, roof ROOF_F -> ROOF_R (centre 2.75, car centre 2.56),
+# fastback rear glass ROOF_R -> DECK, trunk lid DECK -> L (0.90 m)
+COWL, ROOF_F, ROOF_R, DECK = 1.50, 2.32, 3.18, 4.22
+G_U = np.array([COWL, 1.80, 2.30, 3.00, 3.50, 3.90, DECK])
+G_V = np.array([0.760, 0.790, 0.805, 0.805, 0.780, 0.720, 0.660])  # glass outer edge (beltline)
+C_U = np.array([COWL, ROOF_F, 2.75, ROOF_R, DECK])
+C_V = np.array([0.740, 0.650, 0.665, 0.645, 0.610])  # cabin top: windshield / roof / rear glass edge (pillars inside)
+G_FRONT_BOW, G_REAR_BOW = 0.16, 0.10
+PILLAR = 0.030  # A / C pillar and roof rail width seen from above
 
 
 def g_half(u):
   return np.interp(u, G_U, G_V)
+
+
+def c_half(u):
+  return np.interp(u, C_U, C_V)
 
 
 def band(u0, u1, half, bow0, bow1, n=200):
@@ -194,9 +205,9 @@ def render():
   # mirrors: teardrop on each side just behind the A-pillar base (body coloured caps)
   mirrors = []
   for s in (1, -1):
-    base = float(body_half(2.02))
-    pts = [(1.86, s * (base - 0.03)), (1.93, s * (base + 0.06)), (2.02, s * (base + 0.115)), (2.10, s * (base + 0.135)),
-           (2.15, s * (base + 0.12)), (2.16, s * (base + 0.07)), (2.12, s * (base + 0.0)), (2.10, s * (base - 0.03))]
+    base = float(body_half(1.78))
+    pts = [(1.62, s * (base - 0.03)), (1.69, s * (base + 0.06)), (1.78, s * (base + 0.115)), (1.86, s * (base + 0.135)),
+           (1.91, s * (base + 0.12)), (1.92, s * (base + 0.07)), (1.88, s * (base + 0.0)), (1.86, s * (base - 0.03))]
     arr = np.array(pts)
     t = np.linspace(0, 1, len(arr))
     xs = np.linspace(0, 1, 60)
@@ -228,19 +239,21 @@ def render():
     m = tyre_mask(REAR_AXLE_U, v_c, WHEEL_D, w)
     rgb, alpha = over(rgb, alpha, tyre_paint(U, V, REAR_AXLE_U, v_c, WHEEL_D, w), m)
 
-  # paint: dark metal, lit from above - a broad soft sheen on the centre, darker towards the curved edges
-  edge = blur(car, 0.20)
-  shade = 0.42 + 0.58 * np.clip((edge - 0.5) * 2.0, 0, 1) ** 0.8
-  base = np.array([34, 37, 45], np.float32)
-  spec_col = np.array([120, 130, 150], np.float32)
+  # paint: dark metal lit from above - bright along the centre line, darker towards both sides (hood, roof, trunk)
+  edge = blur(car, 0.16)
+  rim_shade = 0.40 + 0.60 * np.clip((edge - 0.5) * 2.0, 0, 1) ** 0.7
   bw_u = body_half(np.clip(U, 0, L))
   vn = V / np.maximum(bw_u, 0.3)
-  hood = smooth(0.10, 0.45, U) * (1 - smooth(1.45, 1.72, U))
-  trunk = smooth(4.18, 4.40, U) * (1 - smooth(4.85, 5.05, U))
-  sheen = np.exp(-(vn / 0.55) ** 2) * (0.30 * hood + 0.24 * trunk)
-  sheen += 0.12 * np.exp(-((U - 0.80) / 0.40) ** 2 - ((V - 0.30) / 0.35) ** 2) * hood  # soft key light patch
+  cross = np.clip(1 - vn ** 2, 0, 1)
+  shade = rim_shade * (0.50 + 0.50 * cross ** 0.8)
+  base = np.array([42, 46, 56], np.float32)
+  spec_col = np.array([140, 152, 176], np.float32)
+  hood = smooth(0.12, 0.40, U) * (1 - smooth(COWL - 0.15, COWL, U))
+  trunk = smooth(DECK, DECK + 0.12, U) * (1 - smooth(L - 0.25, L - 0.05, U))
+  sheen = np.exp(-(vn / 0.42) ** 2) * (0.46 * hood + 0.40 * trunk)
+  sheen += 0.14 * np.exp(-((U - 0.85) / 0.35) ** 2 - ((V - 0.25) / 0.30) ** 2) * hood  # soft key light patch
   axles = np.exp(-((U - FRONT_AXLE_U) / 0.50) ** 2) + np.exp(-((U - REAR_AXLE_U) / 0.50) ** 2)
-  fender = np.exp(-((np.abs(vn) - 0.80) / 0.08) ** 2) * axles * 0.22  # fender shoulders catch a little light
+  fender = np.exp(-((np.abs(vn) - 0.82) / 0.07) ** 2) * axles * 0.26  # fender shoulders catch a little light
   spec = sheen + fender
   paint = base * shade[..., None] + spec_col * spec[..., None] * shade[..., None]
   rgb, alpha = over(rgb, alpha, paint, car)
@@ -260,96 +273,107 @@ def render():
       m = blur(m, soft)
     rgb, alpha = over(rgb, alpha, color, m * a * car)
 
-  # waist / shoulder line along both sides (subtle highlight over a soft dark line)
+  # shoulder line along both sides: fine bright highlight with a dark fold just outside it
   for s in (1, -1):
-    us = np.linspace(0.55, 4.75, 120)
+    us = np.linspace(0.45, 4.95, 160)
     vs = s * (body_half(us) * 0.885)
-    paint_lines(list(zip(us, vs, strict=True)), 0.010, (150, 160, 180), 0.22, 0.008)
-    paint_lines(list(zip(us, vs - s * 0.025, strict=True)), 0.016, (8, 9, 12), 0.22, 0.010)
-  # hood: soft centre crease and two gentle character lines
-  us = np.linspace(0.38, 1.60, 60)
-  paint_lines(list(zip(us, np.full_like(us, 0.012), strict=True)), 0.010, (150, 160, 182), 0.20, 0.008)
-  paint_lines(list(zip(us, np.full_like(us, -0.014), strict=True)), 0.012, (6, 7, 9), 0.20, 0.008)
+    paint_lines(list(zip(us, vs, strict=True)), 0.013, (185, 196, 216), 0.60, 0.004)
+    paint_lines(list(zip(us, vs + s * 0.022, strict=True)), 0.016, (6, 7, 10), 0.45, 0.006)
+  # hood: two character creases converging to the nose (light on the inner face, dark on the outer)
   for s in (1, -1):
-    us = np.linspace(0.30, 1.64, 60)
-    vs = s * (0.48 + 0.17 * smooth(0.25, 1.7, us))
-    paint_lines(list(zip(us, vs, strict=True)), 0.010, (140, 150, 172), 0.18, 0.010)
-    paint_lines(list(zip(us, vs - s * 0.02, strict=True)), 0.012, (6, 7, 9), 0.16, 0.010)
-  # panel gaps: hood front, trunk lid (fine, dark, low contrast)
+    us = np.linspace(0.30, COWL - 0.06, 80)
+    vs = s * (0.30 + 0.24 * smooth(0.20, COWL, us))
+    paint_lines(list(zip(us, vs, strict=True)), 0.013, (175, 186, 208), 0.50, 0.004)
+    paint_lines(list(zip(us, vs + s * 0.022, strict=True)), 0.016, (6, 7, 10), 0.42, 0.006)
+  # trunk: lip line near the rear edge
+  vv = np.linspace(-0.70, 0.70, 80)
+  paint_lines([(rear_edge(x) - 0.20, x) for x in vv], 0.010, (165, 176, 198), 0.40, 0.004)
+  # panel gaps: hood front, trunk lid front, trunk rear
   vv = np.linspace(-0.80, 0.80, 80)
-  paint_lines([(front_edge(x) + 0.20, x) for x in vv], 0.005, (6, 7, 9), 0.45, 0.002)
-  vv = np.linspace(-0.66, 0.66, 80)
-  paint_lines([(4.13 + G_REAR_BOW * (1 - (x / 0.65) ** 2) + 0.03, x) for x in vv], 0.016, (4, 5, 7), 0.45, 0.010)
+  paint_lines([(front_edge(x) + 0.20, x) for x in vv], 0.006, (6, 7, 9), 0.55, 0.002)
+  vv = np.linspace(-0.64, 0.64, 80)
+  paint_lines([(DECK + G_REAR_BOW * (1 - (x / 0.66) ** 2) + 0.03, x) for x in vv], 0.008, (4, 5, 7), 0.55, 0.003)
   vv = np.linspace(-0.80, 0.80, 80)
-  paint_lines([(rear_edge(x) - 0.13, x) for x in vv], 0.005, (6, 7, 9), 0.40, 0.002)
+  paint_lines([(rear_edge(x) - 0.13, x) for x in vv], 0.006, (6, 7, 9), 0.45, 0.002)
 
-  # ---- greenhouse: dark windshield and rear glass, one smooth painted roof, thin side glass slivers ----
-  g_mask = mask_of(band(1.72, 4.13, g_half, G_FRONT_BOW, G_REAR_BOW))
-  glass_dark = np.array([6, 8, 12], np.float32)
-  sky = np.array([70, 84, 104], np.float32)
-  vv = np.linspace(-0.74, 0.74, 80)  # cowl shadow in front of the windshield
-  paint_lines([(1.72 - G_FRONT_BOW * (1 - (x / 0.74) ** 2) - 0.025, x) for x in vv], 0.03, (3, 4, 6), 0.55, 0.014)
-  # whole cabin top in paint first (roof + pillars), then the glass areas cut into it
-  rv = V / np.maximum(g_half(np.clip(U, 1.72, 4.13)), 0.3)
+  # ---- greenhouse: wide trapezoid windshield, roof, fastback rear glass, side glass ----
+  g_mask = mask_of(band(COWL, DECK, g_half, G_FRONT_BOW, G_REAR_BOW))
+  glass_dark = np.array([5, 7, 11], np.float32)
+  sky = np.array([95, 122, 160], np.float32)
+  vv = np.linspace(-0.76, 0.76, 80)  # cowl shadow in front of the windshield
+  paint_lines([(COWL - G_FRONT_BOW * (1 - (x / 0.76) ** 2) - 0.025, x) for x in vv], 0.03, (3, 4, 6), 0.60, 0.012)
+  # whole cabin top in paint first (roof + pillars): bright centre, darker to both sides
+  rv = V / np.maximum(c_half(np.clip(U, COWL, DECK)), 0.3)
   ru = (U - ROOF_F) / (ROOF_R - ROOF_F)
-  roof_shade = 0.58 + 0.42 * np.clip(1 - rv ** 2, 0, 1) ** 0.7
-  roof_spec = 0.10 + 0.20 * np.exp(-(rv / 0.55) ** 2) * (0.6 + 0.4 * np.exp(-((ru - 0.40) / 0.45) ** 2))
+  roof_shade = 0.40 + 0.60 * np.clip(1 - rv ** 2, 0, 1) ** 0.8
+  roof_spec = 0.08 + 0.34 * np.exp(-(rv / 0.45) ** 2) * (0.55 + 0.45 * np.exp(-((ru - 0.45) / 0.45) ** 2))
   roof_col = base * 1.05 * roof_shade[..., None] + spec_col * roof_spec[..., None]
   rgb, alpha = over(rgb, alpha, roof_col, blur(g_mask, 0.004))
 
-  def inset_half(d):
-    return lambda u: np.maximum(g_half(u) - d, 0.05)
+  def inset(f, d):
+    return lambda u: np.maximum(f(u) - d, 0.05)
 
-  # side glass: thin dark sliver along each side of the cabin (tumblehome seen from above)
-  side = mask_of(band(1.80, 4.05, g_half, 0.0, 0.0)) * (1 - mask_of(band(1.70, 4.15, inset_half(SIDE_GLASS), 0.0, 0.0)))
-  side = blur(side, 0.003)
-  rgb, alpha = over(rgb, alpha, glass_dark + sky * 0.16, side * smooth(1.80, 1.95, U) * (1 - smooth(3.92, 4.05, U)))
-  # windshield: from the cowl to the roof front, between thin A pillars
-  ws = mask_of(band(1.72, ROOF_F, inset_half(0.040), G_FRONT_BOW, 0.05))
-  t = smooth(1.60, ROOF_F, U)
-  ws_col = glass_dark + sky * (0.10 + 0.30 * t ** 1.6)[..., None]
-  ws_col = ws_col + np.array([80, 95, 115]) * (np.exp(-(((U - 1.98) - V * 0.32) / 0.07) ** 2) * 0.20)[..., None]
-  rgb, alpha = over(rgb, alpha, ws_col, blur(ws, 0.004))
-  # rear glass: from the roof back edge to the trunk, between C pillars
-  rgm = mask_of(band(ROOF_R, 4.13, inset_half(0.060), 0.04, G_REAR_BOW))
-  t2 = 1 - smooth(ROOF_R, 4.12, U)
-  rg_col = glass_dark + sky * (0.08 + 0.24 * t2 ** 2)[..., None]
-  rg_col = rg_col + np.array([80, 95, 115]) * (np.exp(-(((U - 3.86) + V * 0.28) / 0.06) ** 2) * 0.12)[..., None]
-  rgb, alpha = over(rgb, alpha, rg_col, blur(rgm, 0.004))
-  # chrome window line (DLO): thin, along the outer edge of the side glass
+  def outset(f, d):
+    return lambda u: f(u) + d
+
+  # side glass: between the beltline and the pillars / roof rail
+  side = mask_of(band(1.62, 4.10, inset(g_half, 0.010), 0.0, 0.0)) * (1 - mask_of(band(1.40, 4.30, outset(c_half, PILLAR), 0.0, 0.0)))
+  side = blur(side, 0.003) * smooth(1.62, 1.75, U) * (1 - smooth(3.98, 4.10, U))
+  sg_col = glass_dark + sky * (0.30 + 0.22 * np.clip((np.abs(V) - c_half(np.clip(U, COWL, DECK))) / 0.14, 0, 1))[..., None]
+  rgb, alpha = over(rgb, alpha, sg_col, side)
+
+  def glass(mask, t, k_line, u_line, strength):
+    """dark glass with sky reflection (bright towards t=1) and one thin diagonal highlight."""
+    nonlocal rgb, alpha
+    col = glass_dark + sky * (0.13 + 0.40 * t ** 1.5)[..., None]
+    d = (U - u_line) - V * k_line
+    streak = (np.exp(-(d / 0.014) ** 2) * 0.32 + np.exp(-(d / 0.06) ** 2) * 0.10) * np.exp(-(V / 0.45) ** 4)
+    col = col + np.array([150, 170, 200], np.float32) * (streak * strength)[..., None]
+    rgb, alpha = over(rgb, alpha, col, blur(mask, 0.004))
+
+  # windshield: wide at the cowl, narrower at the roof (A pillars), curved top and bottom edges
+  ws = mask_of(band(COWL, ROOF_F, c_half, G_FRONT_BOW - 0.02, -0.06))
+  glass(ws, smooth(COWL - 0.10, ROOF_F, U) * (1 - 0.35 * np.abs(V) / 0.75), 0.42, 1.92, 1.0)
+  # rear glass: long gentle fastback from the roof back edge to the trunk lid, C pillars
+  rgm = mask_of(band(ROOF_R, DECK, inset(c_half, 0.010), -0.06, G_REAR_BOW - 0.02))
+  glass(rgm, (1 - smooth(ROOF_R, DECK + 0.10, U)) * (1 - 0.35 * np.abs(V) / 0.70), -0.40, 3.70, 0.75)
+  # chrome window line (DLO) along the beltline
   for s in (1, -1):
-    us = np.linspace(1.92, 4.00, 120)
-    paint_lines(list(zip(us, s * (g_half(us) + 0.002), strict=True)), 0.007, (200, 208, 222), 0.80, 0.002)
+    us = np.linspace(1.68, 4.05, 120)
+    paint_lines(list(zip(us, s * g_half(us), strict=True)), 0.008, (205, 212, 226), 0.80, 0.002)
+  # roof rails: fine highlight on the roof edge
+  for s in (1, -1):
+    us = np.linspace(ROOF_F + 0.05, ROOF_R - 0.05, 80)
+    paint_lines(list(zip(us, s * (c_half(us) + PILLAR * 0.5), strict=True)), 0.008, (150, 160, 182), 0.40, 0.003)
 
   # ---- lamps ----
-  # tail lamp: one thin light line across the rear, running smoothly round both corners and along the sides
+  # tail lamp: one bright red light line across the rear, wrapping round both corners, with a red glow
   vr = float(body_half(L - BOW_R))
-  # one continuous chain: left wrap -> rear -> right wrap
-  left = [(u, -(body_half(u) - 0.020)) for u in np.linspace(L - 0.62, L - BOW_R - 0.02, 40)]
-  rear = [(rear_edge(x) - 0.030, x) for x in np.linspace(-vr + 0.06, vr - 0.06, 160)]
-  right = [(u, body_half(u) - 0.020) for u in np.linspace(L - BOW_R - 0.02, L - 0.62, 40)]
+  left = [(u, -(body_half(u) - 0.024)) for u in np.linspace(L - 0.62, L - BOW_R - 0.02, 40)]
+  rear = [(rear_edge(x) - 0.036, x) for x in np.linspace(-vr + 0.06, vr - 0.06, 160)]
+  right = [(u, body_half(u) - 0.024) for u in np.linspace(L - BOW_R - 0.02, L - 0.62, 40)]
   tl_chain = left + rear + right
-  tl = blur(line_mask(tl_chain, 0.014), 0.003)
-  taper = smooth(L - 0.62, L - 0.40, U)  # wraps fade out along the sides
-  tl = tl * taper
-  rgb, alpha = over(rgb, alpha, (255, 30, 40), np.clip(blur(tl, 0.035) * 1.5, 0, 1) * 0.45 * car)
-  rgb, alpha = over(rgb, alpha, (255, 55, 62), tl * car)
-  rgb, alpha = over(rgb, alpha, (255, 175, 175), blur(line_mask(tl_chain, 0.004), 0.002) * taper * 0.55 * car)
-  # headlamps: thin white light at both front corners, wrapping a little along the sides
+  taper = smooth(L - 0.62, L - 0.40, U)
+  tl = blur(line_mask(tl_chain, 0.034), 0.004) * taper
+  rgb, alpha = over(rgb, alpha, (255, 20, 30), np.clip(blur(tl, 0.045) * 2.2, 0, 1) * 0.75 * car)
+  rgb, alpha = over(rgb, alpha, (240, 28, 38), tl * car)
+  rgb, alpha = over(rgb, alpha, (255, 120, 120), blur(line_mask(tl_chain, 0.010), 0.003) * taper * 0.85 * car)
+  # headlamps: bright white light at both front corners, wrapping a little along the sides
   vf = float(body_half(BOW_F))
   hl = np.zeros_like(body)
   for s in (1, -1):
-    pts = [(front_edge(x) + 0.028, s * x) for x in np.linspace(0.50, vf - 0.03, 40)]
-    pts += [(u, s * (body_half(u) - 0.024)) for u in np.linspace(BOW_F + 0.02, 0.42, 20)]
-    hl = np.maximum(hl, line_mask(pts, 0.013))
-  hl = blur(hl, 0.003) * (1 - smooth(0.30, 0.44, U))
-  rgb, alpha = over(rgb, alpha, (200, 225, 255), np.clip(blur(hl, 0.03) * 1.4, 0, 1) * 0.40 * car)
-  rgb, alpha = over(rgb, alpha, (245, 250, 255), hl * car)
+    pts = [(front_edge(x) + 0.032, s * x) for x in np.linspace(0.46, vf - 0.03, 40)]
+    pts += [(u, s * (body_half(u) - 0.028)) for u in np.linspace(BOW_F + 0.02, 0.46, 20)]
+    hl = np.maximum(hl, line_mask(pts, 0.040))
+  hl = blur(hl, 0.004) * (1 - smooth(0.34, 0.48, U))
+  rgb, alpha = over(rgb, alpha, (190, 220, 255), np.clip(blur(hl, 0.05) * 2.4, 0, 1) * 0.75 * car)
+  rgb, alpha = over(rgb, alpha, (225, 238, 255), hl * car)
+  rgb, alpha = over(rgb, alpha, (255, 255, 255), blur(hl, 0.002) ** 2 * car)
   # grille: small chrome line at the centre of the nose (dark sliver behind it), no logo
   vv = np.linspace(-0.24, 0.24, 40)
   rgb, alpha = over(rgb, alpha, (8, 9, 12), blur(line_mask([(front_edge(x) + 0.035, x) for x in vv], 0.030), 0.004) * car * 0.9)
-  rgb, alpha = over(rgb, alpha, (205, 212, 226), line_mask([(front_edge(x) + 0.052, x) for x in vv], 0.005) * car * 0.65)
-  rgb, alpha = over(rgb, alpha, (170, 178, 196), line_mask([(front_edge(x) + 0.022, x) for x in np.linspace(-0.26, 0.26, 40)], 0.004) * car * 0.55)
+  rgb, alpha = over(rgb, alpha, (205, 212, 226), line_mask([(front_edge(x) + 0.052, x) for x in vv], 0.006) * car * 0.70)
+  rgb, alpha = over(rgb, alpha, (170, 178, 196), line_mask([(front_edge(x) + 0.022, x) for x in np.linspace(-0.26, 0.26, 40)], 0.005) * car * 0.55)
 
   # mirrors: body coloured caps with a soft top highlight
   for m in mirrors:

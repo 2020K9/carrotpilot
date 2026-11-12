@@ -143,6 +143,8 @@ K9_REVERSE_SPRITE_PPM = 200.0  # make_k9_reverse_sprite.py PPM (wheel image px -
 K9_REVERSE_FRONT_AXLE_FROM_REAR_M = 1.06 + 3.105  # rear overhang + wheelbase
 K9_REVERSE_FRONT_TRACK_M = 1.63
 K9_REVERSE_DISPLAY_STEER_RATIO = 14.5
+K9_REVERSE_WHEEL_PAD_M = 0.03  # make_k9_reverse_sprite.py WHEEL_PAD
+K9_REVERSE_WHEEL_PEEK_M = 0.02  # turned front tyre: at most this much more past the fender
 # 23:56: alert text on the K9 R screen goes to the right column under the blind-spot row (not over the car);
 # colours and sizes are the normal alert ones
 K9_REVERSE_ALERT_CENTER = (1680.0, 305.0)
@@ -3233,7 +3235,13 @@ class ClusterUiRenderer:
             # positive steering = wheels to the left: the tyre front (screen left) turns to the car's left (screen down)
             angle = -steering_deg / K9_REVERSE_DISPLAY_STEER_RATIO
             axle_y = EV6_REVERSE_REAR_BUMPER_Y_M + K9_REVERSE_FRONT_AXLE_FROM_REAR_M
-            for x in (-K9_REVERSE_FRONT_TRACK_M / 2, K9_REVERSE_FRONT_TRACK_M / 2):
+            # 대감님 11/13 00:20: a turned tyre stays under the fender - its centre moves inward by the extra width the
+            # turned corners would stick out (display only), so only K9_REVERSE_WHEEL_PEEK_M more shows past the body
+            half_len = wheel.width / K9_REVERSE_SPRITE_PPM / 2 - K9_REVERSE_WHEEL_PAD_M
+            half_w = wheel.height / K9_REVERSE_SPRITE_PPM / 2 - K9_REVERSE_WHEEL_PAD_M
+            turn = math.radians(abs(angle))
+            inward = max(0.0, half_w * math.cos(turn) + half_len * math.sin(turn) - half_w - K9_REVERSE_WHEEL_PEEK_M)
+            for x in (-K9_REVERSE_FRONT_TRACK_M / 2 + inward, K9_REVERSE_FRONT_TRACK_M / 2 - inward):
                 c = rl.get_world_to_screen_ex(rl.Vector3(x, axle_y, 0.0), camera, int(self.width), int(self.height))
                 rl.draw_texture_pro(wheel, rl.Rectangle(0, 0, wheel.width, wheel.height),
                                     rl.Rectangle(c.x, c.y, w_px, h_px), rl.Vector2(w_px / 2, h_px / 2), angle, rl.WHITE)
