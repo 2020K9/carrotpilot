@@ -13,14 +13,20 @@ How (lateral_planner, model rate, only while K9WallLane is 1; 0 -> this module i
     start; a line counts as clear again above 0.70 until below 0.55), opposite edge >= D_OPP, stable for WALL_T s (>= 85 % good
     frames, 5-frame median range <= WALL_RANGE), at least V_ON. The wall line is low-passed (TAU_EDGE) after carrying it with
     the car's own motion (EGO_PRED);
-  - virtual lane: wall-side line = filtered wall + (D_TGT - W / 2) toward the road, other line W further (W = lane width estimate,
-    W_LO..W_HI). D_TGT 2.41 m wall to car centre = median 05:13:00-08 with clear lines. A second LanePlanner (lane_planner_2,
-    lane mode, both probs 1.0, no lane / curve offsets) computes the lane path on these lines;
+  - virtual lane (11/12 11:00 rework, real lateral MPC replay of 05:13): the wall counts as a straight line, a least-squares line
+    through the filtered wall over FIT_X0..FIT_X1 m. The far wall shape is NOT copied any more (at 05:13 the 20 m wall point
+    swung 1.1-4.3 m and the old wall-shaped lane doubled the steering swings). The lane path = the normal path shifted sideways
+    by an offset c so that, C_LOOK s ahead on the normal path, the gap to the wall line is D_TGT (2.41 m wall to car centre =
+    median 05:13:00-08 with clear lines). c = C_TAU low-pass of that, at most C_RATE_IN m/s toward the wall and C_RATE_OUT m/s
+    away from it; the shift grows along the path over MERGE_T s of travel (no step at the car);
   - the published path = normal path + g (virtual lane path - normal path), g smoothstep 0 -> 1 in RAMP_T s, 1 -> 0 in RAMP_OUT s
-    when the wall is lost, a line becomes clear, lane change / blinker / desire / below V_ON / turn / side change; lateralPlan
+    when the wall is lost, a line becomes clear, lane change / blinker / desire / below V_ON / side change; lateralPlan
     useLaneLines is True while g > 0 (so it works with UseLaneLineSpeed 0 and K9LaneAssist 0); steering pressed toward the wall
     keeps it, steering away turns it off;
-  - safety: no point of the virtual path closer than D_MIN to the filtered wall (car side 1.04 m).
+  - turns: model lateral accel >= A_TURN (0.25 m/s^2) ends it and ramps out in RAMP_OUT_TURN s. Replay 05:13 14.4-16.6 s
+    (model curve away from the wall, +5..+6e-3 1/m): the lane-mode MPC steered less than the model curvature and the car went
+    0.5-0.9 m toward the wall (gap 1.5-1.8 m) whatever the offset settings; the model curvature kept 2.35 m there;
+  - safety: no point of the lane path closer than D_MIN (2.30) to the wall line (car side 1.34 m).
 """
 import numpy as np
 from openpilot.common.realtime import DT_MDL
@@ -28,7 +34,7 @@ from openpilot.common.realtime import DT_MDL
 PARAM = "K9WallLane"
 HALF_W = 1.915 / 2.0
 D_TGT = 2.41
-D_MIN = 2.00
+D_MIN = 2.30
 D_OPP = 3.8
 D_LO, D_SEEN = 1.6, 3.3
 STD_MAX = 1.2
@@ -36,14 +42,18 @@ P_LINE_ON, P_LINE_OFF, TAU_P = 0.55, 0.70, 1.0
 WALL_T, WALL_FRAC, WALL_RANGE = 1.0, 0.85, 0.8
 LOST_T = 0.5
 OUTLIER = 0.8
-TAU_EDGE = 0.4
-W_LO, W_HI, W_DEF = 2.8, 3.7, 3.2
-RAMP_T, RAMP_OUT = 1.0, 1.0
-A_TURN = 1.2
+TAU_EDGE = 1.0
+RAMP_T, RAMP_OUT, RAMP_OUT_TURN = 1.0, 1.0, 0.3
+A_TURN = 0.25
 V_ON = 30.0 / 3.6     # 05:13: 43-45 km/h; below 30 km/h (city curbs, 000001bb--21 / 0000020e--14 at 24-25 km/h) left alone
 P_WEAK_IN = 0.5      # start only while both 1 s filtered line probs are below this
 EGO_PRED = True
 N_PTS = 33
+FIT_X0, FIT_X1 = 0.0, 15.0   # near-field wall fit range (m)
+MERGE_T = 1.5                # path shift reaches the full offset after this many seconds of travel
+C_TAU = 0.3                  # offset low-pass (s)
+C_LOOK = 1.0                 # gap to the wall line taken on the normal path this many seconds ahead
+C_RATE_IN, C_RATE_OUT = 0.15, 0.50   # offset rate limit toward / away from the wall (m/s)
 
 
 def read_mode(params):
@@ -70,17 +80,18 @@ def _smooth(g):
 
 class WallLane:
   def __init__(self):
-    from openpilot.selfdrive.controls.lib.lane_planner_2 import LanePlanner
     self.sides = [Side(), Side()]
     self.opp_dist = [9.9, 9.9]
-    self.lp = LanePlanner()
-    self.lp.k9_lane_fix_update = lambda: None      # no K9LaneFix merge / PathOffset inside the virtual planner
     self.u = 0.0           # ramp state 0..1 (g = smoothstep(u))
     self.delta = None      # last (virtual - normal) path y, for the ramp out
     self.side = -1
     self.dist = 0.0
     self.active = False
     self.cand = False
+    self.c = None          # sideways offset of the published path (m, model frame +y = right)
+    self.c_f = 0.0
+    self.wall_fit = (0.0, 0.0)
+    self.fast_out = False
 
   def _frame(self, md, x_grid, v_ego=0.0, curv=0.0):
     dt = DT_MDL
@@ -134,7 +145,12 @@ class WallLane:
     desire = getattr(md.meta, 'desire', 0)
     off = (int(getattr(md.meta, 'laneChangeState', 0)) != 0 or (desire not in (0, 'none') and str(desire) not in ('none', '0'))
            or bool(CS.leftBlinker) or bool(CS.rightBlinker) or laneless_only
-           or v_ego < V_ON or abs(model_curv) * max(v_ego, 1.0) ** 2 >= A_TURN)
+           or v_ego < V_ON)
+    turn = abs(model_curv) * max(v_ego, 1.0) ** 2 >= A_TURN
+    if turn:
+      off = True
+      if self.u > 0.0:
+        self.fast_out = True
     if bool(CS.steeringPressed):
       # driver steering toward the wall (the 05:13 case: +200..+300 torque to the left wall) keeps the wall lane;
       # steering away from it (or no side yet) turns it off (ramp out). steeringTorque > 0 = left.
@@ -161,49 +177,55 @@ class WallLane:
     if virt is not None:
       self.delta = virt - path_xyz[:, 1]
       self.u = min(self.u + DT_MDL / RAMP_T, 1.0)
+      self.fast_out = False
     else:
-      self.u = max(self.u - DT_MDL / RAMP_OUT, 0.0)
+      self.u = max(self.u - DT_MDL / (RAMP_OUT_TURN if self.fast_out else RAMP_OUT), 0.0)
       if self.u <= 0.0:
         self.delta, self.side = None, -1
-        self.lp.d_prob_count = 0
+        self.c = None
+        self.fast_out = False
     self.active = virt is not None
     if self.u <= 0.0 or self.delta is None:
       return path_xyz, base_active
     out = path_xyz.copy()
     out[:, 1] = path_xyz[:, 1] + _smooth(self.u) * self.delta
     if virt is not None:
-      sd = self.sides[self.side]
-      wy = np.interp(out[:, 0], x_grid, sd.y)
+      k, b = self.wall_fit      # fitted near-field wall line (the far wall shape is noise, see _virtual_path)
+      wy = b + k * np.asarray(out[:, 0], dtype=float)
       out[:, 1] = np.maximum(out[:, 1], wy + D_MIN) if self.side == 0 else np.minimum(out[:, 1], wy - D_MIN)
     return out, True
 
   def _virtual_path(self, i, x_grid, LP, CS, v_ego, path_t, path_xyz):
+    """Offset-only wall lane (11/12 fix of the 05:13 replay): the wall is reduced to ONE number, its near-field lateral position
+    (straight-line fit of the filtered wall over FIT_X0..FIT_X1 m, evaluated at the car), and the published path is the normal
+    path shifted sideways by a slow offset c so the car settles D_TGT from the wall. The path SHAPE stays the model's: the far
+    wall shape (the 20 m wall point swung 1.1-4.3 m at 05:13) is no longer copied into the steering. c follows a C_TAU low-pass
+    of its target and moves at most C_RATE_IN m/s toward the wall and C_RATE_OUT m/s away from it; the shift grows along the
+    path over MERGE_T s of travel (no step at the car). Every path point stays D_MIN from the fitted wall line."""
     wall = self.sides[i].y
-    d_tgt = D_TGT
-    w = float(np.clip(LP.lane_width if np.isfinite(LP.lane_width) else W_DEF, W_LO, W_HI))
-    lp = self.lp
-    if i == 0:
-      lll = wall + (d_tgt - w / 2.0)
-      rll = lll + w
+    sgn = 1.0 if i == 0 else -1.0                        # left wall (i 0, y < 0): the road is toward +y
+    xs = np.asarray(x_grid, dtype=float)
+    m = (xs >= FIT_X0) & (xs <= FIT_X1)
+    if m.sum() >= 2:
+      k, b = np.polyfit(xs[m], wall[m], 1)
     else:
-      rll = wall - (d_tgt - w / 2.0)
-      lll = rll - w
-    lp.ll_t = np.asarray(LP.ll_t, dtype=float)
-    lp.ll_x = x_grid
-    lp.lll_y, lp.rll_y = lll, rll
-    lp.lll_prob = lp.rll_prob = 1.0
-    lp.lll_std = lp.rll_std = 0.05
-    lp.le_y, lp.re_y = lll, rll
-    lp.lane_width_estimate.x = w
-    lp.lane_width_last = w
-    lp.lane_width_left = lp.lane_width_right = 0.0     # no AdjustLaneOffset shift
-    lp.lanefull_mode = True
-    lp.lane_change_multiplier = 1.0
-    lp.d_prob_count = max(lp.d_prob_count, int(1 / DT_MDL))   # wall already held WALL_T s stable
-    p, act = lp.get_d_path(CS, v_ego, path_t, path_xyz.copy(), 250.0)   # 250 km/h turn speed: no curve offset
-    if not act:
-      return None
-    return np.asarray(p[:, 1], dtype=float)
+      k, b = 0.0, float(wall[0])
+    px = np.asarray(path_xyz[:, 0], dtype=float)
+    py = np.asarray(path_xyz[:, 1], dtype=float)
+    x_l = C_LOOK * max(v_ego, 0.0)                       # gap measured between the normal path and the wall line here
+    gap_l = sgn * (float(np.interp(x_l, px, py)) - (b + k * x_l))
+    c_tgt = sgn * (D_TGT - gap_l)                        # wanted sideways move (model frame +y = right)
+    if self.c is None:
+      self.c = self.c_f = 0.0
+    self.c_f += DT_MDL / (C_TAU + DT_MDL) * (c_tgt - self.c_f)
+    step = self.c_f - self.c
+    lim = (C_RATE_IN if sgn * step < 0.0 else C_RATE_OUT) * DT_MDL     # sgn * step < 0: toward the wall
+    self.c += float(np.clip(step, -lim, lim))
+    ramp = np.clip(px / max(MERGE_T * max(v_ego, 1.0), 1.0), 0.0, 1.0)
+    y = py + self.c * ramp * ramp * (3.0 - 2.0 * ramp)
+    self.wall_fit = (float(k), float(b))
+    wl_y = b + k * px
+    return np.maximum(y, wl_y + D_MIN) if i == 0 else np.minimum(y, wl_y - D_MIN)
 
 
 def k9_wall_lane_step(planner, md, CS, v_ego, path_t, path_xyz, base_active):
