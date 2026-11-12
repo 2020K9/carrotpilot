@@ -174,37 +174,43 @@ K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1256.0, 656.0
 # middle panel road (대감님 18:30 "가운데 꺼 디자인이 다른데?"): flat 2D perspective road drawn from modelV2 lane lines /
 # road edges / plan path and leadOne, no 3D world, no car photo. screen y = horizon + K_Y / (forward + Z0), x = cx + K_X * lateral / (forward + Z0)
 K9_TURZX_ROAD_HORIZON_Y = 108.0
-K9_TURZX_ROAD_EGO_Y = 428.0                  # forward 0 m (352 + 76 from the removed bar)
-K9_TURZX_ROAD_Z0 = 20.0
+# 대감님 20:26 "내 차 너무 크다 줄여라": camera pulled back like the photo - my car sits mid-lane above the path band,
+# a little bigger than the lead car, the road runs on below it to the panel bottom
+K9_TURZX_ROAD_EGO_Y = 300.0                  # forward 0 m (my rear bumper)
+K9_TURZX_ROAD_Z0 = 34.0
 K9_TURZX_ROAD_KY = (K9_TURZX_ROAD_EGO_Y - K9_TURZX_ROAD_HORIZON_Y) * K9_TURZX_ROAD_Z0
-K9_TURZX_ROAD_KX = 1500.0
+K9_TURZX_ROAD_KX = 1450.0
+K9_TURZX_ROAD_BACK_M = 15.0                  # road / lanes / path drawn this far behind my car
 K9_TURZX_ROAD_MAX_M = 140.0
-K9_TURZX_MID_TOP = (6, 13, 30)
-K9_TURZX_MID_BOTTOM = (16, 30, 60)
-K9_TURZX_ROAD = (24, 40, 70)
-K9_TURZX_MID_CARD = (14, 26, 50, 205)
-K9_TURZX_MID_EDGE = (110, 150, 200, 90)
-K9_TURZX_LANE = (96, 196, 255)
-K9_TURZX_PATH = (70, 150, 235)
-K9_TURZX_PATH_ARROW = (196, 228, 255)
+K9_TURZX_MID_TOP = (3, 7, 18)                 # night sky
+K9_TURZX_MID_BOTTOM = (12, 24, 48)
+K9_TURZX_ROAD = (17, 30, 56)
+K9_TURZX_MID_CARD = (8, 14, 30, 214)
+K9_TURZX_MID_EDGE = (206, 186, 148, 70)       # champagne hairline
+K9_TURZX_LANE = (110, 200, 255)
+K9_TURZX_PATH = (64, 214, 190)                # bright teal path band (photo)
+K9_TURZX_PATH_ARROW = (226, 255, 244)
+K9_TURZX_CHAMPAGNE = (214, 192, 150)
+K9_TURZX_CHROME = (196, 206, 222)
 K9_TURZX_POINT = (228, 194, 128)             # 대감님 19:56 고급스럽게: the one accent (lead car, distance tag, lane offset)
 K9_TURZX_LEAD = K9_TURZX_POINT
 K9_TURZX_TAG = K9_TURZX_POINT
 K9_TURZX_RADIUS = 16.0                       # one corner radius for every card
 K9_TURZX_SIGNAL = (80, 222, 150)             # turn signal arrows stay green
-K9_TURZX_EGO_W = 150.0                       # K9 rear sprite width = 2.0 m at forward 0 (75 px/m)
+K9_TURZX_EGO_W = 84.0                        # K9 rear sprite ~2.1 m at forward 0 (42.6 px/m), photo size
 K9_TURZX_LANE_TEXT_SIZE = 40.0               # 치우침 / 좌·우 (was 32 in the middle, not smaller)
 K9_TURZX_LAT_TEXT_SIZE = 27.0                # 실험줄 5개 (was 19 in the middle, not smaller)
-K9_TURZX_BG = (5, 9, 18)
-K9_TURZX_BG_TOP = (10, 18, 34)
-K9_TURZX_CARD = (16, 26, 46)
-K9_TURZX_EDGE = (44, 62, 92)
+K9_TURZX_BG = (2, 4, 10)
+K9_TURZX_BG_TOP = (11, 17, 34)
+K9_TURZX_CARD = (12, 19, 36)
+K9_TURZX_EDGE = (52, 64, 88)
 K9_TURZX_TEXT = (242, 246, 252)
-K9_TURZX_MUTED = (152, 166, 190)             # label tier 1
+K9_TURZX_MUTED = (170, 178, 194)             # label tier 1 (silver)
 K9_TURZX_DIM = (100, 114, 138)               # label tier 2 / no value
 K9_TURZX_ACCENT = (84, 176, 255)
 K9_TURZX_GOOD = (110, 206, 255)
-K9_TURZX_LINE = (60, 84, 120, 150)
+K9_TURZX_LINE = (206, 186, 148, 46)          # champagne hairline separators
+K9_TURZX_VALUE_TRACK = 0.06                  # number letter spacing (was 0.02)
 K9_TURZX_LABEL_SIZE = 24.0
 K9_TURZX_VALUE_SIZE = 60.0
 K9_TURZX_UNIT_SIZE = 28.0
@@ -6060,30 +6066,46 @@ class ClusterUiRenderer:
             rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y + dy, w, h), roundness, 12, grow, rl.Color(0, 0, 0, a))
 
     def _k9_turzx_glass(self, x: float, y: float, w: float, h: float, radius: float = K9_TURZX_RADIUS,
-                        fill=(16, 26, 46, 238), shadow: bool = True) -> None:
-        """glass card: soft shadow, translucent fill with a top sheen, thin light edge."""
+                        fill=(12, 19, 36, 232), shadow: bool = True) -> None:
+        """night card (대감님 20:27 마이바흐급): soft shadow, deep fill with a faint top sheen, champagne hairline edge,
+        chrome highlight fading out from the middle of the top edge."""
         if shadow:
             self._k9_turzx_shadow(x, y, w, h, radius)
         self._rounded_rect(x, y, w, h, radius, fill)
-        sheen = min(h * 0.5, 120.0)
+        sheen = min(h * 0.45, 110.0)
         rl.draw_rectangle_gradient_v(int(x + radius * 0.5), int(y + 2), int(w - radius), int(sheen),
-                                     rl.Color(170, 205, 255, 22), rl.Color(170, 205, 255, 0))
+                                     rl.Color(150, 175, 220, 16), rl.Color(150, 175, 220, 0))
         roundness = max(0.0, min(1.0, radius / max(1.0, min(w, h))))
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y, w, h), roundness, 12, 1.5, rl.Color(130, 170, 225, 70))
-        rl.draw_line_ex(rl.Vector2(x + radius, y + 1.0), rl.Vector2(x + w - radius, y + 1.0), 1.5,
-                        rl.Color(210, 230, 255, 80))
+        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y, w, h), roundness, 12, 1.0, rl.Color(*K9_TURZX_CHAMPAGNE, 62))
+        half = (w - 2.0 * radius) * 0.5
+        mid = x + w * 0.5
+        rl.draw_rectangle_gradient_h(int(mid - half), int(y), int(half), 1, rl.Color(*K9_TURZX_CHROME, 0),
+                                     rl.Color(*K9_TURZX_CHROME, 150))
+        rl.draw_rectangle_gradient_h(int(mid), int(y), int(half), 1, rl.Color(*K9_TURZX_CHROME, 150),
+                                     rl.Color(*K9_TURZX_CHROME, 0))
+
+    def _k9_turzx_value_width(self, text: str, size: float) -> float:
+        w, _ = self._measure_text(text, size, size * K9_TURZX_VALUE_TRACK, self._font_for_text(text))
+        return w
 
     def _k9_turzx_value_text(self, text: str, x: float, y: float, size: float, color, anchor: str = "left") -> None:
-        self._draw_text(text, x + 1.0, y + 2.0, size, (0, 0, 0, 120), anchor=anchor)
-        self._draw_text(text, x, y, size, color, anchor=anchor)
+        # numbers with generous letter spacing (same font / size), soft drop shadow
+        if not text:
+            return
+        font = self._font_for_text(text)
+        spacing = size * K9_TURZX_VALUE_TRACK
+        tw, th = self._measure_text(text, size, spacing, font)
+        dx = x - tw * 0.5 if anchor == "center" else (x - tw if anchor == "right" else x)
+        dy = y - th * 0.5
+        rl.draw_text_ex(font, text, rl.Vector2(dx + 1.0, dy + 2.0), size, spacing, rl.Color(0, 0, 0, 130))
+        rl.draw_text_ex(font, text, rl.Vector2(dx, dy), size, spacing, rl_color(color))
 
     def _k9_turzx_label_value(self, x: float, y: float, label: str, value: str, unit: str, sub: str) -> None:
         self._draw_text(label, x, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
         self._k9_turzx_value_text(value, x, y + 92.0, K9_TURZX_VALUE_SIZE, K9_TURZX_TEXT if value != "-" else K9_TURZX_DIM)
         if unit and value != "-":
-            w, _ = self._measure_text(value, K9_TURZX_VALUE_SIZE, max(1.0, K9_TURZX_VALUE_SIZE * 0.02),
-                                      self._font_for_text(value))
-            self._draw_text(unit, x + w + 6.0, y + 102.0, K9_TURZX_UNIT_SIZE, K9_TURZX_MUTED)
+            w = self._k9_turzx_value_width(value, K9_TURZX_VALUE_SIZE)
+            self._draw_text(unit, x + w + 8.0, y + 102.0, K9_TURZX_UNIT_SIZE, K9_TURZX_MUTED)
         if sub:
             self._draw_text(sub, x, y + 168.0, K9_TURZX_SUB_SIZE, K9_TURZX_DIM)
 
@@ -6139,9 +6161,9 @@ class ClusterUiRenderer:
         self._draw_text("psi", x + w - 18, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="right")
         cx, cy = x + w * 0.5, y + h * 0.5 + 14.0
         car_w, car_h = 56.0, 150.0
-        self._rounded_rect(cx - car_w * 0.5 - 3, cy - car_h * 0.5 - 3, car_w + 6, car_h + 6, 25.0, (*K9_TURZX_ACCENT, 40))
-        self._rounded_rect(cx - car_w * 0.5, cy - car_h * 0.5, car_w, car_h, 22.0, (10, 18, 34), K9_TURZX_ACCENT, 2.0)
-        self._rounded_rect(cx - car_w * 0.5 + 8, cy - car_h * 0.5 + 30, car_w - 16, 28, 6.0, (40, 60, 92))
+        self._rounded_rect(cx - car_w * 0.5 - 3, cy - car_h * 0.5 - 3, car_w + 6, car_h + 6, 25.0, (*K9_TURZX_LANE, 26))
+        self._rounded_rect(cx - car_w * 0.5, cy - car_h * 0.5, car_w, car_h, 22.0, (8, 14, 28), (*K9_TURZX_CHROME, 200), 1.5)
+        self._rounded_rect(cx - car_w * 0.5 + 8, cy - car_h * 0.5 + 30, car_w - 16, 28, 6.0, (34, 48, 74))
         tpms = state.tpms
         for value, sx, sy, name in ((tpms.fl, -1, -1, "FL"), (tpms.fr, 1, -1, "FR"), (tpms.rl, -1, 1, "RL"), (tpms.rr, 1, 1, "RR")):
             vx = cx + sx * 66.0
@@ -6170,6 +6192,8 @@ class ClusterUiRenderer:
                 break
             if f >= -2.0:
                 out.append((float(f), float(lat)))
+        if out and out[0][0] > -K9_TURZX_ROAD_BACK_M:
+            out.insert(0, (-K9_TURZX_ROAD_BACK_M, out[0][1]))
         return out
 
     @staticmethod
@@ -6199,7 +6223,7 @@ class ClusterUiRenderer:
         if len(left) < 2 or len(right) < 2:
             return
         top = min(left[-1][0], right[-1][0], end_m if end_m is not None else 1e9)
-        f = max(left[0][0], right[0][0], -1.0)
+        f = max(left[0][0], right[0][0], -K9_TURZX_ROAD_BACK_M)
         prev = None
         r, g, b = color[:3]
         a0 = color[3] if len(color) > 3 else 255
@@ -6214,7 +6238,7 @@ class ClusterUiRenderer:
                 alpha = a0 if not fade else int(a0 * clamp(1.0 - f / max(1.0, top) * 0.75, 0.2, 1.0))
                 self._k9_turzx_quad(prev[0], prev[1], cur[1], cur[0], rl.Color(r, g, b, alpha))
             prev = cur
-            f += 1.0 if f < 20.0 else 2.5
+            f += 3.0 if f < 0.0 else (1.5 if f < 20.0 else 3.0)
         return
 
     def _k9_turzx_line(self, pts: list[tuple[float, float]], color, width_m: float, glow: bool, dashed: bool,
@@ -6222,7 +6246,7 @@ class ClusterUiRenderer:
         if len(pts) < 2:
             return
         r, g, b = color[:3]
-        f = max(pts[0][0], -1.0)
+        f = max(pts[0][0], -K9_TURZX_ROAD_BACK_M)
         prev = None
         while f <= pts[-1][0]:
             lat = self._k9_turzx_lat_at(pts, f)
@@ -6230,7 +6254,7 @@ class ClusterUiRenderer:
                 break
             x, y, scale = self.k9_turzx_road_project(f, lat)
             cur = (rl.Vector2(x, y), scale)
-            if prev is not None and (not dashed or int(f // 4.0) % 2 == 0):
+            if prev is not None and (not dashed or int((f + 60.0) // 4.0) % 2 == 0):
                 w = max(1.4, width_m * (prev[1] + scale) * 0.5)
                 fade = clamp(1.0 - f / K9_TURZX_ROAD_MAX_M * 0.7, 0.25, 1.0) * alpha
                 if glow:
@@ -6239,7 +6263,7 @@ class ClusterUiRenderer:
                     rl.draw_line_ex(prev[0], cur[0], w * 2.2, rl.Color(r, g, b, int(95 * fade)))
                 rl.draw_line_ex(prev[0], cur[0], w, rl.Color(min(255, r + 60), min(255, g + 40), min(255, b), int(255 * fade)))
             prev = cur
-            f += 1.0 if f < 20.0 else 2.0
+            f += 3.0 if f < 0.0 else (1.5 if f < 20.0 else 2.5)
 
     def _k9_turzx_draw_vehicle(self, forward_m: float, lateral_m: float, fill, edge) -> tuple[float, float, float]:
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
@@ -6257,14 +6281,14 @@ class ClusterUiRenderer:
     def _k9_turzx_draw_ego(self) -> None:
         # 대감님 19:58 "내 차량은 K9 뒷꽁무니 넣어놓은 거": the owner's K9 rear render (assets/images/k9_ego_car.png,
         # 2de680aea, same sprite as the old mode-0 HUD ego car), lane-width sized, soft floor shadow
-        cx, by = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5, K9_TURZX_ROAD_EGO_Y - 4.0  # bumper just above the pills
+        cx, by = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5, K9_TURZX_ROAD_EGO_Y  # rear bumper at forward 0
         if getattr(self, "_ego_car_texture", None) is None and not getattr(self, "_k9_turzx_ego_load_tried", False):
             self._k9_turzx_ego_load_tried = True
             self._ego_car_texture = self._load_icon_texture(EGO_CAR_ICON_PATH, "K9 ego car")
         tex = getattr(self, "_ego_car_texture", None)
         w = K9_TURZX_EGO_W
-        rl.draw_ellipse(int(cx), int(by - 4), w * 0.62, 14.0, rl.Color(0, 0, 0, 70))
-        rl.draw_ellipse(int(cx), int(by - 4), w * 0.50, 8.0, rl.Color(0, 0, 0, 120))
+        rl.draw_ellipse(int(cx), int(by - 2), w * 0.66, 9.0, rl.Color(0, 0, 0, 80))
+        rl.draw_ellipse(int(cx), int(by - 2), w * 0.52, 5.0, rl.Color(0, 0, 0, 140))
         if tex is None:
             h = 38.0
             self._rounded_rect(cx - 31.0, by - h, 62.0, h, 14.0, (214, 224, 238), (120, 140, 170), 2.0)
@@ -6306,8 +6330,8 @@ class ClusterUiRenderer:
             re_ = rights[-1][2]
         if len(le) >= 2 and len(re_) >= 2:
             self._k9_turzx_band(le, re_, (*K9_TURZX_ROAD, 255))
-            self._k9_turzx_line(le, (120, 150, 190), 0.10, False, False, 0.6)
-            self._k9_turzx_line(re_, (120, 150, 190), 0.10, False, False, 0.6)
+            self._k9_turzx_line(le, K9_TURZX_CHROME, 0.08, False, False, 0.55)
+            self._k9_turzx_line(re_, K9_TURZX_CHROME, 0.08, False, False, 0.55)
         # horizon haze + faint sky-blue glow on the horizon
         rl.draw_rectangle_gradient_v(int(x0), int(K9_TURZX_ROAD_HORIZON_Y - 40), int(w), 40,
                                      rl.Color(*K9_TURZX_LANE, 0), rl.Color(*K9_TURZX_LANE, 26))
@@ -6325,26 +6349,29 @@ class ClusterUiRenderer:
         if len(path) >= 2:
             pl = [(f, lat - 0.95) for f, lat in path]
             pr = [(f, lat + 0.95) for f, lat in path]
-            self._k9_turzx_band(pl, pr, (*K9_TURZX_PATH, 150), fade=True, end_m=end_m)
+            self._k9_turzx_band(pl, pr, (*K9_TURZX_PATH, 92), fade=True, end_m=end_m)
+            cl = [(f, lat - 0.45) for f, lat in path]
+            cr_ = [(f, lat + 0.45) for f, lat in path]
+            self._k9_turzx_band(cl, cr_, (150, 240, 222, 40), fade=True, end_m=end_m)
             pl_e = [(f, lat) for f, lat in pl if end_m is None or f <= end_m]
             pr_e = [(f, lat) for f, lat in pr if end_m is None or f <= end_m]
-            self._k9_turzx_line(pl_e, (90, 240, 200), 0.07, False, False, 0.8)
-            self._k9_turzx_line(pr_e, (90, 240, 200), 0.07, False, False, 0.8)
+            self._k9_turzx_line(pl_e, (120, 255, 220), 0.06, False, False, 0.9)
+            self._k9_turzx_line(pr_e, (120, 255, 220), 0.06, False, False, 0.9)
             top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)
-            f = 3.0
+            f = -K9_TURZX_ROAD_BACK_M + 2.0
             while f < top - 2.0:
                 lat = self._k9_turzx_lat_at(path, f)
-                lat2 = self._k9_turzx_lat_at(path, f + 1.6)
+                lat2 = self._k9_turzx_lat_at(path, f + 1.2)
                 if lat is None or lat2 is None:
                     break
-                ax, ay, sc = self.k9_turzx_road_project(f + 1.6, lat2)
-                bl = self.k9_turzx_road_project(f, lat - 0.55)
-                br = self.k9_turzx_road_project(f, lat + 0.55)
-                aw = max(1.5, 0.16 * sc)
-                col = rl.Color(*K9_TURZX_PATH_ARROW, int(230 * clamp(1.0 - f / 70.0, 0.3, 1.0)))
+                ax, ay, sc = self.k9_turzx_road_project(f + 1.2, lat2)
+                bl = self.k9_turzx_road_project(f, lat - 0.42)
+                br = self.k9_turzx_road_project(f, lat + 0.42)
+                aw = max(1.2, 0.09 * sc)
+                col = rl.Color(*K9_TURZX_PATH_ARROW, int(190 * clamp(1.0 - max(0.0, f) / 70.0, 0.3, 1.0)))
                 rl.draw_line_ex(rl.Vector2(bl[0], bl[1]), rl.Vector2(ax, ay), aw, col)
                 rl.draw_line_ex(rl.Vector2(br[0], br[1]), rl.Vector2(ax, ay), aw, col)
-                f += 5.0 if f < 20.0 else 8.0
+                f += 4.0 if f < 20.0 else 8.0
         # ego lane lines: cyan light beams, fainter when the model is unsure
         for item, conf in ((ego_l, getattr(state, "left_lane_line_confidence", None)),
                            (ego_r, getattr(state, "right_lane_line_confidence", None))):
@@ -6383,15 +6410,18 @@ class ClusterUiRenderer:
         rr = K9_TURZX_RADIUS
         rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x0 - 6.0, y0 - 6.0, w + 12.0, h + 12.0), (rr + 6.0) / (h + 12.0), 12,
                                            6.0, rl_color(K9_TURZX_BG))
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x0, y0, w, h), rr / h, 12, 1.5, rl.Color(130, 170, 225, 90))
-        rl.draw_line_ex(rl.Vector2(x0 + rr, y0 + 1.0), rl.Vector2(x0 + w - rr, y0 + 1.0), 1.5, rl.Color(210, 230, 255, 90))
+        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x0, y0, w, h), rr / h, 12, 1.0, rl.Color(*K9_TURZX_CHAMPAGNE, 80))
+        rl.draw_rectangle_gradient_h(int(x0 + rr), int(y0), int(w * 0.5 - rr), 1, rl.Color(*K9_TURZX_CHROME, 0),
+                                     rl.Color(*K9_TURZX_CHROME, 170))
+        rl.draw_rectangle_gradient_h(int(x0 + w * 0.5), int(y0), int(w * 0.5 - rr), 1, rl.Color(*K9_TURZX_CHROME, 170),
+                                     rl.Color(*K9_TURZX_CHROME, 0))
         theme = self._current_theme()
         # speed box: gear / speed / MAX (cruise set)
         bx, by, bw, bh = x0 + 12, y0 + 12, 264.0, 88.0
         self._k9_turzx_glass(bx, by, bw, bh, K9_TURZX_RADIUS, K9_TURZX_MID_CARD, shadow=False)
         gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
         gear = "D" if gear.isdigit() else gear
-        self._rounded_rect(bx + 12, by + bh * 0.5 - 22.0, 40.0, 44.0, 10.0, (22, 50, 92, 230), (*K9_TURZX_ACCENT, 110), 1.5)
+        self._rounded_rect(bx + 12, by + bh * 0.5 - 22.0, 40.0, 44.0, 10.0, (16, 34, 64, 230), (*K9_TURZX_CHAMPAGNE, 120), 1.0)
         self._draw_text(gear, bx + 32, by + bh * 0.5, 36.0, K9_TURZX_ACCENT, anchor="center")
         display_speed_kph = state.display_speed_kph if state.display_speed_kph is not None else state.speed_kph
         speed_value = int(round(display_speed(clamp(display_speed_kph, 0.0, MAX_SPEED_KPH), self.is_metric)))
@@ -6519,6 +6549,8 @@ class ClusterUiRenderer:
         try:
             rl.draw_rectangle_gradient_v(0, 0, int(DESIGN_WIDTH), int(DESIGN_HEIGHT), rl_color(K9_TURZX_BG_TOP),
                                          rl_color(K9_TURZX_BG))
+            rl.draw_rectangle_gradient_v(0, int(DESIGN_HEIGHT) - 24, int(DESIGN_WIDTH), 24, rl.Color(*K9_TURZX_LANE, 0),
+                                         rl.Color(*K9_TURZX_LANE, 10))
             self._k9_turzx_draw_left(state)
             self._k9_turzx_draw_middle(state, signal_lights)
             self._k9_turzx_draw_right(state)
