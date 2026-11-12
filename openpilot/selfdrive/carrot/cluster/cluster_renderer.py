@@ -152,6 +152,60 @@ K9_REVERSE_ALERT_MAX_W = 400.0
 # K9 R screen display scale (대감님 11/12 23:34 차 더 크게): ~121 px/m on the 480 px high screen (EV6 27 deg = ~80 px/m)
 K9_REVERSE_FOVY_DEG = 18.0
 K9_REVERSE_VIEW_Y_M = -2.69
+# 대감님 11/13 02:35 "골라써라" (his own K9 photos): K9 R screen car = k9_rear3.jpg cut out by make_k9_reverse_photo.py
+# (plate blanked, softer reflections, new floor shadow). Path, 1/2/3 m marks and blind-spot bands are drawn on the floor
+# with the photo camera reverse-solved from the photo (wheel contacts at the 3105 mm wheelbase / ~1630 mm track, rear
+# bumper, lamps, plate; 5120 mm body): f px, Rodrigues rvec, tvec (m) in the car frame x right / y forward from the rear
+# bumper / z up. That camera stood only ~1.3 m behind the bumper, so a 3 m path would run behind it: the floor is drawn
+# from the same direction but PULLBACK m further back with the focal length scaled so the rear bumper keeps its size
+# (dolly zoom about the bumper). Photo px -> design px: x * SCALE + OFFSET. The 45 deg / top-view car files stay unused.
+K9_REVERSE_PHOTO_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_photo.png"
+K9_REVERSE_PHOTO_CAMERA = (1484.13, (1.68427, -0.74313, 0.56378), (1.08057, 0.72563, 3.23045), (1600.0, 901.0))
+K9_REVERSE_PHOTO_CROP = (-39.0, 89.0, 1509.0, 910.0)  # image frame in photo px (make_k9_reverse_photo.py CROP)
+K9_REVERSE_PHOTO_PULLBACK_M = 12.0
+K9_REVERSE_PHOTO_SCALE = 0.3456
+K9_REVERSE_PHOTO_OFFSET = (305.8, -24.4)
+K9_REVERSE_PHOTO_CAR_W_PX = 1334.0  # car (no shadow) width in photo px, for the P floor disc size
+K9_REVERSE_PHOTO_FLOOR_W = 1.15  # P stage floor width / car width (P: 694 / 556 = 1.25; a bit less: clear of the R text)
+K9_REVERSE_PHOTO_CAR_CX_PX = 705.0  # car (no shadow) centre x in photo px: floor disc centre x
+# the photo shows the bumper ~0.35 m above the floor; the path is drawn from this far under the car (hidden by the
+# body) so it comes out right at the bumper. Marks / labels still count from the bumper.
+K9_REVERSE_PHOTO_PATH_UNDER_M = 0.35
+# blind-spot band on the K9 photo screen: drawn with the photo camera itself so it lies along the photo car's side
+# (that camera stood ~1.6 m beside the left side): inner edge, strip width (6 strips), front / rear end y (R frame)
+K9_REVERSE_PHOTO_BAND = (1.0, 0.06, 2.2, -2.5)
+
+
+def _k9_reverse_photo_setup(back: float = K9_REVERSE_PHOTO_PULLBACK_M):
+    f, (rx, ry, rz), (tx, ty, tz), (w, h) = K9_REVERSE_PHOTO_CAMERA
+    theta = math.sqrt(rx * rx + ry * ry + rz * rz)
+    k = np.array([rx, ry, rz]) / theta
+    kx = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    rot = np.eye(3) + math.sin(theta) * kx + (1.0 - math.cos(theta)) * (kx @ kx)
+    return rot, np.array([tx, ty, tz + back]), f * (tz + back) / tz, w / 2.0, h / 2.0
+
+
+K9_REVERSE_PHOTO_VIEW = _k9_reverse_photo_setup()
+K9_REVERSE_PHOTO_VIEW_TRUE = _k9_reverse_photo_setup(0.0)  # the photo camera itself (things under the car)
+
+
+def k9_reverse_photo_point(x: float, y: float, z: float = 0.0, true_camera: bool = False):
+    """Design px of a point in the R screen frame (x right, y forward, EV6_REVERSE_REAR_BUMPER_Y_M = bumper); None if
+    it is not in front of the floor camera."""
+    rot, t, f, cx, cy = K9_REVERSE_PHOTO_VIEW_TRUE if true_camera else K9_REVERSE_PHOTO_VIEW
+    p = rot @ np.array([x, y - EV6_REVERSE_REAR_BUMPER_Y_M, z]) + t
+    if p[2] < 0.3:
+        return None
+    ox, oy = K9_REVERSE_PHOTO_OFFSET
+    return ox + K9_REVERSE_PHOTO_SCALE * (f * p[0] / p[2] + cx), oy + K9_REVERSE_PHOTO_SCALE * (f * p[1] / p[2] + cy)
+
+
+def k9_reverse_photo_rect() -> tuple[float, float, float, float]:
+    """Design px rect of k9_reverse_photo.png."""
+    x0, y0, w, h = K9_REVERSE_PHOTO_CROP
+    ox, oy = K9_REVERSE_PHOTO_OFFSET
+    s = K9_REVERSE_PHOTO_SCALE
+    return ox + s * x0, oy + s * y0, s * w, s * h
 # 대감님 11/12 04:34 "화면 너무 파란색인데 좀 더 어둡게 해봐": the blue background and the floor layer under the car get
 # the same darkening (brightness x DIM, blue pulled part of the way towards grey) so their seam does not show;
 # bright floor pixels (the rim light) are spared on a ramp so the rim stays visible. Car photo, text, numbers unchanged.
@@ -3118,6 +3172,9 @@ class ClusterUiRenderer:
         self._k9_reverse_layers = None
         self._ev6_reverse_sprite_key = key
         self._ev6_reverse_sprite = False  # Failure falls back to the live 3D model until the next context/model.
+        self._k9_reverse_photo = False
+        if name == "k9" and K9_REVERSE_PHOTO_PATH.is_file() and self._k9_prepare_reverse_photo():
+            return
         if name == "k9" and K9_REVERSE_CAR_SPRITE_PATH.is_file() and self._k9_prepare_reverse_sprite():
             return
         target = image = texture = None
@@ -3178,6 +3235,94 @@ class ClusterUiRenderer:
                 xs.append(point.x)
                 ys.append(point.y)
         return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+    def _k9_prepare_reverse_photo(self) -> bool:
+        texture = None
+        try:
+            texture = rl.load_texture(str(K9_REVERSE_PHOTO_PATH))
+            if texture.id == 0:
+                return False
+            rl.gen_texture_mipmaps(texture)
+            rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+            sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
+            x, y, w, h = k9_reverse_photo_rect()
+            self._ev6_reverse_sprite = (texture, (x * sx, y * sy, w * sx, h * sy))
+            self._k9_reverse_photo = True
+            texture = None
+            return True
+        except Exception as exc:
+            print(f"K9 reverse photo unavailable: {exc}", flush=True)
+            return False
+        finally:
+            if texture is not None:
+                rl.unload_texture(texture)
+
+    def _k9_draw_reverse_photo_floor(self, points, steering_deg: float, left_bsd: bool, right_bsd: bool,
+                                     accent, warn, dark: bool) -> list:
+        """K9 photo R screen, design px: P stage floor disc, path from the rear bumper, 1/2/3 m marks, blind-spot
+        bands, all on the floor of the photo camera; returns the distance labels (text, x, y)."""
+        floor = self._k9_park_floor_texture()
+        centre = k9_reverse_photo_point(0.0, EV6_REVERSE_REAR_BUMPER_Y_M + 2.56, true_camera=True)
+        if floor is not None and centre is not None:
+            centre = (K9_REVERSE_PHOTO_OFFSET[0] + K9_REVERSE_PHOTO_SCALE * K9_REVERSE_PHOTO_CAR_CX_PX, centre[1])
+            fw = K9_REVERSE_PHOTO_CAR_W_PX * K9_REVERSE_PHOTO_SCALE * K9_REVERSE_PHOTO_FLOOR_W
+            fh = fw * floor.height / floor.width
+            rl.draw_texture_pro(floor, rl.Rectangle(0, 0, floor.width, floor.height),
+                                rl.Rectangle(centre[0] - fw / 2, centre[1] - fh * 0.55, fw, fh), rl.Vector2(0, 0), 0.0,
+                                rl.WHITE)
+
+        bumper = EV6_REVERSE_REAR_BUMPER_Y_M + K9_REVERSE_PHOTO_PATH_UNDER_M
+        path = []  # from just under the rear bumper
+        for a, b in zip(points, points[1:], strict=False):
+            if b[1] > bumper:
+                continue
+            if a[1] > bumper:
+                u = (a[1] - bumper) / (a[1] - b[1])
+                a = (a[0] + (b[0] - a[0]) * u, bumper, a[2] + (b[2] - a[2]) * u)
+            if not path:
+                path.append(a)
+            path.append(b)
+
+        def side(point, offset):
+            px, py, heading = point
+            return k9_reverse_photo_point(px + math.cos(heading) * offset, py - math.sin(heading) * offset)
+
+        def quad(a, b, c, d, color):
+            if None in (a, b, c, d):
+                return
+            va, vb, vc, vd = (rl.Vector2(*p) for p in (a, b, c, d))
+            for tri in ((va, vb, vc), (va, vc, vd), (va, vc, vb), (va, vd, vc)):  # both windings
+                rl.draw_triangle(*tri, color)
+
+        half_w = EV6_REVERSE_HALF_WIDTH_M
+        for active, sign in ((right_bsd, 1.0), (left_bsd, -1.0)):
+            if not active:
+                continue
+            inner0, step, front, rear = K9_REVERSE_PHOTO_BAND
+            for i in range(6):  # amber band fading outward along that side of the car
+                inner, outer = sign * (inner0 + i * step), sign * (inner0 + (i + 1) * step)
+                corners = [k9_reverse_photo_point(xx, yy, true_camera=True)
+                           for xx, yy in ((inner, front), (outer, front), (outer, rear), (inner, rear))]
+                quad(*corners, rl.Color(*warn, int(170 * (1 - i / 6))))
+        fill = rl.Color(*accent, 46 if dark else 34)
+        for a, b in zip(path, path[1:], strict=False):
+            quad(side(a, -half_w), side(a, half_w), side(b, half_w), side(b, -half_w), fill)
+        line = rl.Color(*accent, 230)
+        for offset in (-half_w, half_w):
+            for a, b in zip(path, path[1:], strict=False):
+                quad(side(a, offset - 0.07), side(a, offset + 0.07), side(b, offset + 0.07), side(b, offset - 0.07), line)
+        label_offset = half_w + 0.45 if steering_deg > 0.0 else -half_w - 0.45
+        labels = []
+        for distance_m, color in EV6_REVERSE_MARKS:
+            point = points[self._ev6_reverse_mark_index(distance_m)]
+            ax, ay = -math.sin(point[2]) * 0.12, -math.cos(point[2]) * 0.12
+            a_, b_ = (point[0], point[1], point[2]), (point[0] + ax, point[1] + ay, point[2])
+            quad(side(a_, -half_w - 0.05), side(a_, half_w + 0.05), side(b_, half_w + 0.05), side(b_, -half_w - 0.05),
+                 rl.Color(*color, 235))
+            label = side(point, label_offset)
+            if label is not None:
+                labels.append((f"{distance_m:.0f}m", label[0], label[1]))
+        return labels
 
     def _k9_prepare_reverse_sprite(self) -> bool:
         texture = None
@@ -3264,7 +3409,8 @@ class ClusterUiRenderer:
         rl.rl_scalef(sx, sy, 1.0)
         rl.draw_rectangle_gradient_v(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT, rl_color(colors["bg_top"]), rl_color(colors["bg_bot"]))
         rl.rl_pop_matrix()
-        if k9_look:
+        photo = is_k9 and bool(getattr(self, "_k9_reverse_photo", False)) and bool(getattr(self, "_ev6_reverse_sprite", None))
+        if k9_look and not photo:
             # floor under the car like the P stage: soft lighter pool and a thin rim, below path and car
             fx, fy, fw, fh = self._k9_reverse_car_rect(self._ev6_reverse_camera(True), int(self.width), int(self.height))
             cx, cy = int(fx + fw / 2), int(fy + fh / 2)
@@ -3293,6 +3439,45 @@ class ClusterUiRenderer:
                 rl.draw_triangle_3d(*tri, color)
 
         half_w = EV6_REVERSE_HALF_WIDTH_M
+        photo_labels = None
+        if photo:
+            rl.rl_push_matrix()
+            rl.rl_scalef(sx, sy, 1.0)
+            try:
+                photo_labels = self._k9_draw_reverse_photo_floor(points, steering_deg, left_bsd, right_bsd, accent, warn,
+                                                                 dark)
+            finally:
+                rl.rl_pop_matrix()
+            texture, (car_x, car_y, car_w, car_h) = sprite
+            rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
+                                rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
+        else:
+            self._ev6_draw_reverse_floor_3d(state, camera, sprite, points, half_w, accent, warn, dark, left_bsd,
+                                            right_bsd, steering_deg, is_k9)
+        mark_labels = photo_labels if photo else self._ev6_reverse_mark_labels(points, camera, steering_deg, is_k9, sx, sy)
+
+        rl.rl_push_matrix()
+        rl.rl_scalef(sx, sy, 1.0)
+        try:
+            def text(value, x, y, size, color, anchor="left"):
+                self._draw_text(value, x, y, size, colors[color] if isinstance(color, str) else color, anchor)
+
+            for label, x, y in mark_labels:
+                text(label, x, y, 24, "muted", "center")
+            self._ev6_draw_reverse_texts(state, colors, steering_deg, left_bsd, right_bsd, warn, text)
+        finally:
+            rl.rl_pop_matrix()
+
+    def _ev6_draw_reverse_floor_3d(self, state, camera, sprite, points, half_w, accent, warn, dark, left_bsd, right_bsd,
+                                   steering_deg, is_k9) -> None:
+        def side(point, offset, z):
+            px, py, heading = point
+            return rl.Vector3(px + math.cos(heading) * offset, py - math.sin(heading) * offset, z)
+
+        def quad(a, b, c, d, color):
+            for tri in ((a, b, c), (a, c, d), (a, c, b), (a, d, c)):  # both windings: no culling surprises
+                rl.draw_triangle_3d(*tri, color)
+
         rl.begin_mode_3d(camera)
         try:
             fill = rl.Color(*accent, 46 if dark else 34)
@@ -3328,6 +3513,13 @@ class ClusterUiRenderer:
             rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
                                 rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
 
+    def _ev6_reverse_mark_labels(self, points, camera, steering_deg, is_k9, sx, sy) -> list:
+        half_w = EV6_REVERSE_HALF_WIDTH_M
+
+        def side(point, offset, z):
+            px, py, heading = point
+            return rl.Vector3(px + math.cos(heading) * offset, py - math.sin(heading) * offset, z)
+
         # 대감님 23:56 (K9): distance labels on the outer side of the bend (path turning to the car's left = screen
         # down puts them above the path), so 1m/2m/3m stay inside the screen at any steering angle
         label_offset = -half_w - 0.45
@@ -3338,15 +3530,10 @@ class ClusterUiRenderer:
             point = points[self._ev6_reverse_mark_index(distance_m)]
             screen = rl.get_world_to_screen_ex(side(point, label_offset, 0.0), camera, int(self.width), int(self.height))
             mark_labels.append((f"{distance_m:.0f}m", screen.x / sx, screen.y / sy))
+        return mark_labels
 
-        rl.rl_push_matrix()
-        rl.rl_scalef(sx, sy, 1.0)
-        try:
-            def text(value, x, y, size, color, anchor="left"):
-                self._draw_text(value, x, y, size, colors[color] if isinstance(color, str) else color, anchor)
-
-            for label, x, y in mark_labels:
-                text(label, x, y, 24, "muted", "center")
+    def _ev6_draw_reverse_texts(self, state, colors, steering_deg, left_bsd, right_bsd, warn, text) -> None:
+        if True:
             korean = self.language == CLUSTER_LANGUAGE_KO
             text("R", 70, 150, 140, "text")
             text("후진" if korean else "Reverse", 190, 180, 34, "muted")
@@ -3371,8 +3558,6 @@ class ClusterUiRenderer:
                 text(label, cx + 26, 200, 28, "text" if active else "muted")
             text("후방 카메라와 주변을 함께 확인하세요" if korean else "Check the rear camera and surroundings",
                  x0, 420, 24, "muted")
-        finally:
-            rl.rl_pop_matrix()
 
     @staticmethod
     def _ev6_reverse_mark_index(distance_m: float) -> int:
