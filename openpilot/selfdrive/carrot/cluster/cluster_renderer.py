@@ -231,13 +231,13 @@ K9L_KR_INK = 1.31    # Pretendard Hangul ink 72 px vs KaiGen 94 px at size 100 (
 K9L_SPEED_SIZE = 100.0   # x1.25 ink = 78 px digits (old speed 66 -> 51 px)
 K9L_SPEED_CY = 74.0
 K9L_GEAR_SIZE = 40.0     # old 36
-K9L_SIDE_DX = 150.0
+K9L_SIDE_DX = 140.0
 K9L_SCENE_X0, K9L_SCENE_X1 = 610.0, 1310.0
 K9L_SCENE_FADE = 80.0
-K9L_COL_A, K9L_COL_B = 222.0, 420.0
+K9L_COL_A, K9L_COL_B = 260.0, 440.0
 K9L_METER_W = 150.0
 K9L_TPMS_CX = 112.0
-K9L_RIGHT_X = 1336.0
+K9L_RIGHT_X = 1336.0  # right list x0 (content to K9L_RIGHT_X1)
 K9L_LAT_STEP = 50.0
 K9L_PILL_Y = 150.0
 K9L_BG_TOP = (7, 12, 26)
@@ -253,6 +253,31 @@ K9L_MUTED = (150, 162, 182)
 K9L_DIM = (86, 98, 120)
 K9L_VALUE = (238, 243, 250)
 K9L_LAT = (206, 216, 230)
+# 11/12 22:10 "그게 최선이야?" final pass: one baseline / margin grid for the whole screen (design px, baselines)
+K9L_EDGE = 32.0                        # outer margin left and right (content 32 .. 1888)
+K9L_HEAD = 62.0                        # header baseline: TPMS, the left labels row 1, MAX, 차선 위치
+K9L_ROW1, K9L_ROW2 = 62.0, 320.0       # left label baselines
+K9L_VALUE_DY = 59.0                    # label baseline -> value baseline (= speed / cruise baseline 121 on row 1)
+K9L_METER_DY = 84.0                    # label baseline -> meter line
+K9L_SUB_DY = 118.0                     # label baseline -> sub line baseline (row 2: 438 = last right row)
+K9L_TRACK = 0.14                       # wide letter spacing of the champagne headers
+K9L_TPMS_X = 128.0                     # TPMS car centre x, numbers outside each wheel
+K9L_TPMS_Y = 262.0
+K9L_RULE_X = 244.0                     # one vertical hairline: TPMS | numbers
+K9L_SPEED_BASE = 121.0
+K9L_KMH_BASE = 152.0
+K9L_TOP_CY = 84.0                      # gear ring, limit sign centre
+K9L_SIGN_X = 712.0
+K9L_PERC_Y = 212.0                     # lane % (left) / lead (right) beside the far road, symmetric about 960
+K9L_PERC_GAP = 64.0
+K9L_NAVI_BASE = 292.0
+K9L_RIGHT_X1 = 1888.0
+K9L_RIGHT_C1 = 268.0                   # right list: column 1 value right edge (from x0), column 2 name x (from x0)
+K9L_RIGHT_C2 = 316.0
+K9L_LANE_BASES = (121.0, 172.0)
+K9L_RIGHT_HAIR = 198.0
+K9L_LAT_HEAD = 236.0
+K9L_LAT_BASE0, K9L_LAT_PITCH = 278.0, 40.0
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
@@ -6692,6 +6717,7 @@ class ClusterUiRenderer:
             rl.unload_font(fonts[1])
         self._k9l_font_pair = None
         self._k9l_font_tried = False
+        self._k9l_metric_cache = {}
         bg = getattr(self, "_k9l_bg_texture", None)
         if bg is not None:
             rl.unload_texture(bg)
@@ -6709,29 +6735,59 @@ class ClusterUiRenderer:
                 return kr, K9L_KR_INK
         return self._font_for_text(text), 1.0
 
+    def _k9l_metrics(self, font) -> tuple[float, float]:
+        """(baseline, cap height) of a font as a fraction of the draw size, from the 'H' glyph (cached per font)"""
+        cache = getattr(self, "_k9l_metric_cache", None)
+        if cache is None:
+            cache = {}
+            self._k9l_metric_cache = cache
+        key = int(font.texture.id)
+        m = cache.get(key)
+        if m is None:
+            m = (0.8, 0.7)
+            try:
+                i = rl.get_glyph_index(font, ord("H"))
+                base = max(1, int(font.baseSize))
+                g, rec = font.glyphs[i], font.recs[i]
+                m = ((float(g.offsetY) + float(rec.height)) / base, float(rec.height) / base)
+            except Exception:
+                pass
+            cache[key] = m
+        return m
+
     def _k9l_text(self, text: str, x: float, y: float, size: float, color, anchor: str = "left", numeric: bool = False,
-                  track: float = 0.0, glow: bool = False, shadow: bool = True) -> float:
-        """floating type, y = vertical centre; returns the drawn width"""
+                  track: float = 0.0, glow: bool = False, shadow: bool = True, base: float | None = None,
+                  cap_cy: float | None = None) -> float:
+        """floating type; y = box centre, or base = baseline, or cap_cy = centre of the cap height; returns the width"""
         if not text:
             return 0.0
         font, ink = self._k9l_font(text, numeric)
         fs = size * ink
         spacing = fs * track
         tw, th = self._measure_text(text, fs, spacing, font)
+        if track > 0.0 and len(text) > 1:
+            tw -= spacing  # no trailing letter space: right / centre anchors sit on the ink
         dx = x - tw * 0.5 if anchor == "center" else (x - tw if anchor == "right" else x)
-        dy = y - th * 0.5
+        if base is not None or cap_cy is not None:
+            b, cap = self._k9l_metrics(font)
+            bl = base if base is not None else cap_cy + cap * fs * 0.5
+            dy = float(round(bl - b * fs))
+        else:
+            dy = y - th * 0.5
+        dx = float(round(dx))
         if shadow:
             rl.draw_text_ex(font, text, rl.Vector2(dx, dy + 2.0), fs, spacing, rl.Color(0, 0, 0, 150))
-        r, g, b = color[:3]
+        r, g, b_ = color[:3]
         if glow:
             for ox, oy in ((-1.2, 0.0), (1.2, 0.0), (0.0, -1.2), (0.0, 1.2)):
-                rl.draw_text_ex(font, text, rl.Vector2(dx + ox, dy + oy), fs, spacing, rl.Color(r, g, b, 26))
+                rl.draw_text_ex(font, text, rl.Vector2(dx + ox, dy + oy), fs, spacing, rl.Color(r, g, b_, 26))
         rl.draw_text_ex(font, text, rl.Vector2(dx, dy), fs, spacing, rl_color(color))
         return tw
 
     def _k9l_width(self, text: str, size: float, numeric: bool = False, track: float = 0.0) -> float:
         font, ink = self._k9l_font(text, numeric)
-        return self._measure_text(text, size * ink, size * ink * track, font)[0]
+        w = self._measure_text(text, size * ink, size * ink * track, font)[0]
+        return w - size * ink * track if track > 0.0 and len(text) > 1 else w
 
     def _k9l_background(self):
         """the static night field, drawn once with numpy and kept as a texture"""
@@ -6787,86 +6843,99 @@ class ClusterUiRenderer:
 
     def _k9l_meter(self, x: float, y: float, w: float, fraction: float | None, color, centred: bool = False,
                    neg_color=None) -> None:
-        """2 px hairline track, 3 px lit part with a soft glow"""
-        rl.draw_rectangle_gradient_h(int(x), int(y), int(w * 0.5), 1, rl.Color(*K9L_CHAMPAGNE, 40), rl.Color(*K9L_CHAMPAGNE, 90))
-        rl.draw_rectangle_gradient_h(int(x + w * 0.5), int(y), int(w * 0.5), 1, rl.Color(*K9L_CHAMPAGNE, 90), rl.Color(*K9L_CHAMPAGNE, 40))
+        """every meter the same: 1 px champagne track, 2 px lit line, one glowing end point (centre tick if centred)"""
+        x, y, w = int(x), int(y), int(w)
+        h = w // 2
+        rl.draw_rectangle_gradient_h(x, y, h, 1, rl.Color(*K9L_CHAMPAGNE, 30), rl.Color(*K9L_CHAMPAGNE, 84))
+        rl.draw_rectangle_gradient_h(x + h, y, w - h, 1, rl.Color(*K9L_CHAMPAGNE, 84), rl.Color(*K9L_CHAMPAGNE, 30))
+        if centred:
+            rl.draw_rectangle(x + h, y - 4, 1, 9, rl.Color(*K9L_CHAMPAGNE, 150))
         if fraction is None or not math.isfinite(fraction):
             return
         if centred:
-            cx = x + w * 0.5
-            span = w * 0.5 * clamp(abs(fraction), 0.0, 1.0)
-            c = color if fraction >= 0.0 else (neg_color or color)
-            bx = cx if fraction >= 0.0 else cx - span
-            rl.draw_line_ex(rl.Vector2(cx, y - 7.0), rl.Vector2(cx, y + 8.0), 1.5, rl.Color(*K9L_CHAMPAGNE, 200))
+            f = clamp(fraction, -1.0, 1.0)
+            x0, x1 = x + h + 0.5, x + h + 0.5 + h * f
+            c = color if f >= 0.0 else (neg_color or color)
         else:
-            span = max(4.0, w * clamp(fraction, 0.0, 1.0)) if fraction > 0.0 else 0.0
-            c, bx = color, x
-        if span <= 0.0:
-            return
-        rl.draw_rectangle_rec(rl.Rectangle(bx, y - 3.0, span, 7.0), rl_color(c, 40))
-        rl.draw_rectangle_rec(rl.Rectangle(bx, y - 1.0, span, 3.0), rl_color(c))
+            f = clamp(fraction, 0.0, 1.0)
+            x0, x1, c = float(x), x + w * f, color
+        lo, hi = min(x0, x1), max(x0, x1)
+        if hi - lo >= 1.0:
+            rl.draw_rectangle_rec(rl.Rectangle(lo, y, hi - lo, 2.0), rl_color(c, 230))
+        p = rl.Vector2(x1, y + 1.0)
+        rl.draw_circle_v(p, 7.0, rl_color(c, 36))
+        rl.draw_circle_v(p, 4.2, rl_color(c, 96))
+        rl.draw_circle_v(p, 2.2, rl.Color(250, 252, 255, 255))
 
-    def _k9l_item(self, x: float, y: float, label: str, value: str, unit: str, sub: str) -> None:
-        # label tier (champagne, spaced) / value (Inter Light) / unit / sub line, sizes >= the old cards
-        self._k9l_text(label, x, y + 26.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=0.04)
+    def _k9l_item(self, x: float, base: float, label: str, value: str, unit: str, sub: str) -> None:
+        # one hierarchy for every item: small spaced champagne label / big ice-white value (+ unit on its baseline) /
+        # (meter) / muted sub line, all on the K9L_* baseline grid
+        self._k9l_text(label, x, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=base)
+        vb = base + K9L_VALUE_DY
         vc = K9L_VALUE if value != "-" else K9L_DIM
-        vw = self._k9l_text(value, x - 2.0, y + 92.0, K9_TURZX_VALUE_SIZE, vc, numeric=True, track=0.01, glow=value != "-")
+        vw = self._k9l_text(value, x - 2.0, 0.0, K9_TURZX_VALUE_SIZE, vc, numeric=True, track=0.01, glow=value != "-",
+                            base=vb)
         if unit and value != "-":
-            self._k9l_text(unit, x + vw + 8.0, y + 104.0, K9_TURZX_UNIT_SIZE, K9L_MUTED, numeric=True)
+            self._k9l_text(unit, x - 2.0 + vw + 8.0, 0.0, K9_TURZX_UNIT_SIZE, K9L_MUTED, numeric=True, base=vb)
         if sub:
-            self._k9l_text(sub, x, y + 168.0, K9_TURZX_SUB_SIZE, K9L_MUTED)
+            self._k9l_text(sub, x, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, base=base + K9L_SUB_DY)
 
     def _k9l_draw_left(self, state: ClusterUiState) -> None:
-        y0 = K9_TURZX_MARGIN
         ca, cb = K9L_COL_A, K9L_COL_B
-        ya, yb = y0 + 24.0, y0 + 256.0
+        r1, r2 = K9L_ROW1, K9L_ROW2
         km = self.k9_turzx_range_km(getattr(state, "fuel_gauge", None))
-        self._k9l_item(ca, ya, "주행가능거리", "-" if km is None else str(km), "km", "")
-        self._k9l_meter(ca, ya + 134.0, K9L_METER_W, None if km is None else km / K9_DTE_FULL_KM, K9L_ICE)
+        self._k9l_item(ca, r1, "주행가능거리", "-" if km is None else str(km), "km", "")
+        self._k9l_meter(ca, r1 + K9L_METER_DY, K9L_METER_W, None if km is None else km / K9_DTE_FULL_KM, K9L_ICE)
         trip = getattr(state, "trip_report", None)
         dist = getattr(trip, "distance_m", None) if trip is not None else None
         avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        self._k9l_item(cb, ya, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
+        self._k9l_item(cb, r1, "이번 주행", "-" if dist is None else f"{dist / 1000.0:.1f}", "km",
                        "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
         accel = getattr(state, "accel_mps2", None)
         accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
         throttle = getattr(state, "throttle", None)
         pedal = "-" if throttle is None or not math.isfinite(throttle) else f"{int(round(clamp(throttle, 0.0, 1.0) * 100))}%"
-        self._k9l_item(ca, yb, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
-        self._k9l_meter(ca, yb + 134.0, K9L_METER_W, None if accel_text == "-" else accel / 3.0, K9L_ICE, True,
+        self._k9l_item(ca, r2, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
+        self._k9l_meter(ca, r2 + K9L_METER_DY, K9L_METER_W, None if accel_text == "-" else accel / 3.0, K9L_ICE, True,
                         (255, 120, 90))
         angle = getattr(state, "steering_angle_deg", None)
         angle_ok = angle is not None and math.isfinite(angle)
         angle_text = "-" if not angle_ok else (f"{angle:+.0f}" if abs(angle) >= 99.95 else f"{angle:+.1f}")
         side = "" if not angle_ok else ("가운데" if abs(angle) < 0.5 else ("왼쪽" if angle > 0.0 else "오른쪽"))
-        self._k9l_item(cb, yb, "조향각", angle_text, "°", side)
-        self._k9l_meter(cb, yb + 134.0, K9L_METER_W, None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG,
+        self._k9l_item(cb, r2, "조향각", angle_text, "°", side)
+        self._k9l_meter(cb, r2 + K9L_METER_DY, K9L_METER_W, None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG,
                         K9L_CHAMPAGNE, True, K9L_CHAMPAGNE)
-        # one vertical hairline between the TPMS car and the numbers
-        self._k9_turzx_metal_v(K9L_COL_A - 34.0, y0 + 40.0, K9_TURZX_TOP_H - 80.0, 110)
+        self._k9_turzx_metal_v(K9L_RULE_X, K9L_HEAD - 18.0, K9L_ROW2 + K9L_SUB_DY - K9L_HEAD + 18.0, 110)
         self._k9l_draw_tpms(state)
 
     def _k9l_draw_tpms(self, state: ClusterUiState) -> None:
-        cx, cy = K9L_TPMS_CX, K9_TURZX_MARGIN + K9_TURZX_TOP_H * 0.5 + 16.0
-        self._k9l_text("TPMS", cx - 82.0, K9_TURZX_MARGIN + 34.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=0.08)
-        self._k9l_text("psi", cx + 78.0, K9_TURZX_MARGIN + 34.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor="right", numeric=True)
-        car_w, car_h = 54.0, 148.0
+        # top view of the car, each tyre number right outside its wheel (label above the number, same side)
+        cx, cy = K9L_TPMS_X, K9L_TPMS_Y
+        car_w, car_h = 64.0, 190.0
         top, left = cy - car_h * 0.5, cx - car_w * 0.5
-        rl.draw_ellipse(int(cx), int(cy + 4), car_w * 1.1, car_h * 0.62, rl.Color(*K9L_ICE, 6))
-        for wx in (left - 5.0, left + car_w - 1.0):
-            for wy in (top + 22.0, top + car_h - 50.0):
-                self._rounded_rect(wx, wy, 6.0, 28.0, 3.0, (10, 14, 24), (*K9L_CHAMPAGNE, 120), 1.0)
-        self._rounded_rect(left, top, car_w, car_h, 22.0, (8, 13, 26), (*K9L_CHAMPAGNE, 200), 1.4)
-        self._rounded_rect(left + 8, top + 30, car_w - 16, 26, 8.0, (20, 34, 60), (*K9L_ICE, 110), 1.0)
-        self._rounded_rect(left + 9, top + car_h - 40, car_w - 18, 18, 6.0, (16, 26, 46), (*K9L_ICE, 80), 1.0)
-        rl.draw_line_ex(rl.Vector2(cx, top + 62), rl.Vector2(cx, top + car_h - 46), 1.0, rl.Color(*K9L_CHAMPAGNE, 70))
+        wheel_w, wheel_h, wheel_in = 6.0, 34.0, 29.0
+        num_x = (left - wheel_w - 12.0, left + car_w + wheel_w + 12.0)
+        self._k9l_text("TPMS", K9L_EDGE, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_HEAD)
+        psi_r = num_x[1] + self._k9l_width("35", 36.0, True)
+        self._k9l_text("psi", psi_r, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor="right", numeric=True, base=K9L_HEAD)
+        rl.draw_ellipse(int(cx), int(cy + 4), car_w * 1.05, car_h * 0.6, rl.Color(*K9L_ICE, 6))
+        wheel_cy = (top + wheel_in + wheel_h * 0.5, top + car_h - wheel_in - wheel_h * 0.5)
+        for wx in (left - wheel_w, left + car_w):
+            for wcy in wheel_cy:
+                self._rounded_rect(wx, wcy - wheel_h * 0.5, wheel_w, wheel_h, 3.0, (10, 14, 24), (*K9L_CHAMPAGNE, 120), 1.0)
+        self._rounded_rect(left, top, car_w, car_h, 26.0, (8, 13, 26), (*K9L_CHAMPAGNE, 200), 1.4)
+        self._rounded_rect(left + 9, top + 40, car_w - 18, 32, 9.0, (20, 34, 60), (*K9L_ICE, 110), 1.0)
+        self._rounded_rect(left + 10, top + car_h - 50, car_w - 20, 22, 7.0, (16, 26, 46), (*K9L_ICE, 80), 1.0)
+        rl.draw_line_ex(rl.Vector2(cx, top + 80), rl.Vector2(cx, top + car_h - 58), 1.0, rl.Color(*K9L_CHAMPAGNE, 70))
         tpms = state.tpms
-        for value, sx, sy, name in ((tpms.fl, -1, -1, "FL"), (tpms.fr, 1, -1, "FR"), (tpms.rl, -1, 1, "RL"), (tpms.rr, 1, 1, "RR")):
-            vx = cx + sx * 68.0
-            vy = cy + sy * 70.0
-            self._k9l_text(name, vx, vy - 36.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor="center", numeric=True, track=0.06)
+        for value, sx, row, name in ((tpms.fl, 0, 0, "FL"), (tpms.fr, 1, 0, "FR"), (tpms.rl, 0, 1, "RL"), (tpms.rr, 1, 1, "RR")):
+            vx, wcy = num_x[sx], wheel_cy[row]
+            anchor = "right" if sx == 0 else "left"
+            self._k9l_text(name, vx, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor=anchor, numeric=True, track=0.06,
+                           base=wcy - 9.0)
             text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
-            self._k9l_text(text, vx, vy + 8.0, 36.0, K9L_VALUE if text != "-" else K9L_DIM, anchor="center", numeric=True)
+            self._k9l_text(text, vx, 0.0, 36.0, K9L_VALUE if text != "-" else K9L_DIM, anchor=anchor, numeric=True,
+                           base=wcy + 32.0)
 
     def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool) -> tuple[float, float, float]:
         """rear view of a car ahead: dark body, metal rim, a thin glowing light bar, soft floor shadow"""
@@ -6959,7 +7028,13 @@ class ClusterUiRenderer:
         if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
             lat = lead[0] * math.tan(math.radians(lead[1]))
             lx, ly, lw = self._k9l_vehicle(lead[0], lat, True)
-            self._k9l_text(f"{lead[0]:.0f}m", lx, ly - 18.0, 22.0, K9L_CHAMPAGNE, anchor="center", numeric=True)
+            tag = f"{lead[0]:.0f}m"
+            if ly - 32.0 >= K9L_PERC_Y + 22.0:
+                self._k9l_text(tag, lx, 0.0, 22.0, K9L_CHAMPAGNE, anchor="center", numeric=True, cap_cy=ly - 18.0)
+            else:  # far lead: beside the car (above it is the lane % / lead line, below it the path band)
+                out = 1.0 if lx >= 960.0 else -1.0
+                self._k9l_text(tag, lx + out * (lw * 0.5 + 8.0), 0.0, 22.0, K9L_CHAMPAGNE,
+                               anchor="left" if out > 0 else "right", numeric=True, cap_cy=ly + lw * 0.29)
         # the scene has no frame: the sides melt into the night field
         fw = int(K9L_SCENE_FADE)
         for yy, hh, cl, cr in getattr(self, "_k9l_side_rows", ()):
@@ -6969,27 +7044,29 @@ class ClusterUiRenderer:
 
     def _k9l_draw_top(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         theme = self._current_theme()
-        cy = K9L_SPEED_CY
+        cy = K9L_TOP_CY
         display_speed_kph = state.display_speed_kph if state.display_speed_kph is not None else state.speed_kph
         speed_value = int(round(display_speed(clamp(display_speed_kph, 0.0, MAX_SPEED_KPH), self.is_metric)))
-        self._k9l_text(str(speed_value), 960.0, cy, K9L_SPEED_SIZE, K9L_VALUE, anchor="center", numeric=True, glow=True)
-        self._k9l_text("km/h", 960.0, cy + 70.0, K9_TURZX_SUB_SIZE, K9L_MUTED, anchor="center", numeric=True, track=0.06)
+        self._k9l_text(str(speed_value), 960.0, 0.0, K9L_SPEED_SIZE, K9L_VALUE, anchor="center", numeric=True, glow=True,
+                       base=K9L_SPEED_BASE)
+        self._k9l_text("km/h", 960.0, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, anchor="center", numeric=True, track=0.06,
+                       base=K9L_KMH_BASE)
         gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
         gear = "D" if gear.isdigit() else gear
         gx = 960.0 - K9L_SIDE_DX
-        self._k9l_text(gear, gx, cy - 2.0, K9L_GEAR_SIZE, K9L_ICE, anchor="center", numeric=True, glow=True)
-        rl.draw_ring(rl.Vector2(gx, cy - 2.0), 33.0, 34.2, 0.0, 360.0, 64, rl.Color(*K9L_CHAMPAGNE, 150))
+        self._k9l_text(gear, gx, 0.0, K9L_GEAR_SIZE, K9L_ICE, anchor="center", numeric=True, glow=True, cap_cy=cy)
+        rl.draw_ring(rl.Vector2(gx, cy), 33.0, 34.2, 0.0, 360.0, 64, rl.Color(*K9L_CHAMPAGNE, 150))
         mx = 960.0 + K9L_SIDE_DX
-        self._k9l_text("MAX", mx, cy - 30.0, 22.0, K9L_LABEL, anchor="center", numeric=True, track=0.10)
+        self._k9l_text("MAX", mx, 0.0, 22.0, K9L_LABEL, anchor="center", numeric=True, track=K9L_TRACK, base=K9L_HEAD)
         cruise = self._cruise_set_speed_text(state) if self._cruise_set_visible(state) else "-"
-        self._k9l_text(cruise, mx, cy + 12.0, 36.0, self._cruise_set_color(state, theme) if cruise != "-" else K9L_DIM,
-                       anchor="center", numeric=True)
+        self._k9l_text(cruise, mx, 0.0, 36.0, self._cruise_set_color(state, theme) if cruise != "-" else K9L_DIM,
+                       anchor="center", numeric=True, base=K9L_SPEED_BASE)
         left_lit, right_lit = signal_lights
         for lit, side in ((left_lit, -1.0), (right_lit, 1.0)):
             if not lit:
                 continue
             ax = 960.0 + side * 96.0
-            ay = cy + 70.0
+            ay = K9L_KMH_BASE - 8.0
             tip = rl.Vector2(ax + side * 24.0, ay)
             a, b = rl.Vector2(ax, ay - 14.0), rl.Vector2(ax, ay + 14.0)
             self._k9_turzx_tri(tip, a, b, rl_color(K9_TURZX_SIGNAL))
@@ -6997,13 +7074,14 @@ class ClusterUiRenderer:
         guidance = getattr(navi, "current", None) if navi is not None else None
         rx = K9L_SCENE_X1 - 16.0
         if guidance is not None and guidance.distance_m > 0:
+            # guidance on the right of the scene under the lead line (the top right belongs to MAX)
             dist = self._format_navi_distance(guidance.distance_m)
-            dw = self._k9l_text(dist, rx, 54.0, 40.0, K9L_VALUE, anchor="right", numeric=True)
-            self._draw_navi_turn_icon(guidance.turn_type, rx - dw - 34.0, 54.0, 40.0)
+            dw = self._k9l_text(dist, rx, 0.0, 40.0, K9L_VALUE, anchor="right", numeric=True, base=K9L_NAVI_BASE)
+            self._draw_navi_turn_icon(guidance.turn_type, rx - dw - 32.0, K9L_NAVI_BASE - 18.0, 40.0)
             road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, 200.0)
-            self._k9l_text(road, rx, 100.0, 24.0, K9L_MUTED, anchor="right")
+            self._k9l_text(road, rx, 0.0, 24.0, K9L_MUTED, anchor="right", base=K9L_NAVI_BASE + 34.0)
         speed = getattr(navi, "speed", None) if navi is not None else None
-        sign_cx, sign_cy, r = K9L_SCENE_X0 + 70.0, 76.0, 36.0
+        sign_cx, sign_cy, r = K9L_SIGN_X, cy, 36.0
         section = speed is not None and speed.section_active and speed.section_speed_limit_kph
         limit = speed.section_speed_limit_kph if section else state.speed_limit_kph
         if limit is not None:
@@ -7015,43 +7093,71 @@ class ClusterUiRenderer:
             text = str(int(round(display_speed(limit, self.is_metric))))
             self._draw_text(text, sign_cx, sign_cy, 36.0 if len(text) <= 2 else 30.0, TEXT, anchor="center")
             if section:
-                self._rounded_rect(sign_cx - 28.0, sign_cy + r + 8.0, 56.0, 26.0, 6.0, (236, 240, 246), None)
-                self._draw_text("구간", sign_cx, sign_cy + r + 21.0, 20.0, (20, 26, 40), anchor="center")
+                # one line under the sign, above the horizon light: 평균속도 | 구간 chip | remaining km
+                chip_cy = sign_cy + r + 21.0
+                self._rounded_rect(sign_cx - 28.0, chip_cy - 13.0, 56.0, 26.0, 6.0, (236, 240, 246), None)
+                self._draw_text("구간", sign_cx, chip_cy, 20.0, (20, 26, 40), anchor="center")
                 if speed.section_remaining_distance_m is not None:
                     d = f"{speed.section_remaining_distance_m / 1000.0:.1f} km"
-                    self._k9l_text(d, sign_cx, sign_cy + r + 54.0, 22.0, K9L_VALUE, anchor="center", numeric=True)
+                    self._k9l_text(d, sign_cx + 38.0, 0.0, 22.0, K9L_VALUE, numeric=True, cap_cy=chip_cy)
                 if speed.section_average_kph is not None:
-                    ax0 = sign_cx + r + 20.0
-                    self._k9l_text("평균속도", ax0, sign_cy - 18.0, 20.0, K9L_LABEL)
-                    self._k9l_text(f"{speed.section_average_kph:.0f}", ax0, sign_cy + 16.0, 34.0, K9L_ICE, numeric=True)
-        # lane % and lead: floating type on the right of the scene, under the guidance
-        py = K9L_PILL_Y
+                    vw = self._k9l_text(f"{speed.section_average_kph:.0f}", sign_cx - 38.0, 0.0, 34.0, K9L_ICE,
+                                        anchor="right", numeric=True, cap_cy=chip_cy)
+                    self._k9l_text("평균속도", sign_cx - 46.0 - vw, 0.0, 20.0, K9L_LABEL, anchor="right", cap_cy=chip_cy)
+        # lane % (left) and lead (right) beside the far road, mirrored about the centre line
+        py = K9L_PERC_Y
         if self._lane_confidence_label_visible(state):
             lc = getattr(state, "left_lane_line_confidence", None)
             rc = getattr(state, "right_lane_line_confidence", None)
             known = [c for c in (lc, rc) if c is not None and math.isfinite(c)]
             dot = (120, 130, 150) if not known else (K9_TURZX_GOOD if min(known) >= 0.5 else (255, 190, 70))
             text = f"차선 {self._lane_confidence_text(lc)} · {self._lane_confidence_text(rc)}"
-            tw = self._k9l_text(text, rx, py, 26.0, K9L_VALUE, anchor="right")
-            rl.draw_circle_v(rl.Vector2(rx - tw - 16.0, py), 6.0, rl_color(dot))
+            tx = 960.0 - K9L_PERC_GAP
+            tw = self._k9l_text(text, tx, 0.0, 26.0, K9L_VALUE, anchor="right", cap_cy=py)
+            rl.draw_circle_v(rl.Vector2(tx - tw - 16.0, py), 6.0, rl_color(dot))
         lead = self.k9_turzx_lead(state)
         if lead is not None:
-            self._k9l_text(f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°", rx, py + 42.0, 26.0, K9L_VALUE, anchor="right")
+            self._k9l_text(f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°", 960.0 + K9L_PERC_GAP, 0.0, 26.0, K9L_VALUE,
+                           cap_cy=py)
+
+    @staticmethod
+    def _k9l_pairs(text: str, first_space: bool = False) -> list[tuple[str, str]]:
+        """'조향비 12.90  지연설정 0.20초' -> [('조향비', '12.90'), ('지연설정', '0.20초')] (text unchanged, only laid out)"""
+        out = []
+        for part in (p.strip() for p in text.split("  ")):
+            if part:
+                name, _, value = part.partition(" ") if first_space else part.rpartition(" ")
+                out.append((name, value) if name or value else (part, ""))
+        return out
+
+    def _k9l_list_row(self, text: str, base: float, size: float, first_space: bool = False) -> None:
+        # name left / value right, two columns shared by every row of the right list
+        x0, x1 = K9L_RIGHT_X, K9L_RIGHT_X1
+        pairs = self._k9l_pairs(text, first_space)
+        if len(pairs) == 1:
+            cols = ((x0, x1),)
+        elif len(pairs) == 2:
+            cols = ((x0, x0 + K9L_RIGHT_C1), (x0 + K9L_RIGHT_C2, x1))
+        else:
+            self._k9l_text(text, x0, 0.0, size, K9L_LAT, base=base)
+            return
+        for (name, value), (nx, vx) in zip(pairs, cols, strict=True):
+            if name:
+                self._k9l_text(name, nx, 0.0, size, K9L_MUTED, base=base)
+            if value:
+                dim = value.strip("-") == ""
+                self._k9l_text(value, vx, 0.0, size, K9L_DIM if dim else K9L_VALUE, anchor="right", base=base,
+                               glow=size >= K9_TURZX_LANE_TEXT_SIZE and not dim)
 
     def _k9l_draw_right(self, state: ClusterUiState) -> None:
-        x0, y0 = K9L_RIGHT_X, K9_TURZX_MARGIN
-        self._k9_turzx_metal_v(x0 - 34.0, y0 + 40.0, K9_TURZX_TOP_H - 80.0, 110)
-        self._k9l_text("차선 위치", x0, y0 + 30.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=0.04)
-        lane_texts = (
-            (lane_offset_text(getattr(state, "k9_lane_offset_m", None)), K9L_CHAMPAGNE),
-            (lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None)),
-             K9L_ICE),
-        )
-        for i, (text, color) in enumerate(lane_texts):
-            self._k9l_text(text, x0 + i * 250.0, y0 + 88.0, K9_TURZX_LANE_TEXT_SIZE, color, glow=True)
-        split_y = y0 + 136.0
-        self._k9l_hair(x0, split_y, 520.0, 110)
-        self._k9l_text("조향 학습", x0, split_y + 30.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=0.04)
+        x0, x1 = K9L_RIGHT_X, K9L_RIGHT_X1
+        self._k9l_text("차선 위치", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_HEAD)
+        self._k9l_list_row(lane_offset_text(getattr(state, "k9_lane_offset_m", None)), K9L_LANE_BASES[0],
+                           K9_TURZX_LANE_TEXT_SIZE, first_space=True)
+        self._k9l_list_row(lane_gap_text(getattr(state, "k9_lane_gap_left_m", None), getattr(state, "k9_lane_gap_right_m", None)),
+                           K9L_LANE_BASES[1], K9_TURZX_LANE_TEXT_SIZE)
+        self._k9l_hair(x0, K9L_RIGHT_HAIR, x1 - x0, 110)
+        self._k9l_text("조향 학습", x0, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_LAT_HEAD)
         lat_texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
             delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
@@ -7061,11 +7167,10 @@ class ClusterUiRenderer:
                                 getattr(state, "torque_learn_friction", None)),
             learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
-        step = K9L_LAT_STEP
         for i, text in enumerate(lat_texts):
             if text is None:
                 continue
-            self._k9l_text(text, x0, split_y + 76.0 + step * i, K9_TURZX_LAT_TEXT_SIZE, K9L_LAT)
+            self._k9l_list_row(text, K9L_LAT_BASE0 + K9L_LAT_PITCH * i, K9_TURZX_LAT_TEXT_SIZE)
 
     def _k9l_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         tex = self._k9l_background()
