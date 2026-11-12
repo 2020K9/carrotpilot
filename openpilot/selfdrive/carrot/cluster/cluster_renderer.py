@@ -130,6 +130,11 @@ PARK_K9_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "k9" / "k9_cluster.obj"
 PARK_K9_SCALE_M = (1.915, 5.12, 1.49)  # K9 RJ width x length x height
 # K9 parked screen photo (대감님 11/11 20:37): car cut out of his mock-up, plate blanked; drawn instead of the model
 K9_PARK_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_park_car.png"
+# 대감님 11/12 23:13/23:14: K9 R screen = top view of the repository K9 model (make_k9_reverse_sprite.py from
+# assets/models/k9/k9_cluster.obj, 5120 x 1915 mm, PAD m margin) on the K9 P screen colours.
+K9_REVERSE_CAR_SPRITE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_car.png"
+K9_REVERSE_CAR_SIZE_M = (5.12, 1.915)
+K9_REVERSE_CAR_PAD_M = 0.20
 # 대감님 11/12 04:34 "화면 너무 파란색인데 좀 더 어둡게 해봐": the blue background and the floor layer under the car get
 # the same darkening (brightness x DIM, blue pulled part of the way towards grey) so their seam does not show;
 # bright floor pixels (the rim light) are spared on a ramp so the rim stays visible. Car photo, text, numbers unchanged.
@@ -3081,6 +3086,8 @@ class ClusterUiRenderer:
             rl.unload_texture(self._ev6_reverse_sprite[0])
         self._ev6_reverse_sprite_key = key
         self._ev6_reverse_sprite = False  # Failure falls back to the live 3D model until the next context/model.
+        if name == "k9" and K9_REVERSE_CAR_SPRITE_PATH.is_file() and self._k9_prepare_reverse_sprite():
+            return
         target = image = texture = None
         try:
             scale = EV6_REVERSE_SPRITE_SUPERSAMPLE
@@ -3127,10 +3134,46 @@ class ClusterUiRenderer:
             if target is not None:
                 rl.unload_render_texture(target)
 
+    @staticmethod
+    def _k9_reverse_car_rect(camera, width: int, height: int) -> tuple[float, float, float, float]:
+        """Screen rect (px) of the K9 R sprite: body rear bumper on EV6_REVERSE_REAR_BUMPER_Y_M (path start)."""
+        length, body_w = K9_REVERSE_CAR_SIZE_M
+        pad = K9_REVERSE_CAR_PAD_M
+        xs, ys = [], []
+        for x in (-body_w / 2 - pad, body_w / 2 + pad):
+            for y in (EV6_REVERSE_REAR_BUMPER_Y_M - pad, EV6_REVERSE_REAR_BUMPER_Y_M + length + pad):
+                point = rl.get_world_to_screen_ex(rl.Vector3(x, y, 0.0), camera, width, height)
+                xs.append(point.x)
+                ys.append(point.y)
+        return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+    def _k9_prepare_reverse_sprite(self) -> bool:
+        texture = None
+        try:
+            texture = rl.load_texture(str(K9_REVERSE_CAR_SPRITE_PATH))
+            if texture.id == 0:
+                return False
+            rl.gen_texture_mipmaps(texture)
+            rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+            rect = self._k9_reverse_car_rect(self._ev6_reverse_camera(), int(self.width), int(self.height))
+            self._ev6_reverse_sprite = (texture, rect)
+            texture = None
+            return True
+        except Exception as exc:
+            print(f"K9 reverse car image unavailable, using the 3D model: {exc}", flush=True)
+            return False
+        finally:
+            if texture is not None:
+                rl.unload_texture(texture)
+
     def _ev6_draw_reverse_screen(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
         dark = theme.is_dark
         colors = EV6_PARK_COLORS_DARK if dark else EV6_PARK_COLORS_LIGHT
+        path_accent = colors["accent"]  # reverse path colour stays the same for every car
+        k9_look = dark and ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9"
+        if k9_look:
+            colors = K9_PARK_COLORS_DARK  # K9 P and R are one pair: same blue background, text and lines
         rl.clear_background(rl_color(colors["bg_bot"]))
         sx = self.width / DESIGN_WIDTH
         sy = self.height / DESIGN_HEIGHT
@@ -3138,12 +3181,21 @@ class ClusterUiRenderer:
         rl.rl_scalef(sx, sy, 1.0)
         rl.draw_rectangle_gradient_v(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT, rl_color(colors["bg_top"]), rl_color(colors["bg_bot"]))
         rl.rl_pop_matrix()
+        if k9_look:
+            # floor under the car like the P stage: soft lighter pool and a thin rim, below path and car
+            fx, fy, fw, fh = self._k9_reverse_car_rect(self._ev6_reverse_camera(), int(self.width), int(self.height))
+            cx, cy = int(fx + fw / 2), int(fy + fh / 2)
+            pool = k9_park_darken((70, 120, 210))
+            for i in range(10):
+                k = 1.0 - i / 10.0
+                rl.draw_ellipse(cx, cy, fw * (0.34 + 0.20 * k), fh * (0.56 + 0.34 * k), rl.Color(*pool, 18))
+            rl.draw_ellipse_lines(cx, cy, fw * 0.55, fh * 0.92, rl.Color(*K9_PARK_COLORS_DARK["accent"], 60))
 
         steering_deg = float(getattr(state, "steering_angle_deg", None) or 0.0)
         left_bsd = bool(getattr(state, "left_blindspot", False))
         right_bsd = bool(getattr(state, "right_blindspot", False))
         points = self.ev6_reverse_path(steering_deg, str(getattr(state, "car_fingerprint", "") or ""))
-        accent = colors["accent"]
+        accent = path_accent
         warn = EV6_REVERSE_WARN
 
         camera = self._ev6_reverse_camera()
