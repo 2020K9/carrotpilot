@@ -246,6 +246,12 @@ K9T_LABEL = 24.0
 K9T_UNIT = K9T_LABEL
 K9T_VALUE = 38.0
 K9T_STACK_GAP = 8.0          # item name baseline -> value cap top
+# 11/13 01:29 list (lane position + steering learn): a name sits closer to its own value than to the next item
+# (was 12 px name -> value box vs 7 px value -> next name), the hairline shares one gap
+K9T_LIST_STACK_GAP = 4.0
+K9T_LIST_HAIR_GAPS = 1.4     # the hairline gap in list gaps (other gaps 1 each)
+# card style: every gap of the left list >= 10 px (name -> its value too); the hairline gets one plain gap
+K9T_LIST_STACK_GAP_CARD, K9T_LIST_HAIR_GAPS_CARD = 7.0, 1.0
 K9T_HALF_GAP = 0.0           # two items on one line: halves meet at the middle (name of the 2nd item 41 px after the 1st unit slot)
 K9T_VALUE_GAP = 16.0         # two values of one item
 K9T_UNIT_GAP = 4.0
@@ -336,7 +342,7 @@ K9C_SWAP_DX = K9_TURZX_RIGHT_X - K9_TURZX_LEFT_X   # card 1 (8..488) <-> card 3 
 K9L_SWAP_LEFT_DX = DESIGN_WIDTH - K9L_EDGE - K9L_CAR_W - K9L_EDGE  # 1436: car block 32..452 -> 1468..1888
 K9L_SWAP_RIGHT_DX = -1304.0  # lane / steer-learn list 1336..1776 -> 32..472
 K9C_IND_Y, K9L_IND_Y = 262.0, 182.0   # automatic indicator box (was y 124 = over km/h / the lane pill)
-K9L_PERC_Y_IND = 262.0                # lane % / lead row while the indicator box sits on its usual row
+K9L_PERC_Y_IND = 274.0                # lane % / lead row while the indicator box sits on its usual row
 K9L_NAVI_BASE2 = 336.0                # turn-by-turn distance baseline (scene, right of the road)
 K9L_CAM_X, K9L_CAM_Y, K9L_CAM_W = K9L_SCENE_X0 + 16.0, 292.0, 244.0   # speed camera block (scene, left of the road)
 K9L_LANE_Y = 412.0                    # navi lane strip top (scene, left of my car)
@@ -362,6 +368,12 @@ EGO_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "k9_ego_car.png"
 K9_NAVDY_DIR = CLUSTER_DIR / "assets" / "images" / "navdy"
 K9_NAVDY_YAW_STEP, K9_NAVDY_MID = 2.0, 12
 K9_NAVDY_MIN_W_M = 1.9                     # same 18 px floor as the old box (w = max(18, 1.9 * px/m))
+# 11/13 01:29 screen only (inputs / control untouched): radar L1 and modelV2 M1..M3 report the same car, so cars closer
+# than 2 m sideways (99 % of the same-car spread + margin) and max(6 m, 25 % of the range) lengthwise are drawn once, L1 > radar > model.
+# Measured on 12 K9 rlogs of 11/12 (720 s, 1238 reports): model vs L1 |d forward| 95 % 5.8 m (up to 12 m at 40-52 m),
+# |d lateral| 99 % 1.76 m while |d forward| < 8 m; real cars in the next lane sit 3.3 m off (kept).
+K9_ROAD_SAME_LAT_M, K9_ROAD_SAME_DF_M, K9_ROAD_SAME_DF_K = 2.0, 6.0, 0.25
+K9_ROAD_EGO_OVERLAP_PX = 6.0               # a car right ahead keeps its rear above the ego roof (only this much hidden)
 # Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
 # the ego vehicle only. Leads/cut-ins keep the shared OBJ model.
 EGO_CAR_ICON_MAX_ROLL_DEG = 12.0
@@ -6207,6 +6219,50 @@ class ClusterUiRenderer:
         return None
 
     @staticmethod
+    def k9_road_others(state: ClusterUiState) -> list:
+        """cars to draw besides the lead (L1), one per real car: reports of the same car merged, L1 > radar > model"""
+        vs = [v for v in (getattr(state, "detected_vehicles", ()) or ()) if v.longitudinal_m > 0.0]
+
+        def rank(v) -> int:
+            if v.primary and str(v.label).upper() == "L1":
+                return 0
+            return 1 if "radar" in str(v.source).lower() else 2
+        kept: list = []
+        for v in sorted(vs, key=lambda v: (rank(v), v.longitudinal_m)):
+            if not any(abs(v.lateral_m - k.lateral_m) < K9_ROAD_SAME_LAT_M and abs(v.longitudinal_m - k.longitudinal_m) <
+                       max(K9_ROAD_SAME_DF_M, K9_ROAD_SAME_DF_K * max(v.longitudinal_m, k.longitudinal_m)) for k in kept):
+                kept.append(v)
+        return [v for v in kept if rank(v) > 0 and v.longitudinal_m <= K9_TURZX_ROAD_MAX_M]
+
+    def k9_road_heading_deg(self, state: ClusterUiState, forward_m: float) -> float:
+        """direction of the road (mean of the lane lines, right positive) at that distance, 0 without lane lines"""
+        hs = []
+        for lane in getattr(state, "lanes", ()) or ():
+            pts = self._k9_turzx_points(lane.model_points)
+            a = self._k9_turzx_lat_at(pts, forward_m - 2.0)
+            b = self._k9_turzx_lat_at(pts, forward_m + 2.0)
+            if a is not None and b is not None:
+                hs.append(math.degrees(math.atan2(b - a, 4.0)))
+        return sum(hs) / len(hs) if hs else 0.0
+
+    def k9_road_clear_of_ego(self, forward_m: float, lateral_m: float) -> float:
+        """drawn distance of a car: a car in front of the ego car is moved up until its rear clears the ego roof"""
+        geo = getattr(self, "_k9_geo", K9L_ROAD_GEO)
+        hy, ego_y, _, ego_w = geo
+        if getattr(self, "_ego_car_texture", None) is None and not getattr(self, "_k9_turzx_ego_load_tried", False):
+            self._k9_turzx_ego_load_tried = True
+            self._ego_car_texture = self._load_icon_texture(EGO_CAR_ICON_PATH, "K9 ego car")
+        tex = getattr(self, "_ego_car_texture", None)
+        ego_h = 38.0 if tex is None else ego_w * tex.height / max(1, tex.width)
+        x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
+        half = max(18.0, 1.9 * scale) * 0.5
+        cx = getattr(self, "_k9_cx", K9C_CX)
+        target = ego_y - ego_h + K9_ROAD_EGO_OVERLAP_PX
+        if abs(x - cx) >= ego_w * 0.5 + half or y <= target or target <= hy + 1.0:
+            return forward_m
+        return max(forward_m, (ego_y - hy) * K9_TURZX_ROAD_Z0 / (target - hy) - K9_TURZX_ROAD_Z0)
+
+    @staticmethod
     def _k9_turzx_shadow(x: float, y: float, w: float, h: float, radius: float) -> None:
         # soft shadow as rings outside the card only (no full-card fills: keeps the frame time)
         roundness = max(0.0, min(1.0, radius / max(1.0, min(w, h))))
@@ -6374,8 +6430,10 @@ class ClusterUiRenderer:
         head = K9L_LABEL if lux else K9_TURZX_MUTED
         val = K9L_VALUE if lux else K9_TURZX_TEXT
         ca, cb, cv = self._k9t_cap(lux, "title"), self._k9t_cap(lux, "label"), self._k9t_cap(lux, "value")
-        stack = cb + K9T_STACK_GAP + cv
-        g = (bottom - top - 2 * ca - 2 * cv - 5 * stack) / 9.0
+        sgap = K9T_LIST_STACK_GAP if lux else K9T_LIST_STACK_GAP_CARD
+        hgaps = K9T_LIST_HAIR_GAPS if lux else K9T_LIST_HAIR_GAPS_CARD
+        stack = cb + sgap + cv
+        g = (bottom - top - 2 * ca - 2 * cv - 5 * stack) / (7.0 + hgaps)
         slot = self._k9t_slot(lux, K9T_LIST_UNITS)
         mid = (x0 + x1) * 0.5
         halves = ((x0, mid - K9T_HALF_GAP * 0.5), (mid + K9T_HALF_GAP * 0.5, x1))
@@ -6397,16 +6455,16 @@ class ClusterUiRenderer:
                 continue
             pairs = lane[i]
             if len(pairs) == 1 and not pairs[0][0]:
-                self._k9t(lux, "value", pairs[0][1], x0, b, dim)
+                self._k9t(lux, "value", pairs[0][1], x0, b, muted if pairs[0][1] in ("대기", "-", "--") else dim)
                 continue
             spans = [(x0, x1)] if len(pairs) == 1 else halves
             for (name, value), (a0, a1) in zip(pairs, spans, strict=False):
-                vc = dim if value in ("대기", "-", "--") else colors[i]
+                vc = muted if value in ("대기", "-", "--") else colors[i]  # 01:29 readable no-value (label grey)
                 self._k9t(lux, "label", name, a0, b, muted)
                 self._k9t_value(lux, a1, b, value, vc, slot)
-        hair = b + g
+        hair = b + g * hgaps * 0.5
         self._k9l_hair(x0, hair, x1 - x0, 110) if lux else self._k9_turzx_metal_h(x0, hair, x1 - x0, 130)
-        b = hair + g + ca
+        b = hair + g * hgaps * 0.5 + ca
         title("조향 학습", b)
         rows: list[list[tuple[str, list[str]]]] = []
         for name, values, second in self.k9_lat_lines(state):
@@ -6416,14 +6474,14 @@ class ClusterUiRenderer:
                 rows.append([(name, values)])
         for row in rows:
             lb = b + g + cb
-            vb = lb + K9T_STACK_GAP + cv
+            vb = lb + sgap + cv
             b = vb
             spans = [(x0, x1)] if len(row) == 1 else halves
             for (name, values), (a0, a1) in zip(row, spans, strict=False):
                 self._k9t(lux, "label", name, a0, lb, muted)
                 vx = a1
                 for k, value in enumerate(reversed(values)):
-                    vc = dim if value.strip("-") == "" or value == "대기" else val
+                    vc = muted if value.strip("-") == "" or value == "대기" else val
                     if k == 0:
                         vx = self._k9t_value(lux, vx, vb, value, vc, slot)
                     else:
@@ -6476,9 +6534,15 @@ class ClusterUiRenderer:
             vb = lb + K9T_STACK_GAP + cv
             b = vb
             self._k9t(lux, "label", name, x0, lb, muted)
-            if sub:
+            # 01:29 no meter on this row: the sub item fills the empty left of the value line (balance with the
+            # meter rows); only a trip of ~1000 km with a 3-digit average leaves no room, then it stays on the name line
+            num = self.k9t_split_unit(value)[0]
+            if sub and bar is None and (x0 + self._k9t_w(lux, "label", sub) + 12.0 <=
+                                        x1 - slot - self._k9t_w(lux, "value", num)):
+                self._k9t(lux, "label", sub, x0, vb, dim)
+            elif sub:
                 self._k9t(lux, "label", sub, x1, lb, dim, anchor="right")
-            self._k9t_value(lux, x1, vb, value, val if value != "-" else dim, slot)
+            self._k9t_value(lux, x1, vb, value, val if value != "-" else muted, slot)
             if bar is not None:
                 meter(x0, vb - cv * 0.5, mx1 - x0, bar[0], bar[1])
 
@@ -6675,18 +6739,20 @@ class ClusterUiRenderer:
         self._k9_navdy_cache = None
 
     @staticmethod
-    def k9_navdy_index(forward_m: float, lateral_m: float) -> int:
-        """sprite number of a car on the road: its bearing from the road camera (forward + Z0), 2 deg steps"""
-        yaw = math.degrees(math.atan2(lateral_m, max(1.0, forward_m + K9_TURZX_ROAD_Z0)))
+    def k9_navdy_index(forward_m: float, lateral_m: float, heading_deg: float = 0.0) -> int:
+        """sprite number of a car on the road: its bearing from the road camera (forward + Z0) minus the road
+        direction there (a car on a bend turns with the road), 2 deg steps"""
+        yaw = math.degrees(math.atan2(lateral_m, max(1.0, forward_m + K9_TURZX_ROAD_Z0))) - heading_deg
         return int(clamp(round(yaw / K9_NAVDY_YAW_STEP), -K9_NAVDY_MID, K9_NAVDY_MID)) + K9_NAVDY_MID
 
-    def _k9_navdy_vehicle(self, forward_m: float, lateral_m: float, tint) -> tuple[float, float, float] | None:
+    def _k9_navdy_vehicle(self, forward_m: float, lateral_m: float, tint,
+                          heading_deg: float = 0.0) -> tuple[float, float, float] | None:
         """grey Navdy car times the screen colour, rear bottom centre on the road point. (centre x, top y, width)"""
         sprites = self._k9_navdy_sprites()
         if not sprites:
             return None
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
-        tex, w, h, ax, ay, ppm = sprites[self.k9_navdy_index(forward_m, lateral_m)]
+        tex, w, h, ax, ay, ppm = sprites[self.k9_navdy_index(forward_m, lateral_m, heading_deg)]
         k = max(18.0 / K9_NAVDY_MIN_W_M, scale) / ppm  # sprite px -> screen px (meta px per m vs road px per m)
         dw, dh = w * k, h * k
         rl.draw_ellipse(int(x), int(y), dw * 0.40, max(3.0, dh * 0.10), rl.Color(0, 0, 0, 90))
@@ -6695,8 +6761,9 @@ class ClusterUiRenderer:
                             rl.Vector2(0, 0), 0.0, rl.Color(*tint[:3], 255))
         return left + dw * 0.5, top, dw
 
-    def _k9_turzx_draw_vehicle(self, forward_m: float, lateral_m: float, fill, edge) -> tuple[float, float, float]:
-        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, fill if fill == K9_TURZX_LEAD else edge)
+    def _k9_turzx_draw_vehicle(self, forward_m: float, lateral_m: float, fill, edge,
+                               heading_deg: float = 0.0) -> tuple[float, float, float]:
+        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, fill if fill == K9_TURZX_LEAD else edge, heading_deg)
         if drawn is not None:
             return drawn
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
@@ -6821,18 +6888,19 @@ class ClusterUiRenderer:
         rl.draw_rectangle_gradient_v(int(x0), int(hy - 2), int(w), 110,
                                      rl.Color(*K9_TURZX_MID_TOP, 200), rl.Color(*K9_TURZX_MID_TOP, 0))
         # other cars (dim), then the lead (pink + yellow distance tag)
-        others = [v for v in (getattr(state, "detected_vehicles", ()) or ())
-                  if 0.0 < v.longitudinal_m <= K9_TURZX_ROAD_MAX_M and not (v.primary and str(v.label).upper() == "L1")]
-        for v in sorted(others, key=lambda v: -v.longitudinal_m):
-            self._k9_turzx_draw_vehicle(v.longitudinal_m, v.lateral_m, (46, 66, 110), (96, 130, 186))
+        # 11/13 01:29: one car per real car, turned with the road, never under the ego car (screen only)
+        for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
+            f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
+            self._k9_turzx_draw_vehicle(f, v.lateral_m, (46, 66, 110), (96, 130, 186), self.k9_road_heading_deg(state, f))
         if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
             lat = lead[0] * math.tan(math.radians(lead[1]))
-            lx, ly, lw = self._k9_turzx_draw_vehicle(lead[0], lat, K9_TURZX_LEAD, (255, 236, 196))
+            f = self.k9_road_clear_of_ego(lead[0], lat)
+            lx, ly, lw = self._k9_turzx_draw_vehicle(f, lat, K9_TURZX_LEAD, (255, 236, 196), self.k9_road_heading_deg(state, f))
             tag = f"{lead[0]:.0f}m"
             tw, _ = self._measure_text(tag, 22.0, max(1.0, 22.0 * 0.02), self._font_for_text(tag))
             tbt = getattr(self, "_k9c_tbt_rect", None)  # 22:41 taller TBT card: a far lead tag would hide under it
             if tbt is not None and lx + tw * 0.5 + 8.0 > tbt[0] and ly - 32.0 < tbt[3]:
-                ly = self.k9_turzx_road_project(lead[0], lat)[1] + 36.0  # under the car instead
+                ly = self.k9_turzx_road_project(f, lat)[1] + 36.0  # under the car instead
             self._rounded_rect(lx - tw * 0.5 - 7.0, ly - 31.0, tw + 16.0, 26.0, 8.0, (0, 0, 0, 90), None)
             self._rounded_rect(lx - tw * 0.5 - 8.0, ly - 32.0, tw + 16.0, 26.0, 8.0, K9_TURZX_TAG, None)
             self._draw_text(tag, lx, ly - 19.0, 22.0, (34, 26, 12), anchor="center")
@@ -6998,7 +7066,7 @@ class ClusterUiRenderer:
         # 11/13 00:47: K9T tiers (same as the car card), steering learn as name-over-value items, two per line
         x0, y0, h, w = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9C_LANE_W
         self._k9_turzx_glass(x0, y0, w, h)
-        self._k9t_list(state, False, x0 + 20.0, x0 + w - 20.0, y0 + 12.0, y0 + h - 12.0)
+        self._k9t_list(state, False, x0 + 20.0, x0 + w - 20.0, y0 + 12.0, y0 + h - 8.0)
 
     def _k9_turzx_draw_alert(self, alert: ClusterAlert | None) -> None:
         # alert as a band at the top of the middle panel (was centred on the 1920 screen over the left panel)
@@ -7413,9 +7481,10 @@ class ClusterUiRenderer:
             self._k9l_text(name, nx, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor=anchor, numeric=True, track=0.06,
                            base=wcy + 13.0 * K9T_VALUE / 36.0)
 
-    def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool) -> tuple[float, float, float]:
+    def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool,
+                     heading_deg: float = 0.0) -> tuple[float, float, float]:
         """rear view of a car ahead: dark body, metal rim, a thin glowing light bar, soft floor shadow"""
-        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, K9L_CHAMPAGNE if lead else (130, 150, 186))
+        drawn = self._k9_navdy_vehicle(forward_m, lateral_m, K9L_CHAMPAGNE if lead else (130, 150, 186), heading_deg)
         if drawn is not None:
             return drawn
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
@@ -7500,13 +7569,13 @@ class ClusterUiRenderer:
         # perspective fog: the far road dissolves into the horizon light
         rl.draw_rectangle_gradient_v(int(sx0), int(hy + 1), int(sx1 - sx0), 90, rl.Color(*K9L_FOG, 150),
                                      rl.Color(*K9L_FOG, 0))
-        others = [v for v in (getattr(state, "detected_vehicles", ()) or ())
-                  if 0.0 < v.longitudinal_m <= K9_TURZX_ROAD_MAX_M and not (v.primary and str(v.label).upper() == "L1")]
-        for v in sorted(others, key=lambda v: -v.longitudinal_m):
-            self._k9l_vehicle(v.longitudinal_m, v.lateral_m, False)
+        for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
+            f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
+            self._k9l_vehicle(f, v.lateral_m, False, self.k9_road_heading_deg(state, f))
         if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
             lat = lead[0] * math.tan(math.radians(lead[1]))
-            lx, ly, lw = self._k9l_vehicle(lead[0], lat, True)
+            f = self.k9_road_clear_of_ego(lead[0], lat)
+            lx, ly, lw = self._k9l_vehicle(f, lat, True, self.k9_road_heading_deg(state, f))
             tag = f"{lead[0]:.0f}m"
             tw = self._k9l_width(tag, 22.0, True)
             keep_out = self._k9l_perc_rects(state)
@@ -7688,7 +7757,7 @@ class ClusterUiRenderer:
 
     def _k9l_draw_right(self, state: ClusterUiState) -> None:
         # 11/13 00:47: 차선 위치 + 조향 학습 in the K9T tiers (same as the car block), 344 px
-        self._k9t_list(state, True, K9L_RIGHT_X, K9L_RIGHT_X1, 8.0, 470.0)
+        self._k9t_list(state, True, K9L_RIGHT_X, K9L_RIGHT_X1, 8.0, 462.0)  # 01:29 last line >= 14 px over the edge
 
     def _k9l_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         tex = self._k9l_background()
