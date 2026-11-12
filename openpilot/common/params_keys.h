@@ -283,6 +283,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9OneLaneHold", {PERSISTENT, INT, "0"}},  // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9LaneCenter", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9LaneAssist", {PERSISTENT, INT, "0"}},
+    {"K9WallLane", {PERSISTENT, INT, "0"}},  // 실험중 맨 위: 차선 흐릴 때 방호벽을 차선으로 (k9_wall_lane.py)
     {"K9LaneCenterGain", {PERSISTENT, INT, "100"}},
     {"K9LaneVer", {PERSISTENT, INT}},  // K9LaneAssist menu merge marker (one-time migration, k9_lane.py)
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},

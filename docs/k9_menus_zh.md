@@ -4,6 +4,10 @@
 
 Since 2026-10-24 the web settings screen shows short K9 menu texts. This file keeps the previous full Chinese web text (as of 259006ed); the Korean and English details are in `docs/user/ko/settings.md` and `docs/user/en/settings.md`.
 
+## 把墙当车道线（试验） (`K9WallLane`)
+
+试验中第一项。0 关闭（默认）：保持原样。1 开启：两侧车道线模糊（1秒平均概率低于0.50）且护栏/防护墙（路边）稳定1秒以上时，把墙当作该侧车道线：车道中心距墙2.41米（05:13日志，车道线清晰时墙到车中心的中位数），另一侧线相隔一个车道宽，以车道模式（lane_planner）路径行驶。`UseLaneLineSpeed`、`K9LaneAssist`为0时也工作。路径不进入墙2.0米以内。车道线清晰、墙丢失、转向灯、变道、反向转动方向盘或低于30 km/h时1秒内平顺恢复。未经实车确认。
+
 ## K9 停车方式选择（试验） (`K9StopMode`)
 
 **2026-11-08当前菜单：0、1、2不变；新3号仅把2号的附加差距补偿减半（50%），保留1 km/h以下渐增制动及安全条件，不是总制动力减半。默认0，新3号须自行选择。标记12之前先将旧标记11的3→1、4→2。以下为历史记录。**
