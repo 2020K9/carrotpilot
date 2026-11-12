@@ -168,13 +168,19 @@ K9_DTE_FULL_KM = 600.0  # carState.fuelGauge = CF_Clu_DTE / 600 km for the K9 (s
 # removed; the three cards run down to the bottom instead. Only values the K9 actually sends are drawn.
 K9_TURZX_MARGIN = 8.0
 K9_TURZX_TOP_H = 464.0                       # cards y 8 .. 472 (bottom climate bar removed 19:55)
-K9_TURZX_LEFT_X, K9_TURZX_LEFT_W = 8.0, 656.0
+K9_TURZX_LEFT_X = 8.0
+# 대감님 11/12 23:44 "왼쪽오른쪽칸 줄일수잇으면 더줄이고 가운데 비중 늘려": each side card is its longest text + 20 px
+# padding. Car card (screen right) 656 -> 480: two columns (184 px meters | "999.9 km" 228 px) x three rows, TPMS in the
+# third row; lane card (screen left) 464 -> 460 (longest line "학습 조향비 13.98  학습지연 0.20초" 420 px). Middle 768 -> 948.
+K9_TURZX_LEFT_W = 480.0                      # car card width (drawn at x 8, moved to the right by K9C_SWAP_DX)
 # 대감님 11/12 23:12 "왼쪽칸 좀 줄여도 되잖아, 메인은 가운데인데": the left card (lane position / steering learn) 656 -> 464,
 # the middle road card takes the 192 px (576 -> 768), the right card stays. Road / ego car centred in the middle card.
-K9_TURZX_MID_X, K9_TURZX_MID_W = 480.0, 768.0
-K9C_CX = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5   # 864: card road / ego car centre
-K9C_LANE_W = 464.0                           # card 1 (lane position / steering learn): 8 .. 472
-K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1256.0, 656.0
+K9_TURZX_MID_X, K9_TURZX_MID_W = 476.0, 948.0
+K9C_CX = K9_TURZX_MID_X + K9_TURZX_MID_W * 0.5   # 950: card road / ego car centre (23:12 864)
+K9C_LANE_W = 460.0                           # card 1 (lane position / steering learn): 8 .. 468
+K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1432.0, 480.0
+K9C_COL_B = 232.0                            # car card column 2 x (from the card x): 20 + 184 meter + 28
+K9C_ROW_Y = (8.0, 160.0, 306.0)              # car card rows (from the card top): range | trip, accel | angle, TPMS
 # middle panel road (대감님 18:30 "가운데 꺼 디자인이 다른데?"): flat 2D perspective road drawn from modelV2 lane lines /
 # road edges / plan path and leadOne, no 3D world, no car photo. screen y = horizon + K_Y / (forward + Z0), x = cx + K_X * lateral / (forward + Z0)
 K9_TURZX_ROAD_HORIZON_Y = 170.0   # 21:44 redesign: speed floats above the horizon
@@ -236,13 +242,15 @@ K9L_SPEED_SIZE = 100.0   # x1.25 ink = 78 px digits (old speed 66 -> 51 px)
 K9L_SPEED_CY = 74.0
 K9L_GEAR_SIZE = 40.0     # old 36
 K9L_SIDE_DX = 140.0
-K9L_SCENE_X0, K9L_SCENE_X1 = 496.0, 1310.0   # 23:12: was 610 (left list 32..584 -> 32..472)
-K9L_CX = (K9L_SCENE_X0 + K9L_SCENE_X1) * 0.5    # 903: scene road / speed / ego car centre (was 960)
+# 23:44: scene 496..1310 -> 496..1444 (814 -> 948), the car block on the right 580 -> 420 (1468..1888)
+K9L_SCENE_X0, K9L_SCENE_X1 = 496.0, 1444.0   # 23:12: was 610 (left list 32..584 -> 32..472)
+K9L_CX = (K9L_SCENE_X0 + K9L_SCENE_X1) * 0.5    # 970: scene road / speed / ego car centre (23:12 903)
 K9L_LIST_W = 440.0                          # left list width (lane position / steering learn), was 552
 K9L_LAT_V1, K9L_LAT_N2, K9L_LAT_V2 = 222.0, 242.0, 440.0  # steering-learn row: value 1 right edge, name 2, value 2 right
 K9L_LANE_GAP, K9L_PAIR_GAP = 12.0, 30.0    # lane rows: name -> value, pair -> pair
 K9L_SCENE_FADE = 80.0
-K9L_COL_A, K9L_COL_B = 260.0, 462.0
+K9L_CAR_W = 420.0                           # 23:44 car block width: column 1 x 32, column 2 x 232 ("999.9 km" 215 px)
+K9L_COL_A, K9L_COL_B = 32.0, 232.0
 K9L_METER_W = 150.0
 K9L_TPMS_CX = 112.0
 K9L_RIGHT_X = 1336.0  # right list x0 (content to K9L_RIGHT_X1)
@@ -264,14 +272,15 @@ K9L_LAT = (206, 216, 230)
 # 11/12 22:10 "그게 최선이야?" final pass: one baseline / margin grid for the whole screen (design px, baselines)
 K9L_EDGE = 32.0                        # outer margin left and right (content 32 .. 1888)
 K9L_HEAD = 62.0                        # header baseline: TPMS, the left labels row 1, MAX, 차선 위치
-K9L_ROW1, K9L_ROW2 = 62.0, 320.0       # left label baselines
+K9L_ROW1, K9L_ROW2 = 62.0, 206.0       # car block label baselines (23:44 third row = TPMS)
 K9L_VALUE_DY = 59.0                    # label baseline -> value baseline (= speed / cruise baseline 121 on row 1)
-K9L_METER_DY = 84.0                    # label baseline -> meter line
-K9L_SUB_DY = 118.0                     # label baseline -> sub line baseline (row 2: 438 = last right row)
+K9L_METER_DY = 80.0                    # label baseline -> meter line
+K9L_SUB_DY = 108.0                     # label baseline -> sub line baseline
 K9L_TRACK = 0.10                       # wide letter spacing of the champagne headers
-K9L_TPMS_X = 128.0                     # TPMS car centre x, numbers outside each wheel
-K9L_TPMS_Y = 262.0
-K9L_RULE_X = 244.0                     # one vertical hairline: TPMS | numbers
+K9L_TPMS_X = K9L_EDGE + K9L_CAR_W * 0.5   # TPMS car centre x, name + number outside each wheel (23:44 third row)
+K9L_TPMS_Y = 404.0
+K9L_TPMS_SCALE = 0.75                  # 23:44 the TPMS top view 64x190 -> 48x142 to fit the third row
+K9L_TPMS_HEAD = 348.0
 K9L_SPEED_BASE = 121.0
 K9L_KMH_BASE = 152.0
 K9L_TOP_CY = 84.0                      # gear ring, limit sign centre
@@ -289,11 +298,15 @@ K9L_LAT_BASE0, K9L_LAT_PITCH = 278.0, 40.0
 # 11/12 22:37 대감님 "두 판 모두 살려": K9 D layout chosen by the Param ClusterHudK9Style
 # (0 = card layout of b03a700cc = "윗버전", 1 = one night scene of ad691fbd7.. = "아랫버전").
 K9_HUD_STYLE_CARD, K9_HUD_STYLE_SCENE = 0, 1
-K9C_ROAD_GEO = (108.0, 467.0, 1430.0, 108.0)   # card road: horizon y, my rear bumper y, KX, ego width (b03a700cc)
-K9L_ROAD_GEO = (K9_TURZX_ROAD_HORIZON_Y, K9_TURZX_ROAD_EGO_Y, K9_TURZX_ROAD_KX, K9_TURZX_EGO_W)
+# 23:44 the road grows with the middle (card 768 -> 948, scene 814 -> 948): KX and my car width scaled together
+K9C_ROAD_K = K9_TURZX_MID_W / 768.0
+K9L_ROAD_K = (K9L_SCENE_X1 - K9L_SCENE_X0) / 814.0
+K9C_ROAD_GEO = (108.0, 467.0, 1430.0 * K9C_ROAD_K, 108.0 * K9C_ROAD_K)  # card road: horizon y, rear bumper y, KX, ego w
+K9L_ROAD_GEO = (K9_TURZX_ROAD_HORIZON_Y, K9_TURZX_ROAD_EGO_Y, K9_TURZX_ROAD_KX * K9L_ROAD_K, K9_TURZX_EGO_W * K9L_ROAD_K)
 # 22:41 "1칸 3칸 맞바꿔": the left content moves to the right side and the right content to the left, middle unchanged
-K9C_SWAP_DX = K9_TURZX_RIGHT_X - K9_TURZX_LEFT_X   # card 1 (8..664) <-> card 3 (1256..1912)
-K9L_SWAP_LEFT_DX, K9L_SWAP_RIGHT_DX = 1276.0, -1304.0  # scene: left block 32..612 -> 1308..1888, right 1336..1888 -> 32..584
+K9C_SWAP_DX = K9_TURZX_RIGHT_X - K9_TURZX_LEFT_X   # card 1 (8..488) <-> card 3 (1432..1912)
+K9L_SWAP_LEFT_DX = DESIGN_WIDTH - K9L_EDGE - K9L_CAR_W - K9L_EDGE  # 1436: car block 32..452 -> 1468..1888
+K9L_SWAP_RIGHT_DX = -1304.0  # lane / steer-learn list 1336..1776 -> 32..472
 K9C_IND_Y, K9L_IND_Y = 262.0, 182.0   # automatic indicator box (was y 124 = over km/h / the lane pill)
 K9L_PERC_Y_IND = 262.0                # lane % / lead row while the indicator box sits on its usual row
 K9L_NAVI_BASE2 = 336.0                # turn-by-turn distance baseline (scene, right of the road)
@@ -6245,45 +6258,50 @@ class ClusterUiRenderer:
             rl.draw_rectangle_rounded(rl.Rectangle(x - 2.0, y - 2.0, fw + 4.0, 14.0), 1.0, 6, rl_color(color, 50))
             rl.draw_rectangle_rounded(rl.Rectangle(x, y, fw, 10.0), 1.0, 6, rl_color(color))
 
+    def _k9c_item(self, x: float, y: float, label: str, value: str, unit: str, sub: str) -> None:
+        # 23:44 compact item (140 px tall instead of 184): label / value / (bar at y + 102) / sub, same sizes
+        self._draw_text(label, x, y + 20.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
+        self._k9_turzx_value_text(value, x, y + 68.0, K9_TURZX_VALUE_SIZE, K9_TURZX_TEXT if value != "-" else K9_TURZX_DIM)
+        if unit and value != "-":
+            w = self._k9_turzx_value_width(value, K9_TURZX_VALUE_SIZE)
+            self._draw_text(unit, x + w + 8.0, y + 78.0, K9_TURZX_UNIT_SIZE, K9_TURZX_MUTED)
+        if sub:
+            self._draw_text(sub, x, y + 130.0, K9_TURZX_SUB_SIZE, K9_TURZX_DIM)
+
     def _k9_turzx_draw_left(self, state: ClusterUiState) -> None:
-        # 19:55: fuel % (CF_Clu_FuelDispLvl always 0) and fuel economy (none on the K9) removed. Top row: range | trip,
-        # bottom row: accel / pedal across both columns, right column TPMS.
-        x0, y0, h = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H
-        self._k9_turzx_glass(x0, y0, K9_TURZX_LEFT_W, h)
-        col = (x0, x0 + 224.0, x0 + 448.0)
-        y1 = y0 + h * 0.5
-        pad = (h * 0.5 - 184.0) * 0.5
-        self._k9_turzx_metal_v(col[1], y0 + 20, y1 - y0 - 40)
-        self._k9_turzx_metal_v(col[1], y1 + 20, y0 + h - y1 - 40)
-        self._k9_turzx_metal_v(col[2], y0 + 20, h - 40, 150)
-        self._k9_turzx_metal_h(x0 + 20, y1, col[2] - x0 - 40, 150)
+        # 19:55: fuel % (CF_Clu_FuelDispLvl always 0) and fuel economy (none on the K9) removed.
+        # 23:44 (460 px card): row 1 range | trip, row 2 accel / pedal | steering angle, row 3 TPMS across the card
+        x0, y0, h, w = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9_TURZX_LEFT_W
+        self._k9_turzx_glass(x0, y0, w, h)
+        ca, cb = x0 + 20.0, x0 + K9C_COL_B
+        r1, r2, r3 = (y0 + r for r in K9C_ROW_Y)
+        self._k9_turzx_metal_v(cb - 10.0, r1 + 8.0, r3 - r1 - 22.0)
+        self._k9_turzx_metal_h(x0 + 20, r2 - 6.0, w - 40, 150)
+        self._k9_turzx_metal_h(x0 + 20, r3 - 6.0, w - 40, 150)
         km = self.k9_turzx_range_km(getattr(state, "fuel_gauge", None))
-        self._k9_turzx_label_value(col[0] + 20, y0 + pad, "주행가능거리", "-" if km is None else str(km), "km", "")
-        self._k9_turzx_bar(col[0] + 20, y0 + pad + 132.0, 184.0, None if km is None else km / K9_DTE_FULL_KM,
-                           K9_TURZX_ACCENT)
+        self._k9c_item(ca, r1, "주행가능거리", "-" if km is None else str(km), "km", "")
+        self._k9_turzx_bar(ca, r1 + 102.0, 184.0, None if km is None else km / K9_DTE_FULL_KM, K9_TURZX_ACCENT)
         trip = getattr(state, "trip_report", None)
         dist = getattr(trip, "distance_m", None) if trip is not None else None
         avg = getattr(trip, "average_speed_kph", None) if trip is not None else None
-        self._k9_turzx_label_value(col[1] + 20, y0 + pad, "이번 주행", self.k9_trip_km_text(dist), "km",
-                                   "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
+        self._k9c_item(cb, r1, "이번 주행", self.k9_trip_km_text(dist), "km", "평균 -" if avg is None else f"평균 {avg:.0f} km/h")
         accel = getattr(state, "accel_mps2", None)
         accel_text = "-" if accel is None or not math.isfinite(accel) else f"{accel:+.2f}"
         throttle = getattr(state, "throttle", None)
         pedal = "-" if throttle is None or not math.isfinite(throttle) else f"{int(round(clamp(throttle, 0.0, 1.0) * 100))}%"
-        ya = y1 + pad
-        self._k9_turzx_label_value(col[0] + 20, ya, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
+        self._k9c_item(ca, r2, "가속도 m/s²", accel_text, "", f"페달 {pedal}")
         # 대감님 20:47 "가속도 게이지 있는 쪽에 조향각": carState.steeringAngleDeg (+ = left), bar clipped at +-90 deg
         angle = getattr(state, "steering_angle_deg", None)
         angle_ok = angle is not None and math.isfinite(angle)
         angle_text = "-" if not angle_ok else (f"{angle:+.0f}" if abs(angle) >= 99.95 else f"{angle:+.1f}")
         side = "" if not angle_ok else ("가운데" if abs(angle) < 0.5 else ("왼쪽" if angle > 0.0 else "오른쪽"))
-        self._k9_turzx_label_value(col[1] + 20, ya, "조향각", angle_text, "°", side)
-        self._k9_turzx_center_bar(col[1] + 20, ya + 132.0, 184.0,
+        self._k9c_item(cb, r2, "조향각", angle_text, "°", side)
+        self._k9_turzx_center_bar(cb, r2 + 102.0, 184.0,
                                   None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG, K9_TURZX_CHAMPAGNE,
                                   K9_TURZX_CHAMPAGNE)
-        self._k9_turzx_center_bar(col[0] + 20, ya + 132.0, 184.0,
+        self._k9_turzx_center_bar(ca, r2 + 102.0, 184.0,
                                   None if accel_text == "-" else accel / 3.0, K9_TURZX_ACCENT, (255, 120, 90))
-        self._k9_turzx_draw_tpms(state, col[2], y0, K9_TURZX_LEFT_X + K9_TURZX_LEFT_W - col[2], h)
+        self._k9_turzx_draw_tpms(state, x0, r3, w, y0 + h - r3)
 
     def _k9_turzx_center_bar(self, x: float, y: float, bw: float, fraction: float | None, pos_color, neg_color) -> None:
         # zero-centred bar: + right of the centre tick, - left
@@ -6299,9 +6317,10 @@ class ClusterUiRenderer:
         rl.draw_line_ex(rl.Vector2(cx, y - 6.0), rl.Vector2(cx, y + 16.0), 2.0, rl_color(K9_TURZX_MUTED))
 
     def _k9_turzx_draw_tpms(self, state: ClusterUiState, x: float, y: float, w: float, h: float) -> None:
-        self._draw_text("TPMS", x + 18, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        self._draw_text("psi", x + w - 18, y + 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="right")
-        cx, cy = x + w * 0.5, y + h * 0.5 + 14.0
+        # 23:44 one row across the card: car in the middle, name + number beside each wheel, TPMS / psi at the row ends
+        cx, cy = x + w * 0.5, y + h - 83.0
+        self._draw_text("TPMS", x + 20, cy, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
+        self._draw_text("psi", x + w - 20, cy, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="right")
         car_w, car_h = 56.0, 150.0
         top, left = cy - car_h * 0.5, cx - car_w * 0.5
         rl.draw_ellipse(int(cx), int(cy + 4), car_w * 0.9, car_h * 0.56, rl.Color(0, 0, 0, 60))
@@ -6317,12 +6336,14 @@ class ClusterUiRenderer:
         self._rounded_rect(left + 9, top + car_h - 40, car_w - 18, 18, 6.0, (34, 48, 74), (*K9_TURZX_CHROME, 70), 1.0)
         rl.draw_line_ex(rl.Vector2(cx, top + 62), rl.Vector2(cx, top + car_h - 46), 1.0, rl.Color(*K9_TURZX_CHAMPAGNE, 60))
         tpms = state.tpms
-        for value, sx, sy, name in ((tpms.fl, -1, -1, "FL"), (tpms.fr, 1, -1, "FR"), (tpms.rl, -1, 1, "RL"), (tpms.rr, 1, 1, "RR")):
-            vx = cx + sx * 66.0
-            vy = cy + sy * 70.0
-            self._draw_text(name, vx, vy - 26.0, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED, anchor="center")
+        for value, sx, wy, name in ((tpms.fl, -1, top + 36.0, "FL"), (tpms.fr, 1, top + 36.0, "FR"),
+                                    (tpms.rl, -1, top + car_h - 36.0, "RL"), (tpms.rr, 1, top + car_h - 36.0, "RR")):
             text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
-            self._k9_turzx_value_text(text, vx, vy + 8.0, 36.0, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM, anchor="center")
+            near = cx + sx * (car_w * 0.5 + 22.0)   # number next to the wheel, name outside it
+            far = cx + sx * (car_w * 0.5 + 72.0)
+            self._k9_turzx_value_text(text, near, wy, 36.0, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM,
+                                      anchor="right" if sx < 0 else "left")
+            self._draw_text(name, far, wy, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED, anchor="right" if sx < 0 else "left")
 
     # middle panel: 2D perspective road (TURZX-style, drawn from scratch; no code / art from the photo repo)
     def k9_turzx_road_project(self, forward_m: float, lateral_m: float) -> tuple[float, float, float]:
@@ -7133,37 +7154,42 @@ class ClusterUiRenderer:
         self._k9l_item(cb, r2, "조향각", angle_text, "°", side)
         self._k9l_meter(cb, r2 + K9L_METER_DY, K9L_METER_W, None if not angle_ok else -angle / K9_TURZX_STEER_BAR_DEG,
                         K9L_CHAMPAGNE, True, K9L_CHAMPAGNE)
-        self._k9_turzx_metal_v(K9L_RULE_X, K9L_HEAD - 18.0, K9L_ROW2 + K9L_SUB_DY - K9L_HEAD + 18.0, 110)
+        # 23:44 360 px block: hairlines under rows 1 and 2, TPMS in the third row
+        self._k9l_hair(K9L_EDGE, (r1 + K9L_SUB_DY + r2) * 0.5 - 8.0, K9L_CAR_W, 110)
+        self._k9l_hair(K9L_EDGE, (r2 + K9L_SUB_DY + K9L_TPMS_HEAD) * 0.5 - 8.0, K9L_CAR_W, 110)
         self._k9l_draw_tpms(state)
 
     def _k9l_draw_tpms(self, state: ClusterUiState) -> None:
         # top view of the car, each tyre number right outside its wheel (label above the number, same side)
-        cx, cy = K9L_TPMS_X, K9L_TPMS_Y
-        car_w, car_h = 64.0, 190.0
+        cx, cy, k = K9L_TPMS_X, K9L_TPMS_Y, K9L_TPMS_SCALE
+        car_w, car_h = 64.0 * k, 190.0 * k
         top, left = cy - car_h * 0.5, cx - car_w * 0.5
-        wheel_w, wheel_h, wheel_in = 6.0, 34.0, 29.0
+        wheel_w, wheel_h, wheel_in = 6.0, 34.0 * k, 29.0 * k
         num_x = (left - wheel_w - 12.0, left + car_w + wheel_w + 12.0)
-        self._k9l_text("TPMS", K9L_EDGE, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_HEAD)
-        psi_r = num_x[1] + self._k9l_width("35", 36.0, True)
-        self._k9l_text("psi", psi_r, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor="right", numeric=True, base=K9L_HEAD)
+        self._k9l_text("TPMS", K9L_EDGE, 0.0, K9_TURZX_LABEL_SIZE, K9L_LABEL, track=K9L_TRACK, base=K9L_TPMS_HEAD)
+        self._k9l_text("psi", K9L_EDGE + K9L_CAR_W, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor="right", numeric=True,
+                       base=K9L_TPMS_HEAD)
         rl.draw_ellipse(int(cx), int(cy + 4), car_w * 1.05, car_h * 0.6, rl.Color(*K9L_ICE, 6))
         wheel_cy = (top + wheel_in + wheel_h * 0.5, top + car_h - wheel_in - wheel_h * 0.5)
         for wx in (left - wheel_w, left + car_w):
             for wcy in wheel_cy:
                 self._rounded_rect(wx, wcy - wheel_h * 0.5, wheel_w, wheel_h, 3.0, (10, 14, 24), (*K9L_CHAMPAGNE, 120), 1.0)
-        self._rounded_rect(left, top, car_w, car_h, 26.0, (8, 13, 26), (*K9L_CHAMPAGNE, 200), 1.4)
-        self._rounded_rect(left + 9, top + 40, car_w - 18, 32, 9.0, (20, 34, 60), (*K9L_ICE, 110), 1.0)
-        self._rounded_rect(left + 10, top + car_h - 50, car_w - 20, 22, 7.0, (16, 26, 46), (*K9L_ICE, 80), 1.0)
-        rl.draw_line_ex(rl.Vector2(cx, top + 80), rl.Vector2(cx, top + car_h - 58), 1.0, rl.Color(*K9L_CHAMPAGNE, 70))
+        self._rounded_rect(left, top, car_w, car_h, 26.0 * k, (8, 13, 26), (*K9L_CHAMPAGNE, 200), 1.4)
+        self._rounded_rect(left + 9 * k, top + 40 * k, car_w - 18 * k, 32 * k, 9.0 * k, (20, 34, 60), (*K9L_ICE, 110), 1.0)
+        self._rounded_rect(left + 10 * k, top + car_h - 50 * k, car_w - 20 * k, 22 * k, 7.0 * k, (16, 26, 46),
+                           (*K9L_ICE, 80), 1.0)
+        rl.draw_line_ex(rl.Vector2(cx, top + 80 * k), rl.Vector2(cx, top + car_h - 58 * k), 1.0, rl.Color(*K9L_CHAMPAGNE, 70))
         tpms = state.tpms
+        gap = 12.0
         for value, sx, row, name in ((tpms.fl, 0, 0, "FL"), (tpms.fr, 1, 0, "FR"), (tpms.rl, 0, 1, "RL"), (tpms.rr, 1, 1, "RR")):
             vx, wcy = num_x[sx], wheel_cy[row]
             anchor = "right" if sx == 0 else "left"
-            self._k9l_text(name, vx, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor=anchor, numeric=True, track=0.06,
-                           base=wcy - 9.0)
             text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
-            self._k9l_text(text, vx, 0.0, 36.0, K9L_VALUE if text != "-" else K9L_DIM, anchor=anchor, numeric=True,
-                           base=wcy + 32.0)
+            vw = self._k9l_text(text, vx, 0.0, 36.0, K9L_VALUE if text != "-" else K9L_DIM, anchor=anchor, numeric=True,
+                                base=wcy + 13.0)
+            nx = vx - vw - gap if sx == 0 else vx + vw + gap  # 23:44 name beside the number (outside), not above it
+            self._k9l_text(name, nx, 0.0, K9_TURZX_LABEL_SIZE, K9L_DIM, anchor=anchor, numeric=True, track=0.06,
+                           base=wcy + 13.0)
 
     def _k9l_vehicle(self, forward_m: float, lateral_m: float, lead: bool) -> tuple[float, float, float]:
         """rear view of a car ahead: dark body, metal rim, a thin glowing light bar, soft floor shadow"""
