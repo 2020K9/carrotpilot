@@ -174,13 +174,13 @@ K9_TURZX_RIGHT_X, K9_TURZX_RIGHT_W = 1256.0, 656.0
 # middle panel road (대감님 18:30 "가운데 꺼 디자인이 다른데?"): flat 2D perspective road drawn from modelV2 lane lines /
 # road edges / plan path and leadOne, no 3D world, no car photo. screen y = horizon + K_Y / (forward + Z0), x = cx + K_X * lateral / (forward + Z0)
 K9_TURZX_ROAD_HORIZON_Y = 108.0
-# 대감님 20:26 "내 차 너무 크다 줄여라": camera pulled back like the photo - my car sits mid-lane above the path band,
-# a little bigger than the lead car, the road runs on below it to the panel bottom
-K9_TURZX_ROAD_EGO_Y = 300.0                  # forward 0 m (my rear bumper)
-K9_TURZX_ROAD_Z0 = 34.0
+# 대감님 20:41 "내 차가 왜 중앙에 가 있냐?": my car back at the bottom of the road panel (nearest the viewer, like
+# the pre-692b738d5 layout), rear bumper just above the bottom pills; path band / arrows run only ahead of it
+K9_TURZX_ROAD_EGO_Y = 416.0                  # forward 0 m (my rear bumper), pills top at 424
+K9_TURZX_ROAD_Z0 = 27.5
 K9_TURZX_ROAD_KY = (K9_TURZX_ROAD_EGO_Y - K9_TURZX_ROAD_HORIZON_Y) * K9_TURZX_ROAD_Z0
-K9_TURZX_ROAD_KX = 1450.0
-K9_TURZX_ROAD_BACK_M = 15.0                  # road / lanes / path drawn this far behind my car
+K9_TURZX_ROAD_KX = 1430.0                    # 52 px/m at forward 0: lane 3.6 m = 187 px
+K9_TURZX_ROAD_BACK_M = 6.0                   # road / lane lines continue to the panel bottom (path band does not)
 K9_TURZX_ROAD_MAX_M = 140.0
 K9_TURZX_MID_TOP = (3, 7, 18)                 # night sky
 K9_TURZX_MID_BOTTOM = (12, 24, 48)
@@ -197,7 +197,7 @@ K9_TURZX_LEAD = K9_TURZX_POINT
 K9_TURZX_TAG = K9_TURZX_POINT
 K9_TURZX_RADIUS = 16.0                       # one corner radius for every card
 K9_TURZX_SIGNAL = (80, 222, 150)             # turn signal arrows stay green
-K9_TURZX_EGO_W = 84.0                        # K9 rear sprite ~2.1 m at forward 0 (42.6 px/m), photo size
+K9_TURZX_EGO_W = 108.0                       # K9 rear sprite ~2.1 m at forward 0 (52 px/m), narrower than the lane
 K9_TURZX_LANE_TEXT_SIZE = 40.0               # 치우침 / 좌·우 (was 32 in the middle, not smaller)
 K9_TURZX_LAT_TEXT_SIZE = 27.0                # 실험줄 5개 (was 19 in the middle, not smaller)
 K9_TURZX_BG = (2, 4, 10)
@@ -6347,6 +6347,9 @@ class ClusterUiRenderer:
         path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
         end_m = None if lead is None else max(4.0, lead[0] - 3.0)
         if len(path) >= 2:
+            path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only, nothing behind it
+            if path[0][0] > 0.0:
+                path.insert(0, (0.0, path[0][1]))
             pl = [(f, lat - 0.95) for f, lat in path]
             pr = [(f, lat + 0.95) for f, lat in path]
             self._k9_turzx_band(pl, pr, (*K9_TURZX_PATH, 92), fade=True, end_m=end_m)
@@ -6358,7 +6361,7 @@ class ClusterUiRenderer:
             self._k9_turzx_line(pl_e, (120, 255, 220), 0.06, False, False, 0.9)
             self._k9_turzx_line(pr_e, (120, 255, 220), 0.06, False, False, 0.9)
             top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)
-            f = -K9_TURZX_ROAD_BACK_M + 2.0
+            f = 2.0
             while f < top - 2.0:
                 lat = self._k9_turzx_lat_at(path, f)
                 lat2 = self._k9_turzx_lat_at(path, f + 1.2)
