@@ -7072,6 +7072,29 @@ class ClusterUiRenderer:
         return out
 
     @staticmethod
+    def k9_path_normal(d_forward: float, d_lateral: float) -> tuple[float, float]:
+        """unit normal (forward, lateral) of a path step, pointing to +lateral (right); (0, 1) on a straight path"""
+        n = math.hypot(d_forward, d_lateral)
+        return (0.0, 1.0) if n < 1e-9 else (-d_lateral / n, d_forward / n)
+
+    @classmethod
+    def k9_path_side(cls, path: list[tuple[float, float]], offset_m: float) -> list[tuple[float, float]]:
+        """the path moved sideways by offset_m (+ = right) square to its own direction (대감님 11/13 20:28 \"경로하고
+        예상추종커브나 똑바로 나오게\"): a band built by moving every point straight sideways gets narrower by
+        cos(heading) in a bend (0.4 of its width in a 65 deg turn) and its edges stop running parallel to the lane
+        lines; drawing only, straight paths are unchanged. Points that would fold back (inner edge of a very tight
+        bend) are dropped so forward stays increasing."""
+        out: list[tuple[float, float]] = []
+        n = len(path)
+        for i, (f, lat) in enumerate(path):
+            a, b = path[max(0, i - 1)], path[min(n - 1, i + 1)]
+            nf, nl = cls.k9_path_normal(b[0] - a[0], b[1] - a[1])
+            q = (f + offset_m * nf, lat + offset_m * nl)
+            if not out or q[0] > out[-1][0] + 1e-3:
+                out.append(q)
+        return out
+
+    @staticmethod
     def _k9_turzx_lat_at(points: list[tuple[float, float]], forward_m: float) -> float | None:
         if not points:
             return None
@@ -7370,8 +7393,8 @@ class ClusterUiRenderer:
             if path[0][0] > 0.0:
                 path.insert(0, (0.0, path[0][1]))
             if self.k9_navdy_on():
-                bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue, along the plan (lane changes swing it)
-                br_ = [(f, lat + 1.62) for f, lat in path]
+                bl_ = self.k9_path_side(path, -1.62)  # my lane, deep blue, along the plan (lane changes swing it)
+                br_ = self.k9_path_side(path, 1.62)
                 self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
             else:  # K9HudNavdy 0: teal path band before b7e81bbd4
                 self._k9_old_path_band(path, end_m, 1.05, 0.5, (*K9_TURZX_PATH, 128), (170, 250, 232, 62),
@@ -7384,8 +7407,9 @@ class ClusterUiRenderer:
                 if lat is None or lat2 is None:
                     break
                 ax, ay, sc = self.k9_turzx_road_project(f + 1.2, lat2)
-                bl = self.k9_turzx_road_project(f, lat - 0.42)
-                br = self.k9_turzx_road_project(f, lat + 0.42)
+                nf, nl = self.k9_path_normal(1.2, lat2 - lat)  # chevron wings square to the path, not sideways
+                bl = self.k9_turzx_road_project(f - 0.42 * nf, lat - 0.42 * nl)
+                br = self.k9_turzx_road_project(f + 0.42 * nf, lat + 0.42 * nl)
                 aw = max(1.2, 0.09 * sc)
                 col = rl.Color(*self.k9_look().arrow, int(self.k9_look().arrow_a * clamp(1.0 - max(0.0, f) / 70.0, 0.3, 1.0)))
                 rl.draw_line_ex(rl.Vector2(bl[0], bl[1]), rl.Vector2(ax, ay), aw, col)
@@ -7655,11 +7679,11 @@ class ClusterUiRenderer:
 
     def _k9_old_path_band(self, path, end_m, outer, inner, outer_col, inner_col, edge_col, edge_w, edge_a) -> None:
         """K9HudNavdy 0: the path band + edges before b7e81bbd4 (same calls, same order)"""
-        pl = [(f, lat - outer) for f, lat in path]
-        pr = [(f, lat + outer) for f, lat in path]
+        pl = self.k9_path_side(path, -outer)
+        pr = self.k9_path_side(path, outer)
         self._k9_turzx_band(pl, pr, outer_col, fade=True, end_m=end_m)
-        cl = [(f, lat - inner) for f, lat in path]
-        cr_ = [(f, lat + inner) for f, lat in path]
+        cl = self.k9_path_side(path, -inner)
+        cr_ = self.k9_path_side(path, inner)
         self._k9_turzx_band(cl, cr_, inner_col, fade=True, end_m=end_m)
         pl_e = [(f, lat) for f, lat in pl if end_m is None or f <= end_m]
         pr_e = [(f, lat) for f, lat in pr if end_m is None or f <= end_m]
@@ -8094,8 +8118,8 @@ class ClusterUiRenderer:
             if path[0][0] > 0.0:
                 path.insert(0, (0.0, path[0][1]))
             if self.k9_navdy_on():
-                bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue (same as the card style)
-                br_ = [(f, lat + 1.62) for f, lat in path]
+                bl_ = self.k9_path_side(path, -1.62)  # my lane, deep blue (same as the card style)
+                br_ = self.k9_path_side(path, 1.62)
                 self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
             else:  # K9HudNavdy 0: ice path band before b7e81bbd4
                 self._k9_old_path_band(path, end_m, 1.05, 0.42, (*K9L_ICE, 120), (220, 240, 255, 54), K9L_ICE, 0.07, 0.95)
@@ -8107,8 +8131,9 @@ class ClusterUiRenderer:
                 if lat is None or lat2 is None:
                     break
                 ax, ay, sc = self.k9_turzx_road_project(f + 1.0, lat2)
-                bl = self.k9_turzx_road_project(f, lat - 0.36)
-                br = self.k9_turzx_road_project(f, lat + 0.36)
+                nf, nl = self.k9_path_normal(1.0, lat2 - lat)  # chevron wings square to the path, not sideways
+                bl = self.k9_turzx_road_project(f - 0.36 * nf, lat - 0.36 * nl)
+                br = self.k9_turzx_road_project(f + 0.36 * nf, lat + 0.36 * nl)
                 aw = max(1.0, 0.06 * sc)
                 col = rl.Color(*self.k9_look().l_arrow, int(self.k9_look().l_arrow_a * clamp(1.0 - max(0.0, f) / 60.0, 0.25, 1.0)))
                 rl.draw_line_ex(rl.Vector2(bl[0], bl[1]), rl.Vector2(ax, ay), aw, col)
