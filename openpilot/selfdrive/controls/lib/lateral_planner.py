@@ -64,8 +64,6 @@ class LateralPlanner:
 
     self.useLaneLineSpeedApply = self.params.get_int("UseLaneLineSpeed")
     self.pathOffset = float(self.params.get_int("PathOffset")) * 0.01
-    from openpilot.selfdrive.controls.lib.k9_wall_lane import read_mode as k9_wall_lane_read
-    self.k9_wall_lane_mode = k9_wall_lane_read(self.params)   # K9WallLane (실험중), 0 = off
     self.useLaneLineMode = False
     self.plan_a = np.zeros((TRAJECTORY_SIZE, ))
     self.plan_yaw = np.zeros((TRAJECTORY_SIZE,))
@@ -96,8 +94,6 @@ class LateralPlanner:
       self.readParams = 10
       self.useLaneLineSpeedApply = sm['carState'].useLaneLineSpeed
       self.pathOffset = float(self.params.get_int("PathOffset")) * 0.01
-      from openpilot.selfdrive.controls.lib.k9_wall_lane import read_mode as k9_wall_lane_read
-      self.k9_wall_lane_mode = k9_wall_lane_read(self.params)
       self.lateralPathCost = self.params.get_float("LatMpcPathCost") * 0.01
       self.lateralMotionCost = self.params.get_float("LatMpcMotionCost") * 0.01
       LATERAL_ACCEL_COST = self.params.get_float("LatMpcAccelCost") * 0.01
@@ -158,13 +154,6 @@ class LateralPlanner:
     self.LP.curvature = measured_curvature
     self.LP.k9_path_offset = self.pathOffset    # used only with K9LaneAssist 1 (F1), see lane_planner_2 A1
     self.path_xyz, self.lanelines_active = self.LP.get_d_path(sm['carState'], v_ego_car, self.t_idxs, self.path_xyz, self.curve_speed)
-    if self.k9_wall_lane_mode == 1:
-      # K9WallLane 1 (k9_wall_lane): weak lines + stable wall -> the wall is the lane line on its side, lane-mode path on it.
-      from openpilot.selfdrive.controls.lib.k9_wall_lane import k9_wall_lane_step
-      self.path_xyz, self.lanelines_active = k9_wall_lane_step(self, md, sm['carState'], v_ego_car, self.t_idxs, self.path_xyz,
-                                                               self.lanelines_active)
-    else:
-      self.k9_wl = None
 
     if self.lanelines_active:
       self.plan_yaw, self.plan_yaw_rate = yaw_from_path_no_scipy(
