@@ -43,8 +43,8 @@ def keep_mask(bgr: np.ndarray, a: np.ndarray) -> np.ndarray:
     return red | wheel
 
 
-def main() -> None:
-    bgra = load_ref().astype(np.float32) / 255.0
+def deglare(bgra: np.ndarray) -> np.ndarray:
+    """bgra float 0..1 -> deglared bgra float 0..1."""
     bgr, a = bgra[..., :3], bgra[..., 3]
     body = (a > BODY_A).astype(np.float32)
     lum = bgr @ np.array([0.114, 0.587, 0.299], np.float32)
@@ -61,7 +61,11 @@ def main() -> None:
     w = body * (~keep_mask(bgr, a))
     w = cv2.GaussianBlur(w, (0, 0), 1.5) * body
     res = bgr * (1 - w[..., None]) + out * w[..., None]
-    img = np.dstack([res, a])
+    return np.dstack([res, a])
+
+
+def main() -> None:
+    img = deglare(load_ref().astype(np.float32) / 255.0)
     cv2.imwrite(str(OUT), np.clip(img * 255 + 0.5, 0, 255).astype(np.uint8))
 
 
