@@ -165,6 +165,9 @@ K9_REVERSE_PHOTO_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_photo.pn
 # its own P-stage floor (navy pool + thin blue rim on the photo's ground plane), same frame as the car file, drawn
 # under the path; the P floor file is only the fallback (it carries the P car's mirror image)
 K9_REVERSE_PHOTO_FLOOR_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_photo_floor.png"
+# 대감님 11/13 15:46: ground layer made from the same photo (make_k9_reverse_ground.py) - floor reflection of the car and
+# a floor light matching the photo's light direction, same frame as the car file, drawn over the floor and under the path
+K9_REVERSE_PHOTO_GROUND_PATH = CLUSTER_DIR / "assets" / "images" / "k9_reverse_photo_ground.png"
 K9_REVERSE_PHOTO_PATH_FADE_M = 0.45  # path fill / side lines fade in over this length from under the bumper
 K9_REVERSE_PHOTO_CAMERA = (1484.13, (1.68427, -0.74313, 0.56378), (1.08057, 0.72563, 3.23045), (1600.0, 901.0))
 K9_REVERSE_PHOTO_CROP = (-78.0, 92.0, 1688.0, 935.0)  # image frame in photo px (make_k9_reverse_photo.py CROP)
@@ -3307,6 +3310,21 @@ class ClusterUiRenderer:
             x, y, w, h = k9_reverse_photo_rect()
             rl.draw_texture_pro(own, rl.Rectangle(0, 0, own.width, own.height), rl.Rectangle(x, y, w, h),
                                 rl.Vector2(0, 0), 0.0, rl.WHITE)
+            ground = getattr(self, "_k9_reverse_photo_ground", None)
+            if ground is None:
+                ground = False
+                try:
+                    if K9_REVERSE_PHOTO_GROUND_PATH.is_file():
+                        texture = rl.load_texture(str(K9_REVERSE_PHOTO_GROUND_PATH))
+                        if getattr(texture, "id", 0) > 0:
+                            rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+                            ground = texture
+                except Exception as exc:
+                    print(f"K9 reverse photo ground unavailable: {exc}", flush=True)
+                self._k9_reverse_photo_ground = ground
+            if ground:
+                rl.draw_texture_pro(ground, rl.Rectangle(0, 0, ground.width, ground.height), rl.Rectangle(x, y, w, h),
+                                    rl.Vector2(0, 0), 0.0, rl.WHITE)
         elif floor is not None and centre is not None:
             centre = (K9_REVERSE_PHOTO_OFFSET[0] + K9_REVERSE_PHOTO_SCALE * K9_REVERSE_PHOTO_CAR_CX_PX, centre[1])
             fw = K9_REVERSE_PHOTO_CAR_W_PX * K9_REVERSE_PHOTO_SCALE * K9_REVERSE_PHOTO_FLOOR_W
