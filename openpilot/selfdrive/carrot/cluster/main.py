@@ -850,7 +850,6 @@ def run_demo(
 
     hud_mirror_param_reader = ClusterHudMirrorParamReader()
     active_hud_mirror_mode = hud_mirror_param_reader.read()
-    k9_style_param_reader = ClusterHudK9StyleParamReader()
     k9_navdy_param_reader = K9HudNavdyParamReader()
 
     usb_brightness_auto_enabled = usb_brightness_param_reader is not None
@@ -1099,8 +1098,8 @@ def run_demo(
     next_hud_mode_param_read = start_time
     next_hud_output_gate_param_read = start_time
     next_hud_mirror_param_read = start_time + HUD_MIRROR_PARAM_POLL_SECONDS
-    renderer.set_k9_hud_style(k9_style_param_reader.read())
-    renderer.set_k9_hud_navdy(k9_navdy_param_reader.read())
+    renderer.set_k9_hud_style(k9_navdy_param_reader.read())  # 11/13 17:31: K9HudNavdy 0 = cards / 1 = one scene
+    renderer.set_k9_hud_navdy(1)  # both layouts keep the Navdy road look
     report_frames = 0
     display_actual_fps: float | None = None
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -1312,8 +1311,8 @@ def run_demo(
                     )
                     active_hud_mirror_mode = next_hud_mirror_mode
                 next_hud_mirror_param_read = now + HUD_MIRROR_PARAM_POLL_SECONDS
-                renderer.set_k9_hud_style(k9_style_param_reader.read())  # same 1 s poll as the mirror mode
-                renderer.set_k9_hud_navdy(k9_navdy_param_reader.read())  # K9HudNavdy, same 1 s poll, no restart
+                renderer.set_k9_hud_style(k9_navdy_param_reader.read())  # K9HudNavdy picks the layout, 1 s poll, no restart
+                renderer.set_k9_hud_navdy(1)  # Navdy look in both layouts
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"
