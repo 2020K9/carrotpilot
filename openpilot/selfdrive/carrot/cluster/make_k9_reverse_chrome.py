@@ -7,6 +7,7 @@ Photo pixels only (k9_rear3.jpg, same frame as k9_reverse_photo.png: asset px = 
 - then the same glare removal as make_k9_reverse_deglare (wide sun / sky sheen on trunk, roof, glass, bumper stays dead)
 - window chrome (frame round the side windows / C pillar triangle, belt strip) and a thin roof outline take the photo
   pixels back (own brightness and colour); tail lamps, lower chrome, wheels, empty plate untouched (no plate text)
+Since 11/13 17:03 ("루프만") only the roof is moved onto the deglared asset; window chrome stays deglared.
 Run:  python make_k9_reverse_chrome.py <k9_rear3.jpg>
 """
 import sys
@@ -84,8 +85,15 @@ def main(src: str) -> None:
     keep = cv2.GaussianBlur(keep, (0, 0), 0.6)[..., None]
     res = base[..., :3] * (1 - keep) + orig * keep
     img = np.dstack([res, base[..., 3]])
+    # 11/13 17:03 "아래꺼에서 루프만 따서 위로옮겨": only the roof (added strip + roof outline) goes onto the
+    # deglared asset (fc95ab367 = dg.deglare(load_ref())); window chrome and everything else stay as before
+    old = dg.deglare(ref.copy())
+    chrome_zone = cv2.GaussianBlur(chrome.astype(np.float32), (0, 0), 0.6) > 1e-3
+    roof_zone = cv2.dilate(((add > 0) | top).astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+    roof_zone &= ~chrome_zone
+    img = np.where(roof_zone[..., None], img, old)
     cv2.imwrite(str(OUT), np.clip(img * 255 + 0.5, 0, 255).astype(np.uint8))
-    print("roof px added", int((add > 0.5).sum()), "chrome px", int(chrome.sum()), "outline px", int(top.sum()))
+    print("roof zone px", int(roof_zone.sum()), "roof px added", int((add > 0.5).sum()), "chrome px", int(chrome.sum()), "outline px", int(top.sum()))
 
 
 if __name__ == "__main__":
