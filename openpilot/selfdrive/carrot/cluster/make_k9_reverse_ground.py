@@ -19,7 +19,7 @@ FLOOR = HERE / "assets" / "images" / "k9_reverse_photo_floor.png"
 SRC = HERE / "assets" / "images" / "k9_reverse_photo.png"
 OUT = HERE / "assets" / "images" / "k9_reverse_photo_ground.png"
 NAVY = np.array([0.09, 0.16, 0.34], np.float32)  # RGB, the floor pool colour
-REFLECT_A = 0.45     # reflection strength at the contact line
+REFLECT_A = 0.0      # 대감님 11/13 16:08 "반사광좀죽이라고": floor reflection off (light direction kept)
 REFLECT_FADE = 50.0  # px (this file) for the reflection to fall to 1/e
 BODY_A = 0.95        # alpha above this = car body (the baked shadow tops out at 0.84)
 
@@ -31,7 +31,7 @@ def main() -> None:
     body = a > BODY_A
     out_rgb = np.zeros((h, w, 3), np.float32)
     out_a = np.zeros((h, w), np.float32)
-    for x in range(w):
+    for x in range(w if REFLECT_A > 0 else 0):
         ys = np.nonzero(body[:, x])[0]
         if ys.size == 0:
             continue
