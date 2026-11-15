@@ -138,6 +138,62 @@ def live_comma_resources(device_state) -> tuple[float | None, float | None, floa
             _resource_percent(safe_get(device_state, "gpuUsagePercent", None)),
             _resource_percent(safe_get(device_state, "memoryUsagePercent", None)))
 
+_COMMA_THERMAL = {0: "green", 1: "yellow", 2: "red", 3: "danger"}
+_COMMA_TEMPS = (("CPU", "cpuTempC"), ("GPU", "gpuTempC"), ("MEM", "memoryTempC"), ("PMIC", "pmicTempC"),
+                ("SOC", "bottomSocTempC"), ("DSP", "dspTempC"))
+
+
+def _temp_values(raw) -> list[float]:
+    if raw is None:
+        return []
+    try:
+        items = list(raw) if not isinstance(raw, (int, float, str)) else [raw]
+    except TypeError:
+        items = [raw]
+    values = [finite_float(v) for v in items]
+    return [round(v, 1) for v in values if v is not None and -20.0 <= v <= 150.0 and v != 0.0]
+
+
+def live_comma_diag(device_state, model_v2=None, car_rx_age_s: float | None = None) -> dict | None:
+    """K9HudNavdy 2 diagnostics, comma side: only what deviceState already carries (cores keep their real count),
+    modelV2.modelExecutionTime (request -> result, comma clock) and the carState receive age (comma clock).
+    None for a missing value, never guessed; None overall without deviceState."""
+    if device_state is None:
+        return None
+    try:
+        cores = [_resource_percent(c) for c in (safe_get(device_state, "cpuUsagePercent", None) or ())]
+    except TypeError:
+        cores = []
+    temps = []
+    for name, field_name in _COMMA_TEMPS:
+        values = _temp_values(safe_get(device_state, field_name, None))
+        if values:
+            temps.append((name, max(values), values))
+    power = finite_float(safe_get(device_state, "powerDrawW", None))
+    fan = finite_float(safe_get(device_state, "fanSpeedPercentDesired", None))
+    thermal = safe_get(device_state, "thermalStatus", None)
+    if thermal is not None and not isinstance(thermal, str):
+        try:
+            thermal = _COMMA_THERMAL.get(int(thermal))
+        except (TypeError, ValueError):
+            thermal = str(thermal)
+    model_s = finite_float(safe_get(model_v2, "modelExecutionTime", None)) if model_v2 is not None else None
+    valid = [c for c in cores if c is not None]
+    return {
+        "cores": cores,
+        "cpu": sum(valid) / len(valid) if valid else None,
+        "gpu": _resource_percent(safe_get(device_state, "gpuUsagePercent", None)),
+        "mem_pct": _resource_percent(safe_get(device_state, "memoryUsagePercent", None)),
+        "temps": temps,
+        "power_w": power if power is not None and 0.0 < power < 100.0 else None,
+        "free_pct": _resource_percent(safe_get(device_state, "freeSpacePercent", None)),
+        "thermal": str(thermal) if thermal else None,
+        "fan_pct": fan if fan is not None and 0.0 <= fan <= 100.0 else None,
+        "model_ms": model_s * 1000.0 if model_s is not None and 0.0 < model_s < 10.0 else None,
+        "car_rx_age_s": car_rx_age_s if car_rx_age_s is not None and math.isfinite(car_rx_age_s) and car_rx_age_s >= 0.0 else None,
+    }
+
+
 class TaxiSpeedSampleReader:
     """Every carState (not the conflated latest) for the K9ExtHud=1 taxi meter: a separate
     non-conflated socket, opened on first use (K9ExtHud=1 only) and closed when the meter is off."""
@@ -491,6 +547,12 @@ class OpenpilotLiveSource:
         device_state = self._service_data("deviceState")
         onroad = self._service_alive("deviceState") and bool(safe_get(device_state, "started", False))
         comma_resources = live_comma_resources(device_state) if self._service_alive("deviceState") else None
+        comma_diag = None
+        if self._service_alive("deviceState"):  # K9HudNavdy 2 diagnostics (display only, comma clock)
+            car_rx = self._service_receive_time("carState")
+            comma_diag = live_comma_diag(device_state,
+                                         self._service_data("modelV2") if self._service_alive("modelV2") else None,
+                                         time.monotonic() - car_rx if car_rx is not None else None)
         car_state = self._service_data("carState")
         fuel_gauge = safe_optional_float(car_state, "fuelGauge")
         if fuel_gauge is None or not 0.0 < fuel_gauge <= 1.0:
@@ -626,6 +688,7 @@ class OpenpilotLiveSource:
             alert=self._live_cluster_alert(state.alert, onroad),
             egpu_active=getattr(self, "_egpu_active", False),
             comma_resources=comma_resources,
+            comma_diag=comma_diag,
             external_compute_label=getattr(self, '_external_compute_label', ''),
             external_nav_active=external_nav_active,
             vehicle_navi_available=vehicle_navi_available,

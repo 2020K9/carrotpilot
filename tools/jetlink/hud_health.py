@@ -68,9 +68,71 @@ def jetson_resources(health):
   return (sum(cores) / len(cores) if cores else None, gpu, mem)
 
 
+def _num(value, low=None, high=None):
+  if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+    return None
+  if (low is not None and value < low) or (high is not None and value > high):
+    return None
+  return float(value)
+
+
+def jetson_diag(health):
+  """K9HudNavdy 2: everything for the Jetson block from the fresh host_health STATUS (Jetson clock only);
+  None when the snapshot is missing or stale, None per value when that value is missing."""
+  if not isinstance(health, dict) or not health:
+    return None
+  perf = health.get('performance')
+  perf = perf if isinstance(perf, dict) and perf.get('version') == 1 else {}
+  cores = []
+  for item in perf.get('cpu') or ():
+    if isinstance(item, dict):
+      online = bool(item.get('online'))
+      cores.append((_pct(item.get('busy_pct')) if online else None, _num(item.get('clock_mhz'), 0, 10000) if online else None, online))
+  busy = [c[0] for c in cores if c[0] is not None]
+  gpu = gpu_mhz = None
+  for item in (perf.get('gpu') or {}).values():
+    if isinstance(item, dict) and _pct(item.get('load_pct')) is not None:
+      gpu, gpu_mhz = _pct(item.get('load_pct')), _num(item.get('clock_mhz'), 0, 10000)
+      break
+  memory = perf.get('memory') or {}
+  total, available = memory.get('MemTotal_kb'), memory.get('MemAvailable_kb')
+  mem_used = mem_total = mem_pct = None
+  if isinstance(total, int) and isinstance(available, int) and total > 0 and 0 <= available <= total:
+    mem_used, mem_total, mem_pct = (total - available) / 1048576, total / 1048576, 100. * (total - available) / total
+  temps = []
+  for sensor in health.get('sensors') or ():
+    if isinstance(sensor, dict) and isinstance(sensor.get('name'), str):
+      t = _num(sensor.get('temp_c'), -20, 150)
+      if t is not None:
+        temps.append((sensor['name'].removesuffix('-thermal').removesuffix('_thermal')[:10], t))
+  diag = health.get('hud_diag') if isinstance(health.get('hud_diag'), dict) else {}
+  inference = diag.get('inference') if isinstance(diag.get('inference'), dict) else {}
+  startup = diag.get('startup') if isinstance(diag.get('startup'), dict) else {}
+  return {'cores': cores, 'cpu': sum(busy) / len(busy) if busy else None, 'gpu': gpu, 'gpu_mhz': gpu_mhz,
+          'mem_used_gb': mem_used, 'mem_total_gb': mem_total, 'mem_pct': mem_pct, 'temps': temps,
+          'infer_gpu_ms': _num(inference.get('gpu_ms'), 0, 10000), 'infer_total_ms': _num(inference.get('total_ms'), 0, 10000),
+          'startup': {k: _num(v, 0) for k, v in startup.items() if isinstance(k, str)}}
+
+
 class HealthRenderer(ClusterUiRenderer):
+  startup_marks = {}   # hud.py MARKS (Jetson monotonic)
+
   def k9_jetson_resources(self):
     return jetson_resources(getattr(self, 'host_health', None) or {})
+
+  def k9_jetson_diag(self):
+    return jetson_diag(getattr(self, 'host_health', None) or {})
+
+  def k9_car_rx_age(self, state):
+    received = _num(self.startup_marks.get('car_last'), 0)
+    return None if received is None else max(0., time.monotonic() - received)
+
+  def k9_startup(self):
+    """(seconds after Jetson boot, measured by) per stage; None = not measured. All Jetson CLOCK_MONOTONIC."""
+    server = (self.k9_jetson_diag() or {}).get('startup') or {}
+    marks = {k: _num(v, 0) for k, v in self.startup_marks.items()}
+    return {'connect': (server.get('hello'), '젯슨'), 'model': (server.get('engine_ready'), '젯슨'),
+            'car': (marks.get('car'), '젯슨'), 'frame': (marks.get('frame'), '젯슨')}
 
   def render(self, state, signal_lights=None):
     self.host_health = _fresh(STATUS, time.monotonic())

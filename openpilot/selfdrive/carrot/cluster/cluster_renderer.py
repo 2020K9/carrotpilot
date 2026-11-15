@@ -411,14 +411,16 @@ K9L_RIGHT_X1 = K9L_RIGHT_X + K9L_LIST_W
 K9L_LIST_HEAD = 30.0                   # 00:20 list: 차선 위치 header, rows, hairline, 조향 학습 header, 9 one-item lines
 K9L_LANE_BASES = (72.0, 115.0, 158.0)     # 치우침 / 좌 / 우 ("좌 3.50m" + "우 3.48m" 356 px > 344: one per row)
 K9L_RIGHT_HAIR = 170.0
-# K9HudNavdy 2 (11/16): screen-right car rows squeezed to 8..K9L_RES_CAR_BOTTOM, 콤마 / 젯슨 x CPU GPU MEM above TPMS
-K9L_RES_CAR_BOTTOM = 284.0
-K9L_RES_HAIR = 290.0
-K9L_RES_NAME_W = 56.0
-K9L_RES_HEAD_BASE = 308.0
-K9L_RES_HEAD_SIZE = 14.0
-K9L_RES_ROW_BASES = (328.0, 348.0)
-K9L_RES_SIZE = 19.0
+# K9HudNavdy 2 (11/16 01:33 대감님 "전체삭제하고 ... 코어별항목도추가"): the screen-right block (car rows + TPMS) is
+# replaced by diagnostics only: 콤마 / 젯슨 resources, model times, HUD state, startup stages. Page 0 = summary,
+# page 1 = per core / every sensor; switched by set_k9_res_page only (no automatic cycling).
+K9R_TOP, K9R_BOTTOM = 8.0, 472.0
+K9R_HEAD, K9R_VALUE, K9R_SMALL = 15.0, 16.0, 12.0
+K9R_WARN = (255, 205, 70)
+K9R_STALE_S = 2.0                      # car packet older than this = 수신 끊김
+K9R_GLYPHS = "".join(sorted(set(
+    "콤마젯슨수신끊김열코어온도전력여유팬모델처리요청결과계산내부전체차량정보받은뒤시작단계부팅후연결대기준비출력화면측정" +
+    "안함꺼짐실측없음개°→·…")))
 K9L_LAT_HEAD = 196.0
 K9L_LAT_BASE0, K9L_LAT_PITCH = 228.0, 30.0   # 35 px glyphs (27 x ink 1.31): 25 px box, 5 px between lines, last 468
 # 11/12 22:37 대감님 "두 판 모두 살려": K9 D layout chosen by the Param ClusterHudK9Style
@@ -7687,6 +7689,24 @@ class ClusterUiRenderer:
         """Jetson CPU / GPU / memory %; the plain renderer has no Jetson (the Jetlink HUD overrides this)."""
         return (None, None, None)
 
+    k9_res_page = 0   # K9HudNavdy 2: 0 = summary, 1 = per core; manual only (set_k9_res_page)
+
+    def set_k9_res_page(self, page) -> None:
+        self.k9_res_page = 1 if page == 1 else 0
+
+    def k9_jetson_diag(self) -> dict | None:
+        """K9HudNavdy 2 Jetson block; the plain (comma) renderer has no Jetson data (hud_health overrides this)."""
+        return None
+
+    def k9_car_rx_age(self, state) -> float | None:
+        """seconds since the last carState, measured on the renderer's own clock (comma: SubMaster recv_time)"""
+        diag = getattr(state, "comma_diag", None)
+        return diag.get("car_rx_age_s") if isinstance(diag, dict) else None
+
+    def k9_startup(self) -> dict | None:
+        """startup stage marks {stage: (seconds after boot, device)}; the comma renderer measures none"""
+        return None
+
     def k9_navdy_on(self) -> bool:
         """the single K9HudNavdy switch point (later Navdy-only additions hang off this)"""
         return self.k9_hud_navdy == 1
@@ -7880,6 +7900,11 @@ class ClusterUiRenderer:
         self._k9l_font_pair = None
         self._k9l_font_tried = False
         self._k9l_metric_cache = {}
+        res_font = getattr(self, "_k9r_font_obj", None)
+        if res_font is not None:
+            rl.unload_font(res_font)
+        self._k9r_font_obj = None
+        self._k9r_font_tried = False
         bg = getattr(self, "_k9l_bg_texture", None)
         if bg is not None:
             rl.unload_texture(bg)
@@ -8041,11 +8066,10 @@ class ClusterUiRenderer:
             else:
                 self._k9l_meter(x, cy, mw, fraction, K9L_CHAMPAGNE, True, K9L_CHAMPAGNE)
 
-        if self.k9_hud_res:  # K9HudNavdy 2: rows squeezed, resource rows above TPMS (TPMS unchanged)
-            self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_RES_CAR_BOTTOM, meter)
+        if self.k9_hud_res:  # K9HudNavdy 2: the whole block is diagnostics (no car rows, no TPMS)
             self._k9l_draw_res(state)
-        else:
-            self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_TPMS_HAIR - 4.0, meter)
+            return
+        self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_TPMS_HAIR - 4.0, meter)
         self._k9l_hair(x0, K9L_TPMS_HAIR, K9L_CAR_W, 110)
         self._k9l_draw_tpms(state)
 
@@ -8371,24 +8395,239 @@ class ClusterUiRenderer:
     def k9_res_text(value: float | None) -> str:
         return "--" if value is None else f"{value:.0f}%"
 
-    def _k9l_draw_res(self, state: ClusterUiState) -> None:
-        """K9HudNavdy 2: screen-right car block, between the four rows and TPMS: 콤마 (deviceState) and 젯슨 (Jetlink host),
-        CPU / GPU / 메모리 %. A missing value is '--', never guessed."""
+    # ---- K9HudNavdy 2 diagnostics -------------------------------------------------------------------------------
+    def _k9r_font(self):
+        """own Pretendard atlas for the diagnostics only (the 0 / 1 fonts stay byte-identical)"""
+        if getattr(self, "_k9r_font_tried", False):
+            return getattr(self, "_k9r_font_obj", None)
+        self._k9r_font_tried = True
+        self._k9r_font_obj = None
+        try:
+            rl.set_trace_log_level(rl.TraceLogLevel.LOG_ERROR)
+            cps = sorted(set(range(32, 127)) | {ord(c) for c in K9R_GLYPHS})
+            buf = rl.ffi.new("int[]", cps)
+            font = rl.load_font_ex(str(K9L_KR_FONT_PATH), 48, rl.ffi.cast("int *", buf), len(cps))
+            rl.set_trace_log_level(rl.TraceLogLevel.LOG_WARNING)
+            if font.texture.id > 0:
+                rl.gen_texture_mipmaps(font.texture)
+                rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+                self._k9r_font_obj = font
+        except Exception as exc:
+            rl.set_trace_log_level(rl.TraceLogLevel.LOG_WARNING)
+            print(f"K9 diagnostics font load failed: {exc}")
+        return self._k9r_font_obj
+
+    def _k9r_width(self, text: str, size: float) -> float:
+        font = self._k9r_font()
+        if font is None:
+            return self._measure_text(text, size, 0.0, self._font_for_text(text))[0]
+        return self._measure_text(text, size * K9L_KR_INK, 0.0, font)[0]
+
+    @staticmethod
+    def k9r_pct(value) -> str:
+        return "--" if value is None else f"{value:.0f}%"
+
+    @staticmethod
+    def k9r_num(value, fmt: str, unit: str = "") -> str:
+        return "--" if value is None else f"{value:{fmt}}{unit}"
+
+    def k9_res_layout(self, state: ClusterUiState, width=None, page: int | None = None):
+        """pure layout of the diagnostics block: (texts, bars). texts = (text, x_left, base, size, color);
+        bars = (x, y, w, fill 0..1 or None). Every item lies inside x K9L_EDGE..K9L_EDGE+K9L_CAR_W, y K9R_TOP..K9R_BOTTOM."""
+        width = width or self._k9r_width
+        page = self.k9_res_page if page is None else page
         x0, x1 = K9L_EDGE, K9L_EDGE + K9L_CAR_W
-        self._k9l_hair(x0, K9L_RES_HAIR, x1 - x0, 110)
-        comma = getattr(state, "comma_resources", None) or (None, None, None)
-        rows = (("콤마", comma), ("젯슨", self.k9_jetson_resources()))
-        cols = [x0 + K9L_RES_NAME_W + i * (x1 - x0 - K9L_RES_NAME_W) / 3.0 for i in range(4)]
-        for j, head in enumerate(("CPU", "GPU", "MEM")):
-            self._k9l_text(head, cols[j + 1], 0.0, K9L_RES_HEAD_SIZE, K9L_LABEL, anchor="right", base=K9L_RES_HEAD_BASE,
-                           track=K9L_TRACK)
-        for i, (name, values) in enumerate(rows):
-            base = K9L_RES_ROW_BASES[i]
-            self._k9l_text(name, x0, 0.0, K9L_RES_SIZE, K9L_LABEL, base=base)
-            for j, value in enumerate(values):
-                text = self.k9_res_text(value)
-                self._k9l_text(text, cols[j + 1], 0.0, K9L_RES_SIZE, K9L_MUTED if value is None else K9L_VALUE,
-                               anchor="right", numeric=True, base=base)
+        texts, bars = [], []
+        y = [K9R_TOP]
+
+        def room(size):
+            return y[0] + size + 6.0 <= K9R_BOTTOM
+
+        def put(text, x, base, size, color, anchor="left"):
+            w = width(text, size)
+            xl = x - w if anchor == "right" else x
+            texts.append((text, xl, base, size, color))
+            return w
+
+        def line(size, left, right=None, lcolor=K9L_LABEL, rcolor=K9L_VALUE):
+            if not room(size):
+                return False
+            y[0] += size + 6.0
+            base = y[0]
+            lw = put(left, x0, base, size, lcolor) if left else 0.0
+            if right:
+                rw = width(right, size)
+                if x0 + lw + 8.0 + rw > x1:  # never overlap: shorten the right text
+                    while len(right) > 2 and x0 + lw + 8.0 + width(right + "…", size) > x1:
+                        right = right[:-1]
+                    right += "…"
+                put(right, x1, base, size, rcolor, "right")
+            return True
+
+        def items(parts, size, color=K9L_VALUE, gap=12.0):
+            """one line of short items left to right; items that do not fit are dropped (never drawn outside)"""
+            if not room(size):
+                return False
+            y[0] += size + 6.0
+            x = x0
+            for text, c in parts:
+                w = width(text, size)
+                if x + w > x1:
+                    break
+                put(text, x, y[0], size, c or color)
+                x += w + gap
+            return True
+
+        def hair():
+            if y[0] + 8.0 <= K9R_BOTTOM:
+                y[0] += 8.0
+                bars.append((x0, y[0] - 4.0, x1 - x0, None))
+
+        def core_cells(values, n_label=True):
+            """one row: real core count; numbers only when they fit their cell, a 3 px bar under each"""
+            n = len(values)
+            if n == 0:
+                return items([("코어 --", K9L_MUTED)], K9R_SMALL)
+            if not room(K9R_SMALL + 4.0):
+                return False
+            y[0] += K9R_SMALL + 6.0
+            cell = (x1 - x0) / n
+            show = width("100", K9R_SMALL) <= cell - 3.0
+            for i, v in enumerate(values):
+                cx = x0 + i * cell
+                if show:
+                    text = "--" if v is None else f"{v:.0f}"
+                    w = width(text, K9R_SMALL)
+                    texts.append((text, cx + (cell - w) * 0.5, y[0], K9R_SMALL, K9L_MUTED if v is None else K9L_VALUE))
+                bars.append((cx + 1.0, y[0] + 3.0, max(1.0, cell - 2.0), None if v is None else v / 100.0))
+            y[0] += 4.0
+            return True
+
+        comma = getattr(state, "comma_diag", None)
+        comma = comma if isinstance(comma, dict) else None
+        jet = self.k9_jetson_diag()
+        jet = jet if isinstance(jet, dict) else None
+        lost = ("수신 끊김", K9R_WARN)
+
+        def temps_comma(all_values):
+            out = []
+            for name, top, values in (comma or {}).get("temps") or ():
+                if all_values and len(values) > 1:
+                    out += [(f"{name}{i} {v:.1f}°", None) for i, v in enumerate(values)]
+                else:
+                    out.append((f"{name} {top:.1f}°", None))
+            return out or [("온도 --", K9L_MUTED)]
+
+        def temps_jet(limit):
+            got = sorted((jet or {}).get("temps") or (), key=lambda t: -t[1])
+            got = got[:limit] if limit else got
+            return [(f"{n} {t:.1f}°", None) for n, t in got] or [("온도 --", K9L_MUTED)]
+
+        if page == 0:
+            # 콤마
+            line(K9R_HEAD, "콤마", lost[0] if comma is None else
+                 ("열 " + comma["thermal"] if comma.get("thermal") else "열 --"),
+                 rcolor=K9R_WARN if comma is None else K9L_MUTED)
+            c = comma or {}
+            items([(f"CPU {self.k9r_pct(c.get('cpu'))}", None), (f"GPU {self.k9r_pct(c.get('gpu'))}", None),
+                   (f"MEM {self.k9r_pct(c.get('mem_pct'))}", None)], K9R_VALUE, gap=18.0)
+            core_cells(c.get("cores") or [])
+            items([("온도", K9L_LABEL)] + (temps_comma(False) if comma else [("--", K9L_MUTED)]), K9R_SMALL + 1.0, gap=8.0)
+            items([(f"전력 {self.k9r_num(c.get('power_w'), '.1f', 'W')}", None),
+                   (f"여유 {self.k9r_pct(c.get('free_pct'))}", None),
+                   (f"팬 {self.k9r_pct(c.get('fan_pct'))}", None)], K9R_SMALL + 1.0, gap=14.0)
+            hair()
+            # 젯슨
+            j = jet or {}
+            line(K9R_HEAD, "젯슨", lost[0] if jet is None else f"GPU {self.k9r_num(j.get('gpu_mhz'), '.0f', ' MHz')}",
+                 rcolor=K9R_WARN if jet is None else K9L_MUTED)
+            items([(f"CPU {self.k9r_pct(j.get('cpu'))}", None), (f"GPU {self.k9r_pct(j.get('gpu'))}", None),
+                   (f"MEM {self.k9r_pct(j.get('mem_pct'))}", None)], K9R_VALUE, gap=18.0)
+            core_cells([v for v, _, online in (j.get("cores") or []) if online])
+            clocks = [mhz for _, mhz, online in (j.get("cores") or []) if online and mhz is not None]
+            mem = ("--" if j.get("mem_used_gb") is None else f"{j['mem_used_gb']:.1f}/{j['mem_total_gb']:.1f} GB")
+            items([(f"MEM {mem}", None), (f"CPU {self.k9r_num(max(clocks) if clocks else None, '.0f', ' MHz')}", None)],
+                  K9R_SMALL + 1.0, gap=14.0)
+            items([("온도", K9L_LABEL)] + (temps_jet(3) if jet else [("--", K9L_MUTED)]), K9R_SMALL + 1.0, gap=8.0)
+            hair()
+            # 모델 처리
+            line(K9R_HEAD, "모델 처리", None)
+            line(K9R_SMALL + 1.0, "요청→결과 · 콤마", self.k9r_num(c.get("model_ms"), ".1f", " ms"), K9L_MUTED,
+                 K9L_VALUE if c.get("model_ms") is not None else K9L_MUTED)
+            gpu_ms, total_ms = j.get("infer_gpu_ms"), j.get("infer_total_ms")
+            line(K9R_SMALL + 1.0, "내부 계산 GPU/전체 · 젯슨",
+                 "--" if gpu_ms is None and total_ms is None else
+                 f"{self.k9r_num(gpu_ms, '.1f')}/{self.k9r_num(total_ms, '.1f')} ms", K9L_MUTED,
+                 K9L_VALUE if total_ms is not None else K9L_MUTED)
+            hair()
+            # HUD
+            fps = getattr(state, "actual_fps", None)
+            fps = fps if isinstance(fps, (int, float)) and math.isfinite(fps) and fps > 0.0 else None
+            line(K9R_HEAD, "HUD", f"FPS {self.k9r_num(fps, '.1f')} 실측", rcolor=K9L_VALUE if fps else K9L_MUTED)
+            age = self.k9_car_rx_age(state)
+            if age is None:
+                age_text, age_color = "--", K9L_MUTED
+            elif age > K9R_STALE_S:
+                age_text, age_color = f"수신 끊김 {age:.0f} s", K9R_WARN
+            else:
+                age_text, age_color = f"{age:.2f} s", K9L_VALUE
+            line(K9R_SMALL + 1.0, "차량 정보 받은 뒤", age_text, K9L_MUTED, age_color)
+            hair()
+            # 시작 단계
+            marks = self.k9_startup() or {}
+            line(K9R_HEAD, "시작 단계", "부팅 후 s", rcolor=K9L_MUTED)
+            for key, name in (("connect", "연결 대기"), ("model", "모델 준비"), ("car", "차량 정보 수신"), ("frame", "화면 출력")):
+                t, device = marks.get(key) or (None, "")
+                line(K9R_SMALL + 1.0, name, "--" if t is None else f"{t:.1f} · {device}", K9L_MUTED,
+                     K9L_MUTED if t is None else K9L_VALUE)
+        else:
+            c, j = comma or {}, jet or {}
+            line(K9R_HEAD, "콤마 코어", lost[0] if comma is None else f"{len(c.get('cores') or [])}개",
+                 rcolor=K9R_WARN if comma is None else K9L_MUTED)
+            cores = c.get("cores") or []
+            for r in range(0, len(cores), 4):
+                items([(f"C{i} {self.k9r_pct(v)}", None if v is not None else K9L_MUTED)
+                       for i, v in enumerate(cores[r:r + 4], start=r)], K9R_SMALL + 2.0, gap=14.0)
+            line(K9R_HEAD, "콤마 온도", None)
+            ts = temps_comma(True)
+            for r in range(0, len(ts), 3):
+                items(ts[r:r + 3], K9R_SMALL + 1.0, gap=10.0)
+            hair()
+            line(K9R_HEAD, "젯슨 코어", lost[0] if jet is None else f"{len(j.get('cores') or [])}개",
+                 rcolor=K9R_WARN if jet is None else K9L_MUTED)
+            jc = j.get("cores") or []
+            for r in range(0, len(jc), 2):
+                items([((f"C{i} {self.k9r_pct(v)} {self.k9r_num(mhz, '.0f')}MHz" if online else f"C{i} 꺼짐"),
+                        None if online and v is not None else K9L_MUTED)
+                       for i, (v, mhz, online) in enumerate(jc[r:r + 2], start=r)], K9R_SMALL + 1.0, gap=14.0)
+            items([(f"GPU {self.k9r_pct(j.get('gpu'))} {self.k9r_num(j.get('gpu_mhz'), '.0f', ' MHz')}", None)],
+                  K9R_SMALL + 1.0)
+            line(K9R_HEAD, "젯슨 온도", None)
+            tj = temps_jet(0)
+            for r in range(0, len(tj), 3):
+                items(tj[r:r + 3], K9R_SMALL + 1.0, gap=10.0)
+        return texts, bars
+
+    def _k9l_draw_res(self, state: ClusterUiState) -> None:
+        """K9HudNavdy 2: the screen-right block = diagnostics only. A missing value is '--' / 수신 끊김, never guessed."""
+        texts, bars = self.k9_res_layout(state)
+        for x, yy, w, fill in bars:
+            if fill is None and w > 60.0:
+                self._k9l_hair(x, yy, w, 110)
+                continue
+            rl.draw_rectangle_rec(rl.Rectangle(x, yy, w, 3.0), rl_color(K9L_DIM, 120))
+            if fill is not None:
+                rl.draw_rectangle_rec(rl.Rectangle(x, yy, max(0.0, min(1.0, fill)) * w, 3.0), rl_color(K9L_ICE, 230))
+        font = self._k9r_font()
+        for text, x, base, size, color in texts:
+            if font is None:
+                self._draw_text(text, x, base - size * 0.5, size, color)
+                continue
+            fs = size * K9L_KR_INK
+            b, _cap = self._k9l_metrics(font)
+            dy = float(round(base - b * fs))
+            rl.draw_text_ex(font, text, rl.Vector2(float(round(x)), dy + 1.0), fs, 0.0, rl.Color(0, 0, 0, 150))
+            rl.draw_text_ex(font, text, rl.Vector2(float(round(x)), dy), fs, 0.0, rl_color(color))
 
     def _k9l_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         tex = self._k9l_background()

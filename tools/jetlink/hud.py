@@ -12,6 +12,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'openpilot/selfdrive/carrot/cluster'))
 from hud_protocol import read_snapshot, SERVICES
 
+# K9HudNavdy 2 startup marks, Jetson monotonic (same clock as the server marks): first car packet, last car packet,
+# first frame handed to the USB panel. Display only; nothing waits on them.
+MARKS = {}
+
 
 def require_usb_display(scan, expected):
   product = scan(expected)
@@ -48,6 +52,7 @@ class DisplayParams:
       # still invalidates all vehicle data immediately on snapshot loss.
       if record is not None:
         self.values = record[1]['params']
+        MARKS.setdefault('car', record[0])
       self.next_read = now + .1
     value = self.values.get(key)
     return base64.b64decode(value) if value is not None else None
@@ -104,6 +109,7 @@ class RemoteSubMaster:
       self.alive = dict.fromkeys(self.services, False)
       return
     received, value = snapshot
+    MARKS['car_last'] = received
     if received == self.last_received:
       return
     self.last_received = received
@@ -128,6 +134,7 @@ class RemoteSubMaster:
 
 
 def main():
+  MARKS.setdefault('hud_start', time.monotonic())
   if '--help' not in sys.argv:
     from boot_update import wait_for_runtime
     wait_for_runtime()
@@ -198,6 +205,7 @@ def main():
   import main as cluster
   from hud_health import HealthRenderer
   cluster.ClusterUiRenderer = HealthRenderer
+  HealthRenderer.startup_marks = MARKS
   if '--help' not in sys.argv:
     scan = cluster.find_supported_usb_product
     wait_for_usb_display(scan, cluster.product_id_for_hud_mode(1))
@@ -211,6 +219,7 @@ def main():
     def send_h264_chunk(self, *args, **kwargs):
       result = super().send_h264_chunk(*args, **kwargs)
       now = time.monotonic()
+      MARKS.setdefault('frame', now)
       if now >= self.next_status:
         path = Path('/dev/shm/carrot-jetlink-hud-status.json')
         tmp = path.with_suffix('.tmp')

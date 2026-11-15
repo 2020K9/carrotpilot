@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from cluster_config import DEFAULT_LANE_WIDTH_M, WHITE
@@ -504,6 +504,7 @@ class ClusterUiState:
     memory_used_percent: float | None = None
     disk_used_percent: float | None = None
     comma_resources: tuple[float | None, float | None, float | None] | None = None  # deviceState CPU avg / GPU / memory %
+    comma_diag: dict | None = field(default=None, compare=False, hash=False)  # K9HudNavdy 2 (cluster_live.live_comma_diag)
     network_address: str | None = None
     network_connected: bool = False
     egpu_active: bool = False

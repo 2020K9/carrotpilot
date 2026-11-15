@@ -93,4 +93,4 @@ def test_menu_2_only_changes_the_screen_right_block(monkeypatch):
   assert len(xs) > 1000
   scale = one.shape[1] / cr.DESIGN_WIDTH
   assert xs.min() >= (cr.DESIGN_WIDTH - cr.K9L_EDGE - cr.K9L_CAR_W - 2) * scale
-  assert ys.max() < cr.K9L_TPMS_HAIR * scale   # TPMS untouched
+  assert ys.max() >= cr.K9L_TPMS_HAIR * scale   # 11/16 01:33 "tpms말고도 전체삭제": the TPMS area is replaced too

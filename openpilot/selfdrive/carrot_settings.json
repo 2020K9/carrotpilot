@@ -3831,19 +3831,19 @@
       "group": "외부 HUD",
       "name": "K9HudNavdy",
       "title": "K9 D 화면 판 (실험)",
-      "descr": "K9 D단 HUD 화면 판. 0 윗버전(카드형). 1 아랫버전(한 장면형). 2 한 장면형 + 오른쪽 창에 콤마·젯슨 CPU·GPU·메모리 %(값이 없으면 --). 모든 판 모두 나브디 회색 도로·주변 차, K9 사진 내 차, 차선 평활. 운행 중 바꿔도 1초 안에 바뀜. EV6·P·R 무관. 실차 미확인.",
+      "descr": "K9 D단 HUD 화면 판. 0 윗버전(카드형). 1 아랫버전(한 장면형). 2 한 장면형 + 오른쪽 창을 진단 전용으로(TPMS·주행 정보 없음): 콤마·젯슨 CPU 평균·코어별·GPU·메모리·온도(센서 이름), 콤마 전력·저장공간 여유·열 상태·팬, 젯슨 클럭, 모델 처리 시간(요청→결과는 콤마 시계, 내부 계산은 젯슨 시계), 화면 FPS 실측, 차량 정보 받은 뒤 시간, 시작 단계(연결 대기·모델 준비·차량 정보 수신·화면 출력, 젯슨 부팅 후 초). 값이 없거나 오래되면 -- 또는 수신 끊김. 모든 판 모두 나브디 회색 도로·주변 차, K9 사진 내 차, 차선 평활. 운행 중 바꿔도 1초 안에 바뀜. EV6·P·R 무관. 실차 미확인.",
       "egroup": "CLUSTER HUD",
       "etitle": "K9 D Screen Layout (Trial)",
-      "edescr": "K9 D HUD layout. 0 Upper version (cards). 1 Lower version (one scene). 2 One scene + comma and Jetson CPU, GPU and memory % in the right panel (-- when a value is missing). All keep the Navdy grey road and cars, K9 photo own car, smoothed lanes. Changes within 1 s while driving. EV6, P and R unaffected. Not tested in the car.",
+      "edescr": "K9 D HUD layout. 0 Upper version (cards). 1 Lower version (one scene). 2 One scene + the right panel as diagnostics only (no TPMS or trip info): comma and Jetson CPU average, per core, GPU, memory, temperatures with sensor names, comma power, free storage, thermal state and fan, Jetson clocks, model times (request to result on the comma clock, internal compute on the Jetson clock), measured screen FPS, time since the last vehicle data, startup stages (link wait, model ready, vehicle data, first frame; seconds after Jetson boot). Missing or stale values show -- or 수신 끊김 (signal lost). All keep the Navdy grey road and cars, K9 photo own car, smoothed lanes. Changes within 1 s while driving. EV6, P and R unaffected. Not tested in the car.",
       "cgroup": "外部 HUD",
       "ctitle": "K9 D 画面版式（试验）",
-      "cdescr": "K9 D挡HUD版式。0 上版（卡片）。1 下版（单一场景）。2 单一场景 + 右侧面板显示comma与Jetson的CPU、GPU、内存%（无数值时显示--）。各版均为Navdy灰色道路与车辆、K9照片本车、车道平滑。行驶中1秒内生效。EV6、P、R不受影响。未经实车确认。",
+      "cdescr": "K9 D挡HUD版式。0 上版（卡片）。1 下版（单一场景）。2 单一场景 + 右侧面板仅显示诊断信息（不含TPMS与行程信息）：comma与Jetson的CPU平均、各核心、GPU、内存、温度（含传感器名），comma功耗、存储剩余、热状态、风扇，Jetson频率，模型处理时间（请求→结果用comma时钟，内部计算用Jetson时钟），实测画面FPS，距上次车辆数据的时间，启动阶段（连接等待、模型就绪、车辆数据接收、画面输出；Jetson开机后秒数）。无数值或过期时显示--或“수신 끊김”（接收中断）。各版均为Navdy灰色道路与车辆、K9照片本车、车道平滑。行驶中1秒内生效。EV6、P、R不受影响。未经实车确认。",
       "min": 0,
       "max": 2,
       "default": 0,
       "unit": 1,
       "control": "select",
-      "options": {"ko": ["0 윗버전 카드형", "1 아랫버전 한 장면형", "2 한 장면형 + 자원 표시"], "en": ["0 Upper: cards", "1 Lower: one scene", "2 One scene + resources"], "zh": ["0 上版 卡片", "1 下版 单一场景", "2 单一场景 + 资源显示"]}
+      "options": {"ko": ["0 윗버전 카드형", "1 아랫버전 한 장면형", "2 한 장면형 + 진단 창"], "en": ["0 Upper: cards", "1 Lower: one scene", "2 One scene + diagnostics"], "zh": ["0 上版 卡片", "1 下版 单一场景", "2 单一场景 + 诊断面板"]}
     },
     {
       "group": "외부 HUD",
