@@ -40,7 +40,7 @@
 4 뒤 어떤 단계든 실패(맞바꿈 뒤 첫 fsync 포함) → 복구:
 - 먼저 표시 파일을 원래대로: 원래 없었으면 새 표시를 지우지 않고 `boot-update-required.rolledback-<시각>`으로 치움, 원래 있었으면 원래 내용.
 - 그다음 맞바꿈으로 옛 폴더 복귀 → 백업과 해시 비교 + 옛 갱신기 import·NAS 주소 허용 확인.
-- 이 순서라 복구 도중 프로세스가 죽어도 "옛 갱신기 + 이 도구가 쓴 표시"는 생기지 않음(남는 것은 "새 갱신기 + 표시 없음" → 다시 실행하면 마무리).
+- 이 순서라 복구 도중 프로세스가 죽어도 "옛 갱신기 + 이 도구가 쓴 표시"는 생기지 않음(남는 것은 "새 갱신기 + 표시 없음" → 현재 도구에 마련된 대응은 수동 재실행).
 지우는 것은 없음(백업·옛 폴더·치운 표시 모두 남김).
 
 ## 중단 시험의 뜻 (중요)
@@ -58,7 +58,8 @@
   - 표시를 맞바꿈 **앞**에 쓰는 순서: 그 사이 중단 = 옛 갱신기 + 표시 → **바로 다음 부팅**에 모델 막힘. 채택 안 함.
   - 표시를 맞바꿈 **뒤**(39c7e6985는 검사 뒤 = 하위 프로세스 검사 시간만큼 창이 김): 이번 판은 맞바꿈 직후로 당겨 창을 표시 임시 파일 기록+이름 바꾸기 사이로 줄임. 현재 두 항목(updater 폴더, 표시 파일)을 따로 바꾸는 구현에는 창이 남음. 다른 전환·복구 설계까지 불가능하다고 입증한 것은 아님.
   - 남은 창에 걸리면: 다음 부팅은 정상, 그다음 부팅부터 모델 막힘 → 전환 직후 `--state`가 `{"key":"new","complete":true,"marker":true}`인지 반드시 확인, 아니면 재부팅 전에 다시 실행.
-  - **남은 위험(자동 복구 아님)**: 재부팅 전 사람이 확인·재실행하는 절차는 자동 복구가 아니다. 갑작스러운 전원 차단이면 이 확인 자체를 못 할 수 있고, 그 경우 위 "그다음 부팅부터 모델 막힘"이 그대로 일어날 수 있다.
+  - **남은 위험(`switch_updater.py` 기준)**: 이 도구에 마련된 대응은 재부팅 전 사람이 확인하고 수동으로 다시 실행하는 것뿐이며, 자동 복구가 아니다. 갑작스러운 전원 차단이면 재부팅 전에 이 확인을 할 수 있다고 보장할 수 없고, 그 경우 위 "그다음 부팅부터 모델 막힘"이 그대로 일어날 수 있다.
+  - 다른 복구 설계는 이 판 작성 때 아직 검토하지 않았다(검토 중이었음). 그 뒤 검토·시제작 결과는 아래 "v3 검토" 절(`switch_updater_linked.py`, 대감님 승인 전 시제작).
 - 39c7e6985 시험 `test_power_cut_new_without_marker_then_legacy_start[after_rename_old]`은 옛 순서(검사 뒤 표시)를 전제로 "after_rename_old에서 표시 없음"을 단언하므로 이번 순서 수정 뒤 실패한다. 기존 시험 단언을 바꾸지 않는 규칙에 따라 그대로 두었고, 새 순서의 기대값은 `test_switch_review.py`가 단언한다.
 
 ## 다음 부팅 모의 범위 (`test_switch_review.py::test_next_boot_downloads_verifies_unpacks_activates`)
@@ -97,6 +98,50 @@
 - 실제 젯슨의 updater 파일 내용·키·boot-update-required 유무(읽기 전 미확인).
 - 젯슨 커널/파일시스템에서 renameat2 RENAME_EXCHANGE 동작(워커에서만 시험).
 - 다음 부팅의 실제 다운로드·L4T/TensorRT 검사·GPU probe·서버 시작(위 범위 밖).
-- 구판 부팅의 stage 타이머(OnBootSec=2min, `automatic`)는 모의에 넣지 않음.
+- 구판 부팅의 stage 타이머(OnBootSec=2min, `automatic`): `switch_updater.py` 시험에는 없음. v3 검토에서 가짜 루트로 측정(아래).
 - 보호 저장 이미지의 `/etc/carrot-jetlink-protected.json`·`/run/carrot-storage.json` 실제 값.
 - 옛 개인키 존재 여부(못 찾음, 없다고 단정 안 함).
+
+## v3 검토 (노비 11/16 06:28): 타이머·남은 창 자동 복구 — `switch_updater_linked.py` 시제작, 대감님 승인 전
+기존 `switch_updater.py`와 기존 시험 2개는 바꾸지 않았다. 새 파일 `tools/jetlink/switch_updater_linked.py`, 새 시험 `tools/jetlink/test_switch_linked.py`.
+모든 측정은 워커 가짜 루트(구판 0cb67d46c 실제 파일). `os._exit` 중단은 프로세스 강제 종료 모의이며 실제 전원 차단 입증이 아니다.
+
+### 구판 자동 갱신 타이머 경로 (0cb67d46c 소스)
+- 타이머 `carrot-jetlink-update-stage.timer`: OnBootSec=2min, OnUnitActiveSec=15min, RandomizedDelaySec=30 (`install_updates.py:150-157`).
+- 서비스 `carrot-jetlink-update-stage.service`: `ExecStart=/opt/carrot-jetlink/venv/bin/python /opt/carrot-jetlink/updater/update_host.py automatic` (`install_updates.py:125,139-148`). 즉 **그 순간 설치된 updater 폴더**의 코드가 돈다.
+- `update_host.main()` (`update_host.py:335-371`): `boot_update.enabled()`가 참(표시 있음 + 부팅 id 다름)이면 `automatic`은 잠금 없이 바로 끝(`:345-346`). 아니면 `/run/carrot-jetlink-update.lock`을 `LOCK_EX|LOCK_NB`로 잡고(`:362-363`, 못 잡으면 BlockingIOError로 실패) `automatic_stage()`.
+- `automatic_stage()` (`:307-332`): 콤마 제어 파일(`/dev/shm/carrot-jetlink-bootstrap.json`, 15초 안, onroad False)의 `jetson_release`로 `stage_manifest()`. 구판은 GitHub 주소를 `checked_url`에서 ValueError로 거부, 이 ValueError는 `:317`의 except가 삼키고 HUD 스냅샷 경로(`read_snapshot`, `:320`)로 넘어감.
+- 새 판(063613a16) update_host도 같은 잠금 경로(`update_host.py:368-369`)를 쓴다.
+
+### 타이머 측정 (가짜 루트, 네트워크·시스템 명령 막음)
+- 전환 전(옛 updater, 표시 없음): 결과 정상 종료, 시스템 명령·네트워크 호출 0, runtime 변경 0.
+- 전환 중(새 도구가 잠금 보유, 멈춤 지점 after_lock·after_stage·after_link·after_exchange·after_marker·after_rename_old 6곳): 타이머 BlockingIOError, 변경 0, 호출 0. 전환은 끝까지 성공.
+- 업데이트 동작이 먼저 잠금 보유: 새 도구가 기다린 뒤(시험 1.5초) "nothing changed"로 중단, runtime 스냅샷 변화 0. 잠금이 풀리면 기다리던 전환이 이어서 성공.
+- 전환 직후 같은 부팅: 새 updater, 관문 꺼짐(표시 = 이번 부팅 id) → 새 코드가 GitHub 명세를 받아 `check_runtime`(dpkg-query) 호출까지 감(가짜 루트라 실패, 변경 0). 실제 젯슨에서는 다음 부팅용 내려받기를 시도할 수 있음(미확인).
+- 다음 부팅: 관문 켜짐 → `automatic` 즉시 종료(호출·변경 0).
+- 중단 뒤 각 상태에서 부팅마다 apply → 서버 → 타이머 순서, 타이머가 먼저 도는 경우까지: 타이머가 updater·표시를 바꾼 경우 0.
+- 잠금이 없는 `switch_updater.py`에서 타이머가 전환과 겹칠 때 옛 프로세스가 새 폴더 모듈을 늦게 import하는 섞임은 측정하지 않음(미확인). 새 도구는 잠금으로 이 겹침 자체를 막는다.
+
+### 남은 창 자동 복구 방안 판정
+- (가) 표식을 새 updater 폴더 **안에만** 넣기: **불가**. 구판이 보는 곳은 폴더 밖 `/opt/carrot-jetlink/boot-update-required` 하나(`boot_update.py:25-26`, `install_updates.py:26`).
+- (나) 폴더 밖 표시를 폴더 안 파일로 가는 **상대 심볼릭 링크**로 미리 만들기: **가능, 시제작함**. 구판 두 곳 모두 `Path.is_file()`만 봄 → 옛 폴더일 때 링크가 비어 있어 False = 전환 전과 같은 상태, 맞바꿈(renameat2 한 번) 순간 링크가 풀려 True. updater와 표시가 같은 rename으로 함께 바뀐다. 그 뒤 링크를 같은 내용의 보통 파일로 바꿈(표시는 계속 있음). 구판 `bootstrap()`은 표시를 `temporary.replace(marker)`로 쓰므로(`install_updates.py:109-112`) 빈 링크 위에도 정상 동작(시험 확인).
+  - 새 도구 위치: 잠금 `switch_updater_linked.py:74`, 안쪽 표식 `:201`, 링크 `:212`, 맞바꿈 `:217`, 보통 파일로 `:98`, 남의 링크면 중단 `:151`, 재실행 마무리 `:134`, 복구 `:253`(보통 파일 → 링크(표시 유지) → 맞바꿈 되돌림(링크 비어 전환 전 상태) → 링크 치움, 지우지 않음).
+- (다) 부팅 전 서비스(`carrot-jetlink.service`에 ExecStartPre drop-in)로 새 updater면 표시 보충: **조건부 가능, 시제작 안 함**. 맞바꿈 전에 /etc에 새 파일을 써야 하고, 보호 이미지가 /etc 쓰기를 허용하는지 미확인. (나)가 추가 서비스 없이 같은 효과를 내서 보류.
+- (라) `migrate_running_release`가 읽는 조건 활용: (나)가 바로 이것(`install_updates.py:26`의 `is_file()`).
+- (마) 표시를 먼저 쓰되 옛 갱신기+표식이 안전하게: **불가**. 표시가 있으면 다음 부팅 관문이 옛 updater의 `Gate`로 돌고 옛 코드는 GitHub 명세를 거부(기존 실측 `test_before_switch_old_updater_rejects_github`). 옛 코드를 바꾸려면 결국 폴더 교체가 필요.
+
+### (나) 측정: 중단 지점 × 구판 부팅·타이머 × 재부팅 2회
+- 중단 12곳(after_lock, after_backup, mid_stage, after_stage, after_link, after_exchange, after_exchange_fsync, after_marker_tmp, after_marker_rename, after_marker, after_rename_old, after_verify) × (바로 재부팅 / 같은 부팅 타이머 뒤 재부팅) = 24경우.
+  - 맞바꿈 전 5곳: 옛 updater + 표시 없음 = 도구를 안 돌린 것과 같은 상태(그 뒤는 구판 원래 동작).
+  - 맞바꿈부터 7곳: 새 updater + 표시 있음, 두 번 재부팅 모두 재설치 호출 없음, 관문이 063613a1 선택, 모델 뜸. **`switch_updater.py`에 있던 after_exchange·after_marker_tmp 창이 사라짐.**
+  - 모든 경우 그 뒤 재실행으로 완료(링크 남지 않고 보통 파일).
+- 오류 주입 5곳 × 표시 없음/있음: 전환 전 상태로 정확히 복구(표시 원래대로, 링크는 rolledback 이름으로 치움), 두 번 부팅 뒤 재실행 성공.
+- 복구 중 두 번째 입출력 오류(relink, exchange_back) × 첫 오류 3곳: 남는 상태는 모두 "새 + 표시" 또는 "전환 전"; "새"였던 경우 두 번 부팅 모두 모델 뜸; 재실행 성공.
+- 복구 중 강제 종료(rec_after_relink, rec_after_exchange_back) × 첫 오류 3곳: 각각 "새 + 표시", "전환 전"; 재실행 성공.
+- 남은 위험: 맞바꿈 전 5곳에서 끊기면 전환 전 상태(표시 없는 구판이면 구판 서버가 원래대로 옛 갱신기를 다시 깜). 이는 도구가 만든 상태가 아니라 원래 상태.
+
+### v3 미확인
+- 실제 전원 차단 때 링크 생성·맞바꿈의 디스크 기록 순서(ext4 저널 동작, 젯슨 커널) — 프로세스 종료 모의뿐.
+- 실제 젯슨에서 renameat2 동작, 실제 systemd 타이머 시각·동시 실행, 실제 HUD 스냅샷 경로(`read_snapshot`)를 탄 경우.
+- 전환 직후 같은 부팅에서 새 updater 타이머가 실제로 내려받기를 하는지(가짜 루트에선 dpkg 단계에서 멈춤).
+- 장치의 boot-update-required 실제 유무(있으면 링크 안은 쓰이지 않고 창 자체가 없음).
