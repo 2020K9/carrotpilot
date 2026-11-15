@@ -14,7 +14,17 @@
 
 > Download, extract, then run 01 followed by 02. The scripts handle the rest.
 
-### 📦 [설치파일 받기](https://upload.shind0.synology.me/downloads/jetson/v0.4.0-boot-preview/carrot-jetson-windows.zip)
+### 📦 [설치파일 받기](https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-v0.4.0-boot-preview)
+
+GitHub 한 파일 한도(2GB) 때문에 설치파일(10.1GB)은 1.9GB 조각 6개(`carrot-jetson-windows.zip.part00`~`part05`)로 나뉘어 있습니다. 조각을 하나씩 받지 말고 [`get-carrot-jetson.ps1`](https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/get-carrot-jetson.ps1)을 받아 그 폴더에서 PowerShell로 실행하세요. 조각을 받아 `carrot-jetson-windows.zip` 하나로 합치고, 조각별 SHA256·서명된 목록(`carrot-jetson-windows.zip.parts.json`)·전체 SHA256 `b531393405eab54df134d51a3cad00f74430aca47e4068b855e92e2c58cc6be4` 를 확인한 뒤에만 파일을 남깁니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File get-carrot-jetson.ps1 -Item v040-zip
+```
+
+Python이 있으면 `py release_parts.py fetch https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.parts.json carrot-jetson-windows.zip` 로도 받을 수 있습니다(서명까지 직접 검사).
+
+> GitHub stores the 10.1 GB installer as 1.9 GB parts. Run `get-carrot-jetson.ps1` from the release page; it downloads, joins and verifies the parts, the signed manifest and the whole-file SHA256.
 
 *Download installer · 10.1 GB*
 

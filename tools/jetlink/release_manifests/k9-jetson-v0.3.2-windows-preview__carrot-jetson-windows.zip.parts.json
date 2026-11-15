@@ -1,0 +1,48 @@
+{
+ "format": 1,
+ "join": "python release_parts.py fetch <this manifest url> <output>  |  get-carrot-jetson.ps1",
+ "name": "carrot-jetson-windows.zip",
+ "original_url": "https://upload.shind0.synology.me/downloads/jetson/v0.3.2-windows-preview/carrot-jetson-windows.zip",
+ "part_size": 1900000000,
+ "parts": [
+  {
+   "name": "carrot-jetson-windows.zip.part00",
+   "offset": 0,
+   "sha256": "7614490514174cd01a057e4272891639f7220dfbbf843bef3316a3362c258e61",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.3.2-windows-preview/carrot-jetson-windows.zip.part00"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part01",
+   "offset": 1900000000,
+   "sha256": "42ad652d5e318f7521fd4235568812c2e7753175a426fa7156f8c5201f18654f",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.3.2-windows-preview/carrot-jetson-windows.zip.part01"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part02",
+   "offset": 3800000000,
+   "sha256": "c626cebd8bb77de64b4e89d27bc2144f336dbd84b4fd3c19081ac4bc70ad01d9",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.3.2-windows-preview/carrot-jetson-windows.zip.part02"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part03",
+   "offset": 5700000000,
+   "sha256": "a16df9d87797611a43272d031dfcb62e2c75b7f02ac50a466e14ab841fb4d3c0",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.3.2-windows-preview/carrot-jetson-windows.zip.part03"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part04",
+   "offset": 7600000000,
+   "sha256": "f4d09954d18e3e18bb41dbc48544937c5e3520d305528e7890d133841713f948",
+   "size": 674619308,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.3.2-windows-preview/carrot-jetson-windows.zip.part04"
+  }
+ ],
+ "sha256": "e11a0a1da0c7fc78ace17b527d0242c98d68a752888c072c6f18ed1151e506da",
+ "signature": "XxDUGWBYezcxd0P88DOqut4cm4EMJy/WCgV5Te6vyhP6IrgRr30SydGPgTjbriXBjoIeeRrprEOeEMGfKjcqBw==",
+ "size": 8274619308,
+ "tag": "k9-jetson-v0.3.2-windows-preview"
+}

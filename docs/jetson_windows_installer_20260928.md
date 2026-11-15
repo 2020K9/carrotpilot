@@ -92,7 +92,7 @@ PowerShell은 UTF-8 BOM으로 배포하여 영문 Windows에서도 한글 소스
 
 ## v0.4.0 — 사용자 정상 동작 확인 후 공개한 R2 이미지
 
-- [설치파일](https://upload.shind0.synology.me/downloads/jetson/v0.4.0-boot-preview/carrot-jetson-windows.zip)과
+- [설치파일](https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-v0.4.0-boot-preview)과
   [공개 시험 릴리스](https://github.com/ajouatom/carrot-jetson/releases/tag/v0.4.0-boot-preview)를 게시했습니다.
   이미지 소스는 `b4df5489b2`이며 소유자 매체에 기록한 R2와 같은 이미지입니다.
 - ZIP은 10,098,321,699바이트, SHA256
@@ -110,3 +110,19 @@ PowerShell은 UTF-8 BOM으로 배포하여 영문 Windows에서도 한글 소스
 - 사용자 정상 동작 확인을 실측 결과와 구분했습니다. 배포 정보는 `validation_basis=owner_report`이며
   APP 보호·모델 유효성·Wi-Fi/SSH 복구·DATA 업데이트 전환의 실측 완료를 주장하지 않습니다.
   전원 차단 시험 횟수는 0으로 기록했습니다. 기존 자동 업데이트 채널과 이전 이미지들은 유지했습니다.
+
+## 2026-11-15 — 2020K9 GitHub 배포판으로 이전(1.9GB 조각)
+
+GitHub 배포판은 파일 하나가 2GB를 넘을 수 없어 큰 파일 3개를 1,900,000,000바이트 조각으로 올렸습니다.
+조각 목록 `<이름>.parts.json`에는 조각별 크기·SHA256과 전체 크기·SHA256이 있고 2020K9 배포 키(Ed25519)로 서명했습니다.
+
+| 배포판 | 파일 | 조각 | 전체 SHA256 |
+|---|---|---|---|
+| [k9-jetson-v0.4.0-boot-preview](https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-v0.4.0-boot-preview) | `carrot-jetson-windows.zip` 10,098,321,699 | 6 | `b531393405eab54df134d51a3cad00f74430aca47e4068b855e92e2c58cc6be4` |
+| [k9-jetson-v0.4.0-boot-preview](https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-v0.4.0-boot-preview) | `carrot-jetson.img.zst` 10,073,623,634 | 6 | `b277f3c6318d5b3210eee6e6aa4e74e492f73ffe2f9a669e108822a7ceb6c614` |
+| [k9-jetson-v0.3.2-windows-preview](https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-v0.3.2-windows-preview) | `carrot-jetson-windows.zip` 8,274,619,308 | 5 | `e11a0a1da0c7fc78ace17b527d0242c98d68a752888c072c6f18ed1151e506da` |
+
+- 윈도우: 배포판의 `get-carrot-jetson.ps1 -Item v040-zip|v040-img|v032-zip` 이 조각을 받아 합치고 목록(SHA256 고정)·조각·전체 SHA256을 확인합니다.
+- Python: `tools/jetlink/release_parts.py fetch <parts.json 주소> <출력 파일>` 이 서명까지 검사합니다(표준 라이브러리만 사용).
+- `refresh_protected_image.py` 는 `release_parts.fetch` 로 v0.4.0 이미지를 받습니다.
+- 서명된 목록 사본: `tools/jetlink/release_manifests/*.parts.json`.
