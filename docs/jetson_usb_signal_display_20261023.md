@@ -80,7 +80,7 @@ also passed. Local signed selection/bundle/NAV checks passed 26 with one Windows
 skip. Counts cover overlapping suites and are not a count of independent tests.
 
 Published source: `54e706fa0573e91dc3b4a0d4f625b9d81a6b68cc`.
-[Signed release manifest](https://upload.shind0.synology.me/models/jetlink-host-54e706fa0573e91dc3b4a0d4f625b9d81a6b68cc/manifest.json).
+[Signed release manifest](https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-54e706fa0573e91dc3b4a0d4f625b9d81a6b68cc/manifest.json).
 Bundle: 64707580 bytes; SHA-256 `42c2951e92bd47029ff22fb058f577a0a3d334eeca62c92aa7b6ef479227787c`.
 All 1,099 regular payload files match committed source (including the existing
 selected-model alias for older bootstraps), with no private task evidence or

@@ -13,7 +13,7 @@ USB 외장 케이스는 PC에서 기록할 때 사용하며, Jetson에서는 NVM
 **시험 패치:** PC 검사는 통과했지만 패치된 매체의 실제 SD/NVMe 부팅은 아직
 검증 전입니다. 기존 정상 작동 SD를 복구용으로 보관하세요.
 
-1. [패치파일 받기](https://upload.shind0.synology.me/downloads/jetson/v0.4.0-sd-nvme-patch-v2-preview/carrot-jetson-windows.zip)
+1. [패치파일 받기](https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-sd-nvme-patch-v2-preview/carrot-jetson-windows.zip)
    후 내용을 기존 **CarrotJetson 폴더 안에** 풀어 `support` 폴더를 합칩니다.
 2. 처음 설치하는 매체라면 기존 **01 → 02**를 완료합니다. 이미 R2를 기록했다면
    다시 기록하지 않습니다. NVMe는 **NVMe용 USB 외장 케이스**로 PC에 연결합니다.
@@ -43,7 +43,7 @@ then install the SSD in Jetson's NVMe slot.
 **Experimental:** desktop checks passed; physical boot of the patched SD/NVMe
 is not yet verified. Keep your working SD as a recovery option.
 
-1. [Download the patch](https://upload.shind0.synology.me/downloads/jetson/v0.4.0-sd-nvme-patch-v2-preview/carrot-jetson-windows.zip)
+1. [Download the patch](https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-sd-nvme-patch-v2-preview/carrot-jetson-windows.zip)
    and extract its contents **inside the existing CarrotJetson folder**. Merge
    `support` folders and replace matching files. Existing portable Python is reused.
 2. For new media, run the original **01 → 02**. Already recorded R2 media does

@@ -115,9 +115,9 @@ def test_local_to_official_internet_restore_and_back_on_next_boot(env, monkeypat
   bundle = env.temporary / 'official.tar.gz'
   archive(bundle, 'c' * 40, model)
   official = {'format': 1, 'source_commit': 'c' * 40, 'runtime': local.RUNTIME, 'storage_format': 1,
-              'bundle': {**package_tool.identity(bundle), 'url': 'https://upload.shind0.synology.me/models/official/host.tar.gz'},
+              'bundle': {**package_tool.identity(bundle), 'url': 'https://github.com/2020K9/carrotpilot/releases/download/k9-official/host.tar.gz'},
               'model': {'sha256': hashlib.sha256(model).hexdigest(), 'size': len(model),
-                        'url': 'https://upload.shind0.synology.me/models/official/model.onnx'}}
+                        'url': 'https://github.com/2020K9/carrotpilot/releases/download/k9-official/model.onnx'}}
   monkeypatch.setattr(update, 'verify_signature', lambda value: verified.append(value))
   class Response(io.BytesIO):
     def __init__(self, url):

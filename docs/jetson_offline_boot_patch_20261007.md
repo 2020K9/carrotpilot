@@ -2,7 +2,7 @@
 
 ## 자동 업데이트 패치 받기
 
-[설치파일 받기 — v0.4.2, 약 12.4 MB](https://upload.shind0.synology.me/downloads/jetson/v0.4.2-boot-update-patch-preview/carrot-jetson-windows.zip)
+[설치파일 받기 — v0.4.2, 약 12.4 MB](https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.2-boot-update-patch-preview/carrot-jetson-windows.zip)
 
 **3단계 `Access is denied` 수정본:** 대상 USB를 열어 둔 탐색기 창을 닫고,
 새 ZIP을 **새 폴더에 모두 풀어** `Jetson_자동업데이트패치.cmd`를 처음부터 다시
@@ -119,7 +119,7 @@ The original v0.4.1 self-contained ZIP was 12,448,084 bytes, SHA256
 `7ae15ab13011f1f3d84ef4a80a899d070841d52f7a8a30a17d60b43f375dc597`.
 The boot payload is 21,941 bytes; bundled Windows Python is the same verified
 3.14.7 embedded release used by the earlier installer. The release location is
-[the Windows patch ZIP](https://upload.shind0.synology.me/downloads/jetson/v0.4.2-boot-update-patch-preview/carrot-jetson-windows.zip).
+[the Windows patch ZIP](https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.2-boot-update-patch-preview/carrot-jetson-windows.zip).
 The public server permits the existing `carrot-jetson-windows.zip` filename;
 this is a byte-identical alias of the locally named automatic-update package.
 Private publication/readback evidence is retained in the local investigation

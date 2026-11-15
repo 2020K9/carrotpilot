@@ -87,7 +87,7 @@ and publication status, superseding their default-off/no-package statements.
 ## Published release
 
 Source: `e4779e059a5642d4a8efe989937a84a58210d220`.
-[Signed release manifest](https://upload.shind0.synology.me/models/jetlink-host-e4779e059a5642d4a8efe989937a84a58210d220/manifest.json).
+[Signed release manifest](https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-e4779e059a5642d4a8efe989937a84a58210d220/manifest.json).
 Bundle: 64702473 bytes; SHA-256 `f17dd14ab93204d18f0f341904de46ad0d8e5dad22d9cca7e7d7b5da93fdffaa`.
 All 1,097 regular payload files match committed source (the existing selected
 model alias for older bootstraps is preserved). No private task files or signing

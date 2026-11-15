@@ -11,7 +11,7 @@ This upstream revision is a new **eGPU driving model** with `nav_map` uint8 `[1,
 - Checkpoint: `cf8f6120-49ee-48f8-b2d7-d663a4708271/56320`.
 - Model SHA256: `17c06f9208ab9d1529b52589662af85734425a482e5972d342f676e5d6597f56` (806,704,311 bytes).
 - Runtime: tinygrad `d3f09c9bbd542fbfbe68c8569a1173550c408969`, tar SHA256 `90970e01f2ba70d553294c0f9d5c6fe1678827f750705cab679a7b19b7bcb0b2`.
-- Delivery: `https://upload.shind0.synology.me/models/comma4-big-nav-cf8f6120/manifest.json`; isolated package and runtime, normal startup delivery gate. No matching public ONNX export was available during this work.
+- Delivery: `https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-cf8f6120/manifest.json`; isolated package and runtime, normal startup delivery gate. No matching public ONNX export was available during this work.
 
 `tools/modeld/build_nav_package.py` constructs the hash-pinned package. Public artifacts were copied to the user's separate NAS model directory and verified. Empty-cache HTTPS installation and network-disabled cache reuse passed. Installation alone is not GPU execution validation.
 

@@ -14,7 +14,7 @@ pointer. It does **not** update USB code or the tinygrad submodule.
 - Checkpoint: `2931d3d9-7c90-4988-a6af-654ed71e0af5/56320/96244b1f-6c4e-4adc-848d-eccd0b44b182/12800`.
 - Runtime: tinygrad `d3f09c9bbd542fbfbe68c8569a1173550c408969`, archive
   `90970e01f2ba70d553294c0f9d5c6fe1678827f750705cab679a7b19b7bcb0b2`.
-- [NAS manifest](https://upload.shind0.synology.me/models/comma4-big-nav-n16-96244b1f/manifest.json).
+- [NAS manifest](https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-n16-96244b1f/manifest.json).
 
 The full input/output specs and output slices match the prior RL model; only
 the embedded checkpoint changes. This selects the new PKL on carrot-nav.

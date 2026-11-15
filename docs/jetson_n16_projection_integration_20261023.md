@@ -77,7 +77,7 @@ The imported contributor notes describe their original commits and experiments:
 their original statement that no selected host package was changed.
 
 Published host source: `e7ff007ddc5c539ec34ea83d7b9ac7de1df1a6ae`.
-The signed [release manifest](https://upload.shind0.synology.me/models/jetlink-host-e7ff007ddc5c539ec34ea83d7b9ac7de1df1a6ae/manifest.json)
+The signed [release manifest](https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-e7ff007ddc5c539ec34ea83d7b9ac7de1df1a6ae/manifest.json)
 selects a 64,695,651-byte bundle, SHA-256
 `e72bab4b064bffa62d44531ed269688c41782e0c5b5074333d360f6f4310b7ff`.
 All 1,091 payload files match committed source, including the existing selected

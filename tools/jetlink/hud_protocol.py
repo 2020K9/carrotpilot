@@ -23,7 +23,12 @@ PARAMS = ('ClusterHud', 'ClusterHudDebug', 'ClusterHudBrightness', 'ClusterHudOr
           'ClusterHudRadarSourceColor', 'ClusterHudCameraViewMode', 'ClusterHudPanelLayout',
           'ClusterHudScreenMode', 'ShowPlotMode', 'LanguageSetting', 'IsMetric', 'ShowDateTime',
           'IsOnroad', 'CarParams', 'CalibrationParams', 'CustomSteerRatio', 'SteerActuatorDelay',
-          'LateralAccelerationFactor', 'UsbGpuActive')
+          'LateralAccelerationFactor', 'UsbGpuActive',
+          # The K9 HUD (대감님 HUD) reads these on the vehicle; without them a Jetson panel falls back
+          # to defaults (K9 D cards/Navdy/season switches, the five lat lines above the TPMS car).
+          'ClusterHudK9Style', 'K9HudNavdy', 'K9MeterSeason', 'CustomSR', 'SteerRatioRate',
+          'LateralTorqueCustom', 'LateralTorqueAccelFactor', 'LateralTorqueFriction',
+          'LiveDelay', 'LiveTorqueParameters', 'LiveParameters', 'LiveParametersV2', 'UsbGpuLoading')
 
 
 class Publisher:
