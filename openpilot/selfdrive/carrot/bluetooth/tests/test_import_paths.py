@@ -22,12 +22,13 @@ from pathlib import Path
 root = Path(sys.argv[1])
 if sys.argv[2] == 'True':
   importlib.import_module('tools')
+from openpilot.selfdrive.carrot.bluetooth.b1_monitor import Monitor
 from tools.jetlink.blink_owner import Owner
 from tools.jetlink import blink_protocol
 from tools.jetlink import usb_release, usb_release_client, model_library
 
-# This fork retired b1_monitor; do not restore it solely for the import test.
-assert not (root / 'openpilot/selfdrive/carrot/bluetooth/b1_monitor.py').exists()
+monitor = Monitor()
+assert type(monitor.output_owner) is Owner
 assert blink_protocol.Owner is Owner
 assert Path(blink_protocol.__file__).resolve() == root / 'tools/jetlink/blink_protocol.py'
 assert (Path(blink_protocol.__file__).parent / 'blink_source.py').is_file()
