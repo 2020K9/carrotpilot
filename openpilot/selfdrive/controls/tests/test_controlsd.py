@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from openpilot.cereal import car
+from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
+from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 
 
 def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, min_speed=0.0,
@@ -20,6 +22,8 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
     "math": math, "car": car, "MIN_LATERAL_CONTROL_SPEED": 0.3,
     "resolve_vehicle_model_steer_ratio": lambda *_args: 15.0,
     "lateral_vehicle_parameters": lambda sm, _cp: sm["liveParameters"],
+    "inhibit_faulted_controls": inhibit_faulted_controls,
+    "set_lane_change_blinkers": set_lane_change_blinkers,
   }
   exec(compile(tree, str(path), "exec"), namespace)
   controls = namespace["Controls"].__new__(namespace["Controls"])
@@ -28,7 +32,7 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
   controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda _key: always_lateral)
   controls.is_vw_meb = False
   controls.lateral_startup = SimpleNamespace(ready=True, update=lambda *_args: True)
-  controls.VM = SimpleNamespace(update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
+  controls.VM = SimpleNamespace(update_geometry=lambda *_args: None, update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
   state = car.CarState.new_message(vEgo=speed, standstill=stopped, gearShifter=gear, latEnabled=lat_enabled,
                                    steerFaultTemporary=temporary_fault, steerFaultPermanent=permanent_fault)
   controls.sm = {

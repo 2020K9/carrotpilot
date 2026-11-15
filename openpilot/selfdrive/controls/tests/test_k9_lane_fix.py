@@ -1,3 +1,5 @@
+from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
+from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 """K9LaneFix (experimental menu number, NOT vehicle-validated): OFF/ON identity, switching reset and menu schema.
 
 (a) K9LaneFix=0 (and unknown numbers) gives exactly the parent (685223c8) outputs: lane_planner_2.get_d_path and the
@@ -285,7 +287,8 @@ def make_controls(path, params):
   ns = dict(math=math, np=np, car=car, log=log, Number=Number, CV=CV, LaneChangeState=log.LaneChangeState,
             LaneChangeDirection=log.LaneChangeDirection, DT_CTRL=DT_CTRL, DT_MDL=DT_MDL, CONTROL_N=CONTROL_N,
             MIN_LATERAL_CONTROL_SPEED=0.3, clip_curvature=DH.clip_curvature, get_lag_adjusted_curvature=get_lag_adjusted_curvature,
-            resolve_vehicle_model_steer_ratio=lambda *a: 15.0, lateral_vehicle_parameters=lambda sm, cp: sm["liveParameters"])
+            resolve_vehicle_model_steer_ratio=lambda *a: 15.0, lateral_vehicle_parameters=lambda sm, cp: sm["liveParameters"],
+            inhibit_faulted_controls=inhibit_faulted_controls, set_lane_change_blinkers=set_lane_change_blinkers)
   exec(compile(tree, str(path), "exec"), ns)
   c = ns["Controls"].__new__(ns["Controls"])
   c.params = params
@@ -295,7 +298,7 @@ def make_controls(path, params):
   c.lateral_startup = NS(update=lambda *a: True); c.lateral_started = True
   c.laneless_blend_weight = 0.0; c.steer_limited_by_safety = False; c.desired_curvature = 0.0
   c.cur = {"k": 0.0, "lat": False}
-  c.VM = NS(update_params=lambda *a: None, calc_curvature=lambda *a: -c.cur["k"], roll_compensation=lambda *a: 0.0)
+  c.VM = NS(update_geometry=lambda *a: None, update_params=lambda *a: None, calc_curvature=lambda *a: -c.cur["k"], roll_compensation=lambda *a: 0.0)
   c.LoC = NS(reset=lambda: None, update=lambda *a: (0.0, 0.0, 0.0), long_control_state="off")
   c.carrot_controls = NS(lat_suspend_control=lambda _cs, la: c.cur["lat"])
 
@@ -333,7 +336,7 @@ def cd_step(c, f, k):
   CS = car.CarState.new_message(vEgo=f["v"], gearShifter="drive", latEnabled=True)
   plan = NS(laneBlendWeight=0.0, useLaneLines=f["use"], mpcSolutionValid=True, laneChangeState=f["lcs"], modelMonoTime=k,
             psis=f["psis"], curvatures=f["curvs"], distances=f["dist"])
-  sm = SM(carState=CS, modelV2=NS(meta=NS(laneChangeState=f["lcs"], laneChangeDirection=0), action=NS(desiredCurvature=f["dc"]),
+  sm = SM(carState=CS, modelV2=NS(meta=NS(laneChangeState=f["lcs"], laneChangeDirection=0, assistantLaneSignalId="", assistantLaneSignalRoute=""), action=NS(desiredCurvature=f["dc"]),
                               laneLines=[], laneLineProbs=[], laneLineStds=[]),   # 2026-10-25: no lane lines -> the K9LaneAssist holds add 0
           lateralPlan=plan, liveParameters=NS(stiffnessFactor=1.0, steerRatio=15.0, angleOffsetDeg=0.0, roll=f["roll"]),
           longitudinalPlan=NS(), selfdriveState=NS(enabled=True, active=True), onroadEvents=[], radarState=NS(),
