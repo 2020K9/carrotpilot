@@ -55,6 +55,31 @@ def test_no_intent_replay_after_retreat_stop_or_expiry(mode):
   assert not maneuver(mode=mode)
 
 
+@pytest.mark.parametrize('direction', [1, 2])
+def test_single_frame_boundary_retreat_preserves_recent_approach(direction):
+  def jitter(cs, md, now, frame):
+    if frame == 46:
+      shift = -.22 if direction == 1 else .22
+      for lane in md.laneLines[1:3]:
+        lane.y = [y + shift for y in lane.y]
+  requests = maneuver(direction, gate=jitter)
+  assert requests and {r[1] for r in requests} == {direction}
+  assert len({r[2] for r in requests}) == 1
+
+
+@pytest.mark.parametrize('direction', [1, 2])
+@pytest.mark.parametrize('consistent', [True, False])
+def test_paired_boundary_progress_requires_consistent_width(direction, consistent):
+  def reappearing(cs, md, now, frame):
+    if frame >= 44:
+      shift = .5 if direction == 1 else -.5
+      lines = md.laneLines[1:3] if consistent else [md.laneLines[direction]]
+      for lane in lines:
+        lane.y = [y + shift for y in lane.y]
+  requests = maneuver(direction, gate=reappearing)
+  assert bool(requests) == consistent
+
+
 @pytest.mark.parametrize('code', [-1, 0, 1, 2, 12, 13, 16, 18, 20, 21, 24, 25, 30])
 def test_left_unknown_centreline_edge_and_barrier_never_indicate(code):
   def gate(cs, md, now, frame):
@@ -139,3 +164,14 @@ def test_new_timestamp_roundtrips_real_schema():
   event.init('carState').laneLineInfoMonoTime = 123456789
   with log.Event.from_bytes(event.to_bytes()) as decoded:
     assert decoded.carState.laneLineInfoMonoTime == 123456789
+
+
+@pytest.mark.parametrize('direction', [1, 2])
+def test_opposite_boundary_single_frame_jump_preserves_driver_approach(direction):
+  def jitter(cs, md, now, frame):
+    if frame == 44:
+      lane = md.laneLines[3-direction]
+      lane.y = [v + (.55 if direction == 1 else -.55) for v in lane.y]
+  requests = maneuver(direction, gate=jitter)
+  assert requests and len({r[2] for r in requests}) == 1
+  assert requests[0][0] < 12.6

@@ -92,9 +92,9 @@ def test_moderate_driver_turn_requests_indicator(direction):
   assert drive(direction, 'moderate_turn')[4]
 
 
-def test_low_speed_lane_relabels_do_not_hide_an_independent_manual_turn():
+def test_lane_relabels_do_not_hide_an_independent_manual_turn():
   assert drive(fault='slow_relabel')[4]
-  assert not drive(fault='fast_relabel')[4]
+  assert drive(fault='fast_relabel')[4]
 
 
 @pytest.mark.parametrize('last_lamp', [0., 1.75])
@@ -168,6 +168,35 @@ def test_recognized_road_bend_is_excluded():
     assert detector.update(10 + i * .05, cs, i, .05, allowed=True,
                            following_curve=following_road_curve(md, 5., .05)) is None
   assert detector.reason == 'road_curve'
+
+
+def test_turn_promotes_manual_lane_observation_without_another_request():
+  cs, md = scene()
+  cs.vEgo = 5.
+  md.laneLineProbs = [0.] * 4
+  detector, isolation = ModelIndicator(), BoundaryIndicator()
+  request = None
+  sources = []
+  for i in range(65):
+    now = 10 + i * .05
+    md.frameId = i
+    cs.steeringPressed = i >= 25
+    cs.steeringTorque = 400. if cs.steeringPressed else 0.
+    cs.steeringAngleDeg = min(150., max(0, i - 25) * 8.)
+    yaw = -.22 if i >= 29 else 0.
+    isolation.update(now, cs, md, enabled=False, valid=True, busy=False)
+    edge = 1 if i == 28 else 0
+    if edge:
+      isolation.request_time = now
+      isolation.own(now, edge)
+    detector.update(now, cs, md, valid=True, lateral_active=False, desire_enabled=False,
+      path_enabled=False, busy=False, isolation=isolation, manual_edge=edge,
+      manual_turn_enabled=True, yaw_rate=yaw)
+    if detector.active:
+      request = detector.request_time if request is None else request
+      assert detector.request_time == request
+      sources.append(detector.active.source)
+  assert sources[0] == 'manual' and sources[-1] == 'manual_turn'
 
 
 @pytest.mark.parametrize('reason', ['disabled', 'invalid', 'opposite_lamp', 'stalk', 'pose'])
@@ -246,3 +275,19 @@ def test_source_loop_uses_independent_option_with_lateral_control_off(monkeypatc
     assert sent[2]['hold'] and sent[9]['hold'] and not sent[8]['hold']
     # Release the active hold, and never replay its old edge on resume.
     assert all(bool(value['hold']) is (not cancel) for value in sent[4:8])
+
+
+@pytest.mark.parametrize('speed', [-0.0004, -0.002, 0.])
+def test_confirmed_stop_keeps_owned_turn_despite_speed_estimator_noise(speed):
+  cs, md = scene()
+  cs.vEgo, cs.standstill = speed, True
+  assert allowed(cs, N(latActive=False), md, 'manual_turn', 10., holding=True)
+  assert not allowed(cs, N(latActive=False), md, 'manual_turn', 10., holding=False)
+
+
+@pytest.mark.parametrize('speed,standstill,gear', [(-.002, False, 'drive'), (-.2, True, 'drive'),
+                                                  (-.002, True, 'reverse')])
+def test_reverse_motion_still_ends_owned_turn(speed, standstill, gear):
+  cs, md = scene()
+  cs.vEgo, cs.standstill, cs.gearShifter = speed, standstill, gear
+  assert not allowed(cs, N(latActive=False), md, 'manual_turn', 10., holding=True)

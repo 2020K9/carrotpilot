@@ -80,8 +80,47 @@ def test_desire_nonzero_is_not_event_and_turn_does_not_require_adjacent_lane():
   d=ModelIndicator();run(d,cs,md,path_enabled=False,desire_enabled=True)
   assert d.active is None
   md.meta.desireState=[.1,0.,.9,0.,0.,0.,0.,0.];md.roadEdges[1].y=[2.]*13
-  d=ModelIndicator();run(d,cs,md,path_enabled=False,desire_enabled=True)
+  cs.steeringAngleDeg=-25.
+  d=ModelIndicator();run(d,cs,md,path_enabled=False,desire_enabled=True,yaw_rate=.1)
   assert d.active and d.active.source=='model_turn'
+
+
+@pytest.mark.parametrize('angle,yaw', [(-1.6,.0044), (25.,.1), (-25.,-.1), (-25.,None), (-25.,math.nan),
+                                     (math.inf,-.1), (math.nan,-.1)])
+def test_model_turn_needs_matching_measured_rotation(angle, yaw):
+  cs, md = scene()
+  cs.steeringAngleDeg = angle
+  md.meta.desireState = [.4692,.5009,.0138,0.,0.,0.,0.,0.]
+  d = ModelIndicator()
+  run(d,cs,md,path_enabled=False,desire_enabled=True,yaw_rate=yaw)
+  assert d.active is None
+
+
+@pytest.mark.parametrize('direction', [1, 2])
+def test_model_turn_accepts_matching_rotation_at_threshold(direction):
+  cs, md = scene()
+  sign = 1 if direction == 1 else -1
+  cs.steeringAngleDeg = sign * 15
+  md.meta.desireState = [.1,0.,0.,0.,0.,0.,0.,0.]
+  md.meta.desireState[direction] = .9
+  d = ModelIndicator()
+  run(d,cs,md,path_enabled=False,desire_enabled=True,yaw_rate=-sign*math.radians(3))
+  assert d.active and d.active.direction == direction and d.active.source == 'model_turn'
+
+
+def test_model_turn_withdrawn_before_peak_ends_after_stable_return():
+  cs, md = scene()
+  cs.steeringAngleDeg=20.
+  md.meta.desireState=[.1,.9,0.,0.,0.,0.,0.,0.]
+  movement=Movement(10.,1,'model_turn',cs,md)
+  assert movement.update(10.05,cs,md)
+  cs.steeringAngleDeg=5.
+  assert movement.update(10.1,cs,md)
+  md.meta.desireState=[.9,.1,0.,0.,0.,0.,0.,0.]
+  for i in range(8):
+    assert movement.update(10.15 + i*.05,cs,md)
+  assert not movement.update(10.6,cs,md)
+  assert movement.reason=='completed'
 
 
 def test_left_crossing_on_a_right_curve_uses_relative_curvature():
@@ -306,3 +345,23 @@ def test_forecast_hold_tracks_widening_fork_without_a_second_request(side, stop)
     for i in range(1, 15):
       assert move.update(10.6+i*.05, cs, md)
   assert not move.update(11.41 if stop == 'stalled' else 11. if stop == 'gap' else 10.65, cs, md)
+
+
+@pytest.mark.parametrize('direction', [1, 2])
+@pytest.mark.parametrize('crossing', [False, True])
+def test_current_model_lane_desire_requires_measured_boundary_approach(direction, crossing):
+  cs, md = scene()
+  detector, isolation = ModelIndicator(), BoundaryIndicator()
+  md.meta.desireState = [.1, 0., 0., 0., 0., 0., 0., 0.]
+  md.meta.desireState[direction + 2] = .9
+  sign = 1 if direction == 1 else -1
+  for i in range(30):
+    now = 10 + i * .05
+    md.frameId = i
+    cs.laneLineInfoMonoTime = int(now * 1e9)
+    shift = min(.8, i * .03) if crossing else .04 * math.sin(i)
+    for lane, initial in zip(md.laneLines[1:3], (-1.4, 1.4), strict=True):
+      lane.y = [initial + sign * shift] * 13
+    detector.update(now, cs, md, valid=True, lateral_active=True, desire_enabled=True,
+                    path_enabled=False, busy=False, isolation=isolation)
+  assert bool(detector.active) is crossing

@@ -1,5 +1,163 @@
 # Repository memory
 
+- 2026-11-15: Owner reports missed turns/lanes and straight-road indications
+  after Nov14 fixes. Post-update11e0 evening/11e1 morning run91eb1e86bb and
+  B1 release5 exact ELF.35 requests, zero reported driver_override, three
+  TWAI0x600 bus-error+TX-failed events, one confirms0 frames/no lamp. Two moving
+  holds lose accepted ID while board remains waiting, subreason absent.
+  Junction relabel gate erased above30kmh manual-turn onset. Far-boundary-only
+  spike erased another approach. Current model lane desire lit on straight
+  travel. Tiny negative estimated speeds ended two stopped holds.
+  Remove manual-turn relabel gate, bounded150ms far-only spike wait with no
+  emission, require current model lane probability plus both boundaries moving
+  .15m/.30..55s, permit existing hold at confirmed D standstill abs(v)<.1m/s.
+  Capture once-per-request lost-ACK diagnostic and late ownership transitions.
+  92836-frame/81-rlog/eight-route fixed-input replay99->102 requests,97 exact,
+  one turn .447s earlier, straight false indication removed, four added manual
+  requests. Two older additions lack retained video for visual classification.
+  Seven regressions fail before correction,898 local checks pass/2skip.
+  Normal GitPull/full comma restart.
+  CAN transmit fault and moving ACK-loss causes remain unresolved. No live
+  writes/actuation or physical proof of Nov15 corrections. Evidence
+  .analysis/archive/2026-11-15/indicators, docs/indicator_replay_20261114.md.
+
+
+- 2026-11-14: SD/NVMe Super image uses reviewed R2 initrd PARTUUID resolution,
+  exact-one-device admission, same-disk APP/EFI/DATA, and portable storage format2.
+  Official vendor TEGRA_BOOT_STORAGE is deprecated and can remain mmcblk0 when
+  EFI is already mounted; validate the mounted EFI against the actual root disk.
+  Reuse hash-verified v0.6 ONNX after a redundant network fetch timed out.
+  ARM image43584236953 on3903ab9889 passes91/1skip and offline chroot/storage/
+  capsule/first-DATA admission checks. Signed N16 runtime stays0cb67d46cc.
+  Raw40GiB SHA256fd73ab80fc635a02a6884ec422497f6be986d60535170f58254c20bbdaf2dfd9;
+  compressed8538661725B SHA256771644c507b72e96ed5bd69967f8d24bc757b1bf0d7aaff84efab01244fa6743.
+  Installer977ebb826d ZIP8563362842B SHA256d2d8058cc82cb0c0e3e9cb712f0fa9ecddfde9a2c48f502ef2a4cd1842be0c62.
+  Actual final ZIP extraction/CRC and bundled Python preparation in Korean/space
+  path reproduce the raw hash; installed initrd NVMe drivers, helper sources,
+  capsule, consumer ordering and clean EFI66012160B free independently read back.
+  v0.7.0-super-auto-sd-nvme-preview targets P3767-0005/P3768 bootable JetPack6.x;
+  published on NAS with full readback SHA256 and HTTPS checks; GitHub prerelease
+  jetson-super-auto-sd-nvme-20261114 points to installer977ebb826d. Final native
+  integration43586335520 and full-build43586335505 pass.
+  physical new-image SD/NVMe boot, QSPI update and power interruption unverified.
+  Evidence .analysis/scratch/2026-11-14-super-sd-nvme. Existing Super devices use
+  normal runtime GitPull/restart; automatic firmware installation is image-side.
+
+- 2026-11-14: Owner I5PE07b62e389ed26c81 already has protected R2 SD,36.4.7,
+  Super DT, MAXN_SUPER id2/GPU1020MHz. No image rewrite needed for this device.
+  Startup route11dd reaches host ready around94s, then comma warp preparation
+  takes30.956s. Setup can block20s against the old8s display lease. Add explicit
+  bounded setup phases22s, model/warp/active wording and jetlinkConnectionState
+  transition events, verified in actual11df/0 full rlog. Live monitor catches one
+  false ERROR while warp prepares: sampling time before atomic status read can
+  reject a concurrently newer record as future-dated. Two regressions fail before
+  and pass after post-read time sampling. Preserve optional clock argument used
+  by standalone HUD; initial CI caught that caller and correction passes88 local
+  status/startup/HUD checks. Native43585815662 main2571/56skip plus other groups,
+  full-build43585815661 pass. Owner pulled/restarted91eb1e86bb in P/zero speed/
+  controls disabled, N16 active/MAXN_SUPER verified. Two fixed restarts reach
+  active94.420/95.885s after monitor start, no error badge after daemon connection
+  starts. Deliberate process-stop stale reports before daemon restart are excluded.
+  This tests current installed image and software restart, not new image boot.
+
+- 2026-11-14: I5PE Nov13/14 six drives,60 hash-matched full rlogs on162da468cc,
+  show31/33 manual turns with physical onset all2.48..2.50s and60/63 B1 requests
+  reporting driver_override. Release4 rejects its persistent0x413 tap echo during
+  dark flashes. Release5 remembers confirmed same-side echo first seen during tap,
+  closes allowance on post-tap neutral, preserves raw0x3C1/lease/opposite guards.
+  Isolated native predicate replay62 captured taps/1820frames rejects62 before,
+  zero after; confirmed delivery assumed, running historical ELF/subreason unknown.
+  Diagnostic read before STOP logs one b1TapDiagnostic per failed request.
+  Manual boundary transient retreat150ms and paired bounded shift tolerance recover
+  11d9/2+44.458 and4+21.688. Manual-to-turn promotion preserves request identity
+  in11d4/9 and11d5/0. Model-turn requires same-side15deg and3deg/s, blocking false
+  left11d9/5+30.346(frame6609). Fixed-input68873frames yields61->62 requests,
+  other60 exact starts/sides retained. Below5kmh intent experiment reverted after
+  adding a parking indication suppressed the following left turn. Local878pass,
+  2platform skips; native MSVC and ESP32 core3.3.5 build pass. B1 release5 app651488B,
+  SHA256bf60f950cf3f1334fd9e4fe932a55b45a1e2cf2a2d521207196a6884b79a3b4b.
+  Normal GitPull/restart plus existing authenticated idle B1 OTA. No live writes
+  or physical hold proof. Details docs/indicator_replay_20261114.md and private
+  .analysis/archive/2026-11-14/indicators.
+
+- 2026-11-12: Owner requests SD-only automatic Super firmware provisioning.
+  Official NVIDIA capsule path is available. R2 excluded /opt/ota_package and
+  mounted EFI read-only; restore official36.4.7 Super capsule from pinned deb
+  b7600d3c65be858e8de2b46764221e128f472480fe801b411072d874326adfc2,
+  capsule50796752B SHA256fc07e537329561d520052d2e45a09c516ed430369078224971ed70f5bbe1ec2f.
+  Image-only bootstrap validates P3767-0005/P3768, bootable36.x<=36.4.7,
+  root-SD/EFI/DATA and NVIDIA spec. Stage via vendor capsule helper, temporarily
+  remount EFI rw, verify bytes/UEFI request, automatic reboot before GPU users.
+  Device-bound durable DATA transaction stops repeated failed updates. Next
+  boot verifies capsule status1, changed slot,36.4.7,Super DT and MAXN_SUPER GPU
+  ceiling before inference. Already-matching boards only verify power. Keep
+  vendor spec discovery/boot verification; serialize its automatic capsule work.
+  USB boot screen reports progress/failures. APP remains read-only. Existing
+  GitPull does not install image provisioning. Pre36 firmware unable to boot
+  this SD still requires NVIDIA's prerequisite path; no arbitrary downgrade.
+  Final review found fresh-image DATA admission still requiring last-loaded.json
+  after the builder removed reference engines. Withhold the initial0.6 package;
+  add an explicit preloaded-model marker and installed-helper chroot admission
+  check, preserving legacy completed-runtime checks. Final builder393b98d733
+  includes codea4a2c898d5 and EFI dirty-bit repair2b87210c09. ARM image43209977486,
+  integration43209977709/full-build43209977573/eGPU43209977711/docs43209977884 pass.
+  Native provisioning/storage34pass/1skip; Windows focused39pass/7skip. Actual
+  Windows ZIP CRC/bundled-Python preparation matches raw40GiB SHA256
+  b2645ce45a6e20a6932ae11338dd9cbf95af52309ebaf8e3a0131a962249886f.
+  Compressed8537584278B SHA25634312ff6d9ea216a947f725b80059cc140952992d0282391e50c6dea6796d36c;
+  ZIP8562284725B SHA256259fe2b1724256806b4254174c2906f0c6d1a5f863b2ec7dd0730a1d0f5e090c.
+  Independent image readback confirms installed sources/capsule/consumer ordering,
+  fresh DATA marker and clean EFI with66012160B free. Release
+  jetson-super-auto-sd-20261112/v0.6.0-super-auto-preview is a physical-boot
+  unverified preview; older v0.5 warns about its first DATA admission issue.
+  Physical QSPI update/boot/power interruption and reporter39ms improvement
+  unverified. No live device writes. Evidence and publication readbacks in
+  .analysis/scratch/2026-11-12-super-bootstrap/final.
+
+- 2026-11-12: Ioniq5 b4dcfe6ce00fe149 route0d/13..15 on d37a6d30 confirms
+  host5a2784cc applied but174 samples all super_profile_missing,15W, GPU624.75MHz,
+  EMC2133MHz. Device-tree p3767-0005 lacks Super suffix; NVIDIA nvpower.sh
+  relinks the public R2 image's existing Super profile to ordinary15W/7W.
+  Orin Nano8GB hardware supports Super; exact QSPI version is unrecorded.
+  Model56.722ms/all2873over50,727 frame gaps exactly match invalid odometry;
+  host execution/completion38.895ms, CPU core means4.9..22%,60..61C/no throttle,
+  no USB timeout/disconnect in these segments. CruiseMismatch also present;
+  do not infer it shares this cause. Add explicit super_firmware_required.
+  N16 host0cb67d46cc4ac448326cc9b272ebfebdc6fde797 signed/published67195643B,
+  SHA256 ed22268f318a9db35de78049b0bc88ebfb09df00c9c661c558bb32e23cf98ccd.
+  HTTPS/full hash/signature verified, Jetson43177120838 and full-build CI pass.
+  SD build43177492508 on ARM64 succeeds with signed N16 in factory/DATA,
+  matching ONNX preloaded and board-specific TensorRT engine built first boot.
+  Raw40GiB SHA256 8da67d9b1eff6d7843a26c825fac307be82201e08e55549b76332d77f8f0d196;
+  compressed8505195694B SHA25629617d9bb36c54768bd8b69685b587efc7520dbb6a57191555b6061048539940.
+  Imports/model hashes/privacy/fsck/GPT/systemd graph pass. Physical boot and
+  firmware repair remain unverified. No live-device or QSPI writes. Evidence
+  .analysis/scratch/2026-11-12-ioniq5-route0d. SD v0.5.0-super-preview published
+  on NAS; full NAS readback hashes and public HTTPS installer/image checks pass.
+  Windows ZIP8529895780B SHA2566c05b5c05e53922663d58529696ff31f683aec1602121873e2da3509e0a729c5.
+  Actual ZIP extraction/CRC and bundled Python preparation in Korean/space path
+  reproduce the raw image hash. Physical SD write/boot/performance unverified.
+
+- 2026-11-12: Ioniq5 b4dcfe6ce00fe149 route0b/12..14 on ffa5723e has174
+  fresh host samples, all15W/GPU624.75MHz/EMC2133MHz,53..57C,no thermal throttle,
+  CPU core means5..23%,5.2GiB available. Model56.864ms and724 frame gaps exactly
+  match invalid odometry; no USB disconnect/timeout evidence in these segments.
+  Add named NVIDIA MAXN_SUPER startup selection, once-per-boot locking, mode/
+  GPU-ceiling verification and explicit missing-profile/reboot/firmware failures
+  through host health and route logs. New image units precede Xorg/HUD/inference
+  and update-apply candidate GPU validation;
+  existing runtime attempts setup before backend imports. NVIDIA reboot prompts
+  are declined. Never infer full Super operation from the name alone or flash
+  QSPI blindly. N16 host5a2784cc2dc920cf54d2e40e7e4d9dad1c56b955 signed/published,
+  67193439B/SHA256 4b48fd829c6aa1aa12422404090eb7e5f87370e8187e3ce99636be2a30166c94.
+  HTTPS/signature verified; Linux CI43166733955 main2502pass56skip plus other
+  groups and Windows installer pass. Other model host pins unchanged. Public SD
+  image binary not rebuilt; image-generation code includes the new service.
+  Reporter firmware/profile inventory, physical boot and latency cure await new
+  device evidence. An old protected image can still require an early-boot patch
+  if NVIDIA rejects its late mode switch. Private scratch2026-11-12-ioniq5-jetson
+  and2026-11-12-jetson-auto-super preserve evidence. Normal GitPull/full reboot.
+
 - 2026-11-11: Restore Long Kp/Ki/Kf for identified Ray EV CommaPedal with
   CC_ONLY_CAR/PEDAL_INTERCEPTOR and OP longitudinal. Shared capability gates
   catalog/snapshot and actual speed-PID tuning, startup plus ~1s refresh.
