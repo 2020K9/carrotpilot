@@ -43,7 +43,35 @@ def health_banner(health, language):
   return '', NORMAL
 
 
+def _pct(value):
+  return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 100 else None
+
+
+def jetson_resources(health):
+  """K9HudNavdy 2: Jetson CPU (online core average) / GPU load / memory % from host_performance via host_health;
+  None for anything missing or stale, never guessed."""
+  perf = health.get('performance') if isinstance(health, dict) else None
+  if not isinstance(perf, dict) or perf.get('version') != 1:
+    return (None, None, None)
+  cores = [_pct(c.get('busy_pct')) for c in perf.get('cpu') or () if isinstance(c, dict) and c.get('online')]
+  cores = [c for c in cores if c is not None]
+  gpu = None
+  for item in (perf.get('gpu') or {}).values():
+    if isinstance(item, dict) and _pct(item.get('load_pct')) is not None:
+      gpu = _pct(item.get('load_pct'))
+      break
+  mem = None
+  memory = perf.get('memory') or {}
+  total, available = memory.get('MemTotal_kb'), memory.get('MemAvailable_kb')
+  if isinstance(total, int) and isinstance(available, int) and total > 0 and 0 <= available <= total:
+    mem = 100. * (total - available) / total
+  return (sum(cores) / len(cores) if cores else None, gpu, mem)
+
+
 class HealthRenderer(ClusterUiRenderer):
+  def k9_jetson_resources(self):
+    return jetson_resources(getattr(self, 'host_health', None) or {})
+
   def render(self, state, signal_lights=None):
     self.host_health = _fresh(STATUS, time.monotonic())
     self.host_badge_drawn = False

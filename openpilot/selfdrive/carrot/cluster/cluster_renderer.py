@@ -411,6 +411,14 @@ K9L_RIGHT_X1 = K9L_RIGHT_X + K9L_LIST_W
 K9L_LIST_HEAD = 30.0                   # 00:20 list: 차선 위치 header, rows, hairline, 조향 학습 header, 9 one-item lines
 K9L_LANE_BASES = (72.0, 115.0, 158.0)     # 치우침 / 좌 / 우 ("좌 3.50m" + "우 3.48m" 356 px > 344: one per row)
 K9L_RIGHT_HAIR = 170.0
+# K9HudNavdy 2 (11/16): screen-right car rows squeezed to 8..K9L_RES_CAR_BOTTOM, 콤마 / 젯슨 x CPU GPU MEM above TPMS
+K9L_RES_CAR_BOTTOM = 284.0
+K9L_RES_HAIR = 290.0
+K9L_RES_NAME_W = 56.0
+K9L_RES_HEAD_BASE = 308.0
+K9L_RES_HEAD_SIZE = 14.0
+K9L_RES_ROW_BASES = (328.0, 348.0)
+K9L_RES_SIZE = 19.0
 K9L_LAT_HEAD = 196.0
 K9L_LAT_BASE0, K9L_LAT_PITCH = 228.0, 30.0   # 35 px glyphs (27 x ink 1.31): 25 px box, 5 px between lines, last 468
 # 11/12 22:37 대감님 "두 판 모두 살려": K9 D layout chosen by the Param ClusterHudK9Style
@@ -7670,6 +7678,15 @@ class ClusterUiRenderer:
             v = 0
         self.k9_hud_navdy = v if v in (0, 1) else 0
 
+    k9_hud_res = False   # K9HudNavdy 2 (11/16 00:46): menu 1 + comma / Jetson CPU GPU memory under the right list
+
+    def set_k9_hud_res(self, on) -> None:
+        self.k9_hud_res = bool(on)
+
+    def k9_jetson_resources(self) -> tuple[float | None, float | None, float | None]:
+        """Jetson CPU / GPU / memory %; the plain renderer has no Jetson (the Jetlink HUD overrides this)."""
+        return (None, None, None)
+
     def k9_navdy_on(self) -> bool:
         """the single K9HudNavdy switch point (later Navdy-only additions hang off this)"""
         return self.k9_hud_navdy == 1
@@ -8024,7 +8041,11 @@ class ClusterUiRenderer:
             else:
                 self._k9l_meter(x, cy, mw, fraction, K9L_CHAMPAGNE, True, K9L_CHAMPAGNE)
 
-        self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_TPMS_HAIR - 4.0, meter)
+        if self.k9_hud_res:  # K9HudNavdy 2: rows squeezed, resource rows above TPMS (TPMS unchanged)
+            self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_RES_CAR_BOTTOM, meter)
+            self._k9l_draw_res(state)
+        else:
+            self._k9t_car_rows(state, True, x0, x1, 8.0, K9L_TPMS_HAIR - 4.0, meter)
         self._k9l_hair(x0, K9L_TPMS_HAIR, K9L_CAR_W, 110)
         self._k9l_draw_tpms(state)
 
@@ -8345,6 +8366,29 @@ class ClusterUiRenderer:
     def _k9l_draw_right(self, state: ClusterUiState) -> None:
         # 11/13 00:47: 차선 위치 + 조향 학습 in the K9T tiers (same as the car block), 344 px
         self._k9t_list(state, True, K9L_RIGHT_X, K9L_RIGHT_X1, 8.0, 462.0)  # 01:29 last line >= 14 px over the edge
+
+    @staticmethod
+    def k9_res_text(value: float | None) -> str:
+        return "--" if value is None else f"{value:.0f}%"
+
+    def _k9l_draw_res(self, state: ClusterUiState) -> None:
+        """K9HudNavdy 2: screen-right car block, between the four rows and TPMS: 콤마 (deviceState) and 젯슨 (Jetlink host),
+        CPU / GPU / 메모리 %. A missing value is '--', never guessed."""
+        x0, x1 = K9L_EDGE, K9L_EDGE + K9L_CAR_W
+        self._k9l_hair(x0, K9L_RES_HAIR, x1 - x0, 110)
+        comma = getattr(state, "comma_resources", None) or (None, None, None)
+        rows = (("콤마", comma), ("젯슨", self.k9_jetson_resources()))
+        cols = [x0 + K9L_RES_NAME_W + i * (x1 - x0 - K9L_RES_NAME_W) / 3.0 for i in range(4)]
+        for j, head in enumerate(("CPU", "GPU", "MEM")):
+            self._k9l_text(head, cols[j + 1], 0.0, K9L_RES_HEAD_SIZE, K9L_LABEL, anchor="right", base=K9L_RES_HEAD_BASE,
+                           track=K9L_TRACK)
+        for i, (name, values) in enumerate(rows):
+            base = K9L_RES_ROW_BASES[i]
+            self._k9l_text(name, x0, 0.0, K9L_RES_SIZE, K9L_LABEL, base=base)
+            for j, value in enumerate(values):
+                text = self.k9_res_text(value)
+                self._k9l_text(text, cols[j + 1], 0.0, K9L_RES_SIZE, K9L_MUTED if value is None else K9L_VALUE,
+                               anchor="right", numeric=True, base=base)
 
     def _k9l_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         tex = self._k9l_background()

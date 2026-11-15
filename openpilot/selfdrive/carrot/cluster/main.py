@@ -405,7 +405,7 @@ class K9HudNavdyParamReader:
             return 0
         try:
             value = int(self._params.get_int("K9HudNavdy"))
-            return value if value in (0, 1) else 0
+            return value if value in (0, 1, 2) else 0  # 11/16 00:55: 2 = 1 + comma/Jetson resources in the right list
         except Exception:
             return 0
 
@@ -1098,8 +1098,10 @@ def run_demo(
     next_hud_mode_param_read = start_time
     next_hud_output_gate_param_read = start_time
     next_hud_mirror_param_read = start_time + HUD_MIRROR_PARAM_POLL_SECONDS
-    renderer.set_k9_hud_style(k9_navdy_param_reader.read())  # 11/13 17:31: K9HudNavdy 0 = cards / 1 = one scene
+    k9_hud_menu = k9_navdy_param_reader.read()
+    renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # 11/13 17:31: K9HudNavdy 0 = cards / 1 = one scene (2 = scene too)
     renderer.set_k9_hud_navdy(1)  # both layouts keep the Navdy road look
+    renderer.set_k9_hud_res(k9_hud_menu == 2)  # 11/16: 2 = one scene + comma/Jetson CPU GPU memory on the right
     report_frames = 0
     display_actual_fps: float | None = None
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -1311,8 +1313,10 @@ def run_demo(
                     )
                     active_hud_mirror_mode = next_hud_mirror_mode
                 next_hud_mirror_param_read = now + HUD_MIRROR_PARAM_POLL_SECONDS
-                renderer.set_k9_hud_style(k9_navdy_param_reader.read())  # K9HudNavdy picks the layout, 1 s poll, no restart
+                k9_hud_menu = k9_navdy_param_reader.read()
+                renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # K9HudNavdy picks the layout, 1 s poll, no restart
                 renderer.set_k9_hud_navdy(1)  # Navdy look in both layouts
+                renderer.set_k9_hud_res(k9_hud_menu == 2)
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"

@@ -503,6 +503,7 @@ class ClusterUiState:
     cpu_temp_c: float | None = None
     memory_used_percent: float | None = None
     disk_used_percent: float | None = None
+    comma_resources: tuple[float | None, float | None, float | None] | None = None  # deviceState CPU avg / GPU / memory %
     network_address: str | None = None
     network_connected: bool = False
     egpu_active: bool = False

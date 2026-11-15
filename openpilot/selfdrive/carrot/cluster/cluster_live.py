@@ -120,6 +120,24 @@ def live_route_parser() -> RouteLogParser:
     return RouteLogParser(recompute_cutins=False)
 
 
+
+def _resource_percent(value) -> float | None:
+    value = finite_float(value)
+    return value if value is not None and 0.0 <= value <= 100.0 else None
+
+
+def live_comma_resources(device_state) -> tuple[float | None, float | None, float | None] | None:
+    """K9HudNavdy 2: comma CPU (core average), GPU, memory % straight from deviceState; None for a missing value."""
+    if device_state is None:
+        return None
+    try:
+        cores = [v for v in (_resource_percent(c) for c in (safe_get(device_state, "cpuUsagePercent", None) or ())) if v is not None]
+    except TypeError:
+        cores = []
+    return (sum(cores) / len(cores) if cores else None,
+            _resource_percent(safe_get(device_state, "gpuUsagePercent", None)),
+            _resource_percent(safe_get(device_state, "memoryUsagePercent", None)))
+
 class TaxiSpeedSampleReader:
     """Every carState (not the conflated latest) for the K9ExtHud=1 taxi meter: a separate
     non-conflated socket, opened on first use (K9ExtHud=1 only) and closed when the meter is off."""
@@ -472,6 +490,7 @@ class OpenpilotLiveSource:
 
         device_state = self._service_data("deviceState")
         onroad = self._service_alive("deviceState") and bool(safe_get(device_state, "started", False))
+        comma_resources = live_comma_resources(device_state) if self._service_alive("deviceState") else None
         car_state = self._service_data("carState")
         fuel_gauge = safe_optional_float(car_state, "fuelGauge")
         if fuel_gauge is None or not 0.0 < fuel_gauge <= 1.0:
@@ -606,6 +625,7 @@ class OpenpilotLiveSource:
             onroad=onroad,
             alert=self._live_cluster_alert(state.alert, onroad),
             egpu_active=getattr(self, "_egpu_active", False),
+            comma_resources=comma_resources,
             external_compute_label=getattr(self, '_external_compute_label', ''),
             external_nav_active=external_nav_active,
             vehicle_navi_available=vehicle_navi_available,
