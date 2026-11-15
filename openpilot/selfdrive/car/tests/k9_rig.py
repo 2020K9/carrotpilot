@@ -234,6 +234,17 @@ def load_frozen_cc(commit, tmp_dir, tag):
           "elif ctf != 40 and 30 <= ctf <= 80:  # old x0.01 value (653441e2), manager_init moves it to x0.001")
     assert body and all(ln in ok or ln.startswith('ctf = params.get_int("K9CenterToFront")') for ln in body), iface
     changed.remove(iface)
+  # 2026-11-15 23:41 (대감님 승인 "그냥때려넣어", 노비 23:42 기준판 10개 독립 확인): upstream 189c2faf3 changes exactly one
+  # Tesla-only line inside the Tesla CarInterface alpha-long branch (no Hyundai file references tesla, and this rig loads only
+  # the Hyundai K9 files). Exactly this one removed + one added line and nothing else in the file, else stop.
+  tesla = "opendbc_repo/opendbc/car/tesla/interface.py"
+  if tesla in changed:
+    diff = subprocess.run(["git", "diff", "-U0", commit, "--", tesla], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.splitlines()
+    body = [ln for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    assert body == ["-      if has_vehicle_bus:",
+                    '+      if has_vehicle_bus and Params().get_bool("TeslaAutoSpeedLimit"):'], tesla
+    changed.remove(tesla)
   assert set(changed) <= {CC_REL, f"{HY}/k9_creep.py", f"{HY}/k9_stop_taper.py", f"{HY}/k9_hard_brake.py"}, changed
   tmp_dir = Path(tmp_dir)
   saved, injected = {}, []
