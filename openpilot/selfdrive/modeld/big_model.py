@@ -39,7 +39,7 @@ NAV_MODEL = {
   "filename": "big_driving_tinygrad.pkl",
   "size": 822_465_506,
   "sha256": "52205044e136efb64a6a841c9b016cf35b1db81186dd0f941b62eee5ebdcde24",
-  "url": "https://upload.shind0.synology.me/models/comma4-big-nav-n16-96244b1f/big_driving_tinygrad.pkl",
+  "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-n16-96244b1f/big_driving_tinygrad.pkl",
 }
 MAX_MANIFEST_SIZE = 64 * 1024
 MAX_MODEL_SIZE = 4 * 1024 * 1024 * 1024

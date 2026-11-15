@@ -16,7 +16,9 @@ from openpilot.selfdrive.modeld.jetlink.selection import ModelChanged, approved_
 from jetlink.client import EngineMissing
 from jetlink.transport.base import LinkTimeout
 
-MODEL_URL = 'https://upload.shind0.synology.me/models/carrot-jetlink-cinque-v2/big_driving_supercombo.onnx'
+MODEL_URL = 'https://github.com/2020K9/carrotpilot/releases/download/k9-carrot-jetlink-cinque-v2/big_driving_supercombo.onnx'
+# GitHub redirects release downloads once to its asset store for this repository id only.
+MODEL_REDIRECT_PREFIX = 'https://release-assets.githubusercontent.com/github-production-release-asset/1400258213/'
 CACHE = Path('/data/models/carrot-jetlink-mac')
 
 
@@ -53,7 +55,7 @@ def model_file(offroad, connected, progress, cache=CACHE):
     progress('download', 0., 'Downloading Cinque v2 for Jetlink')
     with os.fdopen(fd, 'wb') as output:
       with urllib.request.urlopen(MODEL_URL, timeout=10) as response:
-        if response.geturl() != MODEL_URL:
+        if response.geturl() != MODEL_URL and not response.geturl().startswith(MODEL_REDIRECT_PREFIX):
           raise ValueError('Unexpected Jetlink model download redirect')
         count, value = 0, hashlib.sha256()
         while True:
