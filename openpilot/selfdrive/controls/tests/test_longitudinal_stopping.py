@@ -36,7 +36,11 @@ def test_planner_uses_current_mpc_or_model_stop_without_early_override(mode, mpc
         'output_a_target_mpc': -.3, 'output_a_target_e2e': -.5, 'output_a_target_base': -.3,
         'output_v_target_mpc': .6, 'output_v_target_now_e2e': .4}
   state.j_desired_trajectory = [0.]
-  exec(compile(ast.Module(body=update.body[start:], type_ignores=[]), str(path), 'exec'), ns)
+  # Stop selection ends where upstream's post-plan stages start (coasting, signal guards: they need sm/carrot and are
+  # covered by their own tests); the asserted should-stop selection itself runs unchanged.
+  end = next((i for i in range(start, len(update.body)) if isinstance(update.body[i], ast.Expr)
+              and ast.unparse(update.body[i]).startswith('self.update_coasting(')), len(update.body))
+  exec(compile(ast.Module(body=update.body[start:end], type_ignores=[]), str(path), 'exec'), ns)
   assert state.output_should_stop == (mpc_stop if mode == 'acc' else mpc_stop or model_stop)
 
 
