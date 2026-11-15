@@ -221,8 +221,6 @@ class Sender:
     if Path('/TICI').is_file():
       from openpilot.common.params import Params
       self.params = Params()
-      if self.params.get_bool('CanfdBlinkerControl'):
-        return  # Preserve fork reboot-selected USB2CAN exclusion.
     seq = client._next_seq()
     client.t.send_json(BEGIN, seq, {'version': 2})
     response = json.loads(bytes(client._expect(ACK, seq, 1.).payload))
