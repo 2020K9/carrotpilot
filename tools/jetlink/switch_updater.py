@@ -9,17 +9,23 @@ new release (063613a1 line).  Steps, each durable before the next:
               (old extra files kept, new files on top, every file fsync'd)
   3. pre-check  the staged updater must accept the comma's GitHub manifest
   4. exchange renameat2(RENAME_EXCHANGE) swaps updater/ and the staged folder in
-              one atomic step; the old folder ends up as updater.replaced-<stamp>
-  5. verify   the installed updater must accept the manifest again (new key,
-              GitHub hosts) and every file must match the payload hash
-  6. marker   only now boot-update-required is created (if missing) with this
-              boot's id, so the legacy runtime's migrate_running_release() no
-              longer reinstalls the old updater and the gate starts next boot
+              one atomic step
+  5. marker   immediately after the exchange (same directory, one fsync for
+              both) boot-update-required is created if missing, with this
+              boot's id.  Without it the legacy runtime's
+              migrate_running_release() reinstalls the old updater at the next
+              server start and arms the gate (old updater + gate = stuck).
+  6. verify   the old folder becomes updater.replaced-<stamp>; the installed
+              updater must accept the manifest again (new key, GitHub hosts)
+              and every file must match the payload hash
 
-Failure in 3..6 swaps the old folder back, re-checks it against the backup and
-imports it.  A power cut at any point leaves updater/ as a complete old or a
-complete new folder.  boot-update-required is never written while the old
-updater is installed (an old updater with the gate on cannot accept GitHub).
+Failure after the exchange first puts the marker back to its original state
+(original content, or a new marker moved aside as
+boot-update-required.rolledback-<stamp>), then swaps the old folder back,
+re-checks it against the backup and imports it.  The combination "old updater +
+marker written by this tool" is never produced.  Residual window: between the
+exchange and the marker rename a killed process leaves new updater + no marker;
+see docs/jetson_updater_switch_20261116.md.
 """
 import argparse
 import ctypes
@@ -50,9 +56,17 @@ class SwitchError(RuntimeError):
 
 
 def crash_point(name):
-  # Test-only power-cut simulation: the process dies without cleanup.
+  # Test only: simulates a forced process kill (os._exit, no cleanup).  This is
+  # NOT a power-cut test: data already written but not yet on disk survives a
+  # process kill, so it proves nothing about what a real power loss keeps.
   if os.environ.get('JET_SWITCH_CRASH_AT') == name:
     os._exit(91)
+
+
+def fail_point(name):
+  # Test only: injected I/O error at a named point (exercises the recovery path).
+  if os.environ.get('JET_SWITCH_FAIL_AT') == name:
+    raise OSError(5, 'injected I/O error at ' + name)
 
 
 def sha(path):
@@ -87,15 +101,35 @@ def exchange(a, b):
   if renameat2(AT_FDCWD, os.fsencode(str(a)), AT_FDCWD, os.fsencode(str(b)), RENAME_EXCHANGE) != 0:
     errno = ctypes.get_errno()
     raise SwitchError(f'RENAME_EXCHANGE failed: {os.strerror(errno)}')
-  fsync_dir(Path(a).parent)
+  # No fsync here: the caller syncs inside its recovery scope.
 
 
 def write_marker(marker, boot_id_path):
   temporary = marker.with_suffix('.switch-new')
   write_durable(temporary, Path(boot_id_path).read_bytes())
   crash_point('after_marker_tmp')
+  fail_point('marker_rename')
   os.replace(temporary, marker)
+  crash_point('after_marker_rename')
+  fail_point('marker_fsync')
   fsync_dir(marker.parent)
+
+
+def restore_marker(marker, marker_before, stamp):
+  """Put boot-update-required back to its state before the switch.
+  Never deletes: a marker this tool created is moved aside."""
+  runtime = marker.parent
+  temporary = marker.with_suffix('.switch-new')
+  if temporary.exists():
+    os.rename(temporary, runtime / f'{temporary.name}.rolledback-{stamp}')
+  if marker_before is None:
+    if marker.exists():
+      os.rename(marker, runtime / f'{marker.name}.rolledback-{stamp}')
+  elif not marker.is_file() or marker.read_bytes() != marker_before:
+    restore = marker.with_suffix('.switch-restore')
+    write_durable(restore, marker_before)
+    os.replace(restore, marker)
+  fsync_dir(runtime)
 
 
 def tree_hashes(folder):
@@ -217,30 +251,39 @@ def switch(root, source, manifest_path, python, boot_id_path, stamp=None):
   # 3. pre-check before anything visible changes
   verify_updater(python, staged, root, manifest_path, NEW_KEY)
 
-  # 4. atomic exchange
+  # 4. atomic exchange (raises before any change if renameat2 is unavailable)
   exchange(updater, staged)  # staged path now holds the old updater
   crash_point('after_exchange')
   replaced = runtime / ('updater.replaced-' + stamp)
   try:
+    fail_point('fsync_after_exchange')
+    # 5. marker right away: shortest window in which the legacy runtime's
+    # migrate_running_release() would reinstall the old updater.
+    if marker_before is None:
+      write_marker(marker, boot_id_path)
+      report['marker_written'] = 'this-boot-id (gate from next boot)'
+    fsync_dir(runtime)  # exchange + marker durable together (same directory)
+    crash_point('after_marker')
+    # 6. keep old folder under its final name, verify installed updater
+    fail_point('rename_old')
     os.rename(staged, replaced)
     fsync_dir(runtime)
     crash_point('after_rename_old')
-    # 5. verify installed updater
     if os.environ.get('JET_SWITCH_FORCE_VERIFY_FAIL') == '1':
       raise SwitchError('forced verification failure (test)')
+    fail_point('verify')
     commit = verify_updater(python, updater, root, manifest_path, NEW_KEY)
     for name in payload:
       if sha(updater / name) != sha(source / name):
         raise SwitchError(f'{name} differs from payload after install')
-    # 6. marker last: keeps old runtime from reinstalling the old updater.
-    if marker_before is None:
-      write_marker(marker, boot_id_path)
-      report['marker_written'] = 'this-boot-id (gate from next boot)'
-    crash_point('after_marker')
+    crash_point('after_verify')
   except BaseException as error:
-    # Recovery: bring the old folder back with the same atomic exchange.
+    # Recovery: marker first (so "old updater + new marker" never exists, even
+    # if this recovery is itself killed), then the same atomic exchange back.
+    restore_marker(marker, marker_before, stamp)
     old = replaced if replaced.exists() else staged
     exchange(updater, old)
+    fsync_dir(runtime)
     check_old_updater(python, updater, backup)
     report['result'] = 'restored-old'
     report['error'] = str(error)[:240]
