@@ -96,6 +96,17 @@ def test_phone_checks_data_role_not_power_role(tmp_path, monkeypatch, mode):
 def test_daemon_wires_mode_protocol_and_separate_ios_owner(tmp_path, monkeypatch, mode, scenario):
   calls = []
   power_steps = []
+  priorities = []
+  class Priority:
+    def __init__(self):
+      self.started = False
+      self.closed = False
+      priorities.append(self)
+    def start(self, peer, *, bulk_usb):
+      self.started = True
+    def close(self):
+      self.closed = True
+  monkeypatch.setattr(daemon, 'UsbCompletionPriority', Priority)
   monkeypatch.setattr(daemon, 'UsbInputPower', lambda: SimpleNamespace(step=lambda: power_steps.append(len(calls))))
   attached = [True]
   reports = []
@@ -109,7 +120,12 @@ def test_daemon_wires_mode_protocol_and_separate_ios_owner(tmp_path, monkeypatch
       return tmp_path / 'local.sock'
     return Path(value)
   monkeypatch.setattr(daemon, 'Path', path)
-  monkeypatch.setattr(daemon, 'open', lambda *a: (tmp_path / 'owner.lock').open('w'), raising=False)
+  locks = []
+  def open_lock(*args):
+    lock = (tmp_path / 'owner.lock').open('w')
+    locks.append(lock)
+    return lock
+  monkeypatch.setattr(daemon, 'open', open_lock, raising=False)
   monkeypatch.setattr(daemon.fcntl, 'flock', lambda *a: None)
   monkeypatch.setattr(daemon, 'transport_mode', lambda: mode)
   monkeypatch.setenv('JETLINK_PROTOCOL', '3' if scenario == 'usb-pinned' else 'auto')
@@ -222,6 +238,8 @@ def test_daemon_wires_mode_protocol_and_separate_ios_owner(tmp_path, monkeypatch
   monkeypatch.setattr(daemon, 'serve_local', serve)
   with pytest.raises(KeyboardInterrupt):
     daemon.main()
+  assert len(locks) == 1 and locks[0].closed
+  assert all(priority.closed for priority in priorities)
   assert power_steps and power_steps[0] == 0  # Before gadget setup in every configured mode.
   assert calls[0] == ('setup', mode)
   if scenario == 'constructor-unsafe':
