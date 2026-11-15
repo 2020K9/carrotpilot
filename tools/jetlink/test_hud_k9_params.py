@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hud_protocol import PARAMS  # noqa: E402
+from hud_protocol import PARAMS
 
 CLUSTER = ROOT / 'openpilot/selfdrive/carrot/cluster'
 # Not forwarded on purpose: write-back/remote meter (read-only adapter), the Jetson fixes its own encoder in argv,
