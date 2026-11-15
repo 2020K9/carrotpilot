@@ -1,0 +1,30 @@
+name: Jet model release
+on:
+  push:
+    branches: [jet-rel-wf-4b64e4ecf]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch and verify
+        run: |
+          set -euo pipefail
+          N=https://upload.shind0.synology.me/models
+          mkdir out && cd out
+          get() { curl --fail --retry 3 -L -o "$1" "$2"; echo "$3  $1" | sha256sum -c -; }
+          get n16.onnx $N/comma4-big-nav-n16-96244b1f/big_driving_supercombo.onnx 01effc679eb46d6036ce0302673a87fe2dcfcc95a679daeeb929679e53c3647a
+          get flip-flop.onnx $N/comma4-big-md-v3-1365126a/big_driving_supercombo.onnx 35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199
+          get light-speed.onnx $N/comma4-big-light-speed-f22b8b34/big_driving_supercombo.onnx 6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21
+          get light-speed-2.onnx $N/comma4-big-light-speed-2-b4dead3e/big_driving_supercombo.onnx 909a140019050a9d7f00db22dd4f4085928d2af9474a82244672ddab964f95a8
+          get host-4b64e4ecf.tar.gz https://raw.githubusercontent.com/2020K9/carrotpilot/jet-host-4b64e4ecf/host.tar.gz 6d6a2cd6fa987acdbc11a7d56553096340361896366705d023d2e46ee93172ec
+          get host-light-speed.tar.gz $N/jetlink-host-cda6a9f2bbb352edd28241eb7891ccc11f2c8fda/precompiled-runtime.tar.gz 91d282f292ef65072d56edf7012f982bd21bb5b23201e1f61dda75949c9d31eb
+          get host-light-speed-2.tar.gz $N/jetlink-host-7c6be06a5b67b49f48b4a68a5a73336ff199c529/precompiled-runtime.tar.gz 026453481bdfa271ff9cd4d96067f49ba4e95a7b4bfb8f131c351556113bf5b2
+          get host-flip-flop.tar.gz $N/jetlink-host-18de2568b022cff450f9bbe8e1dbc67c43c27815/precompiled-runtime.tar.gz 7d3ec5e7b7189f6c3b4fc0e64bf8739fb1bb3139d370d2d7347d20af037ac51f
+          sha256sum * > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create jet-models-4b64e4ecf out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Jet models 4b64e4ecf" --notes "N16, flip-flop, light-speed, light-speed-2 + host" --prerelease
