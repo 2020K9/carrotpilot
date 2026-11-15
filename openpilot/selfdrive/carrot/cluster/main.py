@@ -83,6 +83,7 @@ from cluster_simulator import ClusterSimulator, RandomInputSource
 from cluster_system_monitor import ClusterProcessCoreUsageSampler, NetworkAddressProvider
 from cluster_usb_display import TuringUsbDisplay, find_supported_usb_product, product_id_for_hud_mode, _set_cluster_hud_connected
 from cluster_usb_pipeline import AsyncJpegUsbPipeline
+from cluster_tx_stats import TX as USB_TX_STATS
 from openpilot.common.display_scheduling import CLUSTER_MIN_NICE, DisplayScheduler
 from openpilot.selfdrive.controls.lib.cutin_alert import CutinAlertCandidate, CutinAlertTracker
 
@@ -874,6 +875,7 @@ def run_demo(
                 product_id_for_hud_mode(hud_mode_watch) if hud_mode_watch is not None else None
             ),
         )
+        USB_TX_STATS.enabled = True   # K9HudNavdy 2 전송 FPS (display only)
         # H.264 startup command 13 carries this state; do not add another
         # mandatory sync transaction immediately after USB initialization.
         usb_display.set_orientation(active_orientation)

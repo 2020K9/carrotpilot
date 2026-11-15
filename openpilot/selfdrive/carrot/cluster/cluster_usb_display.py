@@ -14,6 +14,7 @@ from typing import Any
 
 from openpilot.common.usbgpu_bus_lock import usbgpu_bus_lock
 
+from cluster_tx_stats import TX
 from cluster_utils import clamp
 
 VENDOR_ROOT = Path(__file__).resolve().parent / ".vendor" / "turing-smart-screen-python-main"
@@ -663,7 +664,10 @@ class TuringUsbDisplay:
         try:
             self._send_frame(self._cmd_upload_png, frame)
         except Exception as exc:
+            TX.fail()
             self._handle_frame_error(exc)
+        else:
+            TX.sent()
 
     def send_jpeg(self, frame: bytes) -> None:
         if self.dev is None or self._send_jpeg is None:
@@ -671,7 +675,10 @@ class TuringUsbDisplay:
         try:
             self._send_frame(self._cmd_upload_jpeg, frame)
         except Exception as exc:
+            TX.fail()
             self._handle_frame_error(exc)
+        else:
+            TX.sent()
 
     def start_h264_stream(self, requested_chunk_size: int = 0) -> int:
         if self.dev is None:
@@ -761,11 +768,11 @@ class TuringUsbDisplay:
         is_last: bool = False,
         wait_for_ack: bool = True,
         require_ack_response: bool = True,
-    ) -> None:
+    ) -> bool | None:
         if self.dev is None:
             raise RuntimeError("USB display is not open")
         if not chunk:
-            return
+            return None
         try:
             if wait_for_ack:
                 try:
@@ -776,7 +783,7 @@ class TuringUsbDisplay:
                     if require_ack_response:
                         raise
                     self._h264_flow_control(target_queue_depth=2)
-                    return
+                    return False   # soft ack: no confirmation, not counted as sent
                 if require_ack_response:
                     self._check_frame_response(response)
                 else:

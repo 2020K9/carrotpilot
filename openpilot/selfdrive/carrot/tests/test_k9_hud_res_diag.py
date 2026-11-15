@@ -123,7 +123,7 @@ def test_server_and_hud_hooks_are_record_only():
   assert "self.telemetry.health.note_inference(gpu_us, total_us)" in server
   assert "health.mark('hello')" in server and "self.telemetry.health.mark('engine_ready')" in server
   hud = (JETLINK / "hud.py").read_text()
-  for needle in ("MARKS.setdefault('car', record[0])", "MARKS['car_last'] = received", "MARKS.setdefault('frame', now)",
+  for needle in ("MARKS.setdefault('car', received)", "MARKS['car_last'] = received", "MARKS.setdefault('frame', now)",
                  "HealthRenderer.startup_marks = MARKS"):
     assert needle in hud
 
@@ -140,7 +140,7 @@ def test_missing_values_are_dashes_and_lost():
   texts, bars = renderer().k9_res_layout(state(comma_diag=None, actual_fps=None), fake_width)
   words = all_text(texts)
   assert words.count("수신 끊김") == 2   # 콤마 + 젯슨 headers
-  assert "--" in words and "CPU --" in words and "MEM --" in words and "FPS -- 실측" in words
+  assert "--" in words and "CPU --" in words and "MEM --" in words and "화면 생성 FPS" in words
   digits = [w for w in words if any(ch.isdigit() for ch in w)]
   assert digits == [], digits   # nothing numeric survives without data
   assert_clean(texts, bars)
@@ -151,7 +151,7 @@ def test_stale_car_packet_shows_lost():
   words = all_text(r.k9_res_layout(state(comma_diag={**COMMA, "car_rx_age_s": 7.2}), fake_width)[0])
   assert "수신 끊김 7 s" in words
   words = all_text(r.k9_res_layout(state(), fake_width)[0])
-  assert "0.05 s" in words and "38.2 ms" in words and "11.0/12.4 ms" in words and "FPS 9.8 실측" in words
+  assert "0.05 s" in words and "38.2 ms" in words and "11.0/12.4 ms" in words and "9.8" in words
   assert "21.4 · 젯슨" in words and "63.0 · 젯슨" in words and words.count("--") >= 1   # car stage not measured
 
 

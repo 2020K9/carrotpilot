@@ -154,10 +154,12 @@ def _temp_values(raw) -> list[float]:
     return [round(v, 1) for v in values if v is not None and -20.0 <= v <= 150.0 and v != 0.0]
 
 
-def live_comma_diag(device_state, model_v2=None, car_rx_age_s: float | None = None) -> dict | None:
+def live_comma_diag(device_state, model_v2=None, car_rx_age_s: float | None = None,
+                    roundtrip_ms: float | None = None) -> dict | None:
     """K9HudNavdy 2 diagnostics, comma side: only what deviceState already carries (cores keep their real count),
-    modelV2.modelExecutionTime (request -> result, comma clock) and the carState receive age (comma clock).
-    None for a missing value, never guessed; None overall without deviceState."""
+    modelV2.modelExecutionTime (the whole model.run() in modeld = 콤마 모델 실행, comma clock), the Jetson round trip
+    (request sent -> result received, comma monotonic in modeld; None when comma's own model ran) and the age of the
+    last new valid carState (comma clock). None for a missing value, never guessed; None overall without deviceState."""
     if device_state is None:
         return None
     try:
@@ -190,8 +192,27 @@ def live_comma_diag(device_state, model_v2=None, car_rx_age_s: float | None = No
         "thermal": str(thermal) if thermal else None,
         "fan_pct": fan if fan is not None and 0.0 <= fan <= 100.0 else None,
         "model_ms": model_s * 1000.0 if model_s is not None and 0.0 < model_s < 10.0 else None,
+        "roundtrip_ms": roundtrip_ms if roundtrip_ms is not None and math.isfinite(roundtrip_ms) and 0.0 < roundtrip_ms < 10000.0
+        else None,
         "car_rx_age_s": car_rx_age_s if car_rx_age_s is not None and math.isfinite(car_rx_age_s) and car_rx_age_s >= 0.0 else None,
     }
+
+
+def jetlink_roundtrip_ms(params=None) -> float | None:
+    """K9HudNavdy 2 젯슨 왕복: modeld's fresh Jetlink status (comma monotonic, request sent -> result received).
+    None when the Jetson is not the active model (comma's own model ran) or the status is missing / stale.
+    A Jetson panel gets the same comma value through its snapshot (params.jetlink_roundtrip_ms)."""
+    try:
+        if callable(getattr(params, "jetlink_roundtrip_ms", None)):
+            value = params.jetlink_roundtrip_ms()
+        else:
+            from openpilot.common.jetlink_status import MODEL_STATUS, _fresh
+            status = _fresh(MODEL_STATUS)
+            value = status.get("roundtrip_ms") if status.get("active") is True else None
+        value = finite_float(value) if value is not None else None
+    except Exception:
+        return None
+    return value if value is not None and 0.0 < value < 10000.0 else None
 
 
 class TaxiSpeedSampleReader:
@@ -542,17 +563,19 @@ class OpenpilotLiveSource:
                         self._external_compute_label = device_badge[0]
             except Exception:
                 pass
+            self._k9_roundtrip_ms = jetlink_roundtrip_ms(params)
             self._next_egpu_param_read_t = now + 1.0
 
         device_state = self._service_data("deviceState")
         onroad = self._service_alive("deviceState") and bool(safe_get(device_state, "started", False))
         comma_resources = live_comma_resources(device_state) if self._service_alive("deviceState") else None
         comma_diag = None
+        car_rx = self._k9_note_car_state(now)
         if self._service_alive("deviceState"):  # K9HudNavdy 2 diagnostics (display only, comma clock)
-            car_rx = self._service_receive_time("carState")
             comma_diag = live_comma_diag(device_state,
                                          self._service_data("modelV2") if self._service_alive("modelV2") else None,
-                                         time.monotonic() - car_rx if car_rx is not None else None)
+                                         time.monotonic() - car_rx if car_rx is not None else None,
+                                         getattr(self, "_k9_roundtrip_ms", None))
         car_state = self._service_data("carState")
         fuel_gauge = safe_optional_float(car_state, "fuelGauge")
         if fuel_gauge is None or not 0.0 < fuel_gauge <= 1.0:
@@ -1614,6 +1637,12 @@ class OpenpilotLiveSource:
         except AttributeError:
             mono_time = 0
         return float(mono_time) / 1_000_000_000.0 if mono_time else time.monotonic()
+
+    def _k9_note_car_state(self, now: float) -> float | None:
+        """K9HudNavdy 2: last receive time of a NEW valid carState (sm.updated), never of any other message"""
+        if self._service_updated("carState") and self._service_valid("carState"):
+            self._k9_car_rx_t = self._service_receive_time("carState") or now
+        return getattr(self, "_k9_car_rx_t", None)
 
     def _service_receive_time(self, service: str) -> float | None:
         try:

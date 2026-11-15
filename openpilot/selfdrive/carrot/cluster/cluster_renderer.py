@@ -417,10 +417,10 @@ K9L_RIGHT_HAIR = 170.0
 K9R_TOP, K9R_BOTTOM = 8.0, 472.0
 K9R_HEAD, K9R_VALUE, K9R_SMALL = 15.0, 16.0, 12.0
 K9R_WARN = (255, 205, 70)
-K9R_STALE_S = 2.0                      # car packet older than this = 수신 끊김
+K9R_STALE_S = 2.0                      # last NEW valid carState older than this = 수신 끊김
 K9R_GLYPHS = "".join(sorted(set(
     "콤마젯슨수신끊김열코어온도전력여유팬모델처리요청결과계산내부전체차량정보받은뒤시작단계부팅후연결대기준비출력화면측정" +
-    "안함꺼짐실측없음개°→·…")))
+    "안함꺼짐실측없음개°→·…" + "실행왕복생성전송실패첫반환")))
 K9L_LAT_HEAD = 196.0
 K9L_LAT_BASE0, K9L_LAT_PITCH = 228.0, 30.0   # 35 px glyphs (27 x ink 1.31): 25 px box, 5 px between lines, last 468
 # 11/12 22:37 대감님 "두 판 모두 살려": K9 D layout chosen by the Param ClusterHudK9Style
@@ -7698,8 +7698,13 @@ class ClusterUiRenderer:
         """K9HudNavdy 2 Jetson block; the plain (comma) renderer has no Jetson data (hud_health overrides this)."""
         return None
 
+    def k9_tx_stats(self) -> tuple[float | None, int | None]:
+        """(전송 FPS, failed + dropped frames) counted where the USB send call returns (cluster_tx_stats)"""
+        from cluster_tx_stats import TX
+        return TX.snapshot()
+
     def k9_car_rx_age(self, state) -> float | None:
-        """seconds since the last carState, measured on the renderer's own clock (comma: SubMaster recv_time)"""
+        """seconds since the last NEW valid carState (sm.updated), renderer's own clock (comma: SubMaster recv_time)"""
         diag = getattr(state, "comma_diag", None)
         return diag.get("car_rx_age_s") if isinstance(diag, dict) else None
 
@@ -8452,7 +8457,7 @@ class ClusterUiRenderer:
         def line(size, left, right=None, lcolor=K9L_LABEL, rcolor=K9L_VALUE):
             if not room(size):
                 return False
-            y[0] += size + 6.0
+            y[0] += size + (6.0 if size >= K9R_HEAD else 5.0)   # small rows 18 px: room for 전송 FPS / 왕복 rows
             base = y[0]
             lw = put(left, x0, base, size, lcolor) if left else 0.0
             if right:
@@ -8552,8 +8557,10 @@ class ClusterUiRenderer:
             hair()
             # 모델 처리
             line(K9R_HEAD, "모델 처리", None)
-            line(K9R_SMALL + 1.0, "요청→결과 · 콤마", self.k9r_num(c.get("model_ms"), ".1f", " ms"), K9L_MUTED,
+            line(K9R_SMALL + 1.0, "콤마 모델 실행 · 콤마", self.k9r_num(c.get("model_ms"), ".1f", " ms"), K9L_MUTED,
                  K9L_VALUE if c.get("model_ms") is not None else K9L_MUTED)
+            line(K9R_SMALL + 1.0, "젯슨 왕복 · 콤마", self.k9r_num(c.get("roundtrip_ms"), ".1f", " ms"), K9L_MUTED,
+                 K9L_VALUE if c.get("roundtrip_ms") is not None else K9L_MUTED)
             gpu_ms, total_ms = j.get("infer_gpu_ms"), j.get("infer_total_ms")
             line(K9R_SMALL + 1.0, "내부 계산 GPU/전체 · 젯슨",
                  "--" if gpu_ms is None and total_ms is None else
@@ -8563,7 +8570,11 @@ class ClusterUiRenderer:
             # HUD
             fps = getattr(state, "actual_fps", None)
             fps = fps if isinstance(fps, (int, float)) and math.isfinite(fps) and fps > 0.0 else None
-            line(K9R_HEAD, "HUD", f"FPS {self.k9r_num(fps, '.1f')} 실측", rcolor=K9L_VALUE if fps else K9L_MUTED)
+            line(K9R_SMALL + 1.0, "화면 생성 FPS", self.k9r_num(fps, ".1f"), K9L_MUTED, K9L_VALUE if fps else K9L_MUTED)
+            tx_fps, tx_failed = self.k9_tx_stats()
+            tx_text = self.k9r_num(tx_fps, ".1f") + (f" · 실패 {tx_failed}" if tx_failed else "")
+            line(K9R_SMALL + 1.0, "전송 FPS", tx_text, K9L_MUTED,
+                 K9R_WARN if tx_failed or tx_fps == 0.0 else (K9L_VALUE if tx_fps else K9L_MUTED))
             age = self.k9_car_rx_age(state)
             if age is None:
                 age_text, age_color = "--", K9L_MUTED
@@ -8576,7 +8587,8 @@ class ClusterUiRenderer:
             # 시작 단계
             marks = self.k9_startup() or {}
             line(K9R_HEAD, "시작 단계", "부팅 후 s", rcolor=K9L_MUTED)
-            for key, name in (("connect", "연결 대기"), ("model", "모델 준비"), ("car", "차량 정보 수신"), ("frame", "화면 출력")):
+            for key, name in (("connect", "연결 요청 수신"), ("model", "모델 준비"), ("car", "차량 정보 수신"),
+                              ("frame", "첫 USB 전송 반환")):
                 t, device = marks.get(key) or (None, "")
                 line(K9R_SMALL + 1.0, name, "--" if t is None else f"{t:.1f} · {device}", K9L_MUTED,
                      K9L_MUTED if t is None else K9L_VALUE)

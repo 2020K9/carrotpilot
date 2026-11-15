@@ -12,6 +12,7 @@ def configure(root, source):
               'openpilot/selfdrive/carrot/cluster/cluster_usb_display.py',
               'openpilot/selfdrive/carrot/cluster/cluster_config.py',
               'openpilot/selfdrive/carrot/cluster/cluster_utils.py',
+              'openpilot/selfdrive/carrot/cluster/cluster_tx_stats.py',   # imported by cluster_usb_display (stdlib only)
               'openpilot/selfdrive/assets/fonts/KaiGenGothicKR-Bold.ttf', 'LICENSE']
   for name in relative:
     path = target / name

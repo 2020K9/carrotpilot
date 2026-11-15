@@ -12,8 +12,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'openpilot/selfdrive/carrot/cluster'))
 from hud_protocol import read_snapshot, SERVICES
 
-# K9HudNavdy 2 startup marks, Jetson monotonic (same clock as the server marks): first car packet, last car packet,
-# first frame handed to the USB panel. Display only; nothing waits on them.
+# K9HudNavdy 2 startup marks, Jetson monotonic (same clock as the server marks): first / last NEW valid carState
+# (a snapshot arriving is not enough), first USB send call that returned (not the panel showing it). Display only.
 MARKS = {}
 
 
@@ -52,7 +52,6 @@ class DisplayParams:
       # still invalidates all vehicle data immediately on snapshot loss.
       if record is not None:
         self.values = record[1]['params']
-        MARKS.setdefault('car', record[0])
       self.next_read = now + .1
     value = self.values.get(key)
     return base64.b64decode(value) if value is not None else None
@@ -64,6 +63,10 @@ class DisplayParams:
     snapshot = read_snapshot()
     label = snapshot[1].get('external_compute_label', '') if snapshot else ''
     return label if label in ('jetSON', 'MAC', 'Jetlink') else ''
+
+  def jetlink_roundtrip_ms(self):
+    snapshot = read_snapshot()   # comma clock value carried as is; never mixed with Jetson times
+    return snapshot[1].get('jetlink_roundtrip_ms') if snapshot else None
 
   def get_int(self, key, *args, **kwargs):
     try:
@@ -109,7 +112,6 @@ class RemoteSubMaster:
       self.alive = dict.fromkeys(self.services, False)
       return
     received, value = snapshot
-    MARKS['car_last'] = received
     if received == self.last_received:
       return
     self.last_received = received
@@ -131,6 +133,9 @@ class RemoteSubMaster:
         self.data[name] = reader.as_builder()
       self.generations[name] = mono
       self.updated[name] = True
+      if name == 'carState' and self.valid[name]:
+        MARKS['car_last'] = received   # a new carState (new logMonoTime), valid
+        MARKS.setdefault('car', received)
 
 
 def main():

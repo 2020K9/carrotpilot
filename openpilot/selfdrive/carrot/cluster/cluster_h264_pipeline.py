@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Any
 
+from cluster_tx_stats import TX, count_h264_pictures
 from cluster_usb_display import TuringUsbDisplay
 
 
@@ -79,6 +80,11 @@ class _NativeAccessUnit:
     chunks: tuple[bytes, ...]
     codec_config: bool
     keyframe: bool
+
+
+def _unit_pictures(unit) -> int:
+    """K9HudNavdy 2 전송 FPS: one native access unit = one picture unless it carries codec config only"""
+    return 1 if not unit.codec_config else min(1, count_h264_pictures(b"".join(unit.chunks))[0])
 
 
 @dataclass
@@ -2147,6 +2153,7 @@ class H264UsbPipeline:
             queue_depth = packet_queue.qsize()
 
         if dropped:
+            TX.fail(sum(_unit_pictures(unit) for unit in dropped))
             self._record_h264_drop(len(dropped), sum(len(unit.chunks) for unit in dropped))
         self._record_h264_queue_depth(queue_depth)
 
@@ -2243,6 +2250,7 @@ class H264UsbPipeline:
         try:
             fd = proc.stdout.fileno()
             chunk_size = max(1, self.chunk_size)
+            picture_tail = b""
             while True:
                 chunk = os.read(fd, chunk_size)
                 if not chunk:
@@ -2256,8 +2264,8 @@ class H264UsbPipeline:
                 self._debug_log_packetize(self.backend_name, read_index, chunk, chunks, chunk_size)
                 self._write_dump(chunk)
                 self._record_h264_unit(self.backend_name, chunk, chunks)
-                for packet_chunk in chunks:
-                    self._send_h264_chunk(packet_chunk, chunk_size, source=self.backend_name)
+                pictures, picture_tail = count_h264_pictures(chunk, picture_tail)
+                self._send_h264_frame(chunks, chunk_size, self.backend_name, pictures)
         except BaseException as exc:
             with self._condition:
                 if not self._closing:
@@ -2284,17 +2292,31 @@ class H264UsbPipeline:
                     continue
                 if item is None:
                     return
-                for chunk in item.chunks:
-                    if self._closing:
-                        return
-                    self._send_h264_chunk(chunk, chunk_size, source="native")
+                if self._closing:
+                    return
+                self._send_h264_frame(item.chunks, chunk_size, "native", _unit_pictures(item))
         except BaseException as exc:
             with self._condition:
                 if not self._closing:
                     self._error = exc
                 self._condition.notify_all()
 
-    def _send_h264_chunk(self, chunk: bytes, chunk_size: int, *, source: str, is_last: bool = False) -> None:
+    def _send_h264_frame(self, chunks, chunk_size: int, source: str, pictures: int) -> None:
+        """K9HudNavdy 2 전송 FPS: pictures count as sent only when every chunk send returned success."""
+        ok = True
+        try:
+            for chunk in chunks:
+                if self._closing:
+                    return
+                ok = self._send_h264_chunk(chunk, chunk_size, source=source) and ok
+        except BaseException:
+            if pictures:
+                TX.fail(pictures)
+            raise
+        if pictures:
+            (TX.sent if ok else TX.fail)(pictures)
+
+    def _send_h264_chunk(self, chunk: bytes, chunk_size: int, *, source: str, is_last: bool = False) -> bool:
         self._chunks_sent += 1
         self._debug_usb_bytes += len(chunk)
         self._debug_max_chunk_bytes = max(self._debug_max_chunk_bytes, len(chunk))
@@ -2312,7 +2334,7 @@ class H264UsbPipeline:
                 flush=True,
             )
         profile_stage = time.perf_counter()
-        self.usb_display.send_h264_chunk(
+        result = self.usb_display.send_h264_chunk(
             chunk,
             is_last=is_last,
             wait_for_ack=self.wait_for_ack,
@@ -2322,6 +2344,7 @@ class H264UsbPipeline:
         elapsed_ms = (time.perf_counter() - profile_stage) * 1000.0
         self._add_sample_value("usb_h264.send_chunk", elapsed_ms)
         self._record_h264_send(source, len(chunk), elapsed_ms)
+        return result is not False
 
     def _read_stderr(self) -> None:
         proc = self._proc
