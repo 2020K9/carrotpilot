@@ -205,6 +205,7 @@ def test_v2_wire_keeps_legacy_packed_inputs_and_full_outputs():
   finally:
     client.close()
     thread.join(timeout=5)
+    server.close()
   assert not thread.is_alive()
   assert not errors
   assert P.VERSION == 2
