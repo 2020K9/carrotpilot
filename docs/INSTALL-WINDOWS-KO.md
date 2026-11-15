@@ -76,7 +76,7 @@ Windows 10/11 64비트 · PC 여유 공간 약 70GB · 64GB 이상 microSD와 US
 
 *Additional step for NVMe · Common microSD/NVMe patch · About 5–20 min*
 
-**[공용 패치파일 받기 · 약 32MB](https://upload.shind0.synology.me/downloads/jetson/v0.4.0-sd-nvme-patch-v2-preview/carrot-jetson-windows.zip)**
+**[공용 패치파일 받기 · 약 32MB](https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-sd-nvme-patch-v2-preview/carrot-jetson-windows.zip)**
 
 > **Download the common patch · About 32 MB**
 

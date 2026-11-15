@@ -15,7 +15,7 @@ The original model branch started from `carrot-wip` commit
 - Model ID: `comma-pr38823-cinque-v2-37bfa141-09d080f3`
 - File: `big_driving_supercombo.onnx`, 766,040,736 bytes
 - SHA-256: `09d080f36965bb2a0790500452bd328aa03c484d0222aa79d1ad9f021a522aec`
-- Manifest: <https://upload.shind0.synology.me/models/comma4-big-cinque-v2/manifest.json>
+- Manifest: <https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-cinque-v2/manifest.json>
 - NAS directory: `\\DS1821P\openpilot\models\comma4-big-cinque-v2`
 
 This integration replaces the eGPU big model. The internal fallback driving model stays

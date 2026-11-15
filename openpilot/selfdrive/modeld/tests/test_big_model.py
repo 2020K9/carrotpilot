@@ -63,11 +63,11 @@ def test_manifest_resolves_relative_https_url():
 def test_default_manifest_is_pinned_to_navigation_model(monkeypatch):
   monkeypatch.setattr(big_model, "urlopen", lambda *_args, **_kwargs: pytest.fail("default manifest must be built in"))
   manifest = big_model.fetch_manifest()
-  assert big_model.DEFAULT_MANIFEST_URL == "https://upload.shind0.synology.me/models/comma4-big-nav-n16-96244b1f/manifest.json"
+  assert big_model.DEFAULT_MANIFEST_URL == "https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-n16-96244b1f/manifest.json"
   assert manifest.model_id == "comma-nav-n16-afbf2e54-52205044"
   assert manifest.size == 822_465_506
   assert manifest.sha256 == "52205044e136efb64a6a841c9b016cf35b1db81186dd0f941b62eee5ebdcde24"
-  assert manifest.url == "https://upload.shind0.synology.me/models/comma4-big-nav-n16-96244b1f/big_driving_tinygrad.pkl"
+  assert manifest.url == "https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-n16-96244b1f/big_driving_tinygrad.pkl"
   assert manifest.precompiled_only
   assert manifest.cache_filename == "big_driving_tinygrad-52205044e136efb6.pkl"
 

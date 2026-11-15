@@ -55,7 +55,7 @@ checks and eGPU compatibility CI39366620916 pass.
 Our signed runtime is `abac23f644877876285a57631674ade5e901f77e`,
 64,670,484 bytes, SHA-256
 `b4e1a7bde4b7f6850821668f051f269d1333b9209deb83bb36dcfee83e6f4f10`.
-[Manifest](https://upload.shind0.synology.me/models/jetlink-host-abac23f644877876285a57631674ade5e901f77e/manifest.json).
+[Manifest](https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-abac23f644877876285a57631674ade5e901f77e/manifest.json).
 The official ONNX is mirrored alongside the existing n16 PKL on NAS; the PKL
 manifest is unchanged. Existing signing trust and rollback checks are retained.
 ## Owner-device activation

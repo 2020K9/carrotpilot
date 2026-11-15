@@ -54,8 +54,8 @@ has not been established by these finite/performance checks.
 
 The 795002404-byte plan and matching specification/metadata were copied back,
 checked against the device hash, packaged and signed with the existing release
-authority. The [prebuilt archive](https://upload.shind0.synology.me/models/jetlink-nav-rl-80eedcdd-trt10-3-orin-7ba226db/precompiled-runtime.tar.gz)
-and [signed manifest](https://upload.shind0.synology.me/models/jetlink-nav-rl-80eedcdd-trt10-3-orin-7ba226db/manifest.json)
+authority. The [prebuilt archive](https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-nav-rl-80eedcdd-trt10-3-orin-7ba226db/precompiled-runtime.tar.gz)
+and [signed manifest](https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-nav-rl-80eedcdd-trt10-3-orin-7ba226db/manifest.json)
 are stored separately from the runtime. The complete HTTPS archive SHA256
 `f687725ccf61b842cadfa40064e050aa13f1eb87d00396d1ffdc11b3dbd29b7e`
 and manifest signature were verified. This device already has the plan cached,

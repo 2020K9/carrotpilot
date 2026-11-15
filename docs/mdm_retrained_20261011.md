@@ -32,7 +32,7 @@ an upstream model named MDM v2. Web identifies it as `Mountain Dew (8d736683)`.
 - Deterministic isolated runtime: 2,739,152 bytes, SHA256
   `90970e01f2ba70d553294c0f9d5c6fe1678827f750705cab679a7b19b7bcb0b2`.
 - NAS directory: `comma4-big-mdm-8d736683`; vehicle manifest:
-  `https://upload.shind0.synology.me/models/comma4-big-mdm-8d736683/manifest.json`.
+  `https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-mdm-8d736683/manifest.json`.
 
 The complete official PKL was downloaded from the upstream Hugging Face LFS
 endpoint and verified against the committed pointer. The package builder pins

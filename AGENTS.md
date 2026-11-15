@@ -3580,11 +3580,11 @@
   branch for a vehicle folder whose name ends with the exact dongle ID. If the branch is unknown,
   search `\\DS1821P\openpilot` across branch directories for the exact dongle ID first. Do not
   start by looking for a local Windows or WSL tmux installation.
-- Big-model ONNX files and manifests are hosted on the user's NAS under
-  `\\DS1821P\openpilot\models\<model-directory>`. Vehicles download the same files through
-  `https://upload.shind0.synology.me/models/<model-directory>/`. For a new big-model branch,
-  create a distinct model directory, place the verified ONNX and `manifest.json` there, and point
-  the branch at that NAS manifest. Do not use GitHub LFS as the vehicle download source.
+- Big-model ONNX files and manifests are published as 2020K9 GitHub release assets. Vehicles download
+  them through `https://github.com/2020K9/carrotpilot/releases/download/k9-<model-directory>/`
+  (one release per former NAS model directory). For a new big-model branch, create a distinct
+  `k9-<model-directory>` release, upload the verified ONNX and `manifest.json` there, and point the
+  branch at that release manifest. Do not use GitHub LFS as the vehicle download source.
 - Navigation deceleration behavior for the `origin/thftgr/navi-stream` branch is documented in
   `docs/carrot_navi_7713_7714_deceleration.md`.
 - The 7714-only control comparison between `origin/carrot-wip` and `origin/thftgr/navi-stream` is

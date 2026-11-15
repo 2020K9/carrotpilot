@@ -38,8 +38,8 @@ its inspected head rather than following later force-pushes.
 - Matching tinygrad commit: `d5e17c935daf11f6318e45aade9528f71b8fbdcc`
 - Runtime archive: 2,731,184 bytes, SHA-256 `a25b81e90d5259c27bc49b3a93ab499c1909a33e133cba974cf023cd94727eeb`
 - NAS directory: `\\DS1821P\openpilot\models\comma4-big-cinque-v3`
-- Vehicle manifest: <https://upload.shind0.synology.me/models/comma4-big-cinque-v3/manifest.json>
-- Runtime catalog: <https://upload.shind0.synology.me/models/comma4-big-cinque-v3/precompiled.json>
+- Vehicle manifest: <https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-cinque-v3/manifest.json>
+- Runtime catalog: <https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-cinque-v3/precompiled.json>
 
 Upstream publishes no v3 ONNX in this PR. The NAS therefore hosts its verified
 official PKL and matching runtime instead of relabeling the old ONNX as v3.
