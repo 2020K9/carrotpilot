@@ -8,8 +8,27 @@ from openpilot.common.realtime import Ratekeeper, DT_MDL
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.selfdrive.carrot.carrot_functions import CarrotPlanner
+from openpilot.common.params import Params
 from openpilot.selfdrive.controls.radar_constants import LEAD_ACCEL_TAU
 
+
+
+class _PlantSM(dict):
+  """The plant publishes every service each step: alive/valid/seen for the ones it has, absent for the rest
+  (carrotMan, carrotNavi ...), the same view plannerd's SubMaster gives the planner (upstream planner now uses sm.*)."""
+  def __init__(self, msgs, mono_time):
+    super().__init__(msgs)
+    self.alive = {k: True for k in msgs}
+    self.valid = {k: True for k in msgs}
+    self.seen = {k: True for k in msgs}
+    self.logMonoTime = {k: mono_time for k in msgs}
+    for d in (self.alive, self.valid, self.seen):
+      d.setdefault('carrotMan', False)
+      d.setdefault('carrotNavi', False)
+
+  def all_checks(self, service_list=None):
+    return all(self.alive.get(s, False) and self.valid.get(s, False) for s in (service_list or self.keys()))
 
 class Plant:
   messaging_initialized = False
@@ -52,6 +71,13 @@ class Plant:
     from opendbc.car.honda.interface import CarInterface
 
     self.planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=self.speed)
+    # A fresh test prefix has no params; the device's manager_init writes every key's default before plannerd starts.
+    params = Params()
+    for k in params.all_keys():
+      d = params.get_default_value(k)
+      if d is not None and params.get(k) is None:
+        params.put(k, d)
+    self.carrot = CarrotPlanner()
 
   @property
   def current_time(self):
@@ -106,6 +132,10 @@ class Plant:
     # does not predict slowdown in e2e mode
     position = log.XYZTData.new_message()
     position.x = [float(x) for x in (self.speed + 0.5) * np.array(ModelConstants.T_IDXS)]
+    # straight road: carrot stop/lane logic reads y/t too (upstream planner passes the full path)
+    position.y = [0.0] * len(ModelConstants.T_IDXS)
+    position.z = [0.0] * len(ModelConstants.T_IDXS)
+    position.t = [float(t) for t in ModelConstants.T_IDXS]
     model.modelV2.position = position
     model.modelV2.action.desiredAcceleration = float(self.acceleration + 0.1)
     velocity = log.XYZTData.new_message()
@@ -134,7 +164,9 @@ class Plant:
           'selfdriveState': ss.selfdriveState,
           'liveParameters': lp.liveParameters,
           'modelV2': model.modelV2}
-    self.planner.update(sm)
+    sm['livePose'] = messaging.new_message('livePose').livePose
+    sm = _PlantSM(sm, int(self.rk.frame * self.ts * 1e9) if hasattr(self, 'rk') else 0)
+    self.planner.update(sm, self.carrot)
     self.acceleration = self.planner.output_a_target
     self.speed = self.speed + self.acceleration * self.ts
     self.should_stop = self.planner.output_should_stop
