@@ -64,7 +64,18 @@ def extract_bundle(bundle, target):
         raise ValueError('Unsafe host bundle member')
       if member.issym() and (Path(member.linkname).is_absolute() or not (path.parent/member.linkname).resolve().is_relative_to(target.resolve())):
         raise ValueError('Unsafe host bundle link')
-    source.extractall(target, filter='data')
+    # Python 3.10.12 (Jetson L4T) data_filter resolves a relative symlink from
+    # the destination root instead of the link's own folder, so the in-tree
+    # ../../../common/hardware/comma/agnos.json link is rejected as outside.
+    # Links were already checked above from their real folder; keep every
+    # other data_filter rule.
+    source.extractall(target, filter=_bundle_filter)
+
+
+def _bundle_filter(member, path):
+  if member.issym():
+    return tarfile.tar_filter(member, path)
+  return tarfile.data_filter(member, path)
 
 
 def enable(root, name, body):
