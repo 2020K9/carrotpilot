@@ -32,7 +32,7 @@
 
 ## 스크립트 단계 (보완판 순서)
 1. 백업 `<runtime>/updater-switch-backup/<시각>/` (updater 전체·서비스 3개·boot-update-required·해시 목록). 이미 있으면 중단.
-2. `updater.switch-<시각>/`에 새 파일 작성(옛 폴더의 다른 파일은 유지), 파일마다 fsync.
+2. `updater.switch-<시각>/`에 새 파일 작성, 파일마다 fsync. 옛 폴더의 다른 항목: `switch_updater.py`와 31372d20c `switch_updater_linked.py`는 **최상위 보통 파일만** 옮겼다(하위 폴더는 빠지고, 파일을 가리키는 심볼릭 링크는 보통 파일로 바뀜). 0cb67d46c 기준 실제 updater에 생길 수 있는 하위 폴더: `before-usb-experiments/`(`install_usb_receiver.py:42-49`, 0700), 보호 이미지가 아니면 `__pycache__/`(보호 이미지만 `PYTHONDONTWRITEBYTECODE=1`, `install_protected.py:84-86`). 0cb67d46c 코드가 updater 안에 심볼릭 링크를 만드는 곳은 없음(소스 검색). 07:23 판(아래)은 하위 폴더·링크·권한을 그대로 옮기고 `__pycache__/`만 뺀다.
 3. 사전 확인: 그 폴더의 update_host로 콤마 명세(host_release.json) 서명·주소 검사.
 4. `renameat2(RENAME_EXCHANGE)`로 폴더 맞바꿈(한 번에). renameat2가 없으면 아무것도 안 바꾸고 중단.
 5. **맞바꿈 바로 뒤** boot-update-required가 없을 때만 생성(내용 = 이번 부팅 id). 같은 폴더라 fsync 한 번으로 맞바꿈과 함께 기록.
@@ -133,10 +133,10 @@
 ### (나) 측정: 중단 지점 × 구판 부팅·타이머 × 재부팅 2회
 - 중단 12곳(after_lock, after_backup, mid_stage, after_stage, after_link, after_exchange, after_exchange_fsync, after_marker_tmp, after_marker_rename, after_marker, after_rename_old, after_verify) × (바로 재부팅 / 같은 부팅 타이머 뒤 재부팅) = 24경우.
   - 맞바꿈 전 5곳: 옛 updater + 표시 없음 = 도구를 안 돌린 것과 같은 상태(그 뒤는 구판 원래 동작).
-  - 맞바꿈부터 7곳: 새 updater + 표시 있음, 두 번 재부팅 모두 재설치 호출 없음, 관문이 063613a1 선택, 모델 뜸. **`switch_updater.py`에 있던 after_exchange·after_marker_tmp 창이 사라짐.**
+  - 맞바꿈부터 7곳: 새 updater + 표시 있음, 두 번 재부팅 모두 재설치 호출 없음, 관문이 063613a1을 고름(아래 '모델 판정' 참고). **`switch_updater.py`에 있던 after_exchange·after_marker_tmp 창이 사라짐.**
   - 모든 경우 그 뒤 재실행으로 완료(링크 남지 않고 보통 파일).
 - 오류 주입 5곳 × 표시 없음/있음: 전환 전 상태로 정확히 복구(표시 원래대로, 링크는 rolledback 이름으로 치움), 두 번 부팅 뒤 재실행 성공.
-- 복구 중 두 번째 입출력 오류(relink, exchange_back) × 첫 오류 3곳: 남는 상태는 모두 "새 + 표시" 또는 "전환 전"; "새"였던 경우 두 번 부팅 모두 모델 뜸; 재실행 성공.
+- 복구 중 두 번째 입출력 오류(relink, exchange_back) × 첫 오류 3곳: 남는 상태는 모두 "새 + 표시" 또는 "전환 전"; "새"였던 경우 두 번 부팅 모두 관문이 063613a1을 고름; 재실행 성공.
 - 복구 중 강제 종료(rec_after_relink, rec_after_exchange_back) × 첫 오류 3곳: 각각 "새 + 표시", "전환 전"; 재실행 성공.
 - 남은 위험: 맞바꿈 전 5곳에서 끊기면 전환 전 상태(표시 없는 구판이면 구판 서버가 원래대로 옛 갱신기를 다시 깜). 이는 도구가 만든 상태가 아니라 원래 상태.
 
@@ -145,3 +145,33 @@
 - 실제 젯슨에서 renameat2 동작, 실제 systemd 타이머 시각·동시 실행, 실제 HUD 스냅샷 경로(`read_snapshot`)를 탄 경우.
 - 전환 직후 같은 부팅에서 새 updater 타이머가 실제로 내려받기를 하는지(가짜 루트에선 dpkg 단계에서 멈춤).
 - 장치의 boot-update-required 실제 유무(있으면 링크 안은 쓰이지 않고 창 자체가 없음).
+
+### 모델 판정 표현 정정 (노비 11/16 07:22)
+`test_switch_review.py:78-83`의 `model_runs()`는 관문이 켜졌으면 **관문이 고르는 판이 콤마 명세 커밋(063613a1)인지**, 꺼졌으면 **`wait_for_runtime()`이 기다리는지**만 본다. 실제 내려받기·TensorRT·모델 시작은 보지 않는다. 이 문서의 "모델 뜸"은 "관문이 063613a1을 고름(또는 기다리지 않음)", "모델 막힘/안 뜸"은 "관문이 판을 못 고름(또는 기다림)"으로 읽는다. 시험의 `'runs'`/`'STUCK'` 이름도 같은 뜻이다.
+
+## 07:23 검토 (노비 11/16 07:22): 전환 **중** 구판 서버 재설치 경합
+### 누가 언제 부르나 (0cb67d46c 소스)
+- `carrot-jetlink.service` (`install_server.sh:15-39`): `ExecStart=… current/tools/jetlink/server.py …`, `Restart=always`, `RestartSec=3`, `StartLimitIntervalSec=0`. 부팅 때뿐 아니라 **서버가 끝날 때마다 3초 뒤 다시 시작**.
+- `server.py:10-13`: 젯슨(`/etc/nv_tegra_release`)이면 import 전에 `migrate_running_release()`.
+- `install_updates.py:24-29`: `current/tools/jetlink/boot_update.py`가 있고 `boot-update-required`가 **보통 파일이 아니면** `sudo -n … install_updates.py --bootstrap-only` (`:182-186`) → `bootstrap(/, current/tools/jetlink, defer_this_boot=True)`.
+- `bootstrap()` `:90-114`: 잠금 없음. `updater/<이름>.new`를 쓰고 `replace(updater/<이름>)` — **그 순간 `updater/`라는 이름이 가리키는 폴더**에 쓴다. 마지막에 표시(이번 부팅 id).
+- 그 밖: `offline_bootstrap.py:17-27`(이미지 설정 서비스, 서비스들보다 먼저, 부팅 때 한 번), `install_updates.configure()`(이미지 만들 때, `refresh_sd_image.py:77`). 사람이 부팅 뒤 돌리는 전환과 겹칠 수 있는 것은 **서버 시작(재시작) 경로뿐**.
+- 판정: **실제로 전환 도중 실행될 수 있다.** 표시가 없는 젯슨에서 전환 중 서버가 죽거나(USB 끊김 등) 누가 재시작하면 3초 뒤 bootstrap이 돈다. 31372d20c 잠금(`/run/carrot-jetlink-update.lock`)은 bootstrap이 안 잡으므로 막지 못한다.
+
+### 측정 (가짜 루트, 실제 0cb67d46c `install_updates.py`, `test_switch_race.py`)
+분류: new = 새 갱신기(파일 전부 새 판)+표시 / before = 전환 전 그대로 / old+legacy-marker = 옛 갱신기 + 구판 bootstrap이 쓴 표시(도구 없이 구판 서버가 원래 하는 일) / MIXED = 섞임. 각 끝 상태마다 재부팅 2회(apply → 서버 → 타이머).
+- 31372d20c(서버 막기 없음):
+  - 멈춤 12곳마다 서버 한 번 통째로 시작: 12/12 new. (맞바꿈 전 bootstrap은 옛 폴더에 같은 옛 파일을 쓰고 끝, 맞바꿈 뒤에는 표시가 보통 파일이라 건너뜀.)
+  - bootstrap이 전환 **전에** 시작해 k개(1·4·8) 쓴 뒤 멈춤, 전환 멈춤 12곳에서 재개 = 36경우: new 22, before 12(맞바꿈~검사 사이에 재개 → 도구 검사가 잡아 복구, 도구는 실패), **after_verify 뒤 재개 2경우: 도구는 "switched"라고 끝났는데 k=1 → 옛 갱신기+표시, k=4 → 새 폴더에 옛 `update_host.py` 섞임. 두 경우 모두 재부팅 2회 모두 관문이 판을 못 고름.** (`test_race_reproduced_unguarded_switch_reports_switched_but_stuck`)
+  - 진짜 동시 실행, 31372d20c 코드 그대로(워커 `race_on_31372d20c.log`): 프로세스 30회(서버를 끝나자마자 다시 시작, 서버 시작 287번) → new 28, **old+legacy-marker 1(도구 실패·복구 뒤 서버가 재설치)**, **new 폴더에 죽은 bootstrap의 `wifi_protocol.py.new` 찌꺼기 1**. 같은 조건 두 번째 30회(`race_fixed.log`의 `off processes`)는 30/30 new — 무작위로는 드물게 잡힘. 스레드 30회(같은 프로세스에서 bootstrap 반복): 30/30 new.
+- 07:23 판(서버 막기, 아래): 멈춤 13곳 서버 시작 → after_lock(막기 전)만 시작되고 나머지 12곳 시작 안 됨, 13/13 new·재부팅 2회 모두 관문이 063613a1 고름. bootstrap 진행 중(k=1·4·8) × 서비스 묶음 안(정지가 죽임)/밖(sudo로 빠져나간 경우 기다림) 6경우 모두 new. 진짜 동시 실행 프로세스 30회(서버 시작 1453번): 30/30 new(처음 측정에서 정지로 죽은 bootstrap의 `.new` 찌꺼기가 새 폴더로 옮겨진 2회를 찾아, 그 찌꺼기는 백업에만 남기고 새 폴더로는 안 옮기게 고침). 밖에서 끝나지 않으면 "nothing changed"로 중단, 변경 0, 마스크 풀림. 복구 지점 2곳: 마스크 뒤 다시 시작된 서버가 구판대로 재설치 → old+legacy-marker(도구 없이 서버가 재시작한 것과 같음). 막은 뒤 강제 종료 5곳: 마스크가 /run에 남아 서버 안 뜸 → 재부팅 때 풀림, 끝 상태 before 또는 new.
+
+### 고친 것 (`switch_updater_linked.py`, 31372d20c 위 새 커밋)
+- 잠금을 잡은 뒤, 어떤 쓰기보다 먼저: `systemctl is-active` → `systemctl mask --runtime carrot-jetlink.service`(이번 부팅만, /run) → `systemctl stop` → 다시 is-active 확인 → `install_updates.py --bootstrap-only` 프로세스가 없을 때까지 기다림(잠금 대기 시간 안, 넘으면 변경 없이 중단). 끝나면(성공·실패 모두) `unmask --runtime`, 원래 켜져 있었으면 `start --no-block`. 다시 뜬 서버는 표시가 보통 파일이라 bootstrap을 건너뜀(시험 확인).
+- 하위 폴더·링크·권한 보존(`copy_entry`), `__pycache__/`만 제외.
+- 구판 파일 자체를 장치에서 고치는 방안은 쓰지 않았다: 서명된 `current` 릴리스를 바꿔야 하고(보호 이미지면 읽기 전용·서명 검사 깨짐), 고친 파일이 다음 갱신에 덮이며, 차마다 수동 작업이 된다.
+- 이 방안의 위험: 전환 동안 추론 서버가 멈춤(주차 상태에서만). 도구가 강제 종료되면 재부팅 전까지 서버가 안 뜸(마스크가 /run에 남음 — 재부팅하면 풀림, 수동이면 `systemctl unmask --runtime carrot-jetlink.service && systemctl start carrot-jetlink`). sudo가 bootstrap을 다른 cgroup으로 옮기는지는 미확인 → 그래서 프로세스 목록으로 한 번 더 확인.
+
+### 07:23 미확인
+- 실제 systemd(mask --runtime·stop·cgroup 정리) — 시험은 가짜 systemctl 모형. 실제 젯슨·실제 전원 차단·실제 sudo/PAM 세션 동작 미확인.
+- HUD 등 다른 서비스가 `carrot-jetlink.service`를 끌어올리는지(`Requires=`/`Wants=`) — 마스크면 시작은 거부되지만 그 서비스 쪽 실패 동작은 미확인.

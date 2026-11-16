@@ -215,7 +215,9 @@ def test_power_cut_leaves_whole_old_or_new(old_root, point, marker):
   assert next_boot(old_root, MANIFEST) == {'gate': True, 'selected': NEW_COMMIT}
 
 
-@pytest.mark.parametrize('point', ['after_exchange', 'after_rename_old', 'after_marker_tmp'])
+# after_rename_old dropped: since 9bdee0692 the marker is written right after the exchange, so that
+# point already has new updater + marker; its expectation (no reinstall) is in test_switch_review.py.
+@pytest.mark.parametrize('point', ['after_exchange', 'after_marker_tmp'])
 def test_power_cut_new_without_marker_then_legacy_start(old_root, point):
   # If the legacy server starts before a rerun, its own bootstrap reinstalls
   # the old updater (whole, upstream code) and turns the gate on.

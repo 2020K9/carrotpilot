@@ -76,8 +76,9 @@ print(json.dumps({'calls': calls, 'wait_for_runtime_blocks': b.enabled()}))
 
 
 def model_runs(boot):
-  # Model starts if the gate is off and wait_for_runtime does not block, or the
-  # gate accepted the comma's GitHub pin (download/activate tested below).
+  # Gate on: does the gate pick the comma's pinned commit (NEW_COMMIT)?  Gate
+  # off: does wait_for_runtime() not block?  Only that decision is judged; the
+  # real download, TensorRT and model start are not (download/activate: below).
   if boot['apply']['gate']:
     return boot['apply'].get('selected') == NEW_COMMIT
   return not boot['server']['wait_for_runtime_blocks']
