@@ -112,27 +112,10 @@ def integrated_release(image, compressed, metadata, validation=None, owner_boot=
   return release
 
 
-PARTS_ITEM = {'v0.4.0-boot-preview': 'v040-zip', 'v0.3.2-windows-preview': 'v032-zip'}
-
-
-def parts_note(version):
-  """GitHub limits one file to 2 GiB: the installer ZIP is published as signed 1.9 GB parts."""
-  page = f'https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-{version}'
-  manifest = f'https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-{version}/carrot-jetson-windows.zip.parts.json'
-  item = PARTS_ITEM.get(version)
-  command = (f'<code>powershell -ExecutionPolicy Bypass -File get-carrot-jetson.ps1 -Item {item}</code>' if item else
-             f'<code>py release_parts.py fetch {manifest} carrot-jetson-windows.zip</code>')
-  return (f'<p class="parts">설치파일은 GitHub 한 파일 한도(2GB) 때문에 1.9GB 조각(<code>.part00</code>…)으로 나뉘어 있습니다. '
-          f'<a href="{page}">배포 페이지</a>에서 <code>get-carrot-jetson.ps1</code>을 받아 PowerShell에서 {command} 를 실행하면 '
-          f'조각을 받아 하나로 합치고, 조각별·전체 SHA256과 서명된 목록(<a href="{manifest}">carrot-jetson-windows.zip.parts.json</a>)을 확인합니다.'
-          f'<span class="en" lang="en">GitHub limits files to 2 GB, so the ZIP is split into 1.9 GB parts. Download get-carrot-jetson.ps1 from the release page and run it: '
-          f'it downloads, joins and verifies every part, the signed manifest and the whole-file SHA256.</span></p>')
-
-
 def candidate_guide(text, release):
   """Keep the bilingual layout; never link a private candidate to the old download."""
   if release['version'] in ('v0.4.0-protected-preview', 'v0.4.0-boot-preview', 'v0.5.0-super-preview', 'v0.6.0-super-auto-preview', 'v0.7.0-super-auto-sd-nvme-preview'):
-    button = (f'<a class="download" href="https://github.com/2020K9/carrotpilot/releases/tag/k9-jetson-{release["version"]}">'
+    button = (f'<a class="download" href="https://upload.shind0.synology.me/downloads/jetson/{release["version"]}/carrot-jetson-windows.zip">'
               f'설치파일 받기<span class="en" lang="en">Download installer · {release["compressed_bytes"] / 1e9:.1f} GB</span></a>')
     if release.get('automatic_super_firmware'):
       ko = '공개 시험판 · SD에서 Super 펌웨어를 자동 설치합니다. 파일 검증을 마쳤으며 실제 펌웨어 갱신과 부팅은 검증 전입니다.'
@@ -159,8 +142,6 @@ def candidate_guide(text, release):
   else:
     button = '<div class="download">시험용 설치파일<span class="en" lang="en">Private test installer · not released</span></div>'
   text = re.sub(r'<a class="download".*?</a>', button, text)
-  note = parts_note(release['version']) if button.startswith('<a ') else ''
-  text = re.sub(r'<p class="parts">.*?</p>', lambda _: note, text)
   # Download + extracted compressed payload + raw image + workspace margin.
   gb = 5 * ((release['image_bytes'] + 2 * release['compressed_bytes'] + 5 * (1 << 30) + 4999999999) // 5000000000)
   text = text.replace('약 45GB', f'약 {gb}GB').replace('About 45 GB', f'About {gb} GB')

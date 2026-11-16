@@ -36,8 +36,6 @@ def fixture(tmp_path):
     path = io.path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value)
-  # The approved marker must not inherit group-write permissions from umask.
-  io.path(MODULE.FLAG).chmod(0o600)
   for name in ('ffs.adb', 'ncm.0'):
     (io.gadgets / 'g1/functions' / name).mkdir(parents=True)
   io.path('/dev/shm').mkdir(parents=True)

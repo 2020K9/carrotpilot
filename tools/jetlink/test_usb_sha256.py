@@ -122,8 +122,8 @@ def test_official_return_uses_existing_signed_https_path(installed, monkeypatch)
   model_path = installed.temporary / 'official.onnx'
   model_path.write_bytes(model)
   official = {'format': 1, 'source_commit': 'c' * 40, 'runtime': usb.RUNTIME, 'storage_format': 1,
-              'bundle': prepare.identity(bundle, 'https://github.com/2020K9/carrotpilot/releases/download/k9-test/host.tar.gz'),
-              'model': prepare.identity(model_path, 'https://github.com/2020K9/carrotpilot/releases/download/k9-test/model.onnx')}
+              'bundle': prepare.identity(bundle, 'https://upload.shind0.synology.me/models/test/host.tar.gz'),
+              'model': prepare.identity(model_path, 'https://upload.shind0.synology.me/models/test/model.onnx')}
   verified, downloads = [], []
   monkeypatch.setattr(update, 'verify_signature', lambda value: verified.append(value))
   def download(url, **_):

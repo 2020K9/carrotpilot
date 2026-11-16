@@ -125,13 +125,9 @@ with panel_owner(hud=True, directory=Path(sys.argv[1])) as acquired:
     (tmp_path / 'hud-request').write_text(json.dumps({'pid': os.getpid(), 'identity': ['old-boot', '0']}))
     assert not hud_requested(tmp_path)
   finally:
-    if child is not None:
-      try:
-        if child.poll() is None:
-          child.kill()
-        child.wait(timeout=5)
-      finally:
-        child.stdout.close()
+    if child and child.poll() is None:
+      child.kill()
+      child.wait(timeout=5)
 
 
 def test_runtime_display_override_preserves_immutable_recovery(tmp_path, monkeypatch):

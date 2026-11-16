@@ -32,20 +32,9 @@ def size_for(spec):
   return size
 
 
-# Some Python builds (e.g. python-build-standalone) omit the Linux memfd seal
-# constants from fcntl although the kernel supports them. Use the fixed
-# values from <linux/fcntl.h>; the seals are still applied and verified.
-def _fc(name, linux_value):
-  import fcntl
-  return getattr(fcntl, name, linux_value)
-
-
-F_ADD_SEALS = _fc('F_ADD_SEALS', 1024 + 9)
-F_GET_SEALS = _fc('F_GET_SEALS', 1024 + 10)
-
-
 def _seals():
-  return _fc('F_SEAL_GROW', 0x0004) | _fc('F_SEAL_SHRINK', 0x0002) | _fc('F_SEAL_SEAL', 0x0001)
+  import fcntl
+  return fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
 
 
 class Mapping:
@@ -77,7 +66,7 @@ class Reader(Mapping):
     mapping = None
     try:
       os.ftruncate(fd, size_for(spec))
-      fcntl.fcntl(fd, F_ADD_SEALS, _seals())
+      fcntl.fcntl(fd, fcntl.F_ADD_SEALS, _seals())
       # Only the model process writes; daemon views cannot accidentally mutate it.
       mapping = mmap.mmap(fd, size_for(spec), access=mmap.ACCESS_READ)
       nonce = secrets.token_bytes(16)
@@ -123,7 +112,7 @@ class Writer(Mapping):
       if len(first) != 1 or flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or unknown or len(fds) != 1:
         raise ValueError('invalid shared input descriptor')
       fd = fds[0]
-      if os.fstat(fd).st_size != size_for(spec) or fcntl.fcntl(fd, F_GET_SEALS) & _seals() != _seals():
+      if os.fstat(fd).st_size != size_for(spec) or fcntl.fcntl(fd, fcntl.F_GET_SEALS) & _seals() != _seals():
         raise ValueError('unsealed or incorrectly sized shared input')
       nonce = bytes(receive_packet(sock, deadline))
       if len(nonce) != 16 or nonce[:1] != first:

@@ -57,7 +57,7 @@ installed ResAction package cannot run this model by itself.
   changed by package registration. Model weights remain outside Git.
 
 The author's ONNX is public at
-[the RL nav package](https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-rl-80eedcdd/big_driving_supercombo.onnx).
+[the RL nav package](https://upload.shind0.synology.me/models/comma4-big-nav-rl-80eedcdd/big_driving_supercombo.onnx).
 Its bytes were checked against the official hash above. The supplied tinygrad
 PKL is for the existing eGPU backend; this Jetson path builds from ONNX.
 

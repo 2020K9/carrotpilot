@@ -105,7 +105,7 @@ def test_bad_descriptor_is_rejected_without_fd_leak(kind):
   try:
     os.ftruncate(fd, shm.size_for(SPEC) + (1 if kind == 'size' else 0))
     if kind != 'unsealed':
-      fcntl.fcntl(fd, shm.F_ADD_SEALS, shm._seals())
+      fcntl.fcntl(fd, fcntl.F_ADD_SEALS, shm._seals())
     count = 2 if kind == 'extra' else (32 if kind == 'truncated' else 1)
     ancillary = [] if kind == 'missing' else [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [fd]*count))]
     a.sendmsg([b'A'], ancillary)

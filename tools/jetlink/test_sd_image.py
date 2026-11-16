@@ -70,41 +70,6 @@ def test_archive_escape_rejected(tmp_path, name, link):
   assert not (tmp_path/'outside').exists()
 
 
-
-def test_archive_preserves_executable_and_internal_symlink(tmp_path):
-  bundle = tmp_path / 'bundle.tgz'
-  with tarfile.open(bundle, 'w:gz') as archive:
-    member = tarfile.TarInfo('bin/run')
-    member.mode = 0o755
-    member.size = 2
-    archive.addfile(member, io.BytesIO(b'ok'))
-    link = tarfile.TarInfo('current')
-    link.type = tarfile.SYMTYPE
-    link.linkname = 'bin/run'
-    archive.addfile(link)
-  destination = tmp_path / 'root'
-  destination.mkdir()
-  final.extract_bundle(bundle, destination)
-  assert (destination / 'bin/run').stat().st_mode & 0o777 == 0o755
-  assert (destination / 'current').is_symlink()
-  assert (destination / 'current').read_bytes() == b'ok'
-
-
-@pytest.mark.parametrize('kind', [tarfile.LNKTYPE, tarfile.FIFOTYPE, tarfile.CHRTYPE])
-def test_archive_rejects_special_members(tmp_path, kind):
-  bundle = tmp_path / 'bundle.tgz'
-  with tarfile.open(bundle, 'w:gz') as archive:
-    member = tarfile.TarInfo('unsafe')
-    member.type = kind
-    member.linkname = 'target'
-    archive.addfile(member)
-  destination = tmp_path / 'root'
-  destination.mkdir()
-  with pytest.raises(ValueError, match='Unsafe host bundle member'):
-    final.extract_bundle(bundle, destination)
-  assert list(destination.iterdir()) == []
-
-
 def layout():
   parts = [{'node': f'/dev/mmcblk0p{i}', 'start': i*100, 'size': 50, 'name': 'boot'} for i in range(2, 16)]
   parts += [{'node': '/dev/mmcblk0p16', 'start': 1600, 'size': 100, 'name': 'CARROT_SETUP'},

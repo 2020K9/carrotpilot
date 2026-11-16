@@ -48,7 +48,7 @@ def test_n16_pin_keeps_nav_parser_shapes_and_matching_signed_release():
   assert SPEC.packed_nelem == 65595 and SPEC.packed_nbytes == 262380
   selection = selected_release(ROOT / 'openpilot/selfdrive/modeld/jetlink/host_release.json')
   assert selection['model'] == {
-    'url': 'https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-nav-n16-96244b1f/big_driving_supercombo.onnx',
+    'url': 'https://upload.shind0.synology.me/models/comma4-big-nav-n16-96244b1f/big_driving_supercombo.onnx',
     'sha256': SPEC.sha256, 'size': SPEC.nbytes}
   assert 'signature' in selection and selection.get('delivery') != 'local'
   parsed = parse_outputs(Parser(), SPEC, np.zeros(SPEC.output_nelem, np.float32))

@@ -118,24 +118,7 @@ class HostHealth:
   def __init__(self):
     self.error = None
     self.snapshot = {}
-    # K9HudNavdy 2 diagnostics for the Jetson-local HUD only (STATUS file), never sent over USB:
-    # inference times from INFER_RESP (Jetson clock) and first-time startup marks (Jetson monotonic).
-    self.inference = None
-    self.marks = {'server_start': time.monotonic()}
     threading.Thread(target=self._run, name='carrot-host-health', daemon=True).start()
-
-  def note_inference(self, gpu_us, total_us):
-    self.inference = (time.monotonic(), gpu_us / 1000, total_us / 1000)
-
-  def mark(self, name):
-    self.marks.setdefault(name, time.monotonic())
-
-  def diagnostics(self, now):
-    result = {'startup': dict(self.marks)}
-    inference = self.inference
-    if inference is not None and 0 <= now - inference[0] < 3:
-      result['inference'] = {'gpu_ms': inference[1], 'total_ms': inference[2], 'age_s': round(now - inference[0], 3)}
-    return result
 
   def record_error(self, error, detail=''):
     self.error = (time.monotonic(), f'{error}: {detail}'[:240])
@@ -165,7 +148,7 @@ class HostHealth:
         value['updated'] = started
         self.snapshot = value
         temporary = STATUS.with_suffix('.tmp')
-        temporary.write_text(json.dumps({**value, 'hud_diag': self.diagnostics(started)}))
+        temporary.write_text(json.dumps(value))
         os.replace(temporary, STATUS)
       except Exception:
         pass  # Expiry exposes failure; diagnostics cannot terminate inference.

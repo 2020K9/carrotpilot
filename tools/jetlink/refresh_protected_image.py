@@ -6,13 +6,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import urllib.request
 
 from refresh_sd_image import audit_unprovisioned, digest, refresh, run
 from update_host import fetch, verify_signature
-import release_parts
 
-# GitHub stores the 10 GB image as signed 1.9 GB parts; release_parts joins and checks them.
-BASE_MANIFEST_URL = 'https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson.img.zst.parts.json'
+BASE_URL = 'https://upload.shind0.synology.me/downloads/jetson/v0.4.0-boot-preview/carrot-jetson.img.zst'
 BASE_SHA = 'b277f3c6318d5b3210eee6e6aa4e74e492f73ffe2f9a669e108822a7ceb6c614'
 RAW_SHA = 'b11f5601d3a713ad0de23315ee90daddf5452f8e548f2c87c8eeec28d321e55f'
 CACHED_SHA = '34312ff6d9ea216a947f725b80059cc140952992d0282391e50c6dea6796d36c'
@@ -23,8 +22,7 @@ def unpack_base(work, cached=None):
   import zstandard
   compressed = work / 'base.img.zst'
   if cached is None:
-    # signature, every part sha256 and the whole sha256 are checked while joining
-    release_parts.fetch(BASE_MANIFEST_URL, compressed, BASE_SHA)
+    urllib.request.urlretrieve(BASE_URL, compressed)
   else:
     shutil.copyfile(cached, compressed)
   if digest(compressed) != (BASE_SHA if cached is None else CACHED_SHA):

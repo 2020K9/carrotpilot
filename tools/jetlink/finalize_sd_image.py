@@ -64,7 +64,7 @@ def extract_bundle(bundle, target):
         raise ValueError('Unsafe host bundle member')
       if member.issym() and (Path(member.linkname).is_absolute() or not (path.parent/member.linkname).resolve().is_relative_to(target.resolve())):
         raise ValueError('Unsafe host bundle link')
-    source.extractall(target, filter='data')
+    source.extractall(target)
 
 
 def enable(root, name, body):

@@ -57,11 +57,9 @@ class DisplayTelemetry:
 class CarrotSession(Session):
   def _send(self, msg_type, seq, parts=(), flags=0):
     if msg_type == P.Msg.INFER_RESP and self.telemetry.health is not None:
-      _, status, gpu_us, _, total_us = P.unpack_infer_resp(parts[0])
+      status = P.unpack_infer_resp(parts[0])[1]
       if status != P.Status.OK:
         self.telemetry.health.record_error('Inference', f'result status {status}')
-      else:
-        self.telemetry.health.note_inference(gpu_us, total_us)  # HUD diagnostics, memory only
     return super()._send(msg_type, seq, parts, flags)
 
   def _error(self, seq, error, detail=''):
@@ -90,8 +88,6 @@ class CarrotSession(Session):
   def _send_json(self, msg_type, seq, obj, flags=0):
     if msg_type == P.Msg.ENGINE_RESP and obj.get('state') == 'failed' and self.telemetry.health is not None:
       self.telemetry.health.record_error('Engine', obj.get('detail', 'failed'))
-    if msg_type == P.Msg.ENGINE_RESP and obj.get('state') == 'ready' and self.telemetry.health is not None:
-      self.telemetry.health.mark('engine_ready')
     if msg_type == P.Msg.HELLO_RESP:
       host = 'mac' if sys.platform == 'darwin' else (
         'jetson' if Path('/etc/nv_tegra_release').is_file() else 'unknown')
@@ -126,9 +122,6 @@ class CarrotSession(Session):
     if getattr(self, 'power_lease', None) is not None:
       self.power_lease.touch()
     if msg.msg_type == P.Msg.HELLO_REQ:
-      health = getattr(getattr(self, 'telemetry', None), 'health', None)
-      if health is not None:
-        health.mark('hello')
       if getattr(self, 'blinker', None) is not None:
         self.blinker.close()
         self.blinker = BlinkerHost()

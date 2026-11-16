@@ -1,4 +1,4 @@
-"""Verified 2020K9 GitHub Releases runtime/model updates; activation only with both services stopped.
+"""Verified NAS runtime/model updates; activation only with both services stopped.
 
 Migrated hosts check the attached comma's pin before first inference, including
 onroad startup; a separate USB-only gate waits for Internet and applies updates.
@@ -22,11 +22,7 @@ import urllib.request
 
 ROOT = Path('/opt/carrot-jetlink')
 PROTECTED_MARKER = Path('/etc/carrot-jetlink-protected.json')
-DEFAULT_MANIFEST = 'https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-stable/manifest.json'
-# Only 2020K9/carrotpilot release assets. GitHub answers with one redirect to
-# its asset store; accept that store only for this repository id (1400258213).
-RELEASE_HOST, RELEASE_PREFIX = 'github.com', '/2020K9/carrotpilot/releases/download/'
-ASSET_HOST, ASSET_PREFIX = 'release-assets.githubusercontent.com', '/github-production-release-asset/1400258213/'
+DEFAULT_MANIFEST = 'https://upload.shind0.synology.me/models/jetlink-host-stable/manifest.json'
 
 
 def verify_signature(manifest):
@@ -56,12 +52,10 @@ def atomic_json(path, value):
   os.replace(temporary, path)
 
 
-def checked_url(url, redirected=False):
+def checked_url(url):
   parsed = urllib.parse.urlsplit(url)
-  allowed = [(RELEASE_HOST, RELEASE_PREFIX)] + ([(ASSET_HOST, ASSET_PREFIX)] if redirected else [])
-  if (parsed.scheme != 'https' or not any(parsed.netloc == h and parsed.path.startswith(p) for h, p in allowed) or
-      '..' in parsed.path.split('/') or '%' in parsed.path):
-    raise ValueError('Updates require the configured HTTPS 2020K9 GitHub release host')
+  if parsed.scheme != 'https' or parsed.netloc != 'upload.shind0.synology.me' or not parsed.path.startswith('/models/'):
+    raise ValueError('Updates require the configured HTTPS NAS model host')
   return url
 
 
@@ -74,7 +68,7 @@ def fetch(url, path, sha256, size, progress=None):
   temporary = path.with_suffix('.part')
   try:
     with urllib.request.urlopen(url, timeout=45) as response, temporary.open('wb') as output:
-      checked_url(response.url, redirected=True)
+      checked_url(response.url)
       count = 0
       for block in iter(lambda: response.read(1 << 20), b''):
         count += len(block)
@@ -132,7 +126,7 @@ def probe_release(release):
 def stage(manifest_url=DEFAULT_MANIFEST):
   checked_url(manifest_url)
   with urllib.request.urlopen(manifest_url, timeout=30) as response:
-    checked_url(response.url, redirected=True)
+    checked_url(response.url)
     manifest = json.loads(response.read(65537))
   stage_manifest(manifest)
 
