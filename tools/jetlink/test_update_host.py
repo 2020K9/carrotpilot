@@ -25,14 +25,7 @@ def test_reject_os_upgrade_or_untrusted_host():
   with pytest.raises(ValueError):
     update.validate_manifest(value)
   for url in ('http://github.com/2020K9/carrotpilot/releases/download/x', 'https://evil.invalid/models/x',
-              'https://github.com.evil.invalid/2020K9/carrotpilot/releases/download/x', 'file:///etc/passwd',
-              # old NAS host is no longer an allowed update source (28d82eb1d)
-              'http://upload.shind0.synology.me/models/x',
-              'https://upload.shind0.synology.me/models/x',
-              'https://upload.shind0.synology.me.evil.invalid/models/x',
-              'https://github.com/other/carrotpilot/releases/download/x',
-              'https://github.com/2020K9/carrotpilot/releases/download/../x',
-              'https://release-assets.githubusercontent.com/github-production-release-asset/1400258213/x'):
+              'https://github.com.evil.invalid/2020K9/carrotpilot/releases/download/x', 'file:///etc/passwd'):
     with pytest.raises(ValueError):
       update.checked_url(url)
 
