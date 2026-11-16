@@ -27,6 +27,12 @@ DEFAULT_MANIFEST = 'https://github.com/2020K9/carrotpilot/releases/download/k9-j
 # its asset store; accept that store only for this repository id (1400258213).
 RELEASE_HOST, RELEASE_PREFIX = 'github.com', '/2020K9/carrotpilot/releases/download/'
 ASSET_HOST, ASSET_PREFIX = 'release-assets.githubusercontent.com', '/github-production-release-asset/1400258213/'
+# One shared runtime bundle serves every catalog model: the manifest selects the
+# model, the bundle carries all committed specs. install_updates.py refreshes an
+# installed updater that predates this (it would tie a bundle to its pin).
+MODEL_SELECTION = 1
+PIN = 'openpilot/selfdrive/modeld/jetlink/jetson_model.json'
+CATALOG = 'openpilot/selfdrive/modeld/model_catalog'
 
 
 def verify_signature(manifest):
@@ -110,9 +116,11 @@ def validate_storage_compatibility(manifest):
     raise ValueError('Selected release does not support protected storage; keeping current runtime')
 
 
-def probe_release(release):
+def probe_release(release, model=None):
   command = ['runuser', '-u', 'jetlink', '--', str(ROOT / 'venv/bin/python'),
              str(release / 'tools/jetlink/probe_release.py'), str(ROOT / 'cache')]
+  if model is not None:
+    command += [model['sha256'], str(model['size'])]
   process = subprocess.Popen(command, start_new_session=True)
   try:
     code = process.wait(timeout=960)
@@ -146,15 +154,176 @@ def check_runtime(manifest):
     raise ValueError('Installed TensorRT/architecture does not match')
 
 
+def release_spec(release, model):
+  """The committed spec in this release for the manifest's model, or None.
+
+  Older bundles carry only their pin; shared bundles also carry every
+  model_catalog spec. Only exact sha256 + size identity selects a spec.
+  """
+  release = Path(release)
+  identity = (model.get('sha256'), model.get('size'))
+  candidates = [release / PIN, release / PIN.replace('jetson_model.json', 'cinque_v2.json')]
+  catalog = release / CATALOG
+  if catalog.is_dir():
+    candidates += sorted(p for p in catalog.glob('*.json')
+                         if not p.name.endswith('-release.json') and p.name != 'catalog.json')
+  for path in candidates:
+    try:
+      if path.is_symlink() or not path.is_file():
+        continue
+      spec = json.loads(path.read_text())
+      if isinstance(spec, dict) and (spec.get('sha256'), spec.get('nbytes')) == identity:
+        return spec
+    except (OSError, ValueError):
+      continue
+  return None
+
+
 def check_bundle(candidate, manifest):
   if (candidate / 'SOURCE_COMMIT').read_text().strip() != manifest['source_commit']:
     raise ValueError('Bundle source identity mismatch')
-  pin = candidate / 'openpilot/selfdrive/modeld/jetlink/jetson_model.json'
-  if not pin.is_file():
-    pin = pin.with_name('cinque_v2.json')
-  spec = json.loads(pin.read_text())
-  if (spec['sha256'], spec['nbytes']) != (manifest['model']['sha256'], manifest['model']['size']):
+  if release_spec(candidate, manifest['model']) is None:
     raise ValueError('Bundle model contract differs from manifest')
+
+
+def pin_matches(release, model):
+  for name in ('jetson_model.json', 'cinque_v2.json'):
+    pin = Path(release) / PIN.replace('jetson_model.json', name)
+    try:
+      if pin.is_file():
+        spec = json.loads(pin.read_text())
+        return (spec['sha256'], spec['nbytes']) == (model['sha256'], model['size'])
+    except (OSError, ValueError, KeyError, TypeError):
+      return False
+  return True  # No pin at all: nothing to select; keep the original probe call.
+
+
+def model_identity(manifest):
+  model = manifest['model']
+  return {'sha256': model['sha256'], 'size': model['size']}
+
+
+def active_model():
+  """Model the current release was last activated/probed with (None if unknown)."""
+  try:
+    value = json.loads((ROOT / 'updates/active.json').read_text())
+    if value['source_commit'] == (ROOT / 'current/SOURCE_COMMIT').read_text().strip():
+      return value['model']
+  except (OSError, ValueError, KeyError, TypeError):
+    pass
+  # Hosts activated by an updater predating MODEL_SELECTION: the per-model
+  # bundle's own pin is the model it was activated with.
+  try:
+    spec = json.loads((ROOT / 'current' / PIN).read_text())
+    return {'sha256': spec['sha256'], 'size': spec['nbytes']}
+  except (OSError, ValueError, KeyError, TypeError):
+    return None
+
+
+def is_active(manifest):
+  """Same runtime commit and same model; a shared bundle alone is not enough."""
+  try:
+    current = (ROOT / 'current/SOURCE_COMMIT').read_text().strip()
+  except OSError:
+    return False
+  if current != manifest['source_commit']:
+    return False
+  if manifest.get('delivery') in ('usb', 'local') or 'model' not in manifest:
+    return True
+  active = active_model()
+  # Unknown (no record and no pin): the commit identity alone, as before.
+  return active is None or active == model_identity(manifest)
+
+
+def model_path(model):
+  return ROOT / 'cache/models' / (model['sha256'][:16] + '.onnx')
+
+
+def prune():
+  """Keep only the active and the previous runtime/model; never the OS or the base image.
+
+  Called after a successful activation (and once by a refreshed updater).
+  Anything an interrupted transaction or a staged update still names is kept.
+  """
+  releases = (ROOT / 'releases').resolve()
+  keep_releases, keep_models = set(), set()
+
+  def remember(record):
+    if not isinstance(record, dict):
+      return
+    if isinstance(record.get('release'), str):
+      keep_releases.add(Path(record['release']).name)
+    for key in ('source_commit', 'previous_release'):
+      if isinstance(record.get(key), str):
+        keep_releases.add(record[key])
+    if isinstance(record.get('last_loaded'), str):  # previous.json / transaction.json
+      try:
+        remember(json.loads(record['last_loaded']))
+      except ValueError:
+        pass
+    if isinstance(record.get('sha256'), str):  # cache/last-loaded.json shape
+      keep_models.add(record['sha256'][:16])
+    model = record.get('model')
+    if isinstance(model, dict) and isinstance(model.get('sha256'), str):
+      keep_models.add(model['sha256'][:16])
+
+  try:
+    keep_releases.add((ROOT / 'current').resolve().name)
+  except OSError:
+    return
+  for path in [ROOT / 'updates' / name for name in
+               ('active.json', 'previous-active.json', 'previous.json', 'transaction.json', 'pending.json')] + [
+               ROOT / 'cache/last-loaded.json']:
+    try:
+      remember(json.loads(path.read_text()))
+    except (OSError, ValueError):
+      pass
+  current = active_model()
+  if current is not None:
+    keep_models.add(current['sha256'][:16])
+  try:
+    preloaded = json.loads(PROTECTED_MARKER.read_text()).get('preloaded_model')
+    if isinstance(preloaded, dict) and isinstance(preloaded.get('sha256'), str):
+      keep_models.add(preloaded['sha256'][:16])
+  except (OSError, ValueError, AttributeError):
+    pass
+  import shutil
+  if releases.is_dir():
+    for path in releases.iterdir():
+      if (re.fullmatch('[0-9a-f]{40}', path.name) and not path.is_symlink() and path.is_dir()
+          and path.name not in keep_releases and path.resolve().parent == releases):
+        shutil.rmtree(path)
+  updates = ROOT / 'updates'
+  if updates.is_dir():
+    for path in updates.glob('*.tar.gz'):
+      name = path.name[:-len('.tar.gz')]
+      if re.fullmatch('[0-9a-f]{40}', name) and not path.is_symlink() and name not in keep_releases:
+        path.unlink()
+  models = ROOT / 'cache/models'
+  if models.is_dir() and keep_models:
+    for path in models.glob('*.onnx'):
+      if (re.fullmatch('[0-9a-f]{16}', path.stem) and not path.is_symlink()
+          and path.stem not in keep_models):
+        path.unlink()
+  os.sync()
+
+
+def record_active(manifest, previous_model, previous_release=None):
+  """Remember the activated runtime+model and the ones before it (for prune)."""
+  try:
+    before = json.loads((ROOT / 'updates/active.json').read_text())
+  except (OSError, ValueError):
+    before = {}
+  if previous_model is not None and previous_model != model_identity(manifest):
+    atomic_json(ROOT / 'updates/previous-active.json',
+                {'source_commit': before.get('source_commit'), 'model': previous_model})
+  # A model-only switch keeps the shared folder; the previous runtime folder
+  # stays the last different commit.
+  if previous_release is None or previous_release == manifest['source_commit']:
+    previous_release = before.get('previous_release')
+  atomic_json(ROOT / 'updates/active.json',
+              {'source_commit': manifest['source_commit'], 'model': model_identity(manifest),
+               'previous_release': previous_release})
 
 
 def selected_commit(selection):
@@ -175,7 +344,17 @@ def selected_commit(selection):
   validate_manifest(selection)
   verify_signature(selection)
   validate_storage_compatibility(selection)
-  return selection['source_commit']
+  commit = selection['source_commit']
+  try:
+    current = (ROOT / 'current/SOURCE_COMMIT').read_text().strip()
+  except OSError:
+    current = None
+  if current == commit and not is_active(selection):
+    # Shared bundle: same runtime commit, other model. The boot gate compares
+    # this value with current/SOURCE_COMMIT, so it must not look active until
+    # the selected model has been staged, probed and recorded.
+    return commit + ':' + selection['model']['sha256'][:16]
+  return commit
 
 
 def stage_manifest(manifest, progress=None):
@@ -194,7 +373,7 @@ def stage_manifest(manifest, progress=None):
   verify_signature(manifest)
   validate_storage_compatibility(manifest)
   commit = manifest['source_commit']
-  if (ROOT / 'current/SOURCE_COMMIT').read_text().strip() == commit:
+  if is_active(manifest) and model_path(manifest['model']).is_file():
     return
   # Installation dependencies and kernel changes need a separately tested image.
   check_runtime(manifest)
@@ -214,6 +393,8 @@ def stage_manifest(manifest, progress=None):
       os.rename(candidate, release)
   elif not (release / '.bundle-sha256').exists() or (release / '.bundle-sha256').read_text() != item['sha256']:
     raise ValueError('Existing release has a different identity')
+  else:
+    check_bundle(release, manifest)  # A shared release must also carry this model's spec.
   model = manifest['model']
   destination = ROOT / 'cache/models' / (model['sha256'][:16] + '.onnx')
   fetch(model['url'], destination, model['sha256'], model['size'], progress=progress)
@@ -264,6 +445,7 @@ def activate():
   if release.is_symlink() or release.resolve().parent != (ROOT / 'releases').resolve():
     raise ValueError('Invalid release directory')
   previous = (ROOT / 'current').resolve()
+  previous_active = active_model()
   remembered = ROOT / 'cache/last-loaded.json'
   previous_model = remembered.read_bytes() if remembered.exists() else None
   saved = {'release': str(previous), 'last_loaded': previous_model.decode() if previous_model else None}
@@ -272,17 +454,26 @@ def activate():
   try:
     # No USB/control connection: load/build and execute synthetic tensors in a
     # separate process before the new sources are reachable by the vehicle.
-    probe_release(release)
+    if 'model' in manifest and not pin_matches(release, manifest['model']):
+      probe_release(release, model_identity(manifest))  # shared bundle, non-pin model
+    else:
+      probe_release(release)
     link = ROOT / 'current.next'
     link.unlink(missing_ok=True)
     link.symlink_to(release)
     atomic_json(ROOT / 'updates/previous.json', saved)
     os.replace(link, ROOT / 'current')
+    if 'model' in manifest:
+      record_active(manifest, previous_active, previous.name)
     atomic_json(ROOT / 'updates/status.json', {'state': 'applied', 'source_commit': manifest['source_commit'], 'updated': time.time()})
     pending.unlink()
     os.sync()
     transaction.unlink()
     os.sync()
+    try:
+      prune()
+    except OSError as error:
+      print('Old release cleanup deferred:', error, flush=True)
     # Legacy images migrate networking independently of inference. Protected
     # images keep their immutable recovery worker and never write the base OS.
     installer = release / 'tools/jetlink/install_wifi.py'

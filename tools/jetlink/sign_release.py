@@ -16,12 +16,18 @@ def main():
   parser.add_argument('--key', type=Path, required=True)
   parser.add_argument('--model-url', required=True)
   parser.add_argument('--output', type=Path, required=True)
+  parser.add_argument('--model-spec', help='Committed model_catalog spec inside the shared bundle (default: bundle pin)')
   args = parser.parse_args()
   with tarfile.open(args.bundle) as archive:
     commit = archive.extractfile('SOURCE_COMMIT').read().decode().strip()
     pin = 'openpilot/selfdrive/modeld/jetlink/jetson_model.json'
     if pin not in archive.getnames():
       pin = 'openpilot/selfdrive/modeld/jetlink/cinque_v2.json'
+    if args.model_spec is not None:
+      if (not args.model_spec.startswith('openpilot/selfdrive/modeld/model_catalog/') or
+          '..' in args.model_spec.split('/') or not args.model_spec.endswith('.json')):
+        raise ValueError('Select a committed catalog model spec')
+      pin = args.model_spec
     spec = json.load(archive.extractfile(pin))
     compatibility = 'tools/jetlink/runtime_compatibility.json'
     storage_format = (json.load(archive.extractfile(compatibility))['protected_storage_format']

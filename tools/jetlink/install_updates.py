@@ -24,6 +24,11 @@ def migrate_running_release(runtime=Path('/opt/carrot-jetlink')):
   if not (runtime / 'current/tools/jetlink/boot_update.py').is_file():
     return
   if (runtime / 'boot-update-required').is_file():
+    if updater_needs_refresh(runtime):
+      # Detached: waits for the boot gate's update lock, never delays inference.
+      subprocess.Popen(['sudo', '-n', sys.executable, str(runtime / 'current/tools/jetlink/install_updates.py'),
+                        '--refresh-updater'], start_new_session=True,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return
   subprocess.run(['sudo', '-n', sys.executable, str(runtime / 'current/tools/jetlink/install_updates.py'),
                   '--bootstrap-only'], check=True, timeout=30)
@@ -85,6 +90,63 @@ def configure_runtime_boot_display():
   temporary.replace(BOOT_DISPLAY_DROPIN)
   subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=10)
   subprocess.run(['systemctl', 'try-restart', 'carrot-jetlink-boot-display'], check=True, timeout=15)
+
+
+UPDATER_NAMES = ['finalize_sd_image.py', 'hud_protocol.py', 'release-signing-public.pem',
+                 'wifi_protocol.py', 'local_release.py', 'usb_release.py', 'boot_update.py', 'update_host.py']
+MODEL_SELECTION_MARK = b'\nMODEL_SELECTION = 1\n'
+
+
+def updater_needs_refresh(runtime):
+  """Installed updater predates shared bundles (it ties a bundle to its pin)."""
+  try:
+    installed = (runtime / 'updater/update_host.py').read_bytes()
+    running = (runtime / 'current/tools/jetlink/update_host.py').read_bytes()
+  except OSError:
+    return False
+  return MODEL_SELECTION_MARK in running and MODEL_SELECTION_MARK not in installed
+
+
+def refresh_updater(runtime=Path('/opt/carrot-jetlink'), wait=1200.):
+  """Copy this signed release's updater files over the installed slot, then prune.
+
+  Same files and order as bootstrap(); the boot-update policy marker and the
+  launcher/legacy folders are left untouched. Runs under the update lock.
+  """
+  import fcntl
+  import time
+  source = runtime / 'current/tools/jetlink'
+  if not updater_needs_refresh(runtime):
+    return False
+  with Path('/run/carrot-jetlink-update.lock').open('w') as lock:
+    deadline = time.monotonic() + wait
+    while True:
+      try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+      except BlockingIOError:
+        if time.monotonic() > deadline:
+          return False
+        time.sleep(5)
+    if not updater_needs_refresh(runtime):
+      return False
+    target = runtime / 'updater'
+    for name in UPDATER_NAMES:
+      if not (source / name).is_file():
+        continue
+      temporary = target / (name + '.new')
+      with temporary.open('wb') as stream:
+        stream.write((source / name).read_bytes())
+        stream.flush()
+        os.fsync(stream.fileno())
+      temporary.chmod(0o644)
+      temporary.replace(target / name)
+    if hasattr(os, 'sync'):
+      os.sync()
+    sys.path.insert(0, str(target))
+    import update_host
+    update_host.prune()
+  return True
 
 
 def bootstrap(root, source, defer_this_boot=False):
@@ -171,9 +233,12 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument('--boot-display-runtime', action='store_true', help='Use the signed display runtime for this boot only')
   parser.add_argument('--bootstrap-only', action='store_true', help='Migrate an installed runtime; enable from its next boot without OS writes')
+  parser.add_argument('--refresh-updater', action='store_true', help='Refresh an installed updater that predates shared bundles, then prune old releases')
   parser.add_argument('--performance-runtime', action='store_true', help='Apply startup Super mode and start performance sampling')
   args = parser.parse_args()
-  if args.performance_runtime:
+  if args.refresh_updater:
+    refresh_updater()
+  elif args.performance_runtime:
     from power_setup import run_once
     run_once()
     configure_runtime_performance()

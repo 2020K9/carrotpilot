@@ -29,6 +29,12 @@ def main():
   from jetlink.server.cache import EngineCache
   from jetlink.server.session import EngineHost, Request
   spec = read_spec(ROOT)
+  if len(sys.argv) > 2:
+    # Shared runtime bundle: the activating manifest names the model.
+    from update_host import release_spec
+    spec = release_spec(ROOT, {'sha256': sys.argv[2], 'size': int(sys.argv[3])})
+    if spec is None:
+      raise ValueError('Release has no spec for the selected model')
   host = EngineHost(EngineCache(Path(sys.argv[1]), TrtBackend()))
   try:
     host.request(Request(spec['sha256'], spec['nbytes'], spec['frame_skip']), None)
