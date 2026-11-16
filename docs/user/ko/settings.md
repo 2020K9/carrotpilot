@@ -117,18 +117,18 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 
 ## 전체 설정 지도
 
-현재 `carrot-wip`의 `carrot_settings.json`에는 **218개 파라미터**가 있습니다. 카탈로그 메뉴 항목은 아래와 같이 분류됩니다.
+현재 `carrot-wip`의 `carrot_settings.json`에는 **222개 파라미터**가 있습니다. 카탈로그 메뉴 항목은 아래와 같이 분류됩니다.
 
 | 대분류 | 항목 수 | 중분류 |
 |---|---:|---|
-| 주행 제어 | 155 | 시작·오토, Tesla, 버튼·프리셋, 차량 조향, 속도·감속, 크루즈·차간 |
-| 차량·하드웨어 | 20 | 현대·기아, CANFD·HDA, 레이더, 운전자 모니터링, 차량 보조, 기기 하드웨어 |
+| 주행 제어 | 148 | 시작·오토, Tesla, 버튼·프리셋, 차량 조향, 속도·감속, 크루즈·차간 |
+| 차량·하드웨어 | 31 | 현대·기아, CANFD·HDA, 레이더, 운전자 모니터링, 차량 보조, 기기 하드웨어 |
 | 화면 표시 | 34 | 정보 표시, 경로 표시, 밝기·주행화면, 외부 HUD |
 | 시스템 | 9 | 녹화·전원, 네트워크·지도, 사운드, 소프트웨어 |
 
 ## 주행 제어
 
-주행 제어는 주행 동작에 영향을 줄 수 있는 136개 항목입니다. 한 번에 여러 값을 변경하지 마세요.
+주행 제어는 주행 동작에 영향을 줄 수 있는 137개 항목입니다. 한 번에 여러 값을 변경하지 마세요.
 
 <a id="start-auto"></a>
 ### 시작·오토 — 9개; Tesla — 6개
@@ -173,7 +173,7 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 | ONNX 차선·BSD | `ShareData`, `OnnxBsdEnabled`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | 차선 종류 인식과 별도 카메라 BSD 실행 및 세부 조정 |
 | 중앙 보정 | `CameraYawTrimDeg` | 카메라 YAW 미세 보정 (`PathOffset` 차선치우침 좌우보정은 2026-10-25부터 [실험중](#experimental)의 차선 보조 아래) |
 | 조향감 | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | 조향 시점, 평활화, 일시중지 각도와 조향비 |
-| [차로 변경](lane-change.md)·자동 턴 | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlRightLaneChange`, `ManualLaneChangeIndicator`, `ManualTurnIndicator`, `ModelDesireIndicator`, `ModelPathIndicator`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | 차로 변경 진입 조건과 ATC 동작 |
+| [차로 변경](lane-change.md)·자동 턴 | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `AutoTurnControl`, `AutoTurnControlRightLaneChange`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | 차로 변경 진입 조건과 ATC 동작 |
 | 레인모드 | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | 레인모드 MPC 가중치와 차선 사용 조건 |
 | 고급 토크·토크 계수 | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | 커스텀 토크 제어 계수 |
 | 고급 토크·검색 전용 | `NNFF` | 토크 조향의 신경망 피드포워드 옵션 |
@@ -233,7 +233,7 @@ VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. 
 
 `TrafficLightDetectMode`는 `0` 미사용, `1` 정지만 감지, `2` 정지와 출발을 모두 감지합니다. 모델 판단에 의존하므로 운전자가 항상 직접 확인해야 합니다.
 
-### 크루즈·차간 — 전체 29개, 현대·기아·제네시스 26개
+### 크루즈·차간 — 전체 30개, 현대·기아·제네시스 27개
 
 아래 표의 **세부 구역 제목을 누르면** 실제 코드 기준의 계산 방식, 값의 방향과 주의사항을 설명한 페이지로 이동합니다.
 
@@ -294,7 +294,7 @@ Carrot Web 경로: **주행 제어 > 실험중** (영어 화면 **Driving contro
 | 중분류 | 파라미터 | 용도 |
 |---|---|---|
 | 현대·기아 | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera` | SCC 연결 방식, LDWS 차량과 카메라 구간 햅틱 |
-| CANFD·HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdDebug`, `HDPuse` | HDA2 차량, 계기판 직접 송신과 CAN FD 디버그·HDP 기능 |
+| CANFD·HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdDebug`, `HDPuse`, `CcncClusterDisplay`, `CcncTrafficBackground` | HDA2 차량, 계기판 직접 송신, 차로변경 깜빡이 자동, CAN FD 디버그·HDP 기능과 CCNC 계기판 표시 옵션 |
 | 레이더 | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity` | SCC 레이더, 전방 트랙 좌우 보정, 코너 레이더와 당근레이더 처리·컷인 감도 |
 | 운전자 모니터링 | `DriverMonitoringEnabled`(검색 전용), `DriverMonitoringMode`, `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | 운전자 모니터링과 일부 차량 경고음 처리 |
 | 차량 보조 | `MaxAngleFrames`, `SpeedFromPCM` | 최대 조향각 관련 프레임과 순정 SCC 속도 제어 방식 |
@@ -308,7 +308,21 @@ Carrot Web 경로: **주행 제어 > 실험중** (영어 화면 **Driving contro
   설정이 `0`이고 차량에 카메라 SCC가 적용되지 않은 상태에서, 이번 onroad의 카메라 버스(bus2, 다중 Panda에서는 해당 카메라 버스)에서 `SCC_CONTROL`(CAN-FD) 또는 `SCC12`(일반 CAN)를 수신하면 CAN 오류 화면에 **CameraSCC 설정을 켜 주세요** 안내가 표시됩니다. 수신 이력에 따른 설정 확인 안내이며 모든 CAN 오류의 원인을 확정하지는 않습니다. 설정을 자동 변경하지 않으며, 기존 제어 해제와 진입 차단은 유지됩니다. 정차 후 차량·배선에 맞는 모드를 설정하고 다음 onroad에서 확인하세요.
 - `CanfdHDA2`: HDA2 차량에서만 활성화합니다.
 - **계기판 CAN 직접 송신** (`HyundaiCanfdClusterDirectTx`): 현대·기아·제네시스 CAN-FD CameraSCC 차량에서 간헐적인 계기판 경고가 발생할 때 기존 직접 송신 방식과 비교하는 설정입니다. 모든 차량에서 기본 꺼짐이며 증상 차량에서 직접 켭니다. 변경 후 기기를 재부팅해야 적용됩니다. 이 설정을 지원하는 Panda 펌웨어가 필요하며, 경고 원인 해결이 검증된 것은 아닙니다.
-- `EnableRadarTracks`: `-2`는 비전 전용 시험, `-1`은 비전 매칭 없이 SCC를 항상 사용, `0`도 SCC를 항상 사용, `1`은 SCC 없이 프런트 레이더-비전 매칭, `2`는 프런트 레이더와 저속 SCC-비전 매칭, `3`은 프런트 레이더-비전 매칭 실패 시 SCC 강제 사용입니다. 매칭 모드는 실패 시 확률 `0.40` 이상인 중앙 비전을 사용하고, `-1`·`0`·`3`은 SCC가 없을 때만 비전으로 전환합니다. 모든 SCC 매칭은 횡좌표를 사용하지 않습니다. SCC 전용 `-1`·`0`의 비전 폴백에는 별도 dPath 제한이 없습니다. 레거시 Mando 레이더의 32·64슬롯 차이는 자동 처리합니다. 새 정지 전방 리드는 비전 또는 동일 물체의 코너 검출로 확인해야 하며, 전방 레이더의 연속 관측만으로 승인하지 않습니다. 비전의 위치·속도와 일치하는 이동 레이더가 별도로 확인되면, 그 비전을 다른 정지 반사체의 승인·유지 근거로 사용하지 않습니다. 코너 근거도 선택한 정지 객체와 실제로 일치해야 인정합니다. 동일 객체의 코너 확인이 없는 미확정 프런트는 비전 근거가 허용된 짧은 공백을 넘겨 끊기면 객체와 확인 시간을 함께 초기화하고 다시 확인합니다. 이미 선택한 이동 프런트는 같은 실측 객체의 연속성이 유지되면 제한된 비전 거리 불확실도 안에서 L1을 유지하며, 고정 8m 차이만으로 버리지 않습니다. 더 가까운 새 매칭은 즉시 선택할 수 있고, 공백이나 물리적 급변이 생기면 이 유지 허용치를 초기화합니다. 먼 정지차는 실측 프런트의 연속 이력과 반복된 비전 위치 일치가 있을 때 완만한 곡선에서도 확인할 수 있습니다. 같은 코너의 연속된 위치·속도 근거를 함께 판단하고, 확인된 정지 프런트는 거리·시간 상한 안에서 비전 거리 흔들림을 견딥니다. 제어 거리·속도는 레이더 값을 사용합니다.
+### 깜박이 제어
+
+수동 차선변경 감지에서 순간적인 차로 폭 오류는 마지막 유효 관측부터 0.15초 이내에 정상 관측이 돌아올 때 기존 추적을 이어갑니다. 송신 단계는 감지 단계가 확정한 차선 판단을 사용합니다. [자세한 동작](lane-change.md)
+
+설정 > 차량·하드웨어 > 깜박이 제어에 자동 점등, 출력 장치, 레버 동작을 모았습니다. 자동 점등에는 `AutoBlinkerControl`, `ManualLaneChangeIndicator`, `ManualTurnIndicator`, `ModelDesireIndicator`, `ModelPathIndicator`가 있습니다. 출력 장치에는 `CanfdBlinkerKick`, `CanfdBlinkerKickMode`, `CanfdBlinkerControl`, `CanfdBlinkerTest`가 있으며 레버 동작에는 `BlinkerLatchedTurn`, `LaneChangeLeverWait`가 있습니다.
+
+**Panda/SPAS 깜박이 출력** (`CanfdBlinkerKick`)은 공통 판단이 만든 깜박이 요청을 Panda로 송신합니다. 아이오닉5 PE·아이오닉9·그랜저 GN7의 카메라 SCC CAN-FD 구성에서 지원합니다. 수동 차로변경·수동 회전·모델 관찰·내비 회전·음성 차로변경의 시작과 유지, 종료는 기존 공통 설정을 따릅니다. 실제 레버 조작과 오래된 입력은 출력을 중단하며, 종료된 요청은 새 요청 없이 재개하지 않습니다.
+
+`CanfdBlinkerKickMode`는 ECU 응답 후 송신하는 0과 응답이 없을 때 순정 프레임 뒤에 송신하는 1을 선택합니다. 켜기는 다음 OnRoad 시작부터 적용되며 갱신된 Panda 펌웨어가 필요합니다. 끄기는 즉시 적용됩니다. Kick을 켜면 USB2CAN·BT2CAN 출력이 중단되고 잔여 명령 만료와 독점 소유권을 확인합니다. 다음 OnRoad 시작 때 `CanfdBlinkerControl`이 꺼집니다.
+
+기존 출력 설정값과 공통 자동 점등 설정값은 유지합니다. `AutoBlinkerControl=0`이면 자동 점등이 꺼져 있으므로 필요한 공통 기능을 선택하세요. D단에서 명시적인 블루투스 깜박이 버튼은 단발 요청으로 처리합니다. 이전 `CanfdBlinkerKickModelMode`의 독립적인 유지·3/5/7회 설정은 제거했습니다. SPAS 요청 종료 후 실제 램프의 잔여 점멸은 차량에 따라 달라집니다.
+
+수동 차로변경·수동 회전의 정상 완료가 빨라도 Panda/SPAS 출력은 첫 송신 요청부터 최소 2초 유지합니다. 송신 준비 중에는 관찰 시작부터 최대 2초 동안 정상 완료를 늦춥니다. 실제 레버 조작, 크루즈 취소, 기능 끄기, 반대 방향 램프, 입력·차선 오류는 즉시 종료 조건입니다. 실제 점멸 횟수는 차량에서 확인해야 합니다.
+
+자동 램프 피드백은 조향 요청과 격리합니다. 독점 소유권 중 검증된 실제 레버의 새 조작은 보호시간 중에도 일반 차로변경 조건에 전달되며 Kick 출력을 중단합니다.
 
 `RadarTrackFlip`은 `0: 정상`(기본값), `1: 좌우 반전`입니다. 전방 레이더 트랙의 좌우 위치·횡속도를 함께 반전하여 선행차 선택과 표시에 적용하며 SCC·코너·비전은 그대로 유지합니다. 차종별 자동 반전은 없고, 실제 좌우 불일치가 확인된 차량에서만 사용합니다. 변경 후 재시동 또는 재부팅하면 다음 OnRoad 시작부터 적용됩니다. [레이더 좌우 반전](radar.md#radar-track-flip)을 참고하세요.
 
@@ -441,6 +455,32 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 
 실험 DM은 주변 이동 차량이 없다가 처음 나타날 때만 20초간 기본 감시로 전환하고, 차량 추가로 시간을 연장하지 않습니다. 이후 실험 감시로 복귀하되 차량이 남아 있으면 빈 도로 추가 완화는 적용하지 않습니다.
 
+<a id="always-on-changes"></a>
+## 항상 적용되는 변경 (설정 없음)
+
+아래 수정은 설정 없이 적용됩니다.
+
+CCNC 계기판(`CcncClusterDisplay`에 적은 차량):
+
+- HDP 차간: HDP가 켜져 있으면 실제 차간 단계를 표시합니다(이전에는 항상 4). 1~3단계는 HDP 간격 스타일로 그리고, 차간을 바꾸면 순정 「차간거리 N」 팝업을 2초 띄웁니다.
+- 측면 물체: 순정 프레임이 거리 0으로 보낸 측면 박스를 회색 차로 그립니다.
+- 정차 중 아이콘: 조향이 켜진 인게이지 상태면 조향이 쉬는 정차 중에도 조향·차로변경 아이콘을 유지합니다.
+
+현대·기아 CAN-FD 카메라 SCC + 오픈파일럿 롱컨:
+
+- 설정속도·차간 동기화: 인게이지 중 순정 SCC가 일반 크루즈 상태이고 약 11km/h 이상이면, 카메라 버스에 +/−/GAP을 짧게 눌러 카메라의 설정속도·차간을 오픈파일럿과 같게 맞춥니다. 기기가 끊겨도 차는 같은 속도·차간으로 이어 갑니다. 0x10B `CRUISE_BUTTONS_ALT2` 차량은 제외하며, 운전자 버튼 입력 뒤 1초를 기다립니다.
+- 재시작 인계: 기기가 (재)시작될 때 순정 SCC가 크루즈 중이면 그대로 주행하고, 오픈파일럿이 순정 설정속도로 인게이지합니다. 시작 후 30초 안에만 확인하며, 취소·MAIN 입력이 있으면 끝냅니다.
+- 패들 정지: 패들이 떼진 것으로 읽힌 뒤 0.3초간 오픈파일럿 SCC 출력을 끈 상태로 둡니다. 누르고 있는 패들이 잠깐 0으로 읽혀도 다시 켜지지 않습니다.
+
+그 밖:
+
+- 신호 정지: 신호 정지(`e2eStop`)로 3m/s 미만까지 감속 중에는 초록·꺼짐 프레임이 정지를 끝내지 않습니다. 정지한 뒤 초록불이면 전처럼 출발합니다.
+- 당근레이더: 카메라 앞차가 튄 뒤 3프레임 동안, 움직이는 중앙 전방 트랙보다 3~40m 가까운(자차 쪽) 새 정지 레이더 트랙은 바로 앞차로 잡지 않습니다. 정지 물체 확인을 거쳐야 합니다.
+- 현대·기아 조향: 조향 중 0.3초보다 짧은 운전자 토크는 반복 오버라이드로 세지 않아 조향 복귀 시간이 늘지 않습니다.
+- CAN 오류 경고: 두 번째 줄에 타임아웃된 메시지 이름을 최대 2개 표시합니다.
+- 빌드: 빌드 중 전원이 끊기면 다음 부팅 때 Rebuild All을 요청합니다. comma four는 실패한 빌드의 빈 오브젝트 파일을 지우고 캐시 없이 한 번 더 빌드합니다.
+- panda: 거부된 송신의 디버그 출력은 초당 1번으로, pandad의 디버그 읽기는 호출당 버퍼 1개로 제한합니다. 출력 폭주로 panda가 SILENT 되는 것을 막습니다.
+
 ## 위험도별로 접근하기
 
 ### 비교적 쉽게 되돌릴 수 있는 설정
@@ -508,7 +548,9 @@ USB/HUD 일반 카메라 화면에 `BRAKE?`로 표시하고 기록합니다. `BR
 
 ## 깜박이 자동제어 (시험 브랜치)
 
-`AutoBlinkerControl` — 설정 > 주행 제어 > 차량 조향 > 차로 변경 (자동 턴). 기본값은 0입니다. 현재 carrot-wip의 아이오닉 5 PE·젯슨·PEAK USB-CAN/B1 조합을 대상으로 합니다. 크루즈 CANCEL을 누르면 자동 깜빡이 요청과 유지가 중단됩니다. 주차 중 핸들을 돌려도 새로 켜지지 않으며, SET/RES 또는 +/−로 기존 크루즈 취소 상태를 해제하면 새 동작부터 재개합니다. 직접 쓰는 레버와 블루투스 깜빡이 버튼은 계속 사용할 수 있습니다.
+`AutoBlinkerControl` — 설정 > 차량·하드웨어 > 깜박이 제어 > 자동 점등. 기본값은 0입니다. 외부 출력은 기존 지원 USB2CAN·B1 조합을 사용하며, 지원 차종에서는 Panda/SPAS 출력도 선택할 수 있습니다. 크루즈 CANCEL을 누르면 자동 깜빡이 요청과 유지가 중단됩니다. 주차 중 핸들을 돌려도 새로 켜지지 않으며, SET/RES 또는 +/−로 기존 크루즈 취소 상태를 해제하면 새 동작부터 재개합니다. 직접 쓰는 레버와 블루투스 깜빡이 버튼은 계속 사용할 수 있습니다.
+
+USB2CAN·BT2CAN에서 전송 승인과 점등을 확인한 TBT 유지에는 기존 수신기 driver_override 처리가 적용됩니다. Panda/SPAS에서 확인한 실제 레버 조작은 TBT 유지도 종료합니다.
 
 ATC 회전은 audioTurn에서 시작하고 정차 중에도 유지합니다. D단 완전 정지에서는 횡제어 허용·고장 없음이 확인되면 새 안내를 받을 수 있습니다. 수신기가 전송 완료를 확인했는데 양쪽 램프가 1.5초 이상 계속 꺼져 있으면 최초 미점등도 포함해 해당 회전에서 한 번만 재요청합니다. 운전자 취소·통신 이상·전송 미확인에는 재요청하지 않습니다. 앞선 회전 중 들어온 반대 방향 안내는 최대 3초 보관하며, 실제 회전 완료 후에만 넘깁니다.
 
