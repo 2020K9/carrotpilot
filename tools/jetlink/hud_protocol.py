@@ -161,7 +161,10 @@ class SnapshotBuilder:
           if value is not None:
             if isinstance(value, bool):
               value = b'1' if value else b'0'
-            self.settings[key] = base64.b64encode(value if isinstance(value, bytes) else str(value).encode()).decode()
+            value = value if isinstance(value, bytes) else str(value).encode()
+            if key == 'LiveTorqueParameters':
+              value = without_torque_points(value)
+            self.settings[key] = base64.b64encode(value).decode()
         except Exception:
           pass
       self.next_params = now + 1
@@ -182,6 +185,22 @@ class SnapshotBuilder:
       if preview is not None:
         record['nav_map_preview'] = preview
     return encode_snapshot(record)
+
+
+def without_torque_points(data):
+  """torqued caches every fitted point (8 buckets x 1500 x 3 floats, up to ~380 KB) in this
+  param so learning can resume. The HUD reads only calPerc, liveValid and the filtered
+  factor/friction, so the display copy drops the point cloud; every scalar is kept."""
+  from openpilot.cereal import log
+  try:
+    with log.Event.from_bytes(data) as event:
+      if event.which() != 'liveTorqueParameters' or len(event.liveTorqueParameters.points) == 0:
+        return data
+      builder = event.as_builder()
+    builder.liveTorqueParameters.init('points', 0)
+    return builder.as_reader().as_builder().to_bytes()   # re-copy so the orphaned lists are not sent
+  except Exception:
+    return data
 
 
 def jetlink_roundtrip_ms():
