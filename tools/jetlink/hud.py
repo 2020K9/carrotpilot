@@ -10,11 +10,37 @@ import types
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'openpilot/selfdrive/carrot/cluster'))
-from hud_protocol import read_snapshot, SERVICES
+from hud_protocol import read_snapshot, SERVICES, SNAPSHOT_SCHEMA, SNAPSHOT_STATE
+from hud_protocol import EVENT_LIMITS, EVENT_LIMIT, PARAM_LIMITS, PARAM_LIMIT
 
 # K9HudNavdy 2 startup marks, Jetson monotonic (same clock as the server marks): first / last NEW valid carState
 # (a snapshot arriving is not enough), first USB send call that returned (not the panel showing it). Display only.
 MARKS = {}
+# Items this Jetson refused or the comma did not send (name -> reason). A refused item keeps its last good value;
+# it never takes the other items or the whole HUD down. Written to the HUD status file and logged on change.
+REJECTED = {}
+_logged = {}
+
+
+def note_item(name, reason):
+  if reason is None:
+    REJECTED.pop(name, None)
+    _logged.pop(name, None)
+    return
+  REJECTED[name] = reason
+  if _logged.get(name) != reason:
+    _logged[name] = reason
+    print(f'HUD snapshot item {name} not applied: {reason}', file=sys.stderr, flush=True)
+
+
+def snapshot_status(now=None):
+  """Last good snapshot age, schema, size, last read error and refused items (for the status file / telemetry)."""
+  now = time.monotonic() if now is None else now
+  received = SNAPSHOT_STATE.get('received')
+  age = now - received if received is not None else None
+  return {'ok': age is not None and 0 <= age < 1. and SNAPSHOT_STATE.get('schema') == SNAPSHOT_SCHEMA,
+          'age_s': round(age, 3) if age is not None else None, 'schema': SNAPSHOT_STATE.get('schema'),
+          'bytes': SNAPSHOT_STATE.get('bytes', 0), 'error': SNAPSHOT_STATE.get('error'), 'rejected': dict(REJECTED)}
 
 
 def require_usb_display(scan, expected):
@@ -51,10 +77,37 @@ class DisplayParams:
       # settings until a fresh C4 snapshot explicitly changes them; SubMaster
       # still invalidates all vehicle data immediately on snapshot loss.
       if record is not None:
-        self.values = record[1]['params']
+        self.values = self.merge(self.values, record[1])
       self.next_read = now + .1
     value = self.values.get(key)
     return base64.b64decode(value) if value is not None else None
+
+  @staticmethod
+  def merge(old, value):
+    """New Params; a Param the comma dropped or that is malformed/oversized keeps its previous value."""
+    params = value.get('params') if isinstance(value, dict) else None
+    if not isinstance(params, dict):
+      note_item('params', 'missing')
+      return old
+    note_item('params', None)
+    values = {}
+    for key, item in params.items():
+      limit = PARAM_LIMITS.get(key, PARAM_LIMIT)
+      if not isinstance(item, str) or len(item) > limit:
+        note_item(f'params.{key}', f'{len(item)} B > {limit} B' if isinstance(item, str) else 'not text')
+        item = old.get(key)
+      else:
+        note_item(f'params.{key}', None)
+      if item is not None:
+        values[key] = item
+    dropped = value.get('dropped')
+    for name, reason in (dropped.items() if isinstance(dropped, dict) else ()):
+      if isinstance(name, str) and name.startswith('params.'):
+        key = name[len('params.'):]
+        note_item(name, f'comma: {reason}')
+        if key not in values and key in old:
+          values[key] = old[key]
+    return values
 
   def get_bool(self, key, *args, **kwargs):
     return self.get(key) in (b'1', b'True')
@@ -115,22 +168,48 @@ class RemoteSubMaster:
     if received == self.last_received:
       return
     self.last_received = received
-    shift = received - value['sent']
+    SNAPSHOT_STATE['schema'] = value.get('schema')
+    try:
+      shift = received - float(value['sent'])
+      valid, alive, recv, monos, events = (value[k] for k in ('valid', 'alive', 'received', 'mono', 'events'))
+      if not all(isinstance(x, dict) for x in (valid, alive, recv, monos, events)):
+        raise TypeError('snapshot tables')
+    except (KeyError, TypeError, ValueError) as exc:
+      # A malformed snapshot is one lost update, not a HUD stop: last values stay, marked not alive.
+      note_item('snapshot', f'{type(exc).__name__}: {exc}'[:120])
+      self.valid = dict.fromkeys(self.services, False)
+      self.alive = dict.fromkeys(self.services, False)
+      return
+    note_item('snapshot', None)
+    dropped = value.get('dropped') if isinstance(value.get('dropped'), dict) else {}
     for name in self.services:
       if name not in SERVICES:
         continue
-      self.valid[name] = bool(value['valid'].get(name, False))
-      self.alive[name] = bool(value['alive'].get(name, False))
-      self.recv_time[name] = value['received'].get(name, 0.) + shift
-      mono = value['mono'].get(name, 0)
-      self.logMonoTime[name] = int(mono + shift * 1e9)
-      if mono == self.generations.get(name) or name not in value['events']:
+      if f'events.{name}' in dropped:
+        note_item(f'events.{name}', f"comma: {dropped[f'events.{name}']}")
+      try:
+        mono = int(monos.get(name, 0))
+        self.valid[name] = bool(valid.get(name, False))
+        self.alive[name] = bool(alive.get(name, False))
+        self.recv_time[name] = float(recv.get(name, 0.)) + shift
+        self.logMonoTime[name] = int(mono + shift * 1e9)
+        if mono == self.generations.get(name) or name not in events:
+          continue
+        item = events[name]
+        limit = EVENT_LIMITS.get(name, EVENT_LIMIT)
+        if not isinstance(item, str) or len(item) > limit:
+          raise ValueError(f'{len(item)} B > {limit} B' if isinstance(item, str) else 'not text')
+        raw = base64.b64decode(item)
+        with self.log.Event.from_bytes(raw) as reader:
+          if reader.which() != name:
+            raise ValueError('display service identity mismatch')
+          data = reader.as_builder()
+      except Exception as exc:
+        note_item(f'events.{name}', f'{type(exc).__name__}: {exc}'[:120])
         continue
-      raw = base64.b64decode(value['events'][name])
-      with self.log.Event.from_bytes(raw) as reader:
-        if reader.which() != name:
-          raise ValueError('display service identity mismatch')
-        self.data[name] = reader.as_builder()
+      if f'events.{name}' not in dropped:
+        note_item(f'events.{name}', None)
+      self.data[name] = data
       self.generations[name] = mono
       self.updated[name] = True
       if name == 'carState' and self.valid[name]:
@@ -234,7 +313,7 @@ def main():
         signal_color, signal_held, signal_online = remote_signals.status()
         display_metrics['signal_display'] = dict(enabled=remote_signals.enabled, color=signal_color,
                                                 held=signal_held, online=signal_online)
-        tmp.write_text(json.dumps({'updated': now, **display_metrics,
+        tmp.write_text(json.dumps({'updated': now, **display_metrics, 'snapshot': snapshot_status(now),
                                   'vehicle_network_address': VehicleNetworkAddress().address(),
                                   'vehicle_cpu': stats.cpu_core_percents,
                                   'vehicle_memory_percent': stats.memory_used_percent}))

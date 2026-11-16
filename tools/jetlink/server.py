@@ -46,7 +46,10 @@ class DisplayTelemetry:
     connected = False
     try:
       status = json.loads(Path('/dev/shm/carrot-jetlink-hud-status.json').read_text())
-      connected = 0 <= time.monotonic() - status['updated'] < 2
+      # The panel is fed only while the comma's snapshots reach it (hud.py 'snapshot.ok'); frames
+      # still going out with failed or stale snapshots are not a connected HUD.
+      connected = (0 <= time.monotonic() - status['updated'] < 2 and
+                   status.get('snapshot', {}).get('ok') is True)
     except (OSError, ValueError, KeyError, TypeError):
       pass
     return {**self.original.read(), 'carrot_hud_connected': connected,
