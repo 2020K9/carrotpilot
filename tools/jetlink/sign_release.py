@@ -1,4 +1,4 @@
-"""Create an immutable signed NAS update manifest from a committed host bundle."""
+"""Create an immutable signed 2020K9 GitHub Releases update manifest from a committed host bundle."""
 import argparse
 import base64
 import json
@@ -28,7 +28,7 @@ def main():
                       if compatibility in archive.getnames() else None)
   manifest = {'format': 1, 'source_commit': commit,
               'runtime': {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'},
-              'bundle': {'url': f'https://upload.shind0.synology.me/models/jetlink-host-{commit}/precompiled-runtime.tar.gz',
+              'bundle': {'url': f'https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-{commit}/precompiled-runtime.tar.gz',
                          'sha256': digest(args.bundle), 'size': args.bundle.stat().st_size},
               'model': {'url': args.model_url, 'sha256': spec['sha256'], 'size': spec['nbytes']}}
   if storage_format is not None:

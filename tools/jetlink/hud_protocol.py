@@ -23,7 +23,12 @@ PARAMS = ('ClusterHud', 'ClusterHudDebug', 'ClusterHudBrightness', 'ClusterHudOr
           'ClusterHudRadarSourceColor', 'ClusterHudCameraViewMode', 'ClusterHudPanelLayout',
           'ClusterHudScreenMode', 'ShowPlotMode', 'LanguageSetting', 'IsMetric', 'ShowDateTime',
           'IsOnroad', 'CarParams', 'CalibrationParams', 'CustomSteerRatio', 'SteerActuatorDelay',
-          'LateralAccelerationFactor', 'UsbGpuActive')
+          'LateralAccelerationFactor', 'UsbGpuActive',
+          # The K9 HUD (대감님 HUD) reads these on the vehicle; without them a Jetson panel falls back
+          # to defaults (K9 D cards/Navdy/season switches, the five lat lines above the TPMS car).
+          'ClusterHudK9Style', 'K9HudNavdy', 'K9MeterSeason', 'CustomSR', 'SteerRatioRate',
+          'LateralTorqueCustom', 'LateralTorqueAccelFactor', 'LateralTorqueFriction',
+          'LiveDelay', 'LiveTorqueParameters', 'LiveParameters', 'LiveParametersV2', 'UsbGpuLoading')
 
 
 class Publisher:
@@ -169,6 +174,7 @@ class SnapshotBuilder:
               'valid': self.sm.valid, 'alive': self.sm.alive, 'cameras': self.camera_previews()}
     from hud_signal import signal_packet
     record['signal_display'] = signal_packet(now)
+    record['jetlink_roundtrip_ms'] = jetlink_roundtrip_ms()   # K9HudNavdy 2, comma clock; None = comma's own model
     from openpilot.common.indicator_display import current
     record['indicator_display'] = current()
     if self.nav_map is not None:
@@ -176,6 +182,16 @@ class SnapshotBuilder:
       if preview is not None:
         record['nav_map_preview'] = preview
     return encode_snapshot(record)
+
+
+def jetlink_roundtrip_ms():
+  try:
+    from openpilot.common.jetlink_status import MODEL_STATUS, _fresh
+    status = _fresh(MODEL_STATUS)
+    value = status.get('roundtrip_ms') if status.get('active') is True else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+  except Exception:
+    return None
 
 
 def encode_snapshot(record):

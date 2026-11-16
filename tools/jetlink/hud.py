@@ -12,6 +12,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'openpilot/selfdrive/carrot/cluster'))
 from hud_protocol import read_snapshot, SERVICES
 
+# K9HudNavdy 2 startup marks, Jetson monotonic (same clock as the server marks): first / last NEW valid carState
+# (a snapshot arriving is not enough), first USB send call that returned (not the panel showing it). Display only.
+MARKS = {}
+
 
 def require_usb_display(scan, expected):
   product = scan(expected)
@@ -59,6 +63,10 @@ class DisplayParams:
     snapshot = read_snapshot()
     label = snapshot[1].get('external_compute_label', '') if snapshot else ''
     return label if label in ('jetSON', 'MAC', 'Jetlink') else ''
+
+  def jetlink_roundtrip_ms(self):
+    snapshot = read_snapshot()   # comma clock value carried as is; never mixed with Jetson times
+    return snapshot[1].get('jetlink_roundtrip_ms') if snapshot else None
 
   def get_int(self, key, *args, **kwargs):
     try:
@@ -125,9 +133,13 @@ class RemoteSubMaster:
         self.data[name] = reader.as_builder()
       self.generations[name] = mono
       self.updated[name] = True
+      if name == 'carState' and self.valid[name]:
+        MARKS['car_last'] = received   # a new carState (new logMonoTime), valid
+        MARKS.setdefault('car', received)
 
 
 def main():
+  MARKS.setdefault('hud_start', time.monotonic())
   if '--help' not in sys.argv:
     from boot_update import wait_for_runtime
     wait_for_runtime()
@@ -198,6 +210,7 @@ def main():
   import main as cluster
   from hud_health import HealthRenderer
   cluster.ClusterUiRenderer = HealthRenderer
+  HealthRenderer.startup_marks = MARKS
   if '--help' not in sys.argv:
     scan = cluster.find_supported_usb_product
     wait_for_usb_display(scan, cluster.product_id_for_hud_mode(1))
@@ -211,6 +224,7 @@ def main():
     def send_h264_chunk(self, *args, **kwargs):
       result = super().send_h264_chunk(*args, **kwargs)
       now = time.monotonic()
+      MARKS.setdefault('frame', now)
       if now >= self.next_status:
         path = Path('/dev/shm/carrot-jetlink-hud-status.json')
         tmp = path.with_suffix('.tmp')

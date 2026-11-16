@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST_URL = 'https://upload.shind0.synology.me/models/carrot-jetlink-cinque-v2/manifest.json'
+MANIFEST_URL = 'https://github.com/2020K9/carrotpilot/releases/download/k9-carrot-jetlink-cinque-v2/manifest.json'
 
 
 def digest(path):

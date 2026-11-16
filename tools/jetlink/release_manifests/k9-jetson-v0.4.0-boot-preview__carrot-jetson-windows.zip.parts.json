@@ -1,0 +1,55 @@
+{
+ "format": 1,
+ "join": "python release_parts.py fetch <this manifest url> <output>  |  get-carrot-jetson.ps1",
+ "name": "carrot-jetson-windows.zip",
+ "original_url": "https://upload.shind0.synology.me/downloads/jetson/v0.4.0-boot-preview/carrot-jetson-windows.zip",
+ "part_size": 1900000000,
+ "parts": [
+  {
+   "name": "carrot-jetson-windows.zip.part00",
+   "offset": 0,
+   "sha256": "4b239637af188c9469318bd9a21a95c86cd4117181556d7a25c3eff40f276ce4",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.part00"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part01",
+   "offset": 1900000000,
+   "sha256": "4049e7fa4a7649ecabfa48ea04d9a695815b8e40e77ca72c40c49f2d1b736cfd",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.part01"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part02",
+   "offset": 3800000000,
+   "sha256": "067c1d0f314ab92ff5230cf0142ea0f1d4413b6c8472c58305302281fc617ceb",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.part02"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part03",
+   "offset": 5700000000,
+   "sha256": "57ea9285aa6cc685c7defa8a84d60f4e340768176839328f4f88b238235260ac",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.part03"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part04",
+   "offset": 7600000000,
+   "sha256": "9f52d5c0fd50ab6266fe6e52e2369e3b242f0a5cd3d48fdead9daab3ee796391",
+   "size": 1900000000,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.part04"
+  },
+  {
+   "name": "carrot-jetson-windows.zip.part05",
+   "offset": 9500000000,
+   "sha256": "2ff0946e0120ee35cb3a0500eb1bb6b5d25f53a6309054e1beec65d0ef04e4e9",
+   "size": 598321699,
+   "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-v0.4.0-boot-preview/carrot-jetson-windows.zip.part05"
+  }
+ ],
+ "sha256": "b531393405eab54df134d51a3cad00f74430aca47e4068b855e92e2c58cc6be4",
+ "signature": "1U2f70wy1XIWepIdiuL+oSecBeDjM6A1Sq5SroqQVJPmWZv4atjs6q5Z/N4fA7IMoIgmLq/dxHcSPipkBYSwCw==",
+ "size": 10098321699,
+ "tag": "k9-jetson-v0.4.0-boot-preview"
+}

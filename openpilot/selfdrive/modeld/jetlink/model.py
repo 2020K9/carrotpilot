@@ -162,6 +162,7 @@ class JoiningModel:
     self.error = ''
     self.small_runs = 0
     self.last_slow_log = 0.
+    self.roundtrip_ms = None   # K9HudNavdy 2: last Jetson request sent -> result received, comma monotonic; None on the local model
 
   def update(self, sm, metadata):
     self.source_sof = metadata.timestamp_sof if self.phase_enabled else 0
@@ -173,6 +174,7 @@ class JoiningModel:
       record = {'active': self.active, 'ready': self.ready, 'model': model_name(self.spec), 'sha256': self.spec.sha256,
                 'nav_model': 'nav_map' in self.spec.input_shapes,
                 'error': self.error, 'updated': now, 'warp_preparing': self.preparation is not None,
+                'roundtrip_ms': getattr(self, 'roundtrip_ms', None) if self.active else None,
                 'execution': {'cpu_overlap': os.getenv('JETLINK_CPU_OVERLAP', '1') != '0',
                               'shared_input': getattr(self.client, 'shared', None) is not None,
                               'compact_reply': bool(getattr(self.client, 'project_output', False))}}
@@ -257,6 +259,7 @@ class JoiningModel:
         map_options = {'nav_metadata': getattr(self, 'nav_metadata', None)} if getattr(self.client, 'deferred_nav', False) else {}
         result = self.client.infer(images, self.packed, self.frame, self.reset, source_sof=self.source_sof, **map_options)
         replied = time.monotonic()
+        self.roundtrip_ms = (replied - warped) * 1000.
         self.reset = False
         if 'prev_feat' in self.views:
           self.views['prev_feat'][:] = result[self.spec.output_slices['hidden_state']]
@@ -291,6 +294,7 @@ class JoiningModel:
         self.active = False
         self.next_join = time.monotonic() + 5
         self.next_status = 0
+    self.roundtrip_ms = None   # comma's own model produced this frame: no Jetson round trip
     result = self.small.run(bufs, transforms, inputs, prepare_only)
     if result is not None:
       # Loading the PKL alone leaves its first execution cold (~0.8 s on C4).

@@ -14,8 +14,8 @@ import update_host as update
 def manifest():
   return {'format': 1, 'source_commit': 'a' * 40,
           'runtime': {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'},
-          'model': {'url': 'https://upload.shind0.synology.me/models/test/big_driving_supercombo.onnx', 'sha256': 'b' * 64, 'size': 3},
-          'bundle': {'url': 'https://upload.shind0.synology.me/models/test/precompiled-runtime.tar.gz', 'sha256': 'c' * 64, 'size': 3}}
+          'model': {'url': 'https://github.com/2020K9/carrotpilot/releases/download/k9-test/big_driving_supercombo.onnx', 'sha256': 'b' * 64, 'size': 3},
+          'bundle': {'url': 'https://github.com/2020K9/carrotpilot/releases/download/k9-test/precompiled-runtime.tar.gz', 'sha256': 'c' * 64, 'size': 3}}
 
 
 def test_reject_os_upgrade_or_untrusted_host():
@@ -24,8 +24,8 @@ def test_reject_os_upgrade_or_untrusted_host():
   value['runtime']['l4t'] = '999'
   with pytest.raises(ValueError):
     update.validate_manifest(value)
-  for url in ('http://upload.shind0.synology.me/models/x', 'https://evil.invalid/models/x',
-              'https://upload.shind0.synology.me.evil.invalid/models/x', 'file:///etc/passwd'):
+  for url in ('http://github.com/2020K9/carrotpilot/releases/download/x', 'https://evil.invalid/models/x',
+              'https://github.com.evil.invalid/2020K9/carrotpilot/releases/download/x', 'file:///etc/passwd'):
     with pytest.raises(ValueError):
       update.checked_url(url)
 
@@ -68,7 +68,7 @@ def test_carrot_selected_release_takes_precedence_and_failure_does_not_fallback(
 
 def test_download_corruption_does_not_replace_current_file(tmp_path, monkeypatch):
   class Response(io.BytesIO):
-    url = 'https://upload.shind0.synology.me/models/x'
+    url = 'https://github.com/2020K9/carrotpilot/releases/download/x'
   monkeypatch.setattr(update.urllib.request, 'urlopen', lambda *a, **k: Response(b'bad'))
   target = tmp_path / 'model.onnx'
   target.write_bytes(b'old')
