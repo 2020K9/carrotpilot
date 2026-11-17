@@ -48,7 +48,7 @@ def test_out_of_range_width_rejected(w, e):
   assert np.all(out == 0.0)
 
 
-@pytest.mark.parametrize("p,std", [(0.65, 0.05), (0.9, 0.25)])
+@pytest.mark.parametrize("p,std", [(0.65, 0.05), (0.9, 0.35)])  # std 0.25 -> 0.35: 11/03 66e4923f STD_MAX 0.2 -> 0.3, still 0.05 above it
 def test_line_prob_std_gates_on(p, std):
   h = H.LaneCenter()
   assert np.all(run(h, 3.5, 0.3, p=p, std=std) == 0.0) and h.why == 1   # P_ON 0.7 not reached / std > STD_MAX

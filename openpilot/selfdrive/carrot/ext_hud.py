@@ -41,7 +41,12 @@ def normalize_ext_hud(value) -> int:
 
 
 def read_ext_hud(params) -> int:
+  """K9ExtHud as -1/0/1. A key with no value (never written, removed, defaults not yet put) is -1 (off):
+  Params.get_int() returns 0 for a missing value, and 0 = 기본 화면 would switch the external HUD on."""
   try:
+    get = getattr(params, "get", None)
+    if callable(get) and get(EXT_HUD_PARAM) is None:
+      return EXT_HUD_OFF
     return normalize_ext_hud(params.get_int(EXT_HUD_PARAM))
   except Exception:
     return EXT_HUD_OFF
@@ -101,7 +106,7 @@ def apply_exclusive_after_set(params, name: str, value) -> tuple[str, int, int] 
     return None
   key, new = change
   try:
-    old = int(params.get_int(key))
+    old = read_ext_hud(params) if key == EXT_HUD_PARAM else int(params.get_int(key))
   except Exception:
     old = None
   if key == EXT_HUD_PARAM and normalize_ext_hud(old) == EXT_HUD_OFF:

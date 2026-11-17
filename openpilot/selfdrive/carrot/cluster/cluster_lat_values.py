@@ -431,6 +431,9 @@ class LaneTextHold:
         self.side = 0           # shown side: -1 ←, 0 가운데, +1 →
         self.other_since: float | None = None
 
+    def reset(self) -> None:
+        self.__init__()
+
     def _offset_raw(self, model: Any | None) -> float | None:
         if model is None:
             return None

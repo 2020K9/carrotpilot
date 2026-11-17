@@ -73,10 +73,8 @@ class K9MeterServer:
     self._queue: list[str] = []
 
   def ext_hud(self) -> int:
-    try:
-      return int(self._params.get_int(EXT_HUD_PARAM))
-    except Exception:
-      return -1
+    from openpilot.selfdrive.carrot.ext_hud import read_ext_hud  # missing value = -1, never 0 (see read_ext_hud)
+    return read_ext_hud(self._params)
 
   def _push(self, cmd: str) -> None:
     self._n += 1

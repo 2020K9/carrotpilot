@@ -758,7 +758,13 @@ class OpenpilotLiveSource:
             receive_t = self._service_receive_time("modelV2") if hasattr(self, "_service_receive_time") else now
             if receive_t is not None and 0.0 <= now - receive_t <= LANE_LINE_CONFIDENCE_MAX_AGE_S:
                 model = self._service_data("modelV2")
-        offset, gap_l, gap_r = hold.update(model, now)
+        if model is None:
+            # no model frame within LANE_LINE_CONFIDENCE_MAX_AGE_S (stale / dead stream) -> "--" right away; the hold
+            # only bridges short invalid-line dips inside a live stream, it never keeps an old frame on screen
+            hold.reset()
+            offset = gap_l = gap_r = None
+        else:
+            offset, gap_l, gap_r = hold.update(model, now)
         controls_state = self._service_data("controlsState") if self._service_alive("controlsState") else None
         state = safe_get(controls_state, "k9LaneState") if controls_state is not None else None
         accel = safe_get(controls_state, "k9LaneAccel") if controls_state is not None else None

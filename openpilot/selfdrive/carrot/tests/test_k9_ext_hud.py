@@ -191,7 +191,9 @@ def test_menu_and_keys():
   # 11:51 K9MeterSeason is the sub-option right under K9ExtHud (registration pin updated deliberately);
   # 2026-10-25 lane menu merge: the lane switches K9OneLaneHold / K9LaneCenter are K9LaneAssist (+ K9LaneCenterGain) before it
   # 2026-10-29 K9CenterToFront removed again; K9MeterSeason is last in EXPERIMENTAL (registration pin updated deliberately)
-  assert len(exp) == 1 and exp[0]["params"][-5:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason"]
+  # 2026-11-13 54c7adfa K9HudNavdy (K9 D 화면 판) added after K9MeterSeason (registration pin updated deliberately)
+  assert len(exp) == 1 and exp[0]["params"][-6:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason",
+                                                     "K9HudNavdy"]
   p = next(x for x in data["params"] if x["name"] == "K9ExtHud")
   assert (p["min"], p["max"], p["default"], p["control"]) == (-1, 1, -1, "select")
   assert all(len(p["options"][loc]) == 3 for loc in ("ko", "en", "zh"))
@@ -328,3 +330,18 @@ def test_renderer_default_has_no_taxi_panel():
     assert r._taxi_meter_panel_active(mode) is False
   r.set_taxi_meter_enabled(True)
   assert [r._taxi_meter_panel_active(mode) for mode in (-1, 0, 1, 2, 3, 4, 5, 6)] == [False, True, True, True, False, True, True, False]
+
+
+def test_missing_value_reads_off():
+  # Params.get_int() is 0 for a key with no value; 0 = 기본 화면 must not switch the external HUD on by itself.
+  from openpilot.selfdrive.carrot import ext_hud as eh
+  from openpilot.selfdrive.carrot.k9_meter_link import K9MeterServer
+
+  class P:
+    def __init__(self, v): self.v = v
+    def get(self, k): return None if self.v is None else str(self.v).encode()
+    def get_int(self, k): return 0 if self.v is None else int(self.v)
+  assert eh.read_ext_hud(P(None)) == eh.EXT_HUD_OFF
+  assert eh.read_effective_cluster_hud_mode(P(None)) == 0
+  assert [eh.read_ext_hud(P(v)) for v in (-1, 0, 1)] == [-1, 0, 1]
+  assert K9MeterServer(P(None), P(None)).ext_hud() == -1 and K9MeterServer(P(1), P(None)).ext_hud() == 1
