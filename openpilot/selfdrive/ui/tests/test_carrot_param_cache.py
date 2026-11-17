@@ -105,6 +105,8 @@ def main_layout_module(monkeypatch):
     "openpilot.system.ui.lib.application": SimpleNamespace(gui_app=gui_app),
     "openpilot.system.ui.widgets": SimpleNamespace(Widget=Widget),
     "openpilot.selfdrive.ui.layouts.onboarding": SimpleNamespace(OnboardingWindow=Placeholder),
+    # main.py imports the web QR dialog since it was added; stub it like the other layouts
+    "openpilot.selfdrive.ui.widgets.carrot_web_dialog": SimpleNamespace(CarrotWebDialog=Placeholder),
   }
   for name, stub in stubs.items():
     monkeypatch.setitem(sys.modules, name, stub)

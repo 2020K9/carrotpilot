@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cereal import car
+from openpilot.cereal import car
 from openpilot.selfdrive.ui.vision_status import (
   blindspot_source_packet, blindspot_sources, parse_blindspot_source_packet,
   parse_vision_display_packet, vision_display_state,

@@ -212,7 +212,7 @@ XS = [float(x) for x in range(0, 50, 5)]
 
 
 def real_model(left_edge_y, finite=True, left_edge_ys=None):
-  from cereal import log as cereal_log
+  from openpilot.cereal import log as cereal_log
   msg = cereal_log.Event.new_message().init("modelV2")
   lane_lines = msg.init("laneLines", 4)
   for target, y in zip(lane_lines, (-5.4, -1.8, 1.8, 5.4)):
@@ -235,7 +235,7 @@ def real_model(left_edge_y, finite=True, left_edge_ys=None):
 
 
 def real_state(parser, model, t):
-  from cereal import log as cereal_log
+  from openpilot.cereal import log as cereal_log
   parser._update_model_v2(model, t)
   car = cereal_log.Event.new_message().init("carState")
   car.vEgo = 20.0

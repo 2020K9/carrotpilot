@@ -30,6 +30,7 @@ def planner():
   value.trafficState_carrot = 0
   value.soft_hold_active = 0
   value.xState = XState.e2eCruise
+  value.signal_detection_suspended = False  # set in CarrotPlanner.__init__
   return value
 
 

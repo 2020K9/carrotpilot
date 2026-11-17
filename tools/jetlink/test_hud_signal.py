@@ -1,6 +1,8 @@
 ﻿"""Remote signal freshness, frame alignment, actual renderer and packet budgets."""
 import copy
 import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
@@ -9,6 +11,9 @@ import hud_signal as h
 import hud_protocol as protocol
 import hud_camera
 from openpilot.selfdrive.carrot import signal_display as signals
+
+# cluster_renderer lives in the cluster dir; the sibling HUD tests add it the same way (was only found when run after them)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "openpilot/selfdrive/carrot/cluster"))
 
 
 def observation(stamp=10., frame=20, raw='red', session='observer'):

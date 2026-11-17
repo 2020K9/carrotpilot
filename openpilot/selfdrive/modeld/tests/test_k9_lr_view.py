@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cereal import messaging
+from openpilot.cereal import messaging
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, PublishState
 from openpilot.selfdrive.modeld import k9_lr_view as M

@@ -63,6 +63,9 @@ class TestCarrotStreamSession:
     session.uses_road_camera = True
     session.get_answer = mocker.AsyncMock(return_value=SimpleNamespace(sdp="answer", type="answer"))
     session.stop = mocker.AsyncMock()
+    # CarrotStreamSession.__init__ starts both connection timestamps as None
+    session._carrot_connected_monotonic = None
+    session._carrot_disconnected_monotonic = None
     return session
 
   @staticmethod

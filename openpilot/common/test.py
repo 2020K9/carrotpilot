@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from openpilot.common.hardware import HARDWARE, COMMA_HARDWARE
+from openpilot.system.hardware import HARDWARE, TICI as COMMA_HARDWARE
 from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.system.manager import manager
 

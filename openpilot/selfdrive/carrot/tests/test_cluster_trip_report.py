@@ -424,7 +424,7 @@ def test_fullscreen_3d_repositions_hud_widgets_and_suppresses_information_panels
     lambda _state, **kwargs: calls.append(("clock", kwargs["center_x"])),
   )
 
-  hud_state = SimpleNamespace(navi_dashboard=None, debug_ui_visible=False)
+  hud_state = SimpleNamespace(navi_dashboard=None, debug_ui_visible=False, camera_view_mode=0)  # read by _world_view_shift_x
   renderer._draw_driving_hud_content(
     hud_state,
     CLUSTER_SCREEN_MODE_FULLSCREEN_3D,

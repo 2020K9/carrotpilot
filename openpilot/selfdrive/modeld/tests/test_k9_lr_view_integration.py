@@ -185,6 +185,11 @@ def _run_modeld(monkeypatch, n_frames, params_at, lat_active, real_model_buf=Non
       self.data = {s: getattr(MD.messaging.new_message(s), s) for s in services}
       self.updated = dict.fromkeys(services, False)
       self.seen = dict.fromkeys(services, False)
+      # SubMaster freshness fields read by modeld since the indicator/livePose gates (never fresh here)
+      self.valid = dict.fromkeys(services, False)
+      self.alive = dict.fromkeys(services, False)
+      self.recv_time = dict.fromkeys(services, 0.)
+      self.logMonoTime = dict.fromkeys(services, 0)
       sm_box["sm"] = self
     def set_lat_active(self, on):
       self.data["carControl"].latActive = bool(on)

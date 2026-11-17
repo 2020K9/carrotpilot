@@ -28,7 +28,7 @@ from main import ClusterClockVisibilityParamReader, ClusterDisplayPreferencesPar
 
 def test_nav_map_mode_retains_driving_view_and_hud_on_left(monkeypatch):
   renderer = ClusterUiRenderer(screen_mode=7, panel_layout=1)
-  state = SimpleNamespace(camera_view_mode=0)
+  state = SimpleNamespace(camera_view_mode=0, left_lane_line_confidence=None, right_lane_line_confidence=None)  # fields read by the road-edge hold
   assert not renderer._panel_swap_active()
   assert renderer._driving_panel_offset_design_x() == 0
   assert renderer._world_view_shift_x(state) == cluster_renderer.NAVI_WORLD_VIEW_SHIFT_X

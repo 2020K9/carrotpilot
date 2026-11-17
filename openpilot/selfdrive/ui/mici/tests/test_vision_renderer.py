@@ -47,6 +47,7 @@ def test_mici_draws_classified_dashes_and_double_yellow(mici_modules):
   renderer._map_line_to_polygon = lambda points, *_args, **_kwargs: points[:, :2]
   renderer._acceleration_x = []
   renderer._acceleration_x_filter = renderer._acceleration_x_filter2 = SimpleNamespace(update=lambda *_args: None)
+  renderer._display_clock = SimpleNamespace(update_filter=lambda filt, value: filt.update(value))  # filters now go through DisplayClock
   renderer._experimental_mode = False
   renderer._path_offset_z = 0
   renderer._update_model(None, line[:, 0], SimpleNamespace(leftLaneLine=24, rightLaneLine=0))
