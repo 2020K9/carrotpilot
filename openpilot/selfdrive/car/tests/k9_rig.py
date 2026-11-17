@@ -137,17 +137,31 @@ def _git_show(commit, rel):
 # through an `-s ours` merge (no tree change). The guard below is unchanged and now runs against the snapshot. Proven before
 # use: the old CC on its own opendbc + car.capnp and the snapshot CC on this tree send identical CAN bytes and accel
 # (k9_230fix_out/proof: K9 and K7, menus None/0-6, mixed / edge / gentle / lead_hold / override sequences).
+# 2026-11-17: snapshots moved onto the upstream 2b202df1 merge (opendbc_repo = merge c18b3a04, K9 brake files of the
+# old snapshot, carcontroller.py 3-way merged with the upstream CAN-FD Kick changes); parents are the 11-11 snapshots.
 REBASED = {
-  "aeef67c68039dd29d4a5c207b76cb21c194c1e3a": "0f07296dc6c50de9d632100111d16ef6ef191fe4",
-  "1d0961da0a4eeccaa70a2af7ea40b7006ec72eaf": "8a1634a799e5ab9610bc4adba3f5b3bc1c849b0b",
-  "badf1ea7bf1e72ccb5d512bfc2aa7f0ae311e7ed": "1c8b7fff66c7f59198892f60d23d4e89f6e2ca41",
-  "f8532bed73e7ee914e4bd6197a396f887ab69ee5": "7e74cb5294462ac7c7b54765cb5d0193cbd6f2ff",
-  "c62a47160b0e9381cf05eb0c49d3b2beffed5eeb": "f7d247fd7c229b5154dc28eef20e249c9a96a3cb",
-  "9df95178c9867ff58d06a2824ecc4f2854f8ec09": "75ef97f9960cbb5fb23c0e70f536cc0d64bc1771",
-  "88114288a04478ec5c030f3baac96a652f0156b2": "2b72f73f4edf0ae0890761b1ff459efb404e1d61",
-  "b6696b3786254cc6f74f237751b4d28b84eb24e5": "a9982ace841046f58e7306520ff163086391b418",
-  "6f518e3542141b015cc8884273e097ac50a814c3": "f726b7cd4c70e1e5f5e1934c7128ff34bb3182cb",
-  "f9cd096066f4462578d233bf9936d0489a92dc2a": "df53bb25a9d96f34b988e5deceeab7d61275d30e",
+  "aeef67c68039dd29d4a5c207b76cb21c194c1e3a": "eed8ae2244ac58192f85302b99441e686c560cf5",
+  "1d0961da0a4eeccaa70a2af7ea40b7006ec72eaf": "00f4227a437114cab794042a4b1a9be27dfb1f9b",
+  "badf1ea7bf1e72ccb5d512bfc2aa7f0ae311e7ed": "aa6f4da7620317d2e2f6e0f5236dbdadd32d04a1",
+  "f8532bed73e7ee914e4bd6197a396f887ab69ee5": "30403b39ed8f084ebed7460167d4ed1ae8211acc",
+  "c62a47160b0e9381cf05eb0c49d3b2beffed5eeb": "788f4ea9945981fef706594462b09f917c3d6f58",
+  "9df95178c9867ff58d06a2824ecc4f2854f8ec09": "c8e19a35322d7d27c3d636c2dbc6006fc3ec2c8c",
+  "88114288a04478ec5c030f3baac96a652f0156b2": "52aacd05e31dc1859f7d3fbd94f4ecadac81f124",
+  "b6696b3786254cc6f74f237751b4d28b84eb24e5": "f275bce8ecb22b508c58598828c0ff7f464dabea",
+  "6f518e3542141b015cc8884273e097ac50a814c3": "3f9b3df5725e174ac7e3a1885b3a9642a7fedb39",
+  "f9cd096066f4462578d233bf9936d0489a92dc2a": "8f0f2b3da2438601a412b0216fd7bb1d299dcd29",
+  # 2026-11-17: the 11-11 snapshots themselves (named directly by some tests, e.g. test_k9_stop_v12 PREV) and f7e77539
+  "0f07296dc6c50de9d632100111d16ef6ef191fe4": "eed8ae2244ac58192f85302b99441e686c560cf5",
+  "8a1634a799e5ab9610bc4adba3f5b3bc1c849b0b": "00f4227a437114cab794042a4b1a9be27dfb1f9b",
+  "1c8b7fff66c7f59198892f60d23d4e89f6e2ca41": "aa6f4da7620317d2e2f6e0f5236dbdadd32d04a1",
+  "7e74cb5294462ac7c7b54765cb5d0193cbd6f2ff": "30403b39ed8f084ebed7460167d4ed1ae8211acc",
+  "f7d247fd7c229b5154dc28eef20e249c9a96a3cb": "788f4ea9945981fef706594462b09f917c3d6f58",
+  "75ef97f9960cbb5fb23c0e70f536cc0d64bc1771": "c8e19a35322d7d27c3d636c2dbc6006fc3ec2c8c",
+  "2b72f73f4edf0ae0890761b1ff459efb404e1d61": "52aacd05e31dc1859f7d3fbd94f4ecadac81f124",
+  "a9982ace841046f58e7306520ff163086391b418": "f275bce8ecb22b508c58598828c0ff7f464dabea",
+  "f726b7cd4c70e1e5f5e1934c7128ff34bb3182cb": "3f9b3df5725e174ac7e3a1885b3a9642a7fedb39",
+  "df53bb25a9d96f34b988e5deceeab7d61275d30e": "8f0f2b3da2438601a412b0216fd7bb1d299dcd29",
+  "f7e77539c955ca29f0c337b2f4b6e21d852731f9": "946cf856f52f3fb4fbdbfce9cbd997b9f17c622f",
 }
 
 
