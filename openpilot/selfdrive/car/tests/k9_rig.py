@@ -165,6 +165,18 @@ REBASED = {
 }
 
 
+PEDAL_UPSTREAM = "2b202df1"  # carrot upstream carrot-wip the Comma Pedal files were restored from (2026-11-17)
+PEDAL_UPSTREAM_FILES = {
+  f"{HY}/interface.py", f"{HY}/carstate.py", f"{HY}/pedal_interceptor.py", "opendbc_repo/opendbc/car/pedal_interceptor.py",
+  "opendbc_repo/opendbc/can/dbc.py", "opendbc_repo/opendbc/dbc/pedal_interceptor.dbc",
+  "opendbc_repo/opendbc/safety/safety/safety_hyundai.h", "opendbc_repo/opendbc/safety/safety/safety_pedal_interceptor.h",
+}
+
+
+def _git_show_bytes(commit, rel):
+  return subprocess.run(["git", "show", f"{commit}:{rel}"], cwd=ROOT, check=True, capture_output=True).stdout
+
+
 def _rebased(commit):
   full = subprocess.run(["git", "rev-parse", f"{commit}^{{commit}}"], cwd=ROOT, check=True, capture_output=True,
                         text=True).stdout.strip()
@@ -178,6 +190,12 @@ def load_frozen_cc(commit, tmp_dir, tag):
   changed = subprocess.run(["git", "diff", "--name-only", commit, "--", "opendbc_repo"], cwd=ROOT, check=True,
                            capture_output=True, text=True).stdout.split()
   changed = [f for f in changed if "/tests/" not in f]  # test files are never imported by the controller
+  # 2026-11-17 14:01 (대감님 "빠진 부분 푸시해"): the Comma Pedal (Ray EV) files are back exactly as in the carrot upstream
+  # 2b202df1. That path needs CC_ONLY_CAR + PEDAL_INTERCEPTOR flags on the Ray EV and is never built for the K9, so a file
+  # of this list may differ from `commit` only while it is byte-identical to that upstream commit; anything else stops.
+  for f in [f for f in changed if f in PEDAL_UPSTREAM_FILES]:
+    assert (ROOT / f).read_bytes() == _git_show_bytes(PEDAL_UPSTREAM, f), f
+    changed.remove(f)
   # car data shared by all brands (e.g. c6736bca removed KIA_K5_DL3_24_HEV) may differ when the K9 is not touched
   car_data = {f"{HY}/values.py", f"{HY}/fingerprints.py", "opendbc_repo/opendbc/car/fingerprints.py",
               "opendbc_repo/opendbc/car/torque_data/params.toml"}

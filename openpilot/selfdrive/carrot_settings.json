@@ -543,6 +543,7 @@
           "en": "Device Hardware",
           "zh": "设备硬件",
           "params": [
+            "CommaPedalEnabled",
             "HardwareC3xLite"
           ]
         }
@@ -1524,13 +1525,13 @@
       "group": "조향일반",
       "name": "AutoTurnControl",
       "title": "ATC: AutoTurnControl(0)",
-      "descr": "0:사용안함\n1:차선변경·턴\n2:차선변경·턴+속도\n3:속도\n우회전 전 250m 자동 차선변경은 세부 설정에서 별도로 켭니다. 추가 기능은 1·2번에서만 작동합니다.",
+      "descr": "0:사용안함\n1:차선변경·턴\n2:차선변경·턴+속도\n3:속도\n우회전 전 자동 차선변경 거리는 세부 설정에서 조정합니다. 0m는 끄기입니다. 추가 기능은 1·2번에서만 작동합니다.",
       "egroup": "LATSET",
       "etitle": "ATC: AutoTurnControl",
-      "edescr": "0: off, 1: lane change/turn, 2: lane change/turn + speed, 3: speed. Enable the separate 250m right lane-change add-on in details; it operates only with mode 1 or 2.",
+      "edescr": "0: off, 1: lane change/turn, 2: lane change/turn + speed, 3: speed. Set the right lane-change distance in details. Zero metres disables it. The add-on operates with mode 1 or 2.",
       "cgroup": "转向设置",
       "ctitle": "ATC: 自动转向控制",
-      "cdescr": "0: 关闭，1: 变道/转弯，2: 变道/转弯+速度，3: 速度。右转前250米自动变道在详细设置中单独开启，仅在模式1或2下工作。",
+      "cdescr": "0: 关闭，1: 变道/转弯，2: 变道/转弯+速度，3: 速度。右转前自动变道距离在详细设置中调整，0米关闭，仅在模式1或2下工作。",
       "min": 0,
       "max": 3,
       "default": 0,
@@ -3120,6 +3121,24 @@
       "max": 3,
       "default": 0,
       "unit": 1
+    },
+    {
+      "group": "시작",
+      "name": "CommaPedalEnabled",
+      "title": "Comma Pedal사용",
+      "descr": "ACC 미 장착 차량에서 Comma Pedal 장치를 통한 종방향 제어를 허용합니다. CC_ONLY_CAR 차량에서만 사용할 수 있으며, 차량의 Cruise ready가 꺼져 있을 때에만 작동합니다. Cruise ready 상태에서는 순정 크루즈 컨트롤이 우선하여 Comma Pedal 제어를 사용할 수 없습니다.",
+      "egroup": "START",
+      "etitle": "Comma Pedal longitudinal control",
+      "edescr": "Allows longitudinal control through a Comma Pedal device in vehicles without ACC. Requires CC_ONLY_CAR and the vehicle's Cruise ready state to be off. When Cruise ready is on, OEM cruise control takes priority and Comma Pedal control is unavailable.",
+      "cgroup": "启动设置",
+      "ctitle": "Comma Pedal纵向控制",
+      "cdescr": "允许在未配备ACC的车辆上通过Comma Pedal设备进行纵向控制。仅适用于CC_ONLY_CAR车辆，且车辆的Cruise ready必须关闭。Cruise ready开启时原厂巡航优先，无法使用Comma Pedal控制。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle",
+      "risk": "high"
     },
     {
       "group": "시작",

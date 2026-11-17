@@ -135,8 +135,17 @@ def test_carcontroller_diff_is_menu_wiring_only():
   d = subprocess.run(["git", "diff", "-U0", PREV, "--", CC_REL], cwd=ROOT, capture_output=True, text=True, check=True).stdout
   added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++") and l[1:].strip()]
   assert len(added) > 4
+  # 2026-11-17 14:01 (대감님 "빠진 부분 푸시해"): the Comma Pedal (Ray EV) lines are back exactly as in the carrot upstream
+  # 2b202df1 (never built for the K9: needs CC_ONLY_CAR + PEDAL_INTERCEPTOR on the Ray EV). Only the lines that upstream
+  # file has and the K9 tree just before that restore (751fca5e) lacked count as such; every other added line still has
+  # to be menu wiring.
+  back = subprocess.run(["git", "diff", "-U0", "751fca5e", "2b202df1", "--", CC_REL], cwd=ROOT, capture_output=True,
+                        text=True, check=True).stdout
+  pedal = {l[1:] for l in back.splitlines() if l.startswith("+") and not l.startswith("+++")}
   for l in added:  # wiring only: comments, the K9Creep band call arguments
     s = l.strip()
+    if l in pedal:
+      continue
     assert s.startswith("#") or "cb_prev" in s or "creep_obj" in s, l
 
 
