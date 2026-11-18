@@ -110,7 +110,6 @@ from cluster_scene import (
 )
 from cluster_k9_lanesm import K9LaneSmoother
 from cluster_system_monitor import SystemStats, SystemStatsSampler
-from cluster_k9_hold import K9RoadHold
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
 from cluster_lat_values import (delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
@@ -2473,8 +2472,6 @@ class ClusterUiRenderer:
         self._lane_confidence_held_indices = self._lane_confidence_hold_indices(state)
         self._road_edge_held_sides = self._road_edge_hold_sides(state)
         k9_road = self._k9_turzx_active(state)
-        if not k9_road:
-            self._k9_road_hold = None  # back in D later: start fresh, nothing held from before
         alert_slot = {}
         if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
             self._ev6_draw_park_screen(state)
@@ -2483,7 +2480,6 @@ class ClusterUiRenderer:
             if ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9":
                 alert_slot = {"center": K9_REVERSE_ALERT_CENTER, "max_w": K9_REVERSE_ALERT_MAX_W}
         elif k9_road:
-            state = self._k9_hold_state(state)  # 11/13 01:59 screen-only hold / fade of lane lines and cars
             if signal_lights is None:
                 signal_lights = self._turn_signal_lights(state)
             profile_stage = self._profile_start()
@@ -6648,18 +6644,8 @@ class ClusterUiRenderer:
     def _k9_is_lead(vehicle) -> bool:
         return bool(vehicle.primary) and str(vehicle.label).upper() == "L1" and vehicle.longitudinal_m > 0.0
 
-    def _k9_hold_state(self, state: ClusterUiState) -> ClusterUiState:
-        """K9 D road: lane lines / kerbs / cars kept briefly and faded (cluster_k9_hold), clock = k9_hold_clock
-        (log time in replay) else monotonic. Screen copy only; a still or jumping clock draws the state as given."""
-        hold = getattr(self, "_k9_road_hold", None)
-        if hold is None:
-            hold = self._k9_road_hold = K9RoadHold()
-        clock = getattr(self, "k9_hold_clock", None) or time.monotonic
-        state, self._k9_alpha = hold.update(state, float(clock()), self.k9_road_others, self._k9_is_lead)
-        return state
-
     def _k9_fade(self, obj) -> float:
-        return getattr(self, "_k9_alpha", {}).get(id(obj), 1.0) if obj is not None else 1.0
+        return 1.0  # e73e6a17 hold/fade reverted (대감님 11/18 11:56): every line / car drawn as given
 
     def _k9_lead_fade(self, state: ClusterUiState) -> float:
         return self._k9_fade(next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None))
