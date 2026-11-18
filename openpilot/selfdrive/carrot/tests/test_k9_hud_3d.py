@@ -103,7 +103,7 @@ def test_settings_and_main_wiring():
   data = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text())
   item = next(p for p in data["params"] if p["name"] == "K9HudNavdy")
   assert item["max"] == 3 and item["options"]["ko"][3] == "3 부드러운 3D 판"
-  assert "3D" in item["descr"] and "20 FPS" in item["descr"] and "20 FPS" in item["edescr"] and "20 FPS" in item["cdescr"]
+  assert "3D" in item["descr"] and "10 FPS" in item["descr"] and "10 FPS" in item["edescr"] and "10 FPS" in item["cdescr"]
   assert "차선 평활" not in item["descr"] and "smoothed lanes" not in item["edescr"]   # 11/18 revert: no line smoothing
   src = (CLUSTER / "main.py").read_text()
   assert src.count("renderer.set_k9_hud_3d(k9_hud_menu == 3)") == 2
@@ -116,7 +116,7 @@ def test_jetson_fps_policy(tmp_path):
   f = tmp_path / "fps"
   assert hud.k9_start_fps(f) == 10
   assert hud.k9_menu_fps_policy(3, f, received=None) is None and not f.exists()   # no Params yet: never restart
-  assert hud.k9_menu_fps_policy(3, f, received=1.0) == 20 and hud.k9_start_fps(f) == 20
+  assert hud.k9_menu_fps_policy(3, f, received=1.0) == 10 and hud.k9_start_fps(f) == 10
   assert hud.k9_menu_fps_policy(1, f, received=1.0) == 10 and hud.k9_start_fps(f) == 10
   f.write_text("55")
   assert hud.k9_start_fps(f) == 10

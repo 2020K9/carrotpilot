@@ -43,9 +43,9 @@ def snapshot_status(now=None):
           'bytes': SNAPSHOT_STATE.get('bytes', 0), 'error': SNAPSHOT_STATE.get('error'), 'rejected': dict(REJECTED)}
 
 
-# K9HudNavdy 3 (11/18): the 3D board renders at 20 FPS, everything else at 10 (libx264, 1 thread, Jetson CPU).
+# K9HudNavdy 3 (11/18): the 3D board renders at 10 FPS like everything else (대감님 11/18 13:05) (libx264, 1 thread, Jetson CPU).
 # The rate for the next start is kept in a small file so the restart after a menu change comes up at the new rate.
-K9_FPS_BASE, K9_FPS_3D = 10, 20
+K9_FPS_BASE, K9_FPS_3D = 10, 10
 K9_FPS_FILE = Path(os.environ.get('CARROT_JETLINK_HUD_FPS_FILE', '/dev/shm/carrot-jetlink-hud-fps'))
 
 
