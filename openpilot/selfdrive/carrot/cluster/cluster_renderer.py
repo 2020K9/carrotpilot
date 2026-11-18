@@ -446,6 +446,53 @@ K9C_EGO_MAX_W, K9L_EGO_MAX_W = 140.0, 150.0
 K9C_ROAD_GEO = (108.0, 467.0, 1430.0 * K9C_ROAD_K, min(K9C_EGO_MAX_W, 108.0 * K9C_ROAD_K))  # horizon y, rear bumper y, KX, ego w
 K9L_ROAD_GEO = (K9_TURZX_ROAD_HORIZON_Y, K9_TURZX_ROAD_EGO_Y, K9_TURZX_ROAD_KX * K9L_ROAD_K,
                 min(K9L_EGO_MAX_W, K9_TURZX_EGO_W * K9L_ROAD_K))
+# K9HudNavdy 1 (대감님 11/19 06:05 "ClusterHudScreenMode 디버그 1 주행화면처럼 차선이고 뭐고 비율 맞춰라, 예상경로 등등",
+# 06:10 "디자인은 그대로"): menu 1 places the road, lane lines, road edges, path, arrows, cars and my car with the SAME
+# camera as the debug 1 3D driving view (cluster_scene.scene_camera drive camera, fovy, design height, the 0.5
+# longitudinal render scale, data forward 0 = my front bumper at EGO_FORWARD_M). Only the horizontal centre stays at
+# the scene centre. Colours, widths, shapes, text and layout are untouched; menus 0, 2, 3 keep the old projection.
+import cluster_scene as _k9_cs
+_K9_BACK = [0.0]   # drawn distance behind data forward 0 (0 = old; menu 1 = debug 1 rear edge, see _k9_exp1_setup)
+K9_EXP1_DATA_SCALE = _k9_cs.LONGITUDINAL_RENDER_DISTANCE_SCALE
+K9_EXP1_EGO_REAR_M = -VEHICLE_LENGTH_M / K9_EXP1_DATA_SCALE   # my rear bumper in data metres (debug 1 ego box)
+K9_EXP1_BACK_M = -_k9_cs.DRIVE_VIEW_REAR_RELATIVE_M / K9_EXP1_DATA_SCALE
+
+
+def k9_exp1_camera(ego_bottom: bool = False) -> tuple:
+    """debug 1 drive camera as (pos, fwd, right, up, focal px) in design px (raylib Camera3D, up = +z, fovy vertical)"""
+    if ego_bottom:
+        pos, tgt, fovy = _k9_cs.DRIVE_CAMERA_EGO_BOTTOM_POSITION_M, _k9_cs.DRIVE_CAMERA_EGO_BOTTOM_TARGET_M, 44.0
+    else:
+        sh = _k9_cs.DRIVE_CAMERA_FORWARD_SHIFT_M
+        pos, tgt, fovy = (0.0, -16.0 + sh, 6.00), (0.0, 7.0 + sh, -0.20), 31.0
+    d = [t - p for t, p in zip(tgt, pos, strict=True)]
+    n = math.sqrt(sum(v * v for v in d))
+    fwd = [v / n for v in d]
+    right = [fwd[1], -fwd[0], 0.0]  # fwd x (0, 0, 1)
+    rn = math.hypot(right[0], right[1]) or 1.0
+    right = [right[0] / rn, right[1] / rn, 0.0]
+    up = [right[1] * fwd[2] - right[2] * fwd[1], right[2] * fwd[0] - right[0] * fwd[2], right[0] * fwd[1] - right[1] * fwd[0]]
+    focal = DESIGN_HEIGHT * 0.5 / math.tan(math.radians(fovy) * 0.5)
+    return tuple(pos), tuple(fwd), tuple(right), tuple(up), focal
+
+
+def k9_exp1_project(cam: tuple, forward_m: float, lateral_m: float, cx: float, height_m: float = 0.0):
+    """(screen x, screen y, px per m, depth m) of a data point (forward from my front bumper, right +) in debug 1"""
+    pos, fwd, right, up, focal = cam
+    wx = lateral_m - pos[0]
+    wy = EGO_FORWARD_M + forward_m * K9_EXP1_DATA_SCALE - pos[1]
+    wz = height_m - pos[2]
+    depth = max(0.3, wx * fwd[0] + wy * fwd[1] + wz * fwd[2])
+    k = focal / depth
+    return (cx + k * (wx * right[0] + wy * right[1] + wz * right[2]),
+            DESIGN_HEIGHT * 0.5 - k * (wx * up[0] + wy * up[1] + wz * up[2]), k, depth)
+
+
+def k9_exp1_horizon_y(cam: tuple) -> float:
+    _, fwd, _, up, focal = cam
+    return DESIGN_HEIGHT * 0.5 - focal * up[1] / max(1e-6, fwd[1])
+
+
 # 22:41 "1칸 3칸 맞바꿔": the left content moves to the right side and the right content to the left, middle unchanged
 K9C_SWAP_DX = K9_TURZX_RIGHT_X - K9_TURZX_LEFT_X   # card 1 (8..488) <-> card 3 (1432..1912)
 K9L_SWAP_LEFT_DX = DESIGN_WIDTH - K9L_EDGE - K9L_CAR_W - K9L_EDGE  # 1436: car block 32..452 -> 1468..1888
@@ -6692,6 +6739,8 @@ class ClusterUiRenderer:
 
     def k9_road_clear_of_ego(self, forward_m: float, lateral_m: float) -> float:
         """drawn distance of a car: a car in front of the ego car is moved up until its rear clears the ego roof"""
+        if getattr(self, "_k9_exp1_cam", None) is not None:
+            return forward_m  # K9HudNavdy 1: like debug 1, a car is drawn at its own distance
         geo = getattr(self, "_k9_geo", K9L_ROAD_GEO)
         hy, ego_y, _, ego_w = geo
         if getattr(self, "_ego_car_texture", None) is None and not getattr(self, "_k9_turzx_ego_load_tried", False):
@@ -7059,6 +7108,10 @@ class ClusterUiRenderer:
     # middle panel: 2D perspective road (TURZX-style, drawn from scratch; no code / art from the photo repo)
     def k9_turzx_road_project(self, forward_m: float, lateral_m: float) -> tuple[float, float, float]:
         """(screen x, screen y, px per m) of a road point, design px. forward >= -Z0 * 0.5."""
+        cam = getattr(self, "_k9_exp1_cam", None)
+        if cam is not None:  # K9HudNavdy 1: the debug 1 camera
+            x, y, k, _ = k9_exp1_project(cam, forward_m, lateral_m, getattr(self, "_k9_cx", K9L_CX))
+            return x, y, k
         z = max(K9_TURZX_ROAD_Z0 * 0.5, forward_m + K9_TURZX_ROAD_Z0)
         hy, ego_y, kx, _ = getattr(self, "_k9_geo", K9L_ROAD_GEO)  # card or scene road (ClusterHudK9Style)
         scale = kx / z
@@ -7074,10 +7127,10 @@ class ClusterUiRenderer:
                 continue
             if f > max_m:
                 break
-            if f >= min(-K9_TURZX_ROAD_BACK_M, 0.0):
+            if f >= min(-K9_TURZX_ROAD_BACK_M - _K9_BACK[0], 0.0):
                 out.append((float(f), float(lat)))
-        if out and out[0][0] > -K9_TURZX_ROAD_BACK_M:
-            out.insert(0, (-K9_TURZX_ROAD_BACK_M, out[0][1]))
+        if out and out[0][0] > -K9_TURZX_ROAD_BACK_M - _K9_BACK[0]:
+            out.insert(0, (-K9_TURZX_ROAD_BACK_M - _K9_BACK[0], out[0][1]))
         return out
 
     @staticmethod
@@ -7107,7 +7160,7 @@ class ClusterUiRenderer:
         if len(left) < 2 or len(right) < 2:
             return
         top = min(left[-1][0], right[-1][0], end_m if end_m is not None else 1e9)
-        f = max(left[0][0], right[0][0], -K9_TURZX_ROAD_BACK_M)
+        f = max(left[0][0], right[0][0], -K9_TURZX_ROAD_BACK_M - _K9_BACK[0])
         prev = None
         r, g, b = color[:3]
         a0 = color[3] if len(color) > 3 else 255
@@ -7130,7 +7183,7 @@ class ClusterUiRenderer:
         if len(pts) < 2:
             return
         r, g, b = color[:3]
-        f = max(pts[0][0], -K9_TURZX_ROAD_BACK_M)
+        f = max(pts[0][0], -K9_TURZX_ROAD_BACK_M - _K9_BACK[0])
         prev = None
         while f <= pts[-1][0]:
             lat = self._k9_turzx_lat_at(pts, f)
@@ -7218,7 +7271,14 @@ class ClusterUiRenderer:
         if not sprites:
             return None
         x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
-        tex, w, h, ax, ay, ppm = sprites[self.k9_navdy_index(forward_m, lateral_m, heading_deg)]
+        cam = getattr(self, "_k9_exp1_cam", None)
+        if cam is not None:  # K9HudNavdy 1: bearing from the debug 1 camera
+            _, _, _, depth = k9_exp1_project(cam, forward_m, lateral_m, 0.0)
+            yaw = math.degrees(math.atan2(lateral_m - cam[0][0], depth)) - heading_deg
+            idx = int(clamp(round(yaw / K9_NAVDY_YAW_STEP), -K9_NAVDY_MID, K9_NAVDY_MID)) + K9_NAVDY_MID
+        else:
+            idx = self.k9_navdy_index(forward_m, lateral_m, heading_deg)
+        tex, w, h, ax, ay, ppm = sprites[idx]
         k = max(18.0 / K9_NAVDY_MIN_W_M, scale) / ppm  # sprite px -> screen px (meta px per m vs road px per m)
         dw, dh = w * k, h * k
         va = getattr(self, "_k9_va", 1.0)  # held / new car fade (cluster_k9_hold)
@@ -7262,14 +7322,22 @@ class ClusterUiRenderer:
             # 11/13 05:02 대감님 "d모드에 내차는어딧니?": the whole car well inside the card / screen (bottom edge
             # K9_NAVDY_EGO_BOTTOM_PAD up), still sized by the lane width at the row where it now sits
             limit = (8.0 + K9_TURZX_TOP_H if tuple(geo) == tuple(K9C_ROAD_GEO) else float(self.height)) - K9_NAVDY_EGO_BOTTOM_PAD
-            dw = 3.6 * kx / K9_TURZX_ROAD_Z0 * K9_NAVDY_EGO_LANE_FRAC
-            for _ in range(4):  # lane width at the car's own middle row (where the eye compares it), not at the bumper
+            cam = getattr(self, "_k9_exp1_cam", None)
+            if cam is not None:  # K9HudNavdy 1: debug 1 ego box rear bumper / sprite px per m (like the other cars)
+                _, by, kk, _ = k9_exp1_project(cam, K9_EXP1_EGO_REAR_M, 0.0, cx)
+                k = kk / max(1e-6, sprites[K9_NAVDY_MID][5])
+                dw, dh = sw * k, sh * k
+                by -= max(0.0, by + dh - ay * k - limit)
+            else:
+                dw = 3.6 * kx / K9_TURZX_ROAD_Z0 * K9_NAVDY_EGO_LANE_FRAC
+            for _ in range(4 if cam is None else 0):  # lane width at the car's own middle row (where the eye compares it), not at the bumper
                 mid_y = by - ay * dw / sw * 0.5
                 dw = 3.6 * kx * (mid_y - hy) / ((ego_y - hy) * K9_TURZX_ROAD_Z0) * K9_NAVDY_EGO_LANE_FRAC
                 by -= max(0.0, by + (sh - ay) * dw / sw - limit)
-            k = dw / sw
-            dh = sh * k
-            by -= max(0.0, by + dh - ay * k - limit)
+            if cam is None:
+                k = dw / sw
+                dh = sh * k
+                by -= max(0.0, by + dh - ay * k - limit)
             rl.draw_ellipse(int(cx), int(by - 1), dw * 0.60, max(4.0, dh * 0.12), rl.Color(0, 0, 0, 55))
             rl.draw_ellipse(int(cx), int(by - 1), dw * 0.48, max(3.0, dh * 0.07), rl.Color(0, 0, 0, 105))
             dst = rl.Rectangle(cx - ax * k, by - ay * k, dw, dh)
@@ -7618,7 +7686,11 @@ class ClusterUiRenderer:
                 self._k9v_draw_hud(state, signal_lights)
             elif self.k9_hud_style == K9_HUD_STYLE_SCENE:
                 self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
-                self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
+                self._k9_exp1_setup(state)
+                try:
+                    self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
+                finally:
+                    self._k9_exp1_cam, _K9_BACK[0] = None, 0.0
             else:
                 self._k9_geo, self._k9_cx = K9C_ROAD_GEO, K9C_CX
                 self._k9c_draw_hud(state, signal_lights)  # b03a700cc cards
@@ -7626,6 +7698,13 @@ class ClusterUiRenderer:
             rl.rl_pop_matrix()
 
     k9_hud_navdy = 0   # K9HudNavdy (실험중): 0 = look before b7e81bbd4 / 1 = Navdy grey, K9 D road only
+    _k9_exp1_cam = None  # K9HudNavdy 1 only: debug 1 drive camera (k9_exp1_camera), None = old road projection
+
+    def _k9_exp1_setup(self, state: ClusterUiState) -> None:
+        on = self.k9_hud_menu == 1 and self.k9_navdy_on() and not self.k9_hud_3d
+        ego_bottom = getattr(state, "camera_view_mode", None) == _k9_cs.CLUSTER_CAMERA_VIEW_MODE_EGO_BOTTOM
+        self._k9_exp1_cam = k9_exp1_camera(ego_bottom) if on else None
+        _K9_BACK[0] = K9_EXP1_BACK_M if on else 0.0
 
     def set_k9_hud_navdy(self, value) -> None:
         try:
@@ -8213,7 +8292,8 @@ class ClusterUiRenderer:
 
     def _k9l_draw_road(self, state: ClusterUiState) -> None:
         sx0, sx1 = K9L_SCENE_X0, K9L_SCENE_X1
-        hy = K9_TURZX_ROAD_HORIZON_Y
+        cam = getattr(self, "_k9_exp1_cam", None)
+        hy = K9_TURZX_ROAD_HORIZON_Y if cam is None else k9_exp1_horizon_y(cam)  # menu 1: fog at the debug 1 horizon
         lanes = list(getattr(state, "lanes", ()) or ())
         lane_pts = [(lane, self._k9_turzx_points(lane.model_points)) for lane in lanes]
         lane_pts = [(lane, pts) for lane, pts in lane_pts if len(pts) >= 2]
