@@ -109,6 +109,7 @@ from cluster_scene import (
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
+from cluster_k9_3d import K9Scene3D, draw_car as k9v_draw_car  # noqa: F401  (K9HudNavdy 3)
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
 from cluster_lat_values import (delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
@@ -7607,7 +7608,10 @@ class ClusterUiRenderer:
         rl.rl_scalef(sx, sy, 1.0)
         try:
             self._k9_ind_active = self._k9_indicator_active()
-            if self.k9_hud_style == K9_HUD_STYLE_SCENE:
+            if self.k9_hud_3d:  # K9HudNavdy 3 (11/18): smooth 3D board
+                self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
+                self._k9v_draw_hud(state, signal_lights)
+            elif self.k9_hud_style == K9_HUD_STYLE_SCENE:
                 self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
                 self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
             else:
@@ -7633,6 +7637,73 @@ class ClusterUiRenderer:
     def k9_jetson_resources(self) -> tuple[float | None, float | None, float | None]:
         """Jetson CPU / GPU / memory %; the plain renderer has no Jetson (the Jetlink HUD overrides this)."""
         return (None, None, None)
+
+    k9_hud_3d = False   # K9HudNavdy 3 (11/18 11:49): smooth 3D board (cluster_k9_3d), K9 D only
+
+    def set_k9_hud_3d(self, on) -> None:
+        self.k9_hud_3d = bool(on)
+
+    K9V_CAM = (1600.0, 300.0, 288.0, 162.0)   # small front camera, bottom right (x, y, w, h)
+
+    def _k9v_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
+        scene = getattr(self, "_k9v_scene", None)
+        if scene is None:
+            clock = getattr(self, "k9v_clock", None)
+            scene = self._k9v_scene = K9Scene3D(clock or time.monotonic)
+        sample = scene.update(state, self._k9_is_lead, self.k9_road_others)
+        if sample is None:
+            return
+        scene.draw_scene(sample, lambda f: self.k9_road_heading_deg(state, f), signal_lights)
+        self._k9v_draw_text(state, sample)
+        self._k9v_draw_camera(state)
+
+    def _k9v_draw_text(self, state: ClusterUiState, sample) -> None:
+        speed = state.display_speed_kph if state.display_speed_kph is not None else sample.speed
+        value = int(round(display_speed(clamp(speed, 0.0, MAX_SPEED_KPH), self.is_metric)))
+        x = 40.0
+        self._k9l_text(str(value), x, 0.0, 96.0, (240, 242, 246), numeric=True, base=92.0)
+        self._k9l_text("km/h" if self.is_metric else "mph", x + 2.0, 0.0, 18.0, (150, 154, 164), numeric=True, base=118.0)
+        gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
+        gear = "D" if gear.isdigit() else gear
+        gx = x + max(130.0, self._k9l_width(str(value), 96.0, True) + 28.0)
+        for i, g in enumerate("PRND"):
+            on = g == gear
+            self._k9l_text(g, gx + i * 26.0, 0.0, 22.0, (245, 247, 250) if on else (84, 88, 98), numeric=True, base=40.0)
+        y = 150.0
+        if self._cruise_set_visible(state):
+            text = self._cruise_set_speed_text(state)
+            w = self._k9l_width(text, 22.0, True) + 28.0
+            rl.draw_rectangle_rounded(rl.Rectangle(x, y - 17.0, w, 32.0), 0.9, 8, rl.Color(52, 56, 64, 255))
+            self._k9l_text(text, x + w * 0.5, 0.0, 22.0, (240, 242, 246), anchor="center", numeric=True, cap_cy=y - 1.0)
+        lead = next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None)
+        if lead is not None:
+            parts = [f"앞차 {lead.longitudinal_m:.0f} m"]
+            if lead.relative_speed_mps is not None and math.isfinite(lead.relative_speed_mps):
+                parts.append(f"{lead.relative_speed_mps * 3.6:+.0f} km/h")
+            v = max(0.0, (state.speed_kph or 0.0) / 3.6)
+            if v > 1.0:
+                parts.append(f"{lead.longitudinal_m / v:.1f}초")
+            self._k9l_text("   ".join(parts), x, 0.0, 20.0, (196, 200, 210), base=200.0)
+        clock = getattr(state, "center_clock_text", None) or time.strftime("%H:%M")
+        self._k9l_text(clock, DESIGN_WIDTH - 40.0, 0.0, 22.0, (196, 200, 210), anchor="right", numeric=True, base=40.0)
+
+    def _k9v_draw_camera(self, state: ClusterUiState) -> None:
+        x, y, w, h = self.K9V_CAM
+        rl.draw_rectangle_rounded(rl.Rectangle(x - 3, y - 3, w + 6, h + 6), 0.08, 6, rl.Color(70, 74, 84, 255))
+        rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, h), 0.06, 6, rl.Color(14, 15, 18, 255))
+        live = self._live_road_camera_view() if getattr(state, "onroad", False) else None
+        if live is None:
+            return
+        sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
+        rl.rl_draw_render_batch_active()
+        rl.begin_scissor_mode(int(x * sx), int(y * sy), int(w * sx), int(h * sy))
+        try:
+            live.draw(rl.Rectangle(x, y, w, h))
+        except Exception as exc:
+            print(f"K9 3D camera preview failed: {exc}", flush=True)
+            self._close_live_road_camera()
+        finally:
+            rl.end_scissor_mode()
 
     k9_res_page = 0   # K9HudNavdy 2: 0 = summary, 1 = per core; manual only (set_k9_res_page)
 

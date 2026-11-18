@@ -43,6 +43,36 @@ def snapshot_status(now=None):
           'bytes': SNAPSHOT_STATE.get('bytes', 0), 'error': SNAPSHOT_STATE.get('error'), 'rejected': dict(REJECTED)}
 
 
+# K9HudNavdy 3 (11/18): the 3D board renders at 20 FPS, everything else at 10 (libx264, 1 thread, Jetson CPU).
+# The rate for the next start is kept in a small file so the restart after a menu change comes up at the new rate.
+K9_FPS_BASE, K9_FPS_3D = 10, 20
+K9_FPS_FILE = Path(os.environ.get('CARROT_JETLINK_HUD_FPS_FILE', '/dev/shm/carrot-jetlink-hud-fps'))
+
+
+def k9_start_fps(path=None):
+  try:
+    value = int((path or K9_FPS_FILE).read_text().strip())
+  except (OSError, ValueError):
+    return K9_FPS_BASE
+  return value if value in (K9_FPS_BASE, K9_FPS_3D) else K9_FPS_BASE
+
+
+def k9_menu_fps_policy(menu, path=None, received=None):
+  """wanted FPS for this K9HudNavdy value; None until the comma's Params really arrived (no restart loop at boot)"""
+  if (SNAPSHOT_STATE.get('received') if received is None else received) is None:
+    return None
+  want = K9_FPS_3D if menu == 3 else K9_FPS_BASE
+  try:
+    target = path or K9_FPS_FILE
+    if k9_start_fps(target) != want or not target.exists():
+      tmp = target.with_suffix('.tmp')
+      tmp.write_text(str(want))
+      os.replace(tmp, target)
+  except OSError:
+    return None   # cannot remember the rate: never restart for it
+  return want
+
+
 def require_usb_display(scan, expected):
   product = scan(expected)
   if product is None:
@@ -325,7 +355,8 @@ def main():
   # use the existing software encoder at the normal 10 FPS cluster rate.
   # Bound conversion/encoding concurrency; an explicit trailing CLI value of
   # zero restores FFmpeg's automatic thread pools for comparisons.
-  sys.argv = [__file__, '--input', 'live', '--output', 'usb', '--fps', '10',
+  cluster.K9_MENU_FPS_POLICY = k9_menu_fps_policy
+  sys.argv = [__file__, '--input', 'live', '--output', 'usb', '--fps', str(k9_start_fps()),
               '--usb-codec', 'h264', '--usb-h264-backend', 'ffmpeg',
               '--usb-h264-ffmpeg-encoder', 'libx264', '--usb-h264-ffmpeg-threads', '1',
               '--cluster-hud-mode', '1', *sys.argv[1:]]

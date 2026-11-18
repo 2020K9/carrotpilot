@@ -23,15 +23,15 @@ from cluster_live import live_comma_resources
 def test_settings_menu_has_three_values():
   data = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text())
   item = next(p for p in data["params"] if p["name"] == "K9HudNavdy")
-  assert (item["min"], item["max"], item["default"]) == (0, 2, 0)
-  assert all(len(v) == 3 for v in item["options"].values())
+  assert (item["min"], item["max"], item["default"]) == (0, 3, 0)   # 11/18: 3 = smooth 3D board (test_k9_hud_3d)
+  assert all(len(v) == 4 for v in item["options"].values())
   assert "2" in item["descr"] and "2" in item["edescr"] and "2" in item["cdescr"]
 
 
 def test_reader_passes_2_and_main_maps_it_to_scene_plus_res():
   import main
   reader = main.K9HudNavdyParamReader()
-  for raw, want in ((0, 0), (1, 1), (2, 2), (3, 0), (-1, 0)):
+  for raw, want in ((0, 0), (1, 1), (2, 2), (3, 3), (4, 0), (-1, 0)):   # 11/18: 3 passes (3D board)
     reader._params = SimpleNamespace(get_int=lambda _k, v=raw: v)
     assert reader.read() == want
   src = (CLUSTER / "main.py").read_text()

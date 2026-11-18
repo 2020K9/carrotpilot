@@ -389,6 +389,12 @@ class ClusterHudK9StyleParamReader:
             return 0
 
 
+# K9HudNavdy 3 (11/18): a renderer host may set this to menu -> wanted render FPS (or None = keep). When the wanted
+# rate differs from the running one the loop exits and the host's service restarts it at that rate (the Jetson HUD:
+# 10 FPS, 20 FPS with the 3D board). None here = no policy (the comma HUD keeps its own USB FPS policy).
+K9_MENU_FPS_POLICY = None
+
+
 class K9HudNavdyParamReader:
     """K9HudNavdy (실험중): K9 D road look, 0 = before b7e81bbd4 / 1 = Navdy grey. Read like ClusterHudK9Style."""
 
@@ -406,7 +412,7 @@ class K9HudNavdyParamReader:
             return 0
         try:
             value = int(self._params.get_int("K9HudNavdy"))
-            return value if value in (0, 1, 2) else 0  # 11/16 00:55: 2 = 1 + comma/Jetson resources in the right list
+            return value if value in (0, 1, 2, 3) else 0  # 11/16 00:55: 2 = 1 + comma/Jetson resources; 11/18: 3 = 3D board
         except Exception:
             return 0
 
@@ -1104,6 +1110,7 @@ def run_demo(
     renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # 11/13 17:31: K9HudNavdy 0 = cards / 1 = one scene (2 = scene too)
     renderer.set_k9_hud_navdy(1)  # both layouts keep the Navdy road look
     renderer.set_k9_hud_res(k9_hud_menu == 2)  # 11/16: 2 = one scene + comma/Jetson CPU GPU memory on the right
+    renderer.set_k9_hud_3d(k9_hud_menu == 3)  # 11/18: 3 = smooth 3D board (cluster_k9_3d)
     report_frames = 0
     display_actual_fps: float | None = None
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -1319,6 +1326,12 @@ def run_demo(
                 renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # K9HudNavdy picks the layout, 1 s poll, no restart
                 renderer.set_k9_hud_navdy(1)  # Navdy look in both layouts
                 renderer.set_k9_hud_res(k9_hud_menu == 2)
+                renderer.set_k9_hud_3d(k9_hud_menu == 3)
+                wanted_fps = K9_MENU_FPS_POLICY(k9_hud_menu) if K9_MENU_FPS_POLICY is not None else None
+                if wanted_fps and abs(wanted_fps - target_fps) > 0.01:
+                    print(f"K9HudNavdy {k9_hud_menu} wants {wanted_fps:g} FPS (running {target_fps:g}); exiting for restart",
+                          flush=True)
+                    break
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"
