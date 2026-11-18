@@ -1111,6 +1111,7 @@ def run_demo(
     renderer.set_k9_hud_navdy(1)  # both layouts keep the Navdy road look
     renderer.set_k9_hud_res(k9_hud_menu == 2)  # 11/16: 2 = one scene + comma/Jetson CPU GPU memory on the right
     renderer.set_k9_hud_3d(k9_hud_menu == 3)  # 11/18: 3 = smooth 3D board (cluster_k9_3d)
+    renderer.set_k9_hud_menu(k9_hud_menu)  # 11/18 17:35: menu 1 band on the ego lane lines
     report_frames = 0
     display_actual_fps: float | None = None
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -1327,6 +1328,7 @@ def run_demo(
                 renderer.set_k9_hud_navdy(1)  # Navdy look in both layouts
                 renderer.set_k9_hud_res(k9_hud_menu == 2)
                 renderer.set_k9_hud_3d(k9_hud_menu == 3)
+                renderer.set_k9_hud_menu(k9_hud_menu)
                 wanted_fps = K9_MENU_FPS_POLICY(k9_hud_menu) if K9_MENU_FPS_POLICY is not None else None
                 if wanted_fps and abs(wanted_fps - target_fps) > 0.01:
                     print(f"K9HudNavdy {k9_hud_menu} wants {wanted_fps:g} FPS (running {target_fps:g}); exiting for restart",

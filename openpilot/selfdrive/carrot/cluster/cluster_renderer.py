@@ -7634,6 +7634,31 @@ class ClusterUiRenderer:
             v = 0
         self.k9_hud_navdy = v if v in (0, 1) else 0
 
+    k9_hud_menu = None   # K9HudNavdy value itself (11/18 17:35): only menu 1 uses k9l_ego_lane_band
+
+    def set_k9_hud_menu(self, value) -> None:
+        try:
+            self.k9_hud_menu = int(value)
+        except (TypeError, ValueError):
+            self.k9_hud_menu = None
+
+    @staticmethod
+    def k9l_ego_lane_band(path, left_pts, right_pts, lo: float = 2.4, hi: float = 4.6):
+        """K9HudNavdy 1 (대감님 11/18 17:35 "가운데 차선하고 경로추종하고 잘안맞음"): my-lane band edges on the two
+        drawn ego lane lines (same model points / projection as the lines), the fixed path +-1.62 m only where a line
+        is missing or the lane width is implausible; same forward stations as the path (band end unchanged)"""
+        bl, br = [], []
+        lat_at = ClusterUiRenderer._k9_turzx_lat_at
+        for f, lat in path:
+            ll, rr = lat_at(left_pts, f), lat_at(right_pts, f)
+            if ll is not None and rr is not None and lo <= rr - ll <= hi:
+                bl.append((f, ll))
+                br.append((f, rr))
+            else:
+                bl.append((f, lat - 1.62))
+                br.append((f, lat + 1.62))
+        return bl, br
+
     k9_hud_res = False   # K9HudNavdy 2 (11/16 00:46): menu 1 + comma / Jetson CPU GPU memory under the right list
 
     def set_k9_hud_res(self, on) -> None:
@@ -8224,6 +8249,8 @@ class ClusterUiRenderer:
             if self.k9_navdy_on():
                 bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue (same as the card style)
                 br_ = [(f, lat + 1.62) for f, lat in path]
+                if self.k9_hud_menu == 1 and ego_l is not None and ego_r is not None:
+                    bl_, br_ = self.k9l_ego_lane_band(path, ego_l[2], ego_r[2])
                 self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
             else:  # K9HudNavdy 0: ice path band before b7e81bbd4
                 self._k9_old_path_band(path, end_m, 1.05, 0.42, (*K9L_ICE, 120), (220, 240, 255, 54), K9L_ICE, 0.07, 0.95)
