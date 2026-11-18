@@ -70,7 +70,7 @@ def lat_at(pts, f: float):
   """lateral (m) of a (forward, lateral) polyline at forward f, linear, None outside"""
   if len(pts) < 2 or f < pts[0][0] or f > pts[-1][0]:
     return None
-  for (f0, l0), (f1, l1) in zip(pts, pts[1:]):
+  for (f0, l0), (f1, l1) in zip(pts, pts[1:], strict=False):
     if f0 <= f <= f1:
       return l0 if f1 - f0 < 1e-6 else l0 + (l1 - l0) * (f - f0) / (f1 - f0)
   return None
@@ -135,7 +135,7 @@ def sample_from_state(state, is_lead, others) -> Sample:
 def _mix_list(a, b, t):
   if a is None or b is None or len(a) != len(b):
     return b
-  return [y if x is None or y is None else lerp(x, y, t) for x, y in zip(a, b)]
+  return [y if x is None or y is None else lerp(x, y, t) for x, y in zip(a, b, strict=False)]
 
 
 def mix(a: Sample | None, b: Sample, t: float) -> Sample:
@@ -143,10 +143,10 @@ def mix(a: Sample | None, b: Sample, t: float) -> Sample:
   if a is None or t >= 1.0:
     return b
   if len(a.lines) == len(b.lines):
-    lines = [(lerp(la[0], lb[0], t), _mix_list(la[1], lb[1], t)) for la, lb in zip(a.lines, b.lines)]
+    lines = [(lerp(la[0], lb[0], t), _mix_list(la[1], lb[1], t)) for la, lb in zip(a.lines, b.lines, strict=False)]
   else:
     lines = b.lines
-  edges = tuple(_mix_list(ea, eb, t) for ea, eb in zip(a.edges, b.edges))
+  edges = tuple(_mix_list(ea, eb, t) for ea, eb in zip(a.edges, b.edges, strict=False))
   cars = {}
   for k, (f, lat, lead, brake) in b.cars.items():
     if k in a.cars and abs(a.cars[k][0] - f) < 15.0:
@@ -223,13 +223,13 @@ def _quad(pts, col):
 def _road_color(f: float):
   k = max(0.0, min(1.0, f / ROAD_MAX_M)) ** 0.7
   fade = 1.0 - max(0.0, (f - ROAD_MAX_M * 0.75) / (ROAD_MAX_M * 0.25))
-  rgb = [lerp(n, r, k) for n, r in zip(ROAD_NEAR, ROAD_FAR)]
-  return tuple(int(lerp(b, v, max(0.0, fade))) for b, v in zip(BG, rgb)) + (255,)
+  rgb = [lerp(n, r, k) for n, r in zip(ROAD_NEAR, ROAD_FAR, strict=False)]
+  return tuple(int(lerp(b, v, max(0.0, fade))) for b, v in zip(BG, rgb, strict=False)) + (255,)
 
 
 def _line_ribbon(lats, half_w: float, alpha_fn):
   left, right, cols = [], [], []
-  for f, lat in zip(STATIONS, lats):
+  for f, lat in zip(STATIONS, lats, strict=False):
     if lat is None or f > ROAD_MAX_M:
       left.append(None)
       right.append(None)
@@ -248,7 +248,7 @@ def _far_alpha(f: float) -> float:
 
 
 def _dashes(lats, half_w: float, phase: float):
-  pts = [(f, l) for f, l in zip(STATIONS, lats) if l is not None and f <= ROAD_MAX_M]
+  pts = [(f, l) for f, l in zip(STATIONS, lats, strict=False) if l is not None and f <= ROAD_MAX_M]
   if len(pts) < 2:
     return
   period = DASH_ON_M + DASH_OFF_M
@@ -370,7 +370,7 @@ class K9Scene3D:
         rw = [5.4 for _ in STATIONS]
       # road surface (shoulder 0.6 m beyond the edges)
       left, right, cols, sl, sr = [], [], [], [], []
-      for f, a, b in zip(STATIONS, lw, rw):
+      for f, a, b in zip(STATIONS, lw, rw, strict=False):
         if a is None or b is None or f > ROAD_MAX_M:
           left.append(None)
           right.append(None)
