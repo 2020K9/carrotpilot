@@ -594,6 +594,15 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.PERMANENT: NormalPermanentAlert("Rebooting into Dashcam Mode", priority=Priority.LOW),
   },
 
+  # K9Clamp 1 (k9_clamp.py): laneless clamp steering correction large; ding like ldw, small banner.
+  EventName.k9ClampActive: {
+    ET.PERMANENT: Alert(
+      "Clamp steering correction active",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOWEST, VisualAlert.none, AudibleAlert.prompt, 0.2),
+  },
+
   EventName.systemReady: {
     ET.PERMANENT: Alert("", "", AlertStatus.normal, AlertSize.none, Priority.LOWEST,
                         VisualAlert.none, AudibleAlert.systemReady, 0.2),

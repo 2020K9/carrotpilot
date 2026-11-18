@@ -290,6 +290,11 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9LaneCenter", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9LaneAssist", {PERSISTENT, INT, "0"}},
     {"K9LaneCenterGain", {PERSISTENT, INT, "100"}},
+    {"K9Clamp", {PERSISTENT, INT, "0"}},  // 0 off / 1 lane-line & road-edge minimum-distance clamp (k9_clamp.py)
+    {"K9ClampLaneCm", {PERSISTENT, INT, "135"}},  // K9Clamp min distance from a lane line [cm] (ej ClampMinDistLane)
+    {"K9ClampEdgeCm", {PERSISTENT, INT, "115"}},  // K9Clamp min distance from a road edge [cm] (ej ClampMinDistEdge)
+    {"K9ClampGain", {PERSISTENT, INT, "10"}},     // K9Clamp laneless steering correction gain x0.1 (ej ClampSteerGain)
+    {"K9ClampAlert", {PERSISTENT, INT, "1"}},     // K9Clamp correction alert 0 off / 1 on (ej ClampSteerAlert)
     {"K9LaneVer", {PERSISTENT, INT}},  // K9LaneAssist menu merge marker (one-time migration, k9_lane.py)
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},
     {"CancelButtonMode", {PERSISTENT, INT, "0"}},

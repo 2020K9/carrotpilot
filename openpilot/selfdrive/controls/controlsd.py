@@ -228,6 +228,12 @@ class Controls:
       self.k9_lane_state = 1
     self.k9_lane_accel = k9_lane_add * float(CS.vEgo) ** 2
     lane_cmd_active = False
+    # K9Clamp (experimental, see controls/lib/k9_clamp.py): 0 / unreadable = off -> the correction is 0.0 and not added.
+    from openpilot.selfdrive.controls.lib.k9_clamp import SteerCorrector, atc_active_from_carrot_man, read_cfg, lane_change_block
+    if getattr(self, 'k9_clamp', None) is None:
+      self.k9_clamp = SteerCorrector(DT_CTRL)
+    k9_clamp_cfg = read_cfg(self.params)   # all 5 K9Clamp settings, live
+    k9_clamp_laneless = False
     if not CC.latActive:
       new_desired_curvature = self.curvature
     elif self.is_vw_meb:
@@ -255,7 +261,15 @@ class Controls:
       dc_model = model_v2.action.desiredCurvature
       if k9_lane_add != 0.0:
         dc_model = dc_model + k9_lane_add   # K9LaneAssist 1: lane-centre hold, both lines or one line (laneless only)
+      # K9Clamp 1 (k9_clamp.py): push away from a too-close lane line / road edge (laneless only). Off -> 0.0, not added.
+      k9_clamp_laneless = True
+      k9_clamp_add = self.k9_clamp.update(model_v2, CS.vEgo, k9_clamp_cfg, k9_clamp_cfg.enabled and lane_change_block(
+        model_v2, CS.leftBlinker, CS.rightBlinker, atc_active_from_carrot_man(self.sm['carrotMan'])))
+      if k9_clamp_add != 0.0:
+        dc_model = dc_model + k9_clamp_add
       new_desired_curvature = smooth_value(dc_model, self.desired_curvature, 0.1)
+    if not k9_clamp_laneless:
+      self.k9_clamp.reset()
 
     # K9LaneFix (experimental, see controls/lib/k9_lane_fix.py): read every control tick like the other lateral params
     # here; a changed number restarts the hand-over state. 0 / unknown = off (fix is None and nothing below runs).
@@ -540,6 +554,8 @@ class Controls:
     cs.activeLaneLine = self.lanefull_mode_enabled
     cs.k9LaneState = int(getattr(self, 'k9_lane_state', 0))
     cs.k9LaneAccel = float(getattr(self, 'k9_lane_accel', 0.0))
+    k9c = getattr(self, 'k9_clamp', None)
+    cs.k9ClampActive = bool(k9c is not None and k9c.alert_active and CC.latActive)
     self.pm.send('controlsState', dat)
 
     # carControl

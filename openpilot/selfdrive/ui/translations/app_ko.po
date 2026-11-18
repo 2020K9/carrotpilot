@@ -643,6 +643,10 @@ msgid "LTE"
 msgstr "LTE"
 
 #: openpilot/selfdrive/selfdrived/events.py
+msgid "Clamp steering correction active"
+msgstr "클램프 조향 보정 작동"
+
+#: openpilot/selfdrive/selfdrived/events.py
 msgid "Lane Departure Detected"
 msgstr "차선이탈"
 

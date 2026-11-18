@@ -168,6 +168,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     teslaTrafficStopTakeover @131;
     pandaCanFault @132;
     stockSccFault @133;
+    k9ClampActive @134;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -872,6 +873,7 @@ struct ControlsState @0x97ff69c53601abf1 {
   # 3 one-line hold; k9LaneAccel = lateral accel the holds add [m/s^2], + = toward the right
   k9LaneState @68 :UInt8;
   k9LaneAccel @69 :Float32;
+  k9ClampActive @70 :Bool;  # K9Clamp 1: laneless clamp steering correction large (selfdrived -> k9ClampActive ding)
 
   lateralControlState :union {
     pidState @53 :LateralPIDState;

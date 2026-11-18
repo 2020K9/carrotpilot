@@ -424,7 +424,12 @@
             "PathOffset",
             "K9ExtHud",
             "K9MeterSeason",
-            "K9HudNavdy"
+            "K9HudNavdy",
+            "K9Clamp",
+            "K9ClampLaneCm",
+            "K9ClampEdgeCm",
+            "K9ClampGain",
+            "K9ClampAlert"
           ]
         }
       ]
@@ -3865,6 +3870,123 @@
       "unit": 1,
       "control": "select",
       "options": {"ko": ["0 기본 제동", "1 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "2 격차수정 + 1 km/h 아래 서서히 더 잡기", "3 격차 반만 + 1 km/h 아래 서서히 더 잡기"], "en": ["0 Base braking", "1 bono1739 original2 + harder 1 s after the stop", "2 Gap fix + gradually harder below 1 km/h", "3 Half gap + gradually harder below 1 km/h"], "zh": ["0 基本制动", "1 bono1739原版2＋停后1秒起加压", "2 差距修正＋1 km/h以下逐渐加大制动", "3 半差距＋1 km/h以下逐渐加大制动"]},
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9Clamp",
+      "title": "클램프 (실험)",
+      "descr": "0 끔: 기존 그대로\n1 켬: 경로가 차선 1.35m·도로 경계 1.15m 안으로 붙으면 안쪽으로 밀어냄. 레인모드는 경로를 고치고, 레인리스는 조향 곡률에 보정을 더함(횡가속 1.5m/s²·곡률 0.02 상한). 5~10km/h에서 서서히 켜짐, 20cm 넘게 붙어야 작동(10cm 안으로 돌아오면 멈춤). 차선변경·깜빡이·ATC 중과 끝난 뒤 2초는 멈춤. 레인리스 보정이 크면 '클램프 조향 보정 작동'과 띵. 원본 aabc88 ej. 실차 미확인.",
+      "egroup": "LANE",
+      "etitle": "Clamp (experimental)",
+      "edescr": "0 Off: as before\n1 On: pushes the path back in when it gets closer than 1.35 m to a lane line or 1.15 m to a road edge. Lane mode corrects the path, laneless adds a correction to the steering curvature (1.5 m/s^2 lateral accel, 0.02 1/m curvature caps). Fades in from 5 to 10 km/h, acts only beyond 20 cm (stops inside 10 cm). Paused during lane change / blinker / ATC and for 2 s after. A large laneless correction shows 'Clamp steering correction active' with a ding. From aabc88 ej. Not vehicle-validated.",
+      "cgroup": "转向",
+      "ctitle": "钳位（试验）",
+      "cdescr": "0 关闭：保持原样\n1 开启：路径离车道线小于1.35m或离路沿小于1.15m时向内推回。车道模式修正路径，无车道线模式在转向曲率上加修正（横向加速度1.5m/s²、曲率0.02上限）。5~10km/h逐渐生效，超出20cm才作用（回到10cm内停止）。变道、转向灯、ATC期间及结束后2秒暂停。无车道线修正较大时显示“最小距离钳位转向修正中”并提示音。来自aabc88 ej。未实车验证。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(기존 그대로)",
+          "1 켬(클램프)"
+        ],
+        "en": [
+          "0 Off (existing)",
+          "1 On (clamp)"
+        ],
+        "zh": [
+          "0 关闭（现有）",
+          "1 开启（钳位）"
+        ]
+      },
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9ClampLaneCm",
+      "title": "클램프 차선 최소거리(cm)",
+      "descr": "경로가 차선에서 이 거리(cm)보다 붙으면 안쪽으로 밉니다. 1cm 단위, 기본 135. 클램프 1일 때만.",
+      "egroup": "LANE",
+      "etitle": "Clamp lane-line min distance (cm)",
+      "edescr": "Pushes the path back in when it gets closer than this to a lane line. 1 cm steps, default 135. Only with Clamp 1.",
+      "cgroup": "转向",
+      "ctitle": "钳位车道线最小距离(cm)",
+      "cdescr": "路径离车道线小于此距离(cm)时向内推。1cm单位，默认135。仅钳位为1时。",
+      "min": 0,
+      "max": 300,
+      "default": 135,
+      "unit": 1,
+      "display_unit": "distanceCm",
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9ClampEdgeCm",
+      "title": "클램프 도로 경계 최소거리(cm)",
+      "descr": "차선이 안 보이는 쪽은 도로 경계에서 이 거리(cm)를 유지합니다. 1cm 단위, 기본 115. 클램프 1일 때만.",
+      "egroup": "LANE",
+      "etitle": "Clamp road-edge min distance (cm)",
+      "edescr": "On a side with no lane line seen, keeps this distance from the road edge. 1 cm steps, default 115. Only with Clamp 1.",
+      "cgroup": "转向",
+      "ctitle": "钳位路沿最小距离(cm)",
+      "cdescr": "看不到车道线的一侧与路沿保持此距离(cm)。1cm单位，默认115。仅钳位为1时。",
+      "min": 0,
+      "max": 300,
+      "default": 115,
+      "unit": 1,
+      "display_unit": "distanceCm",
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9ClampGain",
+      "title": "클램프 조향 보정 게인(10)",
+      "descr": "레인리스 조향 보정 세기 x0.1. 10 = 1배(기본), 0 = 보정 끔, 20 = 2배. 클램프 1일 때만.",
+      "egroup": "LANE",
+      "etitle": "Clamp steering correction gain(10)",
+      "edescr": "Laneless steering correction strength x0.1. 10 = 1.0x (default), 0 = no correction, 20 = 2.0x. Only with Clamp 1.",
+      "cgroup": "转向",
+      "ctitle": "钳位转向修正增益(10)",
+      "cdescr": "无车道线转向修正强度x0.1。10 = 1倍（默认），0 = 不修正，20 = 2倍。仅钳位为1时。",
+      "min": 0,
+      "max": 20,
+      "default": 10,
+      "unit": 1,
+      "risk": "high"
+    },
+    {
+      "group": "레인모드",
+      "name": "K9ClampAlert",
+      "title": "클램프 보정 알림",
+      "descr": "1 켬(기본): 레인리스 보정이 크면 '클램프 조향 보정 작동'과 띵. 0 끔: 알림만 끄고 보정은 그대로. 클램프 1일 때만.",
+      "egroup": "LANE",
+      "etitle": "Clamp correction alert",
+      "edescr": "1 On (default): a large laneless correction shows 'Clamp steering correction active' with a ding. 0 Off: silences the alert only. Only with Clamp 1.",
+      "cgroup": "转向",
+      "ctitle": "钳位修正提示",
+      "cdescr": "1 开启（默认）：无车道线修正较大时显示提示并响一声。0 关闭：仅关提示，修正照常。仅钳位为1时。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔",
+          "1 켬"
+        ],
+        "en": [
+          "0 Off",
+          "1 On"
+        ],
+        "zh": [
+          "0 关闭",
+          "1 开启"
+        ]
+      },
       "risk": "high"
     },
     {

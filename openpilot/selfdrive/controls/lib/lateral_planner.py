@@ -169,6 +169,25 @@ class LateralPlanner:
     if not getattr(self.LP, 'k9_path_offset_applied', False):
       self.path_xyz[:, 1] += self.pathOffset
 
+    # K9Clamp (experimental, see controls/lib/k9_clamp.py): 0 / unreadable = off -> path untouched, nothing below changes.
+    from openpilot.selfdrive.controls.lib.k9_clamp import PathClamp, read_cfg, lane_change_block
+    if getattr(self, 'k9_path_clamp', None) is None:
+      self.k9_path_clamp = PathClamp(DT_MDL)
+    k9_clamp_cfg = read_cfg(self.params)   # all 5 K9Clamp settings, live
+    k9_clamp_blocked = k9_clamp_cfg.enabled and lane_change_block(
+      md, getattr(sm['carState'], 'leftBlinker', False), getattr(sm['carState'], 'rightBlinker', False),
+      getattr(carrot, 'atc_active', False))
+    self.path_xyz, k9_clamp_changed = self.k9_path_clamp.apply(self.path_xyz, md, v_ego_car, k9_clamp_cfg,
+                                                               k9_clamp_blocked,
+                                                               (getattr(self.LP, "l_prob", 0.0), getattr(self.LP, "r_prob", 0.0)) if k9_clamp_cfg.enabled else None)
+    if k9_clamp_changed and self.lanelines_active:
+      self.plan_yaw, self.plan_yaw_rate = yaw_from_path_no_scipy(
+        self.path_xyz, self.v_plan,
+        smooth_window=5,
+        clip_rate=2.0,
+        align_first_yaw=None
+      )
+
     self.lat_mpc.set_weights(self.lateralPathCost, self.lateralMotionCost,
                              LATERAL_ACCEL_COST, LATERAL_JERK_COST,
                              STEERING_RATE_COST)
@@ -266,11 +285,13 @@ class LateralPlanner:
 
     self.x_sol = self.lat_mpc.x_sol
 
+    k9pc = getattr(self, 'k9_path_clamp', None)
     debugText = (
       f"{'lanemode' if self.lanelines_active else 'laneless'} | " +
       f"{self.LP.lane_width_left:.1f}m | " +
       f"{self.LP.lane_width:.1f}m | " +
       f"{self.LP.lane_width_right:.1f}m | " +
+      f"{f'clamp={k9pc.sides}{k9pc.max_correction * 100.0:.0f}cm | ' if k9pc is not None and k9pc.max_correction > 0.005 else ''}" +
       f"{f'offset={self.LP.offset_total * 100.0:.1f}cm turn={np.clip(self.curve_speed, -200, 200):.0f}km/h' if self.lanelines_active else ''}"
     )
 
