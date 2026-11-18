@@ -134,6 +134,11 @@ def _role_attached():
 
 def publish(status, spec=None, **extra):
   global LAST_STATUS_EVENT
+  if isinstance(extra.get('peer'), dict) and 'telemetry' in extra['peer']:
+    # HELLO is identity. Its telemetry is a copy from connect time (before the
+    # HUD attaches, so carrot_hud_connected stays false); live values are in
+    # the top-level 'telemetry' field.
+    extra['peer'] = {k: v for k, v in extra['peer'].items() if k != 'telemetry'}
   record = dict(state=status, updated=time.monotonic(), model=model_name(spec) if spec else 'App selection',
                 sha256=spec.sha256 if spec else None,
                 transport=SESSION_MODE if TRANSPORT_MODE == 'auto' else TRANSPORT_MODE,

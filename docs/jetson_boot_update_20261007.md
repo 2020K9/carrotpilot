@@ -201,3 +201,28 @@ runtime errors. No protocol fix or new signed host release was applied in
 this investigation. Rebooting only the vehicle while Jetson was already in
 normal runtime reconnected without this gate-specific error; that is not a
 validation of a fix. Private journals and the reproducer remain local.
+
+## Follow-up 2026-11-18: onroad pre-download
+
+The updater timer (boot +2 min, then every 15 min, Nice 19, idle I/O) now
+stages the comma-selected signed pin while the comma is onroad as well: it only
+downloads and verifies into `updates/` and `releases/<commit>`, never touches
+`current/` or running services. On boot-gate hosts it runs only after this boot
+was approved (`runtime_ready`), never during the gate itself, and skips when the
+update lock is held. Activation is unchanged: the next Jetson boots gate stops
+
+## Follow-up 2026-11-18: onroad pre-download
+
+On boot-gate hosts the updater timer (boot +2 min, then every 15 min, Nice 19,
+idle I/O) now stages the comma-selected signed pin while the comma is onroad as
+well (`update_host.prestage`): it only downloads and verifies into `updates/`,
+`releases/<commit>` and the model cache, never touches `current/` or running
+services. It runs only after this boot was approved (`runtime_ready`), never
+during the gate itself, skips when the update lock is held, and never uses the
+unpinned channel. Activation is unchanged: the next Jetson boot's gate stops the
+services, probes and atomically switches (cached files need no Internet).
+Legacy (pre-gate) hosts keep their offroad-only `automatic_stage` policy.
+
+Jetlink status `peer` is HELLO identity only; its connect-time `telemetry`
+copy (taken before the HUD attaches, so `carrot_hud_connected:false`) is no
+longer published. Live values stay in the top-level `telemetry`.

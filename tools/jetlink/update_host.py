@@ -2,7 +2,8 @@
 
 Migrated hosts check the attached comma's pin before first inference, including
 onroad startup; a separate USB-only gate waits for Internet and applies updates.
-Legacy hosts retain offroad staging and next-boot activation until migration.
+While running (also onroad) the timer pre-downloads a newer pin; only the next
+boot's gate activates it. Legacy hosts retain offroad staging until migration.
 Failed probes preserve the old release; the new gate still withholds execution.
 No OS, user identity, network credentials or vehicle settings are updated.
 """
@@ -529,6 +530,25 @@ def automatic_stage():
     stage()  # Compatibility for C4 releases predating version pinning.
 
 
+def prestage():
+  # Boot-gate hosts, after this boot was approved: download/verify the comma's
+  # signed pin also while onroad (Nice 19, idle I/O). Writes only updates/,
+  # releases/<commit> and the model cache; never current/ or running services.
+  # The next boot's gate activates it exactly as before. No unpinned channel.
+  control_file = Path('/dev/shm/carrot-jetlink-bootstrap.json')
+  try:
+    control = json.loads(control_file.read_text())
+    if 0 <= time.monotonic() - control['received'] < 15 and control.get('jetson_release') is not None:
+      stage_manifest(control['jetson_release'])
+      return
+  except (OSError, ValueError, KeyError, TypeError):
+    pass
+  from hud_protocol import read_snapshot
+  snapshot = read_snapshot()
+  if snapshot is not None and snapshot[1].get('jetson_release') is not None:
+    stage_manifest(snapshot[1]['jetson_release'])
+
+
 def main():
   import fcntl
   parser = argparse.ArgumentParser(description=__doc__)
@@ -540,7 +560,19 @@ def main():
   from boot_update import enabled, boot
   boot_gate = enabled()
   if args.action == 'automatic' and boot_gate:
-    return  # All required updates now complete before this boot's first model.
+    # The boot gate applies the comma's pin before this boot's first model.
+    # After this boot was approved, pre-download a newer pin (also onroad) so
+    # the next boot's gate only verifies and activates it.
+    from boot_update import runtime_ready
+    if not runtime_ready():
+      return
+    try:
+      with Path('/run/carrot-jetlink-update.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        prestage()
+    except BlockingIOError:
+      pass  # Another update action owns the files; retry at the next timer.
+    return
   if args.action == 'activate' and boot_gate:
     # A separate transient service has no startup timeout and survives the old
     # image's oneshot apply service finishing. No writes to a protected OS.
