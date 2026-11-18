@@ -92,5 +92,5 @@ def test_menu_2_only_changes_the_screen_right_block(monkeypatch):
   ys, xs = np.nonzero(diff)
   assert len(xs) > 1000
   scale = one.shape[1] / cr.DESIGN_WIDTH
-  assert xs.min() >= (cr.DESIGN_WIDTH - cr.K9L_EDGE - cr.K9L_CAR_W - 2) * scale
+  assert xs.min() >= (cr.K9L_SCENE_X0 - 2) * scale   # 11/18: 2 also shrinks the scene (aspect kept) for the 480 px block
   assert ys.max() >= cr.K9L_TPMS_HAIR * scale   # 11/16 01:33 "tpms말고도 전체삭제": the TPMS area is replaced too

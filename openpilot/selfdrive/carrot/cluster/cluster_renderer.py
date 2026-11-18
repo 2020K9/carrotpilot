@@ -413,6 +413,14 @@ K9L_RIGHT_HAIR = 170.0
 # replaced by diagnostics only: 콤마 / 젯슨 resources, model times, HUD state, startup stages. Page 0 = summary,
 # page 1 = per core / every sensor; switched by set_k9_res_page only (no automatic cycling).
 K9R_TOP, K9R_BOTTOM = 8.0, 472.0
+# 11/18 11:49 대감님 "오른쪽 정보칸 내용이 많아 잘린다": K9HudNavdy 2 diagnostics block 320 -> 480 px wide,
+# the scene (road + speed row) shrinks to fit with its aspect ratio kept (same scale x and y, centred vertically)
+K9R_W = 480.0
+K9R_X0 = DESIGN_WIDTH - K9L_EDGE - K9R_W            # 1408: block 1408..1888 on screen
+K9R_SWAP_DX = K9R_X0 - K9L_EDGE                     # block drawn at 32..512, moved right
+K9R_SCENE_GAP = 16.0
+K9R_SCENE_S = (K9R_X0 - K9R_SCENE_GAP - K9L_SCENE_X0) / (K9L_SCENE_X1 - K9L_SCENE_X0)   # 1000 / 1160 = 0.862
+K9R_SCENE_DY = DESIGN_HEIGHT * (1.0 - K9R_SCENE_S) * 0.5
 K9R_HEAD, K9R_VALUE, K9R_SMALL = 15.0, 16.0, 12.0
 K9R_WARN = (255, 205, 70)
 K9R_STALE_S = 2.0                      # last NEW valid carState older than this = 수신 끊김
@@ -8373,10 +8381,10 @@ class ClusterUiRenderer:
 
     def k9_res_layout(self, state: ClusterUiState, width=None, page: int | None = None):
         """pure layout of the diagnostics block: (texts, bars). texts = (text, x_left, base, size, color);
-        bars = (x, y, w, fill 0..1 or None). Every item lies inside x K9L_EDGE..K9L_EDGE+K9L_CAR_W, y K9R_TOP..K9R_BOTTOM."""
+        bars = (x, y, w, fill 0..1 or None). Every item lies inside x K9L_EDGE..K9L_EDGE+K9R_W, y K9R_TOP..K9R_BOTTOM."""
         width = width or self._k9r_width
         page = self.k9_res_page if page is None else page
-        x0, x1 = K9L_EDGE, K9L_EDGE + K9L_CAR_W
+        x0, x1 = K9L_EDGE, K9L_EDGE + K9R_W
         texts, bars = [], []
         y = [K9R_TOP]
 
@@ -8581,13 +8589,31 @@ class ClusterUiRenderer:
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT),
                             rl.Vector2(0, 0), 0.0, rl.WHITE)
         sx = self.width / DESIGN_WIDTH
-        rl.begin_scissor_mode(int(K9L_SCENE_X0 * sx), 0, int((K9L_SCENE_X1 - K9L_SCENE_X0) * sx), int(self.height))
-        try:
-            self._k9l_draw_road(state)
-        finally:
-            rl.end_scissor_mode()
-        self._k9l_draw_top(state, signal_lights)
-        with self._k9_shift(K9L_SWAP_LEFT_DX):   # 22:41 1칸 <-> 3칸
+        if not self.k9_hud_res:
+            rl.begin_scissor_mode(int(K9L_SCENE_X0 * sx), 0, int((K9L_SCENE_X1 - K9L_SCENE_X0) * sx), int(self.height))
+            try:
+                self._k9l_draw_road(state)
+            finally:
+                rl.end_scissor_mode()
+            self._k9l_draw_top(state, signal_lights)
+        else:  # K9HudNavdy 2: scene scaled about its left edge, aspect kept, so the wider block fits (11/18 11:49)
+            sy = self.height / DESIGN_HEIGHT
+            k, dy = K9R_SCENE_S, K9R_SCENE_DY
+            rl.rl_push_matrix()
+            rl.rl_translatef(K9L_SCENE_X0, dy, 0.0)
+            rl.rl_scalef(k, k, 1.0)
+            rl.rl_translatef(-K9L_SCENE_X0, 0.0, 0.0)
+            try:
+                rl.begin_scissor_mode(int(K9L_SCENE_X0 * sx), int(dy * sy), int((K9L_SCENE_X1 - K9L_SCENE_X0) * k * sx),
+                                      int(round(DESIGN_HEIGHT * k * sy)))
+                try:
+                    self._k9l_draw_road(state)
+                finally:
+                    rl.end_scissor_mode()
+                self._k9l_draw_top(state, signal_lights)
+            finally:
+                rl.rl_pop_matrix()
+        with self._k9_shift(K9R_SWAP_DX if self.k9_hud_res else K9L_SWAP_LEFT_DX):   # 22:41 1칸 <-> 3칸
             self._k9l_draw_left(state)
         with self._k9_shift(K9L_SWAP_RIGHT_DX):
             self._k9l_draw_right(state)

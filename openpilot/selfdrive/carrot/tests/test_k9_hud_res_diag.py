@@ -52,7 +52,7 @@ def all_text(texts):
 
 
 def assert_clean(texts, bars, width=fake_width):
-  x0, x1 = cr.K9L_EDGE, cr.K9L_EDGE + cr.K9L_CAR_W
+  x0, x1 = cr.K9L_EDGE, cr.K9L_EDGE + cr.K9R_W   # 11/18: block 320 -> 480 (대감님 11:49 "오른쪽 정보칸 잘린다")
   boxes = []
   for text, x, base, size, _c in texts:
     w = width(text, size)
@@ -251,7 +251,7 @@ def test_render_0_1_ignore_diag_and_2_only_changes_right_block():
           assert np.array_equal(f[(car, gear, 1, "plain")], f[(car, gear, 2, kind)]), (car, gear, kind)
   one, two, p1 = f[("KIA_K9", "D", 1, "diag")], f[("KIA_K9", "D", 2, "diag")], f[("KIA_K9", "D", 2, "p1")]
   scale = one.shape[1] / cr.DESIGN_WIDTH
-  x_block = (cr.DESIGN_WIDTH - cr.K9L_EDGE - cr.K9L_CAR_W - 2) * scale
+  x_block = (cr.K9L_SCENE_X0 - 2) * scale   # 11/18: 2 also shrinks the scene (aspect kept) for the wider block; left list same
   for img in (two, p1):
     ys, xs = np.nonzero(np.any(one != img, axis=2))
     assert len(xs) > 1000 and xs.min() >= x_block
