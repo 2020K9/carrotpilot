@@ -36,7 +36,12 @@ export function renderLibrary(library, force = false) {
   if (!root.querySelector("button")) {
     const summary = text("div", "");
     summary.className = "model-library__summary";
-    summary.append(text("strong", ""), text("p", ""));
+    const badge = text("div", "HB");
+    badge.className = "egpu-model-card__icon";
+    badge.setAttribute("aria-hidden", "true");
+    const details = text("div", "");
+    details.append(text("strong", ""), text("p", ""));
+    summary.append(badge, details);
     const button = text("button", "");
     button.id = "btnChangeModel";
     button.type = "button";

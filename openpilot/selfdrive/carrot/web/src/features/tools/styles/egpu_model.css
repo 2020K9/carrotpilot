@@ -168,7 +168,8 @@
   background: var(--md-surface-container);
 }
 .model-library[hidden] { display: none; }
-.model-library__summary { min-width: 0; overflow-wrap: anywhere; }
+.model-library__summary { display: flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.model-library__summary > .egpu-model-card__icon { flex-shrink: 0; }
 .model-library__summary strong { font-size: 15px; }
 .model-library__summary p { margin: 4px 0 0; font-size: 12px; color: var(--md-on-surface-var); }
 .model-library[data-state="error"] .model-library__summary p { color: #ff7474; }

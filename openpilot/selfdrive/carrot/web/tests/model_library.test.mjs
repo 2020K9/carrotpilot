@@ -40,6 +40,10 @@ test('model choice distinguishes current/pending/NOO and preserves in-flight cho
   assert.equal(root.querySelector('select'), undefined);
   assert.equal(root.querySelector('button').textContent, 'Change model');
   assert.equal(root.children.length, 2);
+  const [badge, details] = root.children[0].children;
+  assert.equal(badge.className, 'egpu-model-card__icon');
+  assert.equal(badge.textContent, 'HB');
+  assert.equal(details.querySelector('strong').textContent, 'Flip Flop');
   root.querySelector('button').events.click();
   assert.equal(elements.get('modelLibraryDialog').open, true);
   elements.get('btnCloseModelLibrary').events.click();
