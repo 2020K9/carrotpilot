@@ -91,6 +91,26 @@ class EngagedConfirmationButton(BigButton):
     self.set_click_callback(lambda: _engaged_confirmation_click(callback, action_text, icon, exit_on_confirm=exit_on_confirm, red=red))
 
 
+class JetsonRebootBigButton(EngagedConfirmationButton):
+  """Settings > Device: reboot the Jetson (offroad only); the result shows as the sub-label for a few seconds."""
+  def __init__(self):
+    from openpilot.selfdrive.ui.layouts.settings.jetson_reboot import JetsonReboot
+    self.jetson_reboot = JetsonReboot()
+    super().__init__("jetson reboot", "reboot jetson", gui_app.texture("icons_mici/settings/device/reboot.png", 64, 70),
+                     self._request, exit_on_confirm=False)
+    self.set_enabled(lambda: ui_state.is_offroad())
+
+  def _request(self):
+    if ui_state.is_offroad():
+      self.jetson_reboot.request(ui_state.params)
+
+  def _update_state(self):
+    super()._update_state()
+    text = self.jetson_reboot.text()
+    if text != self.value:
+      self.set_value(text)
+
+
 class DeviceInfoLayoutMici(Widget):
   def __init__(self):
     super().__init__()
@@ -347,6 +367,7 @@ class DeviceLayoutMici(NavScroller):
       regulatory_btn,
       reset_calibration_btn,
       uninstall_openpilot_btn,
+      JetsonRebootBigButton(),
       reboot_btn,
       self._power_off_btn,
     ])

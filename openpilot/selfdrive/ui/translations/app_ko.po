@@ -1571,3 +1571,67 @@ msgstr "전방 안전 시스템 오류: 차량을 점검하세요"
 
 msgid "comma Connect is disabled"
 msgstr "comma Connect가 꺼져 있습니다"
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Jetson Reboot"
+msgstr "젯슨 재부팅"
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "REBOOT"
+msgstr "재부팅"
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Reboot the Jetson that runs the driving model. Only offroad; the Jetson also refuses unless the car is in P, stopped and driver assistance is off."
+msgstr "주행 모델을 돌리는 젯슨을 재부팅합니다. 오프로드에서만 되며, 젯슨도 P단·정차·주행 보조 꺼짐이 아니면 거부합니다."
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Go offroad to reboot the Jetson"
+msgstr "오프로드에서 젯슨 재부팅"
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Are you sure you want to reboot the Jetson?"
+msgstr "젯슨을 재부팅하시겠습니까?"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "sending..."
+msgstr "보내는 중..."
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "sent, Jetson rebooting"
+msgstr "보냄, 젯슨 재부팅 중"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "Jetson not connected"
+msgstr "젯슨 미연결"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "rejected: {}"
+msgstr "거부: {}"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "onroad"
+msgstr "주행 중"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "not in P"
+msgstr "P단 아님"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "vehicle moving"
+msgstr "차량 움직임"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "driver assistance active"
+msgstr "주행 보조 켜짐"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "no vehicle signal"
+msgstr "차량 신호 없음·오래됨"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "Jetson needs the new bundle (next boot)"
+msgstr "젯슨 새 판 필요(다음 부팅 후)"
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "reboot command failed"
+msgstr "재부팅 명령 실패"

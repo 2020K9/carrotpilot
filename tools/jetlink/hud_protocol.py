@@ -172,6 +172,8 @@ class SnapshotBuilder:
     from openpilot.cereal import messaging
     from openpilot.common.params import Params
     self.sm = messaging.SubMaster(list(SERVICES))
+    # Ignition for the Jetson reboot check (host_reboot.check B); not drawn, not forwarded as an event.
+    self.panda_sm = messaging.SubMaster(['pandaStates'])
     self.params = Params()
     self.cached = {}
     self.settings = {}
@@ -260,6 +262,7 @@ class SnapshotBuilder:
               'external_compute_label': device_badge[0] if device_badge and device_badge[1] == 'active' else '',
               'received': self.sm.recv_time, 'mono': self.sm.logMonoTime,
               'valid': self.sm.valid, 'alive': self.sm.alive, 'cameras': self.camera_previews()}
+    record['vehicle_state'] = self.vehicle_state(now)
     from hud_signal import signal_packet
     record['signal_display'] = signal_packet(now)
     record['jetlink_roundtrip_ms'] = jetlink_roundtrip_ms()   # K9HudNavdy 2, comma clock; None = comma's own model
@@ -272,6 +275,18 @@ class SnapshotBuilder:
     data = encode_snapshot(record)
     self.report = snapshot_report(record, data)
     return data
+
+
+  def vehicle_state(self, now):
+    if getattr(self, 'panda_sm', None) is None:
+      return None
+    self.panda_sm.update(0)
+    received = self.panda_sm.recv_time['pandaStates']
+    if not received or not self.panda_sm.alive['pandaStates']:
+      return None
+    states = self.panda_sm['pandaStates']
+    ignition = any(ps.ignitionLine or ps.ignitionCan for ps in states) if len(states) else None
+    return {'ignition': ignition, 'age': round(now - received, 3)}
 
 
 def _pointer(field):

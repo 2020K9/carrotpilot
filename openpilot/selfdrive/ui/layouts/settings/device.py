@@ -7,6 +7,7 @@ from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.onroad.driver_camera_dialog import DriverCameraDialog
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.selfdrive.ui.layouts.settings.jetson_reboot import JetsonReboot
 from openpilot.selfdrive.ui.layouts.onboarding import TrainingGuide
 from openpilot.selfdrive.ui.widgets.pairing_dialog import PairingDialog
 from openpilot.system.ui.lib.application import FontWeight, gui_app
@@ -24,6 +25,8 @@ DESCRIPTIONS = {
   'driver_camera': tr_noop("Preview the driver facing camera to ensure that driver monitoring has good visibility. (vehicle must be off)"),
   'reset_calibration': tr_noop("openpilot requires the device to be mounted within 4° left or right and within 5° up or 9° down."),
   'review_guide': tr_noop("Review the rules, features, and limitations of openpilot"),
+  'jetson_reboot': tr_noop("Reboot the Jetson that runs the driving model. Only offroad; " +
+                           "the Jetson also refuses unless the car is in P, stopped and driver assistance is off."),
 }
 
 
@@ -35,6 +38,7 @@ class DeviceLayout(Widget):
     self._select_language_dialog: MultiOptionDialog | None = None
     self._fcc_dialog: HtmlModal | None = None
     self._training_guide: TrainingGuide | None = None
+    self._jetson_reboot = JetsonReboot()
 
     items = self._initialize_items()
     self._scroller = Scroller(items, line_separator=True, spacing=0)
@@ -53,6 +57,9 @@ class DeviceLayout(Widget):
     self._power_off_btn = dual_button_item(lambda: tr("Reboot"), lambda: tr("Power Off"),
                                            left_callback=self._reboot_prompt, right_callback=self._power_off_prompt)
 
+    self._jetson_reboot_btn = button_item(self._jetson_reboot_title, lambda: tr("REBOOT"), lambda: tr(DESCRIPTIONS['jetson_reboot']),
+                                          callback=self._jetson_reboot_prompt, enabled=ui_state.is_offroad)
+
     items = [
       text_item(lambda: tr("Dongle ID"), self._params.get("DongleId") or (lambda: tr("N/A"))),
       text_item(lambda: tr("Serial"), self._params.get("HardwareSerial") or (lambda: tr("N/A"))),
@@ -64,6 +71,7 @@ class DeviceLayout(Widget):
                   self._on_review_training_guide, enabled=ui_state.is_offroad),
       button_item(lambda: tr("Regulatory"), lambda: tr("VIEW"), callback=self._on_regulatory, enabled=ui_state.is_offroad),
       button_item(lambda: tr("Change Language"), lambda: tr("CHANGE"), callback=self._show_language_dialog),
+      self._jetson_reboot_btn,
       self._power_off_btn,
     ]
     return items
@@ -185,6 +193,22 @@ class DeviceLayout(Widget):
         self._params.put_bool_nonblocking("DoReboot", True)
 
     dialog = ConfirmDialog(tr("Are you sure you want to reboot?"), tr("Reboot"), callback=perform_reboot)
+    gui_app.push_widget(dialog)
+
+  def _jetson_reboot_title(self):
+    result = self._jetson_reboot.text()
+    return tr("Jetson Reboot") + (f" - {result}" if result else "")
+
+  def _jetson_reboot_prompt(self):
+    if not ui_state.is_offroad():
+      gui_app.push_widget(alert_dialog(tr("Go offroad to reboot the Jetson")))
+      return
+
+    def perform_jetson_reboot(result: DialogResult):
+      if ui_state.is_offroad() and result == DialogResult.CONFIRM:
+        self._jetson_reboot.request(self._params)
+
+    dialog = ConfirmDialog(tr("Are you sure you want to reboot the Jetson?"), tr("Reboot"), callback=perform_jetson_reboot)
     gui_app.push_widget(dialog)
 
   def _power_off_prompt(self):

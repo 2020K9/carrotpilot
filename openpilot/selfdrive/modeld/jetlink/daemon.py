@@ -277,6 +277,8 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
   performance_log = PerformanceLog(cloudlog.event, peer, getattr(client.spec, 'sha256', None))
   from tools.jetlink.model_library import Client as ModelLibrary  # noqa: TID251 -- shared standalone host protocol
   library = ModelLibrary(peer)
+  from tools.jetlink.host_reboot import Client as HostReboot  # noqa: TID251 -- shared standalone host protocol
+  host_reboot = HostReboot(peer)
   last_status = 0.
   last_ping = time.monotonic()
   telemetry_updated = 0.
@@ -301,6 +303,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
       connection, _ = listener.accept()
     except TimeoutError:
       library.idle(client, params)
+      host_reboot.idle(client, params)
       if time.monotonic() - last_ping > (.2 if blinker is not None else 2):
         client.last_state = client.state()
         check_loaded(client, client.last_state)

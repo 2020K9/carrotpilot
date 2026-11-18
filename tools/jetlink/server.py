@@ -28,6 +28,7 @@ from host_health import health_worker
 from host_lpm import SessionLease
 from blink_protocol import Host as BlinkerHost, CAPABILITY as BLINKER_CAPABILITY, BEGIN as BLINKER_BEGIN, ACK as BLINKER_ACK, DATA as BLINKER_DATA
 from wifi_protocol import CAPABILITY as WIFI_CAPABILITY, MESSAGE as WIFI_MESSAGE, receive as receive_wifi
+from host_reboot import CAPABILITY as REBOOT_CAPABILITY, REQUEST as REBOOT_REQUEST, RESPONSE as REBOOT_RESPONSE, host_request as reboot_request
 from model_library import CAPABILITY as LIBRARY_CAPABILITY, REQUEST as LIBRARY_REQUEST, RESPONSE as LIBRARY_RESPONSE, host_request as library_request
 from jetlink import protocol as P
 from jetlink import request_chunks, deferred_map, packed_codec, output_projection
@@ -102,7 +103,8 @@ class CarrotSession(Session):
       obj = {**obj, HUD_CAPABILITY: legacy_display, NAVI_CAPABILITY: legacy_display,
              PUMP_CAPABILITY: legacy_display, WIFI_CAPABILITY: host == 'jetson', 'carrot_host': host,
              HUD_WIFI_CAPABILITY: self.hud_wifi_supported,
-             HUD_USB_CAPABILITY: host == 'jetson' and legacy_display, LIBRARY_CAPABILITY: host == 'jetson'}
+             HUD_USB_CAPABILITY: host == 'jetson' and legacy_display, LIBRARY_CAPABILITY: host == 'jetson',
+             REBOOT_CAPABILITY: host == 'jetson'}
       if host == 'jetson' and self.blinker.supported():
         obj[BLINKER_CAPABILITY] = True
       if self.deferred_negotiated:
@@ -114,6 +116,17 @@ class CarrotSession(Session):
     return super()._send_json(msg_type, seq, obj, flags)
 
   def handle(self, msg):
+    if msg.msg_type == REBOOT_REQUEST:
+      if msg.seq <= self.last_seq:
+        return
+      self.last_seq = msg.seq
+      # Checked against the newest comma snapshot at receipt (host_reboot.check); host only.
+      if Path('/etc/nv_tegra_release').is_file():
+        result = reboot_request(msg.payload, HUD_PACKET)
+      else:
+        result = {'ok': False, 'reason': 'not a jetson'}
+      self._send_json(REBOOT_RESPONSE, msg.seq, result)
+      return
     if msg.msg_type == LIBRARY_REQUEST:
       if msg.seq <= self.last_seq:
         return

@@ -1516,3 +1516,67 @@ msgstr ""
 #: openpilot/selfdrive/selfdrived/events.py
 msgid "Park safely before rebooting your device"
 msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Jetson Reboot"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "REBOOT"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Reboot the Jetson that runs the driving model. Only offroad; the Jetson also refuses unless the car is in P, stopped and driver assistance is off."
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Go offroad to reboot the Jetson"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/device.py
+msgid "Are you sure you want to reboot the Jetson?"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "sending..."
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "sent, Jetson rebooting"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "Jetson not connected"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "rejected: {}"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "onroad"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "not in P"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "vehicle moving"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "driver assistance active"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "no vehicle signal"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "Jetson needs the new bundle (next boot)"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
+msgid "reboot command failed"
+msgstr ""
