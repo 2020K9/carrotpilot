@@ -42,7 +42,7 @@ def test_projection_ego_low_horizon_high_and_behind_camera_clipped():
   ego = k3.project(-2.45, 0.0)
   far = k3.project(110.0, 0.0)
   assert 400 < ego[1] < 480 and 0 < far[1] < 120 and abs(ego[0] - k3.CX) < 1e-6
-  assert k3.project(-k3.CAM_BACK_M - 1.0, 0.0) is None
+  assert k3.project(-k3.CAM_BACK_M - 30.0, 0.0) is None and k3.project(-k3.CAM_BACK_M, 0.0, k3.CAM_H_M) is None
   left, right = k3.project(10.0, -1.8), k3.project(10.0, 1.8)
   assert left[0] < k3.CX < right[0]
 
@@ -153,7 +153,7 @@ def test_render_3_only_k9_d_and_0_1_2_unchanged():
     out = {}
     for car in ("KIA_K9", "KIA_EV6"):
       for gear in ("D", "P", "R"):
-        st = road_state(rg.synthetic_state(gear), left=True)
+        st = road_state(rg.synthetic_state(gear))   # no blinker: its phase follows the real clock
         st = replace(st, car_fingerprint=car, gear_text=gear)
         for menu in (0, 1, 2, 3):
           r.set_k9_hud_style(min(menu, 1))
@@ -170,7 +170,7 @@ def test_render_3_only_k9_d_and_0_1_2_unchanged():
     for menu in (0, 1, 2):
       r.set_k9_hud_style(min(menu, 1))
       r.set_k9_hud_res(menu == 2)
-      out[("again", menu)] = png(replace(road_state(rg.synthetic_state("D"), left=True), gear_text="D"))
+      out[("again", menu)] = png(replace(road_state(rg.synthetic_state("D")), gear_text="D"))
     return out
   f = _frames(body)
   for car in ("KIA_K9", "KIA_EV6"):
