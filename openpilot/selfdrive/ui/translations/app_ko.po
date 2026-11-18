@@ -1625,8 +1625,8 @@ msgid "driver assistance active"
 msgstr "주행 보조 켜짐"
 
 #: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
-msgid "no vehicle signal"
-msgstr "차량 신호 없음·오래됨"
+msgid "Vehicle stop state could not be confirmed, so the Jetson was not rebooted"
+msgstr "차량 정차 상태를 확인할 수 없어 재부팅하지 않았습니다"
 
 #: openpilot/selfdrive/ui/layouts/settings/jetson_reboot.py
 msgid "Jetson needs the new bundle (next boot)"

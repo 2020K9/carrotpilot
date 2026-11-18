@@ -91,7 +91,7 @@ def test_result_texts(files):
   assert state.text(t + 5. + JR.SHOW_SECONDS + 1) == ""
   for result, text in ((('sent', ''), "sent, Jetson rebooting"),
                        (('unsupported', 'old jetson bundle'), "Jetson needs the new bundle (next boot)"),
-                       (('rejected', 'no vehicle signal'), "rejected: no vehicle signal")):
+                       (('rejected', 'no vehicle signal'), "Vehicle stop state could not be confirmed, so the Jetson was not rebooted")):
     state.request(ui_state.params)
     R._write(R.RESULT_FILE, {'id': state.request_id, 'state': result[0], 'reason': result[1]})
     assert state.text() == text
@@ -107,6 +107,7 @@ def test_korean_strings():
   translations, _ = load_translations(TRANSLATIONS_DIR.joinpath('app_ko.po'))
   assert translations["Jetson Reboot"] == "젯슨 재부팅"
   assert translations["Jetson not connected"] == "젯슨 미연결"
+  assert translations["Vehicle stop state could not be confirmed, so the Jetson was not rebooted"] == "차량 정차 상태를 확인할 수 없어 재부팅하지 않았습니다"
   for msgid in list(JR.REASONS.values()) + ["sending...", "sent, Jetson rebooting", "rejected: {}", "REBOOT",
                                             "Are you sure you want to reboot the Jetson?", "Go offroad to reboot the Jetson",
                                             "Reboot the Jetson that runs the driving model. Only offroad; " +
@@ -131,3 +132,16 @@ def test_mici_button_before_reboot_offroad_only(files, monkeypatch):
   assert json.loads(R.REQUEST_FILE.read_text())['id'] == button.jetson_reboot.request_id
   button._update_state()
   assert button.value == "sending..."
+
+
+def test_unconfirmed_stop_shows_exact_korean_sentence(files):
+  from openpilot.system.ui.lib.multilang import multilang
+  state = JR.JetsonReboot()
+  multilang.change_language("ko")
+  try:
+    state.request(ui_state.params)
+    R._write(R.RESULT_FILE, {'id': state.request_id, 'state': 'rejected', 'reason': 'no vehicle signal'})
+    assert state.text() == "차량 정차 상태를 확인할 수 없어 재부팅하지 않았습니다"
+  finally:
+    multilang.change_language("en")
+    R.REQUEST_FILE.unlink(missing_ok=True)

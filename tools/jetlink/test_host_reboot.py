@@ -74,13 +74,26 @@ def test_not_alive_signal_rejected():
   assert R.check(snapshot(alive={'selfdriveState': False}), .01) == 'no vehicle signal'
 
 
-def test_offroad_ignition_off_without_card():
-  assert R.check(snapshot(with_car=False, vehicle={'ignition': False, 'age': .1}), .01) is None
-  assert R.check(snapshot(with_car=False, vehicle={'ignition': True, 'age': .1}), .01) == 'no vehicle signal'
-  assert R.check(snapshot(with_car=False, vehicle={'ignition': None, 'age': .1}), .01) == 'no vehicle signal'
-  assert R.check(snapshot(with_car=False, vehicle={'ignition': False, 'age': .5}), .01) == 'no vehicle signal'
-  assert R.check(snapshot(with_car=False), .01) == 'no vehicle signal'
+def test_ignition_off_without_gear_speed_rejected():
+  # 노비 11/19 07:50: the old 'card not running + fresh panda ignition off' allowance is gone.
+  for vehicle in ({'ignition': False, 'age': .01}, {'ignition': False, 'age': .1}, None):
+    assert R.check(snapshot(with_car=False, vehicle=vehicle), .01) == 'no vehicle signal'
   assert R.check(snapshot(with_car=False, vehicle={'ignition': False, 'age': .1}, onroad=b'1'), .01) == 'onroad'
+
+
+@pytest.mark.parametrize('name', ['carState', 'selfdriveState', 'carControl'])
+@pytest.mark.parametrize('how', ['missing', 'not_alive', 'old', 'no_event'])
+def test_each_condition_missing_or_old_rejected(name, how):
+  snap = snapshot(vehicle={'ignition': False, 'age': .01})   # a fresh ignition-off must not rescue anything
+  if how == 'missing':
+    del snap['received'][name], snap['alive'][name], snap['events'][name]
+  elif how == 'not_alive':
+    snap['alive'][name] = False
+  elif how == 'old':
+    snap['received'][name] = snap['sent'] - .5
+  else:
+    del snap['events'][name]
+  assert R.check(snap, .01) == 'no vehicle signal'
 
 
 def _packet(tmp_path, snap, age=0.):
@@ -204,22 +217,17 @@ def test_server_advertises_and_answers(tmp_path, monkeypatch):
   assert len(sent) == 1
 
 
-def test_snapshot_carries_panda_ignition():
-  import hud_protocol
-  builder = hud_protocol.SnapshotBuilder.__new__(hud_protocol.SnapshotBuilder)
-  assert builder.vehicle_state(5.) is None    # no panda subscriber: nothing claimed
-  states = [SimpleNamespace(ignitionLine=False, ignitionCan=False)]
-  class SM(dict):
-    def __init__(self, recv, alive, value):
-      super().__init__(pandaStates=value)
-      self.recv_time, self.alive = {'pandaStates': recv}, {'pandaStates': alive}
-    def update(self, timeout):
-      pass
-  builder.panda_sm = SM(4.9, True, states)
-  assert builder.vehicle_state(5.) == {'ignition': False, 'age': .1}
-  builder.panda_sm = SM(4.9, True, states + [SimpleNamespace(ignitionLine=False, ignitionCan=True)])
-  assert builder.vehicle_state(5.)['ignition'] is True
-  builder.panda_sm = SM(4.9, False, states)
-  assert builder.vehicle_state(5.) is None
-  builder.panda_sm = SM(0., True, states)
-  assert builder.vehicle_state(5.) is None
+def test_ignition_off_no_gear_speed_rejected_end_to_end(tmp_path, files):
+  # Jetson refuses, never runs the reboot command, comma records the reason the UI shows as the fixed sentence.
+  calls = []
+  snap = snapshot(with_car=False, vehicle={'ignition': False, 'age': .01})
+  packet = _packet(tmp_path, snap)
+  rid = R.submit(now=10.)
+
+  class Wire(FakeClient):
+    def _expect(self, kind, seq, timeout):
+      reply = R.host_request(json.dumps(self.sent[-1][2]).encode(), packet, lambda cmd, **kw: calls.append(cmd))
+      return SimpleNamespace(payload=json.dumps(reply).encode())
+  R.Client(PEER).idle(Wire(None), FakeParams(), now=10.1)
+  assert calls == []
+  assert R.status(rid, 10., now=10.2) == ('rejected', 'no vehicle signal')

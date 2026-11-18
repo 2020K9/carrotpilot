@@ -4,11 +4,10 @@ Comma UI -> REQUEST_FILE -> jetlinkd (existing authenticated Jetlink session, of
 -> REQUEST message -> Jetson server.py -> host_request() -> 'sudo -n systemctl --no-block reboot'.
 
 The Jetson accepts only when, at receipt, its newest comma HUD snapshot (Jetson clock) is < MAX_AGE old and in it:
-  IsOnroad is 0, and
-  A) carState, selfdriveState and carControl are fresh (< MAX_AGE, comma clock) with gear P, vEgo 0 and
-     driver assistance not enabled/active, or
-  B) card is not running (offroad) and the panda reports ignition off, fresh (< MAX_AGE).
-Missing or old signals reject. A Jetson without this file never advertises CAPABILITY, so comma reports 'old bundle'.
+  IsOnroad is 0, and carState, selfdriveState and carControl are all fresh (< MAX_AGE, comma clock) with
+  gear P, vEgo 0 and driver assistance not enabled/active.
+Any missing or old signal rejects (no vehicle signal); no ignition-off shortcut (노비 11/19 07:50).
+A Jetson without this file never advertises CAPABILITY, so comma reports 'old bundle'.
 """
 import base64
 import json
@@ -67,24 +66,15 @@ def check(snapshot, snapshot_age):
   if onroad != b'0':
     return 'onroad' if onroad == b'1' else 'no vehicle signal'
   try:
-    if _fresh(snapshot, 'carState'):
-      if not (_fresh(snapshot, 'selfdriveState') and _fresh(snapshot, 'carControl')):
-        return 'no vehicle signal'
-      cs, ss, cc = (_event(snapshot, n) for n in ('carState', 'selfdriveState', 'carControl'))
-      if ss['enabled'] or ss['active'] or cc['enabled'] or cc['latActive']:
-        return 'driver assistance active'
-      if str(cs['gearShifter']) != 'park':
-        return 'not in P'
-      if cs['vEgo'] != 0:
-        return 'moving'
-      return None
-    if _age(snapshot, 'carState') is not None:
-      return 'no vehicle signal'   # card running but its carState is old
-    vehicle = snapshot.get('vehicle_state')
-    if not isinstance(vehicle, dict) or not 0 <= float(vehicle.get('age')) < MAX_AGE:
+    if not all(_fresh(snapshot, n) for n in ('carState', 'selfdriveState', 'carControl')):
       return 'no vehicle signal'
-    if vehicle.get('ignition') is not False:
-      return 'no vehicle signal'   # ignition on without a fresh carState: gear/speed unknown
+    cs, ss, cc = (_event(snapshot, n) for n in ('carState', 'selfdriveState', 'carControl'))
+    if ss['enabled'] or ss['active'] or cc['enabled'] or cc['latActive']:
+      return 'driver assistance active'
+    if str(cs['gearShifter']) != 'park':
+      return 'not in P'
+    if cs['vEgo'] != 0:
+      return 'moving'
     return None
   except (KeyError, TypeError, ValueError, AttributeError):
     return 'no vehicle signal'

@@ -9,7 +9,8 @@ REASONS = {
   'not in P': tr_noop("not in P"),
   'moving': tr_noop("vehicle moving"),
   'driver assistance active': tr_noop("driver assistance active"),
-  'no vehicle signal': tr_noop("no vehicle signal"),
+  # Stop state (P, vEgo 0, assistance off) not confirmed by fresh signals: full sentence, no 'rejected:' prefix.
+  'no vehicle signal': tr_noop("Vehicle stop state could not be confirmed, so the Jetson was not rebooted"),
   'old jetson bundle': tr_noop("Jetson needs the new bundle (next boot)"),
   'reboot command failed': tr_noop("reboot command failed"),
 }
@@ -59,4 +60,6 @@ class JetsonReboot:
       return tr("Jetson not connected")
     if state == 'unsupported':
       return tr(REASONS['old jetson bundle'])
+    if reason == 'no vehicle signal':
+      return tr(REASONS[reason])
     return tr("rejected: {}").format(tr(REASONS[reason]) if reason in REASONS else reason)
