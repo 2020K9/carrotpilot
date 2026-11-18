@@ -332,6 +332,15 @@ def main():
 
     def send_h264_chunk(self, *args, **kwargs):
       result = super().send_h264_chunk(*args, **kwargs)
+      self._record_send_status()
+      return result
+
+    def send_jpeg(self, *args, **kwargs):
+      result = super().send_jpeg(*args, **kwargs)
+      self._record_send_status()
+      return result
+
+    def _record_send_status(self):
       now = time.monotonic()
       MARKS.setdefault('frame', now)
       if now >= self.next_status:
@@ -349,7 +358,6 @@ def main():
                                   'vehicle_memory_percent': stats.memory_used_percent}))
         os.replace(tmp, path)
         self.next_status = now + 1
-      return result
   cluster.TuringUsbDisplay = Display
   # Jetson has no video encoder block. Keep inference CPU/GPU headroom and
   # use the existing software encoder at the normal 10 FPS cluster rate.
@@ -357,7 +365,7 @@ def main():
   # zero restores FFmpeg's automatic thread pools for comparisons.
   cluster.K9_MENU_FPS_POLICY = k9_menu_fps_policy
   sys.argv = [__file__, '--input', 'live', '--output', 'usb', '--fps', str(k9_start_fps()),
-              '--usb-codec', 'h264', '--usb-h264-backend', 'ffmpeg',
+              '--usb-codec', 'jpeg', '--usb-h264-backend', 'ffmpeg',
               '--usb-h264-ffmpeg-encoder', 'libx264', '--usb-h264-ffmpeg-threads', '1',
               '--cluster-hud-mode', '1', *sys.argv[1:]]
   if '--help' in sys.argv:
