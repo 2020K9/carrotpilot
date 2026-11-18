@@ -1109,7 +1109,7 @@ def run_demo(
     k9_hud_menu = k9_navdy_param_reader.read()
     renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # 11/13 17:31: K9HudNavdy 0 = cards / 1 = one scene (2 = scene too)
     renderer.set_k9_hud_navdy(1)  # both layouts keep the Navdy road look
-    renderer.set_k9_hud_res(k9_hud_menu == 2)  # 11/16: 2 = one scene + comma/Jetson CPU GPU memory on the right
+    renderer.set_k9_hud_res(k9_hud_menu in (1, 2))  # 11/16 2 = scene + diagnostics right; 11/18 17:17 1 too
     renderer.set_k9_hud_3d(k9_hud_menu == 3)  # 11/18: 3 = smooth 3D board (cluster_k9_3d)
     renderer.set_k9_hud_menu(k9_hud_menu)  # 11/18 17:35: menu 1 band on the ego lane lines
     report_frames = 0
@@ -1326,7 +1326,7 @@ def run_demo(
                 k9_hud_menu = k9_navdy_param_reader.read()
                 renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # K9HudNavdy picks the layout, 1 s poll, no restart
                 renderer.set_k9_hud_navdy(1)  # Navdy look in both layouts
-                renderer.set_k9_hud_res(k9_hud_menu == 2)
+                renderer.set_k9_hud_res(k9_hud_menu in (1, 2))  # 11/18 17:17 "1번 오른쪽칸을 3번처럼"
                 renderer.set_k9_hud_3d(k9_hud_menu == 3)
                 renderer.set_k9_hud_menu(k9_hud_menu)
                 wanted_fps = K9_MENU_FPS_POLICY(k9_hud_menu) if K9_MENU_FPS_POLICY is not None else None

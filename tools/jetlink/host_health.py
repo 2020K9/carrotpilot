@@ -165,7 +165,7 @@ class HostHealth:
         value['updated'] = started
         self.snapshot = value
         temporary = STATUS.with_suffix('.tmp')
-        temporary.write_text(json.dumps({**value, 'hud_diag': self.diagnostics(started)}))
+        temporary.write_text(json.dumps({**value, 'hud_diag': self.diagnostics(time.monotonic())}))
         os.replace(temporary, STATUS)
       except Exception:
         pass  # Expiry exposes failure; diagnostics cannot terminate inference.

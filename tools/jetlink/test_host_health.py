@@ -75,3 +75,37 @@ def test_hello_telemetry_never_becomes_current_health(tmp_path, monkeypatch):
   assert status.diagnostics()['temp_c'] is None
   monkeypatch.setattr(status.time, 'monotonic', lambda: 15.)
   assert status.badge() == ('jetSON ERROR', 'error')
+
+
+def test_inference_noted_after_started_stays_in_written_diagnostics(tmp_path, monkeypatch):
+  # Sensor collection takes time after 'started'; an inference noted meanwhile
+  # is newer than 'started' and must not drop out (GPU cell flicker with '--').
+  import host_health
+  import host_performance
+  monkeypatch.setattr(host_health, 'STATUS', tmp_path / 'health.json')
+  monkeypatch.setattr(host_health.threading, 'Thread', lambda **kw: type('T', (), {'start': lambda self: None})())
+  worker = host_health.HostHealth()
+  clock = [100.0]
+  monkeypatch.setattr(host_health.time, 'monotonic', lambda: clock[0])
+  def thermal():
+    clock[0] += 0.4
+    worker.note_inference(12_500, 40_000)
+    clock[0] += 0.1
+    return {'severity': 'ok', 'reason': ''}
+  monkeypatch.setattr(host_health, 'thermal_health', thermal)
+  monkeypatch.setattr(host_performance, 'read_snapshot', dict)
+  monkeypatch.setattr(host_health, 'power_health', lambda value: None)
+  monkeypatch.setattr(host_health, 'storage_health', lambda value: None)
+  monkeypatch.setattr(host_health, 'network_addresses', list)
+  class Stop(Exception):
+    pass
+  def stop(_):
+    raise Stop
+  monkeypatch.setattr(host_health.time, 'sleep', stop)
+  try:
+    worker._run()
+  except Stop:
+    pass
+  diag = json.loads((tmp_path / 'health.json').read_text())['hud_diag']
+  assert diag['inference'] == {'gpu_ms': 12.5, 'total_ms': 40.0, 'age_s': 0.1}
+  assert worker.diagnostics(100.0) == {'startup': diag['startup']}  # older clock still rejects it
