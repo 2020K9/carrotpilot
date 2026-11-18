@@ -198,7 +198,8 @@ def test_no_flat_extrapolation():
     md.laneLines[i].x = (X * 0.3).tolist()
   lo, hi = kc._bounds(kc.ClampGate(DT_MDL), np.array([10.0, 50.0]), (np.array(md.laneLines[1].x), np.array(md.laneLines[1].y)),
                       None, None, None)
-  g = kc.ClampGate(DT_MDL); g.left_active = True
+  g = kc.ClampGate(DT_MDL)
+  g.left_active = True
   lo, hi = kc._bounds(g, np.array([10.0, 50.0]), (np.array(md.laneLines[1].x), np.array(md.laneLines[1].y)), None, None, None)
   assert np.isfinite(lo[0]) and lo[1] == -np.inf
 
@@ -276,7 +277,7 @@ def test_param_default_off():
   with open(os.path.join(BASEDIR, "common", "params_keys.h"), encoding="utf-8") as f:
     s = f.read()
   for k, v in (("K9Clamp", "0"), ("K9ClampLaneCm", "135"), ("K9ClampEdgeCm", "115"), ("K9ClampGain", "10"), ("K9ClampAlert", "1")):
-    assert '{"%s", {PERSISTENT, INT, "%s"}}' % (k, v) in s
+    assert f'{{"{k}", {{PERSISTENT, INT, "{v}"}}}}' in s
 
 
 def test_event_alert():
