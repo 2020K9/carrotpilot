@@ -112,7 +112,7 @@ from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_k9_3d import K9Scene3D, draw_car as k9v_draw_car  # noqa: F401  (K9HudNavdy 3)
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
-from cluster_lat_values import (delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
+from cluster_lat_values import (lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
                                 learned_steer_ratio_text, torque_learned_text)
 from cluster_vehicle_models import ego_model_name
 from cluster_utils import blink_visible, clamp
@@ -5707,14 +5707,15 @@ class ClusterUiRenderer:
     def _draw_lat_values(self, state: ClusterUiState) -> None:
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
-            delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
             torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
                                 getattr(state, "torque_filtered_friction", None)),
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
                                 getattr(state, "torque_learn_friction", None)),
             learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
-        for text, y in zip(texts, LAT_VALUES_SLOT_Y):
+        # 2026-11-18 18:16 (대감님 "지연학습줄지워"): the 지연학습 line is gone; the other four keep their text and close up
+        # towards the TPMS car (slots 2..5), so lines 3..5 keep their pixels and 조향비 moves down one slot.
+        for text, y in zip(texts, LAT_VALUES_SLOT_Y[1:]):
             if text is None:
                 continue
             self._draw_text_with_stroke(text, LAT_VALUES_RIGHT_X, y, LAT_VALUES_FONT_SIZE, LAT_VALUES_COLOR, (0, 0, 0), 2,
@@ -7550,10 +7551,9 @@ class ClusterUiRenderer:
 
     def k9_lat_lines(self, state: ClusterUiState) -> list[tuple[str, list[str], bool]]:
         """steering-learn texts as one item per line (00:20): [(name, values, second item of its text)], text unchanged;
-        a nameless value ('지연학습 100%  0.20초') stays on its item's line"""
+        a nameless value stays on its item's line; 11/18 18:16 (대감님 "지연학습줄지워") the 지연학습 line is gone"""
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
-            delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
             torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
                                 getattr(state, "torque_filtered_friction", None)),
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
