@@ -422,12 +422,17 @@ K9R_SWAP_DX = K9R_X0 - K9L_EDGE                     # block drawn at 32..512, mo
 K9R_SCENE_GAP = 16.0
 K9R_SCENE_S = (K9R_X0 - K9R_SCENE_GAP - K9L_SCENE_X0) / (K9L_SCENE_X1 - K9L_SCENE_X0)   # 1000 / 1160 = 0.862
 K9R_SCENE_DY = DESIGN_HEIGHT * (1.0 - K9R_SCENE_S) * 0.5
-K9R_HEAD, K9R_VALUE, K9R_SMALL = 15.0, 16.0, 12.0
+# 11/18 13:17 대감님 "오른쪽칸 줄을 잘 나눠서 잘 보이게 해봐 안보여 글씨가 작아": every size x1.4 or more
+# (title 15 -> 21, CPU/GPU/MEM 16 -> 23, rows 13 -> 19); page 0 in titled groups with a hairline between them,
+# values right-aligned; per-core numbers -> one 최대 value over the per-core bars, startup -> 시작 완료 once all done
+K9R_HEAD, K9R_VALUE, K9R_SMALL = 21.0, 23.0, 18.0
+K9R_ROW = K9R_SMALL + 1.0
+K9R_COL_GAP = 16.0
 K9R_WARN = (255, 205, 70)
 K9R_STALE_S = 2.0                      # last NEW valid carState older than this = 수신 끊김
 K9R_GLYPHS = "".join(sorted(set(
     "콤마젯슨수신끊김열코어온도전력여유팬모델처리요청결과계산내부전체차량정보받은뒤시작단계부팅후연결대기준비출력화면측정" +
-    "안함꺼짐실측없음개°→·…" + "실행왕복생성전송실패첫반환")))
+    "안함꺼짐실측없음개°→·…" + "실행왕복생성전송실패첫반환" + "최대완료시간클럭" + "앞차거리상대속도없음초")))
 K9L_LAT_HEAD = 196.0
 K9L_LAT_BASE0, K9L_LAT_PITCH = 228.0, 30.0   # 35 px glyphs (27 x ink 1.31): 25 px box, 5 px between lines, last 468
 # 11/12 22:37 대감님 "두 판 모두 살려": K9 D layout chosen by the Param ClusterHudK9Style
@@ -7643,7 +7648,12 @@ class ClusterUiRenderer:
     def set_k9_hud_3d(self, on) -> None:
         self.k9_hud_3d = bool(on)
 
-    K9V_CAM = (1600.0, 300.0, 288.0, 162.0)   # small front camera, bottom right (x, y, w, h)
+    # 11/18 13:18 대감님 "아래 스타일 양옆에다가도 정보 넣어야지": 3 = left info block | 3D scene | right diagnostics,
+    # side blocks as wide as the 2 diagnostics block (480), the scene kept at its scale and cut to the middle
+    K9V_SIDE_W = K9R_W
+    K9V_SCENE_X0 = K9L_EDGE + K9R_W + K9R_SCENE_GAP          # 528
+    K9V_SCENE_X1 = K9R_X0 - K9R_SCENE_GAP                     # 1392 (scene centre 960 = the 3D camera centre)
+    K9V_CAM = (K9L_EDGE + (K9R_W - 288.0) * 0.5, 300.0, 288.0, 162.0)   # small front camera, bottom of the left block
 
     def _k9v_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         scene = getattr(self, "_k9v_scene", None)
@@ -7653,39 +7663,68 @@ class ClusterUiRenderer:
         sample = scene.update(state, self._k9_is_lead, self.k9_road_others)
         if sample is None:
             return
-        scene.draw_scene(sample, lambda f: self.k9_road_heading_deg(state, f), signal_lights)
+        rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), int(DESIGN_HEIGHT), rl.Color(6, 6, 8, 255))
+        sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
+        x0, x1 = self.K9V_SCENE_X0, self.K9V_SCENE_X1
+        rl.begin_scissor_mode(int(round(x0 * sx)), 0, int(round((x1 - x0) * sx)), int(round(DESIGN_HEIGHT * sy)))
+        try:
+            scene.draw_scene(sample, lambda f: self.k9_road_heading_deg(state, f), signal_lights)
+        finally:
+            rl.end_scissor_mode()
+        for x in (x0 - 8.0, x1 + 7.0):   # thin divider between the scene and each side block
+            rl.draw_rectangle_rec(rl.Rectangle(x, 24.0, 1.0, DESIGN_HEIGHT - 48.0), rl.Color(70, 74, 84, 160))
         self._k9v_draw_text(state, sample)
         self._k9v_draw_camera(state)
+        with self._k9_shift(K9R_SWAP_DX):
+            self._k9l_draw_res(state)
+
+    def k9v_left_layout(self, state: ClusterUiState, sample, width=None):
+        """left block rows under the speed: (text, x_left, base, size, color), labels left / values right-aligned"""
+        width = width or self._k9r_width
+        x0, x1 = K9L_EDGE, K9L_EDGE + self.K9V_SIDE_W
+        out = []
+        lead = next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None)
+        dist = rel = gap = None
+        if lead is not None:
+            dist = f"{lead.longitudinal_m:.0f} m"
+            if lead.relative_speed_mps is not None and math.isfinite(lead.relative_speed_mps):
+                rel = f"{lead.relative_speed_mps * 3.6:+.0f} km/h"
+            v = max(0.0, (state.speed_kph or 0.0) / 3.6)
+            if v > 1.0:
+                gap = f"{lead.longitudinal_m / v:.1f}초"
+        out.append(("앞차", x0, 178.0, K9R_HEAD, K9L_LABEL))
+        if lead is None:
+            text = "없음"
+            out.append((text, x1 - width(text, K9R_HEAD), 178.0, K9R_HEAD, K9L_MUTED))
+        for i, (label, value) in enumerate((("거리", dist), ("상대속도", rel), ("시간", gap))):
+            base = 212.0 + i * 30.0
+            value = value or "--"
+            out.append((label, x0, base, K9R_VALUE, K9L_MUTED))
+            out.append((value, x1 - width(value, K9R_VALUE), base, K9R_VALUE, K9L_MUTED if value == "--" else K9L_VALUE))
+        return out
 
     def _k9v_draw_text(self, state: ClusterUiState, sample) -> None:
         speed = state.display_speed_kph if state.display_speed_kph is not None else sample.speed
         value = int(round(display_speed(clamp(speed, 0.0, MAX_SPEED_KPH), self.is_metric)))
-        x = 40.0
-        self._k9l_text(str(value), x, 0.0, 96.0, (240, 242, 246), numeric=True, base=92.0)
-        self._k9l_text("km/h" if self.is_metric else "mph", x + 2.0, 0.0, 18.0, (150, 154, 164), numeric=True, base=118.0)
+        x, x1 = K9L_EDGE + 8.0, K9L_EDGE + self.K9V_SIDE_W
+        self._k9l_text(str(value), x, 0.0, 112.0, (240, 242, 246), numeric=True, base=104.0)
+        self._k9l_text("km/h" if self.is_metric else "mph", x + 2.0, 0.0, 24.0, (150, 154, 164), numeric=True, base=136.0)
         gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
         gear = "D" if gear.isdigit() else gear
-        gx = x + max(130.0, self._k9l_width(str(value), 96.0, True) + 28.0)
+        gx = x + max(170.0, self._k9l_width(str(value), 112.0, True) + 36.0)
         for i, g in enumerate("PRND"):
             on = g == gear
-            self._k9l_text(g, gx + i * 26.0, 0.0, 22.0, (245, 247, 250) if on else (84, 88, 98), numeric=True, base=40.0)
-        y = 150.0
+            self._k9l_text(g, gx + i * 34.0, 0.0, 30.0, (245, 247, 250) if on else (84, 88, 98), numeric=True, base=52.0)
         if self._cruise_set_visible(state):
             text = self._cruise_set_speed_text(state)
-            w = self._k9l_width(text, 22.0, True) + 28.0
-            rl.draw_rectangle_rounded(rl.Rectangle(x, y - 17.0, w, 32.0), 0.9, 8, rl.Color(52, 56, 64, 255))
-            self._k9l_text(text, x + w * 0.5, 0.0, 22.0, (240, 242, 246), anchor="center", numeric=True, cap_cy=y - 1.0)
-        lead = next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None)
-        if lead is not None:
-            parts = [f"앞차 {lead.longitudinal_m:.0f} m"]
-            if lead.relative_speed_mps is not None and math.isfinite(lead.relative_speed_mps):
-                parts.append(f"{lead.relative_speed_mps * 3.6:+.0f} km/h")
-            v = max(0.0, (state.speed_kph or 0.0) / 3.6)
-            if v > 1.0:
-                parts.append(f"{lead.longitudinal_m / v:.1f}초")
-            self._k9l_text("   ".join(parts), x, 0.0, 20.0, (196, 200, 210), base=200.0)
+            w = self._k9l_width(text, 30.0, True) + 32.0
+            cy = 95.0
+            rl.draw_rectangle_rounded(rl.Rectangle(gx, cy - 21.0, w, 42.0), 0.9, 8, rl.Color(52, 56, 64, 255))
+            self._k9l_text(text, gx + w * 0.5, 0.0, 30.0, (240, 242, 246), anchor="center", numeric=True, cap_cy=cy - 1.0)
         clock = getattr(state, "center_clock_text", None) or time.strftime("%H:%M")
-        self._k9l_text(clock, DESIGN_WIDTH - 40.0, 0.0, 22.0, (196, 200, 210), anchor="right", numeric=True, base=40.0)
+        self._k9l_text(clock, x1, 0.0, 30.0, (196, 200, 210), anchor="right", numeric=True, base=52.0)
+        self._k9l_hair(K9L_EDGE, 150.0, self.K9V_SIDE_W, 110)
+        self._k9r_draw_texts(self.k9v_left_layout(state, sample))
 
     def _k9v_draw_camera(self, state: ClusterUiState) -> None:
         x, y, w, h = self.K9V_CAM
@@ -8458,6 +8497,7 @@ class ClusterUiRenderer:
         x0, x1 = K9L_EDGE, K9L_EDGE + K9R_W
         texts, bars = [], []
         y = [K9R_TOP]
+        prev = [0.0]   # size of the line above (line() only)
 
         def room(size):
             return y[0] + size + 6.0 <= K9R_BOTTOM
@@ -8471,7 +8511,9 @@ class ClusterUiRenderer:
         def line(size, left, right=None, lcolor=K9L_LABEL, rcolor=K9L_VALUE):
             if not room(size):
                 return False
-            y[0] += size + (6.0 if size >= K9R_HEAD else 5.0)   # small rows 18 px: room for 전송 FPS / 왕복 rows
+            # small rows 5 px apart; 6 px under a title (its taller box) and for titles
+            y[0] += size + (6.0 if size >= K9R_HEAD or prev[0] >= K9R_HEAD else 5.0)
+            prev[0] = size
             base = y[0]
             lw = put(left, x0, base, size, lcolor) if left else 0.0
             if right:
@@ -8497,30 +8539,10 @@ class ClusterUiRenderer:
                 x += w + gap
             return True
 
-        def hair():
-            if y[0] + 8.0 <= K9R_BOTTOM:
-                y[0] += 8.0
-                bars.append((x0, y[0] - 4.0, x1 - x0, None))
-
-        def core_cells(values, n_label=True):
-            """one row: real core count; numbers only when they fit their cell, a 3 px bar under each"""
-            n = len(values)
-            if n == 0:
-                return items([("코어 --", K9L_MUTED)], K9R_SMALL)
-            if not room(K9R_SMALL + 4.0):
-                return False
-            y[0] += K9R_SMALL + 6.0
-            cell = (x1 - x0) / n
-            show = width("100", K9R_SMALL) <= cell - 3.0
-            for i, v in enumerate(values):
-                cx = x0 + i * cell
-                if show:
-                    text = "--" if v is None else f"{v:.0f}"
-                    w = width(text, K9R_SMALL)
-                    texts.append((text, cx + (cell - w) * 0.5, y[0], K9R_SMALL, K9L_MUTED if v is None else K9L_VALUE))
-                bars.append((cx + 1.0, y[0] + 3.0, max(1.0, cell - 2.0), None if v is None else v / 100.0))
-            y[0] += 4.0
-            return True
+        def hair(step=8.0):
+            if y[0] + step <= K9R_BOTTOM:
+                y[0] += step
+                bars.append((x0, y[0] - step * 0.5, x1 - x0, None))
 
         comma = getattr(state, "comma_diag", None)
         comma = comma if isinstance(comma, dict) else None
@@ -8542,52 +8564,77 @@ class ClusterUiRenderer:
             got = got[:limit] if limit else got
             return [(f"{n} {t:.1f}°", None) for n, t in got] or [("온도 --", K9L_MUTED)]
 
+        def grid(cells, size, gap=K9R_COL_GAP):
+            """one row of equal columns: label at the column left, value right-aligned at the column right"""
+            if not room(size):
+                return False
+            y[0] += size + 6.0
+            prev[0] = size
+            cw = (x1 - x0 - gap * (len(cells) - 1)) / len(cells)
+            for i, (label, value) in enumerate(cells):
+                cx0 = x0 + i * (cw + gap)
+                put(label, cx0, y[0], size, K9L_MUTED)
+                put(value, cx0 + cw, y[0], size, K9L_MUTED if value.startswith("--") else K9L_VALUE, "right")
+            return True
+
+        def core_strip(values):
+            """per-core load as thin bars only, right under the 코어 최대 row"""
+            if values:
+                cell = (x1 - x0) / len(values)
+                for i, v in enumerate(values):
+                    bars.append((x0 + i * cell + 1.0, y[0] + 4.0, max(1.0, cell - 2.0), None if v is None else v / 100.0))
+            y[0] += 4.5
+
+        def top(values):
+            got = [v for v in values if v is not None]
+            return max(got) if got else None
+
         if page == 0:
+            c, j = comma or {}, jet or {}
             # 콤마
             line(K9R_HEAD, "콤마", lost[0] if comma is None else
-                 ("열 " + comma["thermal"] if comma.get("thermal") else "열 --"),
+                 f"열 {c.get('thermal') or '--'} · 팬 {self.k9r_pct(c.get('fan_pct'))}",
                  rcolor=K9R_WARN if comma is None else K9L_MUTED)
-            c = comma or {}
-            items([(f"CPU {self.k9r_pct(c.get('cpu'))}", None), (f"GPU {self.k9r_pct(c.get('gpu'))}", None),
-                   (f"MEM {self.k9r_pct(c.get('mem_pct'))}", None)], K9R_VALUE, gap=18.0)
-            core_cells(c.get("cores") or [])
-            items([("온도", K9L_LABEL)] + (temps_comma(False) if comma else [("--", K9L_MUTED)]), K9R_SMALL + 1.0, gap=8.0)
-            items([(f"전력 {self.k9r_num(c.get('power_w'), '.1f', 'W')}", None),
-                   (f"여유 {self.k9r_pct(c.get('free_pct'))}", None),
-                   (f"팬 {self.k9r_pct(c.get('fan_pct'))}", None)], K9R_SMALL + 1.0, gap=14.0)
-            hair()
+            grid([("CPU", self.k9r_pct(c.get("cpu"))), ("GPU", self.k9r_pct(c.get("gpu"))),
+                  ("MEM", self.k9r_pct(c.get("mem_pct")))], K9R_VALUE)
+            grid([("코어 최대", self.k9r_pct(top(c.get("cores") or []))),
+                  ("온도", self.k9r_num(top([t for _, t, _v in c.get("temps") or ()]), ".1f", "°")),
+                  ("전력", self.k9r_num(c.get("power_w"), ".1f", "W"))], K9R_ROW)
+            core_strip(c.get("cores") or [])
+            hair(9.0)
             # 젯슨
-            j = jet or {}
-            line(K9R_HEAD, "젯슨", lost[0] if jet is None else f"GPU {self.k9r_num(j.get('gpu_mhz'), '.0f', ' MHz')}",
+            mem = None if j.get("mem_used_gb") is None else f"{j['mem_used_gb']:.1f}/{j['mem_total_gb']:.1f} GB"
+            line(K9R_HEAD, "젯슨", lost[0] if jet is None else
+                 " · ".join(([mem] if mem else []) + [f"GPU {self.k9r_num(j.get('gpu_mhz'), '.0f', ' MHz')}"]),
                  rcolor=K9R_WARN if jet is None else K9L_MUTED)
-            items([(f"CPU {self.k9r_pct(j.get('cpu'))}", None), (f"GPU {self.k9r_pct(j.get('gpu'))}", None),
-                   (f"MEM {self.k9r_pct(j.get('mem_pct'))}", None)], K9R_VALUE, gap=18.0)
-            core_cells([v for v, _, online in (j.get("cores") or []) if online])
-            clocks = [mhz for _, mhz, online in (j.get("cores") or []) if online and mhz is not None]
-            mem = ("--" if j.get("mem_used_gb") is None else f"{j['mem_used_gb']:.1f}/{j['mem_total_gb']:.1f} GB")
-            items([(f"MEM {mem}", None), (f"CPU {self.k9r_num(max(clocks) if clocks else None, '.0f', ' MHz')}", None)],
-                  K9R_SMALL + 1.0, gap=14.0)
-            items([("온도", K9L_LABEL)] + (temps_jet(3) if jet else [("--", K9L_MUTED)]), K9R_SMALL + 1.0, gap=8.0)
-            hair()
-            # 모델 처리
-            line(K9R_HEAD, "모델 처리", None)
-            line(K9R_SMALL + 1.0, "콤마 모델 실행 · 콤마", self.k9r_num(c.get("model_ms"), ".1f", " ms"), K9L_MUTED,
+            grid([("CPU", self.k9r_pct(j.get("cpu"))), ("GPU", self.k9r_pct(j.get("gpu"))),
+                  ("MEM", self.k9r_pct(j.get("mem_pct")))], K9R_VALUE)
+            jc = j.get("cores") or []
+            grid([("코어 최대", self.k9r_pct(top([v for v, _, online in jc if online]))),
+                  ("온도", self.k9r_num(top([t for _, t in j.get("temps") or ()]), ".1f", "°")),
+                  ("클럭", self.k9r_num(top([mhz for _, mhz, online in jc if online]), ".0f", "MHz"))], K9R_ROW)
+            core_strip([v for v, _, online in jc if online])
+            hair(9.0)
+            # 모델 시간
+            line(K9R_HEAD, "모델 시간", None)
+            line(K9R_ROW, "콤마 모델 실행 · 콤마", self.k9r_num(c.get("model_ms"), ".1f", " ms"), K9L_MUTED,
                  K9L_VALUE if c.get("model_ms") is not None else K9L_MUTED)
-            line(K9R_SMALL + 1.0, "젯슨 왕복 · 콤마", self.k9r_num(c.get("roundtrip_ms"), ".1f", " ms"), K9L_MUTED,
+            line(K9R_ROW, "젯슨 왕복 · 콤마", self.k9r_num(c.get("roundtrip_ms"), ".1f", " ms"), K9L_MUTED,
                  K9L_VALUE if c.get("roundtrip_ms") is not None else K9L_MUTED)
             gpu_ms, total_ms = j.get("infer_gpu_ms"), j.get("infer_total_ms")
-            line(K9R_SMALL + 1.0, "내부 계산 GPU/전체 · 젯슨",
+            line(K9R_ROW, "내부 계산 GPU/전체 · 젯슨",
                  "--" if gpu_ms is None and total_ms is None else
                  f"{self.k9r_num(gpu_ms, '.1f')}/{self.k9r_num(total_ms, '.1f')} ms", K9L_MUTED,
                  K9L_VALUE if total_ms is not None else K9L_MUTED)
-            hair()
-            # HUD
+            hair(9.0)
+            # 전송 · FPS
+            line(K9R_HEAD, "전송 · FPS", None)
             fps = getattr(state, "actual_fps", None)
             fps = fps if isinstance(fps, (int, float)) and math.isfinite(fps) and fps > 0.0 else None
-            line(K9R_SMALL + 1.0, "화면 생성 FPS", self.k9r_num(fps, ".1f"), K9L_MUTED, K9L_VALUE if fps else K9L_MUTED)
+            line(K9R_ROW, "화면 생성 FPS", self.k9r_num(fps, ".1f"), K9L_MUTED, K9L_VALUE if fps else K9L_MUTED)
             tx_fps, tx_failed = self.k9_tx_stats()
             tx_text = self.k9r_num(tx_fps, ".1f") + (f" · 실패 {tx_failed}" if tx_failed else "")
-            line(K9R_SMALL + 1.0, "전송 FPS", tx_text, K9L_MUTED,
+            line(K9R_ROW, "전송 FPS", tx_text, K9L_MUTED,
                  K9R_WARN if tx_failed or tx_fps == 0.0 else (K9L_VALUE if tx_fps else K9L_MUTED))
             age = self.k9_car_rx_age(state)
             if age is None:
@@ -8596,16 +8643,19 @@ class ClusterUiRenderer:
                 age_text, age_color = f"수신 끊김 {age:.0f} s", K9R_WARN
             else:
                 age_text, age_color = f"{age:.2f} s", K9L_VALUE
-            line(K9R_SMALL + 1.0, "차량 정보 받은 뒤", age_text, K9L_MUTED, age_color)
-            hair()
-            # 시작 단계
+            line(K9R_ROW, "차량 정보 받은 뒤", age_text, K9L_MUTED, age_color)
+            hair(9.0)
+            # 시작 단계: one line once every stage is in, else the four stages on one row
             marks = self.k9_startup() or {}
-            line(K9R_HEAD, "시작 단계", "부팅 후 s", rcolor=K9L_MUTED)
-            for key, name in (("connect", "연결 요청 수신"), ("model", "모델 준비"), ("car", "차량 정보 수신"),
-                              ("frame", "첫 USB 전송 반환")):
-                t, device = marks.get(key) or (None, "")
-                line(K9R_SMALL + 1.0, name, "--" if t is None else f"{t:.1f} · {device}", K9L_MUTED,
-                     K9L_MUTED if t is None else K9L_VALUE)
+            got = [(name, *(marks.get(key) or (None, ""))) for key, name in
+                   (("connect", "연결"), ("model", "모델"), ("car", "차량"), ("frame", "USB"))]
+            devices = sorted({d for _n, t, d in got if t is not None and d})
+            dev = f" · {devices[0]}" if len(devices) == 1 else ""
+            if all(t is not None for _n, t, _d in got):
+                line(K9R_HEAD, "시작 완료", f"{max(t for _n, t, _d in got):.1f} s{dev}", rcolor=K9L_VALUE)
+            else:
+                line(K9R_HEAD, "시작 단계", "부팅 후 s" + dev, rcolor=K9L_MUTED)
+                grid([(n, "--" if t is None else f"{t:.1f}") for n, t, _d in got], K9R_ROW, gap=12.0)
         else:
             c, j = comma or {}, jet or {}
             line(K9R_HEAD, "콤마 코어", lost[0] if comma is None else f"{len(c.get('cores') or [])}개",
@@ -8644,6 +8694,9 @@ class ClusterUiRenderer:
             rl.draw_rectangle_rec(rl.Rectangle(x, yy, w, 3.0), rl_color(K9L_DIM, 120))
             if fill is not None:
                 rl.draw_rectangle_rec(rl.Rectangle(x, yy, max(0.0, min(1.0, fill)) * w, 3.0), rl_color(K9L_ICE, 230))
+        self._k9r_draw_texts(texts)
+
+    def _k9r_draw_texts(self, texts) -> None:
         font = self._k9r_font()
         for text, x, base, size, color in texts:
             if font is None:

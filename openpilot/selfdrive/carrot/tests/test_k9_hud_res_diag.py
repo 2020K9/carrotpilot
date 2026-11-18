@@ -140,7 +140,7 @@ def test_missing_values_are_dashes_and_lost():
   texts, bars = renderer().k9_res_layout(state(comma_diag=None, actual_fps=None), fake_width)
   words = all_text(texts)
   assert words.count("수신 끊김") == 2   # 콤마 + 젯슨 headers
-  assert "--" in words and "CPU --" in words and "MEM --" in words and "화면 생성 FPS" in words
+  assert "--" in words and "CPU" in words and "MEM" in words and "화면 생성 FPS" in words   # 11/18 13:17: label | value right-aligned
   digits = [w for w in words if any(ch.isdigit() for ch in w)]
   assert digits == [], digits   # nothing numeric survives without data
   assert_clean(texts, bars)
@@ -152,7 +152,7 @@ def test_stale_car_packet_shows_lost():
   assert "수신 끊김 7 s" in words
   words = all_text(r.k9_res_layout(state(), fake_width)[0])
   assert "0.05 s" in words and "38.2 ms" in words and "11.0/12.4 ms" in words and "9.8" in words
-  assert "21.4 · 젯슨" in words and "63.0 · 젯슨" in words and words.count("--") >= 1   # car stage not measured
+  assert "21.4" in words and "63.0" in words and "부팅 후 s · 젯슨" in words and words.count("--") >= 1   # 11/18 13:17 one row   # car stage not measured
 
 
 def test_comma_renderer_never_invents_jetson_or_startup():

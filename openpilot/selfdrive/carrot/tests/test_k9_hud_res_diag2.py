@@ -63,7 +63,7 @@ def test_renamed_rows_and_no_old_names():
   assert got["젯슨 왕복 · 콤마"] == "21.7 ms"
   assert got["내부 계산 GPU/전체 · 젯슨"] == "11.0/12.4 ms"
   assert got["화면 생성 FPS"] == "9.8" and got["전송 FPS"] == "9.6"
-  assert got["연결 요청 수신"] == "21.4 · 젯슨" and got["첫 USB 전송 반환"] == "63.0 · 젯슨"
+  assert got["시작 완료"] == "63.0 s · 젯슨"   # 11/18 13:17 "줄을 잘 나눠서": every stage in -> one line
   words = " ".join(f"{k} {v}" for k, v in got.items())
   for old in ("요청→결과", "연결 대기", "화면 출력", "실측"):
     assert old not in words, old
@@ -87,7 +87,7 @@ def test_every_new_glyph_is_in_the_diag_font():
 def test_new_rows_fit_inside_the_block():
   startup = dict.fromkeys(("connect", "model", "car", "frame"), (12.3, "젯슨"))
   texts, _ = renderer(startup=startup, tx=(10.0, 12345)).k9_res_layout(st(), fake_width)
-  assert texts[-2][0] == "첫 USB 전송 반환" or texts[-1][0] == "첫 USB 전송 반환"
+  assert texts[-2][0] == "시작 완료"   # 11/18 13:17: every stage in -> one line
   for _t, _x, base, size, _c in texts:
     assert cr.K9R_TOP <= base - size and base + 3 <= cr.K9R_BOTTOM
 
