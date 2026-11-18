@@ -91,18 +91,18 @@ class EngagedConfirmationButton(BigButton):
     self.set_click_callback(lambda: _engaged_confirmation_click(callback, action_text, icon, exit_on_confirm=exit_on_confirm, red=red))
 
 
-class JetsonRebootBigButton(EngagedConfirmationButton):
-  """Settings > Device: reboot the Jetson (offroad only); the result shows as the sub-label for a few seconds."""
+class JetsonRebootBigButton(BigButton):
+  """Settings > Device: reboot the Jetson in any state (대감님 11/19 08:29); slide confirm stays, no engaged gate."""
   def __init__(self):
     from openpilot.selfdrive.ui.layouts.settings.jetson_reboot import JetsonReboot
     self.jetson_reboot = JetsonReboot()
-    super().__init__("jetson reboot", "reboot jetson", gui_app.texture("icons_mici/settings/device/reboot.png", 64, 70),
-                     self._request, exit_on_confirm=False)
-    self.set_enabled(lambda: ui_state.is_offroad())
+    icon = gui_app.texture("icons_mici/settings/device/reboot.png", 64, 70)
+    super().__init__("jetson reboot", "", icon)
+    self.set_click_callback(lambda: gui_app.push_widget(
+      BigConfirmationDialog("slide to\nreboot jetson", icon, self._request, exit_on_confirm=False)))
 
   def _request(self):
-    if ui_state.is_offroad():
-      self.jetson_reboot.request(ui_state.params)
+    self.jetson_reboot.request(ui_state.params)
 
   def _update_state(self):
     super()._update_state()

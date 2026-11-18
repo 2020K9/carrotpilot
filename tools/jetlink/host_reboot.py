@@ -1,15 +1,11 @@
-"""Jetson OS reboot requested from comma Settings > Device (대감님 11/19 07:13).
+"""Jetson OS reboot requested from comma Settings > Device (대감님 11/19 07:13, 08:29 "어떤 조건이든 내가 누르면 재부팅").
 
-Comma UI -> REQUEST_FILE -> jetlinkd (existing authenticated Jetlink session, offroad idle loop only)
--> REQUEST message -> Jetson server.py -> host_request() -> 'sudo -n systemctl --no-block reboot'.
-
-The Jetson accepts only when, at receipt, its newest comma HUD snapshot (Jetson clock) is < MAX_AGE old and in it:
-  IsOnroad is 0, and carState, selfdriveState and carControl are all fresh (< MAX_AGE, comma clock) with
-  gear P, vEgo 0 and driver assistance not enabled/active.
-Any missing or old signal rejects (no vehicle signal); no ignition-off shortcut (노비 11/19 07:50).
+Comma UI (always enabled, confirm dialog) -> REQUEST_FILE -> jetlinkd (existing authenticated Jetlink session,
+offroad idle loop and between onroad frames) -> REQUEST message -> Jetson server.py -> host_request()
+-> 'sudo -n systemctl --no-block reboot'. No vehicle condition (gear, speed, assistance, IsOnroad, signal age).
+One reboot command per Jetson server process; later requests answer 'rebooting' without a second command.
 A Jetson without this file never advertises CAPABILITY, so comma reports 'old bundle'.
 """
-import base64
 import json
 from pathlib import Path
 import subprocess
@@ -18,7 +14,6 @@ import uuid
 
 CAPABILITY = 'carrot_host_reboot_v1'
 REQUEST, RESPONSE = 0x4050, 0x4051
-MAX_AGE = .5
 REQUEST_FILE = Path('/dev/shm/carrot-jetson-reboot-request.json')
 RESULT_FILE = Path('/dev/shm/carrot-jetson-reboot-result.json')
 REQUEST_TIMEOUT = 3.   # comma side: a request older than this is dropped, the UI reports "not connected"
@@ -27,72 +22,10 @@ REBOOT_COMMAND = ('sudo', '-n', 'systemctl', '--no-block', 'reboot')
 
 # ---------------------------------------------------------------- Jetson side
 
-def _event(snapshot, name):
-  from openpilot.cereal import log
-  raw = snapshot.get('events', {}).get(name)
-  if not isinstance(raw, str):
-    return None
-  with log.Event.from_bytes(base64.b64decode(raw)) as event:
-    value = getattr(event, name)
-    return {field: getattr(value, field) for field in FIELDS[name]}
+_state = {'rebooting': False}
 
 
-FIELDS = {'carState': ('gearShifter', 'vEgo'), 'selfdriveState': ('enabled', 'active'),
-          'carControl': ('enabled', 'latActive')}
-
-
-def _age(snapshot, name):
-  try:
-    if snapshot['alive'].get(name) is not True:
-      return None
-    return float(snapshot['sent']) - float(snapshot['received'][name])
-  except (KeyError, TypeError, ValueError, AttributeError):
-    return None
-
-
-def _fresh(snapshot, name):
-  age = _age(snapshot, name)
-  return age is not None and 0 <= age < MAX_AGE
-
-
-def check(snapshot, snapshot_age):
-  """None when a reboot is allowed, else the reason (short English, comma UI translates)."""
-  if snapshot is None or snapshot_age is None or not 0 <= snapshot_age < MAX_AGE:
-    return 'no vehicle signal'
-  try:
-    onroad = base64.b64decode(snapshot.get('params', {}).get('IsOnroad', '')).strip()
-  except (ValueError, TypeError):
-    onroad = b''
-  if onroad != b'0':
-    return 'onroad' if onroad == b'1' else 'no vehicle signal'
-  try:
-    if not all(_fresh(snapshot, n) for n in ('carState', 'selfdriveState', 'carControl')):
-      return 'no vehicle signal'
-    cs, ss, cc = (_event(snapshot, n) for n in ('carState', 'selfdriveState', 'carControl'))
-    if ss['enabled'] or ss['active'] or cc['enabled'] or cc['latActive']:
-      return 'driver assistance active'
-    if str(cs['gearShifter']) != 'park':
-      return 'not in P'
-    if cs['vEgo'] != 0:
-      return 'moving'
-    return None
-  except (KeyError, TypeError, ValueError, AttributeError):
-    return 'no vehicle signal'
-
-
-def latest_snapshot(packet):
-  """(snapshot, age on the Jetson clock) of the HUD packet server.py writes, or (None, None)."""
-  from hud_protocol import HEADER, MAX_HUD_BYTES
-  try:
-    with Path(packet).open('rb') as f:
-      data = f.read(MAX_HUD_BYTES + HEADER.size + 1)
-    received, = HEADER.unpack_from(data)
-    return json.loads(data[HEADER.size:]), time.monotonic() - received
-  except Exception:  # unreadable/partial packet = no signal
-    return None, None
-
-
-def host_request(payload, packet, run=subprocess.run):
+def host_request(payload, run=subprocess.run):
   try:
     if len(payload) > 256:
       raise ValueError
@@ -101,16 +34,15 @@ def host_request(payload, packet, run=subprocess.run):
       raise ValueError
   except (ValueError, TypeError):
     return {'ok': False, 'reason': 'invalid request'}
-  snapshot, age = latest_snapshot(packet)
-  reason = check(snapshot, age)
-  if reason is not None:
-    return {'id': request['id'], 'ok': False, 'reason': reason}
+  if _state['rebooting']:
+    return {'id': request['id'], 'ok': True, 'duplicate': True}
   try:
     result = run(list(REBOOT_COMMAND), capture_output=True, text=True, timeout=5, check=False)
     if result.returncode != 0:
       return {'id': request['id'], 'ok': False, 'reason': 'reboot command failed'}
   except (OSError, subprocess.TimeoutExpired):
     return {'id': request['id'], 'ok': False, 'reason': 'reboot command failed'}
+  _state['rebooting'] = True
   return {'id': request['id'], 'ok': True}
 
 
@@ -150,7 +82,7 @@ def status(request_id, requested_at, now=None):
 
 
 class Client:
-  """jetlinkd: forwards a queued request in the offroad idle loop."""
+  """jetlinkd: forwards a queued request (offroad idle loop and between onroad frames, any vehicle state)."""
   def __init__(self, peer):
     self.enabled = isinstance(peer, dict) and peer.get(CAPABILITY) is True
     self.is_jetson = isinstance(peer, dict) and peer.get('carrot_host') == 'jetson'
@@ -171,8 +103,6 @@ class Client:
       result.update(state='disconnected', reason='')
     elif not self.enabled:
       result.update(state='unsupported', reason='old jetson bundle')
-    elif params.get_bool('IsOnroad') or not params.get_bool('IsOffroad'):
-      result.update(state='rejected', reason='onroad')
     else:
       try:
         seq = client._next_seq()

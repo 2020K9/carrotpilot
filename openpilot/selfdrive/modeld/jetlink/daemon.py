@@ -360,6 +360,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
               blinker.send(client)
             if wifi is not None:
               wifi.send(client)
+            host_reboot.idle(client, params)
             if usb_display:
               publish_hud(client, publisher)
             client.last_state = client.state()
@@ -453,6 +454,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
           tail_done = time.monotonic()
           if wifi is not None:
             wifi.send(client)
+          host_reboot.idle(client, params)   # Jetson reboot also onroad (대감님 11/19 08:29); reply already sent
           finished = time.monotonic()
           # Record in rlog as well as stderr. Receive time includes normal idle
           # waiting; the reply tail may delay admission of the NEXT request.

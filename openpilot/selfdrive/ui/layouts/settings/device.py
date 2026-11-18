@@ -25,8 +25,7 @@ DESCRIPTIONS = {
   'driver_camera': tr_noop("Preview the driver facing camera to ensure that driver monitoring has good visibility. (vehicle must be off)"),
   'reset_calibration': tr_noop("openpilot requires the device to be mounted within 4° left or right and within 5° up or 9° down."),
   'review_guide': tr_noop("Review the rules, features, and limitations of openpilot"),
-  'jetson_reboot': tr_noop("Reboot the Jetson that runs the driving model. Only offroad; " +
-                           "the Jetson also refuses unless the car is in P, stopped and driver assistance is off."),
+  'jetson_reboot': tr_noop("Reboot the Jetson that runs the driving model. Works in any state, including while driving."),
 }
 
 
@@ -58,7 +57,7 @@ class DeviceLayout(Widget):
                                            left_callback=self._reboot_prompt, right_callback=self._power_off_prompt)
 
     self._jetson_reboot_btn = button_item(self._jetson_reboot_title, lambda: tr("REBOOT"), lambda: tr(DESCRIPTIONS['jetson_reboot']),
-                                          callback=self._jetson_reboot_prompt, enabled=ui_state.is_offroad)
+                                          callback=self._jetson_reboot_prompt)
 
     items = [
       text_item(lambda: tr("Dongle ID"), self._params.get("DongleId") or (lambda: tr("N/A"))),
@@ -200,12 +199,9 @@ class DeviceLayout(Widget):
     return tr("Jetson Reboot") + (f" - {result}" if result else "")
 
   def _jetson_reboot_prompt(self):
-    if not ui_state.is_offroad():
-      gui_app.push_widget(alert_dialog(tr("Go offroad to reboot the Jetson")))
-      return
-
+    # Any vehicle state (대감님 11/19 08:29); the confirm dialog stays.
     def perform_jetson_reboot(result: DialogResult):
-      if ui_state.is_offroad() and result == DialogResult.CONFIRM:
+      if result == DialogResult.CONFIRM:
         self._jetson_reboot.request(self._params)
 
     dialog = ConfirmDialog(tr("Are you sure you want to reboot the Jetson?"), tr("Reboot"), callback=perform_jetson_reboot)

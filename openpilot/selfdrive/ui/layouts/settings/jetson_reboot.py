@@ -5,12 +5,6 @@ from openpilot.system.ui.lib.multilang import tr, tr_noop
 
 SHOW_SECONDS = 10.
 REASONS = {
-  'onroad': tr_noop("onroad"),
-  'not in P': tr_noop("not in P"),
-  'moving': tr_noop("vehicle moving"),
-  'driver assistance active': tr_noop("driver assistance active"),
-  # Stop state (P, vEgo 0, assistance off) not confirmed by fresh signals: full sentence, no 'rejected:' prefix.
-  'no vehicle signal': tr_noop("Vehicle stop state could not be confirmed, so the Jetson was not rebooted"),
   'old jetson bundle': tr_noop("Jetson needs the new bundle (next boot)"),
   'reboot command failed': tr_noop("reboot command failed"),
 }
@@ -28,10 +22,7 @@ class JetsonReboot:
     self.final = None        # (state, reason, time)
 
   def request(self, params):
-    # Same gate as the button: offroad only (IsOnroad=0).
-    if params.get_bool("IsOnroad"):
-      self.request_id, self.final = None, ('rejected', 'onroad', time.monotonic())
-      return
+    # Any vehicle state, onroad included (대감님 11/19 08:29).
     self.requested_at = time.monotonic()
     self.final = None
     self.request_id = _protocol().submit(self.requested_at)
@@ -55,11 +46,9 @@ class JetsonReboot:
     if state == 'pending':
       return tr("sending...")
     if state == 'sent':
-      return tr("sent, Jetson rebooting")
+      return tr("Jetson rebooting")
     if state == 'disconnected':
       return tr("Jetson not connected")
     if state == 'unsupported':
       return tr(REASONS['old jetson bundle'])
-    if reason == 'no vehicle signal':
-      return tr(REASONS[reason])
     return tr("rejected: {}").format(tr(REASONS[reason]) if reason in REASONS else reason)

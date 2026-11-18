@@ -120,9 +120,9 @@ class CarrotSession(Session):
       if msg.seq <= self.last_seq:
         return
       self.last_seq = msg.seq
-      # Checked against the newest comma snapshot at receipt (host_reboot.check); host only.
+      # No vehicle condition (대감님 11/19 08:29); one reboot command per server process; host only.
       if Path('/etc/nv_tegra_release').is_file():
-        result = reboot_request(msg.payload, HUD_PACKET)
+        result = reboot_request(msg.payload)
       else:
         result = {'ok': False, 'reason': 'not a jetson'}
       self._send_json(REBOOT_RESPONSE, msg.seq, result)
