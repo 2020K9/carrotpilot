@@ -1,15 +1,15 @@
 {
   "format": 1,
-  "source_commit": "c22cdac4dea561a1bc02d6e87ccd140f01960ee7",
+  "source_commit": "885407202484f8fc363c3b44de810ff5d5e869c5",
   "runtime": {
     "arch": "aarch64",
     "l4t": "36.4.7",
     "tensorrt": "10.3.0"
   },
   "bundle": {
-    "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-c22cdac4dea561a1bc02d6e87ccd140f01960ee7/precompiled-runtime.tar.gz",
-    "sha256": "c148bba3a295256f09f0669ee5c9806938cf829fbc55c15ef38dbf3e8a4739dd",
-    "size": 71133924
+    "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-885407202484f8fc363c3b44de810ff5d5e869c5/precompiled-runtime.tar.gz",
+    "sha256": "4eaabbd632d389909d62addef4d5769f28355d8ad201f963eee2d1221b70e535",
+    "size": 71134121
   },
   "model": {
     "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-comma4-big-light-speed-2-b4dead3e/big_driving_supercombo.onnx",
@@ -17,5 +17,5 @@
     "size": 768749892
   },
   "storage_format": 1,
-  "signature": "MAE9ttAV2fUwBmFqHldT8XelE4+93ZLRfHBJUHXxLR9JTK6paV41KjZJ/7p2TRxvfRfcQy/5ZjW1fDka0LB8CQ=="
+  "signature": "w5Huy2MPL5Zocpyi5gBdejYnw9yTIZdm0l1gG5jS2ugUBSIAUEyFfeSgWUrj6wRNw/9lOGilzukVnp5Fwb7YDQ=="
 }
