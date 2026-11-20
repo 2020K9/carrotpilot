@@ -40,6 +40,7 @@ jobs:
           python tools/signal_validation/run.py \
             openpilot/selfdrive/car/tests/test_camera_scc_steering_intent.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_carstate_buttons.py \
+            opendbc_repo/opendbc/car/hyundai/tests/test_hda2_scc_topology.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_pedal_interceptor.py \
             opendbc_repo/opendbc/safety/tests/test_pedal_interceptor.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_alt2_adas_buttons.py \
@@ -60,6 +61,8 @@ jobs:
             openpilot/selfdrive/controls/tests/test_desire_helper_stalk.py \
             openpilot/selfdrive/controls/tests/test_assistant_lane.py \
             openpilot/selfdrive/car/tests/test_assistant_speed.py \
+            openpilot/selfdrive/car/tests/test_cruise_timing.py \
+            openpilot/common/tests/test_runtime_diagnostics.py \
             openpilot/selfdrive/controls/tests/test_lever_forced_turn.py \
             openpilot/selfdrive/carrot/tests/test_xiaoge_data.py \
             tools/signal_validation/test_trial_integration.py \
@@ -77,6 +80,7 @@ jobs:
             tools/jetlink/test_boundary_recent_intent.py \
             tools/jetlink/test_manual_turn_indicator.py \
             tools/jetlink/test_indicator_reconstruction.py \
+            tools/jetlink/test_indicator_continuity.py \
             openpilot/selfdrive/car/tests/test_card_diagnostics.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_aprk_blinkers.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_camera_set_speed_sync.py \

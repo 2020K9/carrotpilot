@@ -282,7 +282,8 @@ def test_actual_source_loop_journals_then_taps_legacy_or_holds_observation(monke
   # so the stub keeps the real schema and only replaces CarParams.from_bytes with the fixed test car.
   from openpilot.cereal import car as real_car
   fake_car_params = N(**{k: getattr(real_car.CarParams, k) for k in dir(real_car.CarParams) if not k.startswith('__')})
-  fake_car_params.from_bytes = lambda _: nullcontext(N(carFingerprint='HYUNDAI_IONIQ_5_PE', brand='hyundai', passive=False,
+  fake_car_params.from_bytes = lambda _: nullcontext(N(carFingerprint='PROTOCOL_MATCHED_CAR',
+      brand='hyundai', passive=False, openpilotLongitudinalControl=True, extFlags=1 << 19,
       safetyConfigs=[N(safetyParam=32768)]))
   fake_cereal.car = N(CarState=real_car.CarState, RadarData=real_car.RadarData, CarControl=real_car.CarControl, CarParams=fake_car_params)
   monkeypatch.setitem(sys.modules, 'openpilot.common.params', fake_params)

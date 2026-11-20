@@ -1,5 +1,227 @@
 # Repository memory
 
+- 2026-11-20: Owner requests internal CD210 again after disliking Cheddar.
+  Restore exact60792584B/f73a9e535523 ONNX, vendored compile_modeld and ordinary
+  ModelState together; Carrot Web fixed name is CD210. External eGPU/Jetson
+  selections/pins unchanged. Retain isolated Cheddar tools only for explicit
+  experiments. Existing startup tree stamp/SCons dependencies rebuild the
+  internal artifact. Local272Python+4web checks pass; Linux full build now
+  exercises actual CD210 warmup, both camera warps, catch-up and history reset.
+  Full native CI follows publication. No live vehicle installation in this task.
+  Earlier Cheddar timing success did not establish preferred driving behavior.
+
+- 2026-11-20: Sonata565c34a74e40b91d uploads464/0..1 and466/0..2 on
+  a9811adce contain persistent CAN faults, not a UI crash.464 selects classic
+  SONATA;466 selects SONATA_2024 with recorded HDA2=0/CameraSCC=0. Physical
+  ECAN is bus1 (0x100/32,0x1AA/16,0x1CF/8); LKAS_ALT0x110 is on bus2.
+  Enabling HDA2 alone retains this platform's inherited CameraSCC flag and
+  still waits for SCC_CONTROL/LFAHDA_CLUSTER on the wrong bus. Normalize the
+  existing HDA2+CameraSCC0 selection to stock SCC before deriving capabilities,
+  safety and longitudinal policy; explicit CameraSCC modes remain unchanged.
+  Current36 CAN-FD platforms x eight setting combinations reproduce one old
+  failure (Sonata HDA2 stock), all pass corrected.745 related local checks pass.
+  Full CarState/parser replay of five complete rlogs, with parser registration
+  clock aligned to recorded time, has23339/23339 valid samples after the initial
+  five seconds per route; recorded configurations have23339 invalid. This is
+  receive-path replay, not ECU acceptance, physical driving or a live fix.
+  Vehicle still needs Sonata2024 selection/HDA2 enabled and restart; no Params
+  or device writes performed. Private evidence shares tesla-startup scratch.
+
+- 2026-11-20: Latest-labelled wip device edb4204468f19127 (unidentified, not
+  confirmed Tesla) repeatedly exits UI1 on lazy reboot/signal_mode imports;
+  tmux diagnostics also cannot import egpu_diagnostics. All helpers are tracked
+  in ad0943; mismatched traceback source supports runtime/checkout inconsistency,
+  but its cause is unproven. Load these stdlib-only helpers with their callers
+  during startup, preserving setting reads and reboot/diagnostic behavior.
+  Four isolated caller paths reproduce missing/replaced-helper failure before
+  correction and pass afterward (eight cases); no blanket exception suppression.
+  This prevents those late imports, not arbitrary damaged installations. No
+  reporter device writes or physical recovery proof. Evidence in private
+  .analysis/scratch/2026-11-20-tesla-startup/INDEX.md.
+
+- 2026-11-20: Merge PR583 alternate 8-byte0x4B8 PROLONG navigation receiver.
+  Owner requests data-based support across Hyundai/Kia/Genesis CAN-FD, including
+  EV4/PV5 optional reception, with no GV80 fingerprint gate. Share the existing
+  profile policy; retain route/PV5 warning requirements and settings. Exact-length
+  admission rejects unrelated same-address payloads; consume primary/alternate
+  profiles in timestamp order. Original PR reproduces wrong-length false bump,
+  older alternate overwriting newer zone, and EV4 exclusion; final tests pass.
+  Scan58 retained GV80-folder logs:141 physical-bus profiles in15segments/two
+  GV80s; one log lacks carParams. Navigation-component replay65segments/34routes/
+  352327 recorded carState inputs, four modes:50 no-alternate segments unchanged;
+  alternate path exactly matches baseline with address remapped4B8->4BE.
+  Replay selects the observed navigation bus/format independently of unrecorded
+  harness Params, initializes each segment, and fixes recorded speed. It is not
+  whole-controller, physical deceleration, or harness-installation validation.
+  549 local related checks,25Wiki tests and DBC generation parity pass. CI/NAS
+  automatic deployment follow publication. No vehicle writes. Private evidence
+  .analysis/scratch/2026-11-20-pr583/INDEX.md.
+
+- 2026-11-20: Owner removes manual left OEM centre-line/marking and right2.5m
+  road-edge admission gates. Model/Tesla policy and automatic-steering isolation
+  retained. Short<=2s returned/relabelled manual attempt can seed independently
+  confirmed same-side turn within3s at10kmh+; fresh opposite boundary approach
+  can rearm after1s dark. Driver/input cancellation never seeds recovery.
+  Entire retained467segments/60routes/523934inputs against34ce0aa171: native
+  365->406, delayed410ms364->405, external366->407;42added/1removed/12changed.
+  Recover11f1/1 next right turn and11d5/3 opposite request;1186/3 turn245mslater.
+  Do not claim zero regression:118a/9 model turn absent under retained isolation;
+  five matched holds shorter, three at recorded lever/changed echo timing,
+  two boundary-return.17added events have sampled video,25unavailable; parked-car
+  avoidance is also admitted, so false-indication rate unproven.1196localpass/
+  9platformskip and25Wiki tests. No vehicle writes/physical proof. CI follows
+  publication. Details docs/indicator_replay_20261114.md and private scratch
+  2026-11-20-manual-indicator-fix/INDEX.md.
+
+- 2026-11-19 late: Owner explicitly requests Jetson-first Fairy Tale testing
+  from ONNX despite official AMD PKL still404; Jetson does not depend on PKL.
+  Owner authorizes reboot/temporary Jetson stop while Park/zero/disabled, then
+  imposes~5min departure cutoff. Orin Nano8GB/MAXN_SUPER, signedN16 host0cb67d46.
+  Fresh vehicle guard and bounded service-restoring supervisor stop inference;
+  original host builds hash-verifiedbc125a ONNX in private scratch. NvMap error12
+  warning occurs, but timing cache and534724608B staged engine prove builder
+  reached plan serialization/write. Repeated SSH heartbeat banner timeout then
+  triggers guard kill; no complete atomic plan or inference timing. Do not infer
+  fatal model incompatibility/OOM-killer cause from warning alone. Original N16
+  service restored, commaactive/ready/error-empty verified; selection/pins unchanged.
+  Removed incomplete1300859716B temp directory after process check. Retain ONNX,
+  spec/timing cache/log in /opt/carrot-jetlink/fairy-test-20261119 for next session.
+  Offline harness uses persistent SSH heartbeat with same4s expiry; not yet device
+  tested. No more device work after cutoff. Hold catalog until native comparison
+  passes; Jetson-only entry must not advertise unavailable eGPU support.
+  Evidence private scratch2026-11-19-fairy-tale and updated review doc.
+
+- 2026-11-19 evening: Owner reconnects comma and authorizes actual Cheddar
+  installation plus PR39415 review. Offroad clean tracked checkout fast-forwards
+  a9811adce->93c5c6afaf, normal reboot/fresh QCOM SCons build succeeds; installed
+  worker passes both camera sizes, changed input/catch-up/reset. Owner READY,
+  real1344x760 cameras/core7/FIFO54. Initial1398 live frames mean34.30/max44.97,
+  no gaps or invalid pose/odometry. Explicit Park/zero/inactive guarded45s
+  Jetlink daemon pause: stable Cheddar820frames mean34.32/max45.21/zeroover50,
+  valid outputs/odometry/pose. Deliberate timeout207.41ms causes3-frame gap and
+  one invalid odometry; pose valid/no sampled alert. Resume watchdog/finally
+  restore daemon; N16 returns~10s later,1406frames mean41.43/max50.03/oneover50,
+  all valid. Existing N16 remains active; Cheddar internal fallback retained.
+  No model-selection/control Params changes, road/thermal validation. Recovered
+  raw evidence and hash-matched scratch bundle/warp; exact unused5319-file
+  scratch directory removed, live mmap/runtime retained. Previous final full
+  build/model/Jetson/docs CI pass. PR39415 only changes external PKL, sameec91b74
+  runtime; configured official LFS returns404 for16882f.../764592225B twice.
+  Official Fairy Tale ONNXbc125a.../766137036B hash/checker pass; Light speed2
+  contract/slices exact,40CPU recurrent frames finite/parser/cereal pass.
+  No NAV inputs. Official Chestnut60samples mean39.39/max39.92, not own hardware.
+  Hold Fairy catalog/pins until exact PKL and native external validation.
+  See docs/fairy_tale_model_review_20261119.md, updated Cheddar review and
+  private scratch2026-11-19-cheddar-install and2026-11-19-fairy-tale.
+
+- 2026-11-19: Owner requests official-condition Cheddar comparison and runtime
+  integration, permitting CD210 replacement. Same offroad TICI, core7/FIFO54,
+  performance governors/1689600kHz and GPU IRQ7: 500 synthetic full-image calls
+  CD21021.62ms/p9521.96/max22.19, official Cheddar31.12/31.33/31.63,
+  integrated worker32.59/32.80/32.91; all zero over50ms. Worker confirms affinity
+  and priority. Reset first output and two150-frame changing-image/desire runs
+  match exactly. Power/IRQ restoration read back after timing tests. Isolate
+  exact ec91b74 runtime in the internal worker/compiler; resident state aliases,
+  compiled transfers and acknowledged reset preserve fallback/warmup semantics.
+  Serialize warp JITs independently to prevent a shared-pickle HCQ parameter
+  failure. Native CPU:LLVM compiles actual ONNX;40 alias/separate-state frames
+  agree, production worker passes both camera sizes and reset. Replace default
+  CD210 ONNX with Cheddar; DM/legacy external and external runtime pins remain.
+  CD210-specific optional signal observer stays unavailable for Cheddar.
+  No road-load/thermal or physical-driving validation, installed vehicle changes,
+  Params/control writes. Device disconnected during a later fresh QCOM compile;
+  completion/raw-result retrieval/scratch cleanup await reconnection. Full build
+  and broader CI follow publication. See docs/cheddar_model_review_20261118.md
+  and private scratch2026-11-19-cheddar-integration.
+
+- 2026-11-18: Cheddar GPU follow-up isolates the first QCOM failure to constant
+  Gather history expansion: 225 individual selections produce a388368-byte
+  shader, requiring3035 load units in a10-bit field. Command uint32 overflow
+  occurs before submission but after HCQ timeline advancement; optimizer retries
+  then await the missing signal. Coalesce consecutive selections into nine
+  slices without changing order/history; shader3064bytes/24units. Corrected old
+  runtime completes180finite recurrent frames;32 desktop Python selection/JIT
+  checks pass. Exact upstream ec91b74 compiler/runtime also runs and survives
+  saved-artifact checks. State aliases preserve captured outputs and avoid
+  separate-copy56.06ms overhead; compiled-readback policy averages33.39ms.
+  Synthetic full-image paths500calls: CD21028.70ms/p9534.61/max51.90/1over50;
+  Cheddar41.26/p9549.60/max65.74/22over50. Offroad little cores, not road-load
+  validation. CPU numerical differences remain characterized, not certified.
+  Hold model/default/catalog/runtime-pin replacement; production state/reset/
+  recovery integration and representative deadlines remain. No vehicle install
+  or Params/control changes. Native CPU CI follows publication. Review
+  docs/cheddar_model_review_20261118.md; private scratch2026-11-18-cheddar-runtime.
+
+- 2026-11-18: Owner replaces PR582 point shedding with equivalent computation
+  reuse. Decode vision association fields lazily once per lead per detector
+  update; retain original short-circuit reads, precise/normal gates and each
+  radar point's missing-speed fallback. Reuse unchanged paired-front motion
+  metrics and projection. No new setting, input filtering or history/policy
+  change. Baseline446fa79624 versus final code matches all11 controller outputs,
+  estimates, observations, aliases, continuity and timers on107full segments/
+  92routes/128086aligned inputs, both initial sensor preferences256172comparisons.
+  Python fallback8segments/9594inputs also exact. Two full-controller slowing
+  regressions fail on original PR582 and pass here. Local932native-backed and
+  860Python checks pass; desktop timing improves but is not a device latency or
+  commIssue cure measurement. Native/full CI and scheduled NAS deployment follow
+  publication. No vehicle writes. Private evidence
+  .analysis/scratch/2026-11-18-radar-compute/INDEX.md.
+
+- 2026-11-18: Indicator continuity replay now covers467 retained full segments/
+  60routes/523934aligned inputs. Bound early manual near-edge retreat by150ms
+  paired-rebase memory; uncertain near-line retreat requires same-side torque,
+  far-line progress and stable geometry within3s. Opposite driver/input guards
+  remain. Consecutive opposite manual turns bridge only the last250ms before
+  existing2s/1s-dark rearm, at10kmh+, with current growing steering. Independent
+  ordinary detector preserves5kmh admission and survives retained-intent expiry.
+  Native363->365, delayed-first-send410ms362->364, external364->366; no previous
+  request removed, two existing starts~100ms earlier/same ends, five lane ends
+  extended. Video confirms added11d6/0+17.410 and11f5/8+49.368. Todayf5/4 hold
+  .200->2.990s, f5/7 .246->2.446s delayed-native. f5/8 cancels after1.700s on
+  opposite driver, so two physical flashes not guaranteed. Reject broad history
+  causing parking/exit indications and next-signal suppression. Three baseline
+  failure shapes reproduced;1184localpass/9platformskip, Wiki25pass. Unknown
+  marking/narrow-width/source-delivery misses remain; no whole-corpus truth rate
+  or physical lamp proof. No vehicle writes. Native/full CI follows publication.
+  Evidence .analysis/archive/2026-11-18/indicator-continuity-fixes/INDEX.md.
+
+- 2026-11-18: Review PR581 EV4 wrapped navigation and PR582 radar load shedding.
+  Integrate EV4 message selection with the existing navigation policy. Scope
+  empty wrapped-route padding and HDA-only availability to EV4, preserving PV5
+  and legacy route handling. Tests cover real EV4 camera/HDA payloads, both HDA
+  buses, startup caching, mode/route admission and padding timeout. Extended
+  inventory covers104segments/23routes/two EV4s, three incomplete tails retained
+  only through complete messages. PR0x092 legacy mapping yields impossible
+  averages384+ and reproduces false section admission on the recorded payload.
+  Remove that unverified position DBC/registration, retain camera/bump/route
+  support; both-bus regressions fail before/pass after. Local252 checks pass;
+  native/full CI follows publication.
+  Hold PR582: exact contributor controller under smooth0.8m/s2 target slowing
+  reproduces lost leadCutInRisk/leadsCutIn and changed leadTwo once vLead falls
+  through0.5m/s. Existing confirmed holds depend on history beyond common_ok.
+  Two deterministic full-controller cases change14/11 frames; this is not a
+  replay of a captured maneuver. Reporter I9 route4cd/26..27 does confirm low
+  radarState cadence. No vehicle writes or measured physical improvement.
+  Private review and raw-log inventory .analysis/scratch/2026-11-18-pr581-582.
+
+- 2026-11-17: Carnival c4dcf95545dafe68 route299/14 on2b202df126 has
+  card state_tail71.409ms and per-frame threadCPUmax13.191ms in the same
+  aggregate, bounding at least58ms of that tail outside thread CPU execution.
+  Original state-publication timing reproduces radarcan inputTimeout within2ms.
+  Stock SCC retains mode1/StopReq1 through the fault, while host inactive output
+  reaches vehicle CAN at51.223s, TCS ACC_REQ clears38ms later, wheels move451ms
+  later. Production builder matches20 packets on mode/stop/acceleration/band.
+  Exact waiting operation remains unrecorded. Add bounded cruise phase wall/CPU
+  timings for Params, Bluetooth, assistant read/completion and button/total work.
+  Existing1Hz card diagnostics retain one correlated state-tail peak with frame,
+  refresh flag and receive timestamp. Eight delay-injection and three card-step
+  checks cover localization/reset/publication. Fixed recorded-input A/B matches
+  all82 scalar helper states on5974 frames, external command channels silent
+  assumed. Local331pass/2skip, six Linux-import cases await native CI. Same-device
+  stock reference12rlogs/34321SCC pairs agrees bus0/bus2 with no host longActive.
+  No historical per-call attribution, live install or physical cure proof.
+  Private evidence .analysis/archive/2026-11-17/carnival-299-14.
+
 - 2026-11-17: Evening11ee and morning11ef/f0 add23 full rlogs to retained
   indicator audit, now426segments/55routes/477798aligned inputs. Bound invalid
   lane-width gaps by existing150ms continuity while clearing new-admission time.
