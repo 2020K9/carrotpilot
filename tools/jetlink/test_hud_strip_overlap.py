@@ -148,8 +148,13 @@ def test_ok_jetson_without_car_data_has_no_strip_any_more(renderer, monkeypatch)
   # 23:12: this state (all server stages done, no car data yet) used to get a %-only strip ('ok_83');
   # without the % there is no strip: the normal full-size screen, pixel-identical to the old path
   r, _st = renderer
+  # this worker's live CPU/MEM gauges (right 'system' card) are not drawn per frame: they sit in the trip-report
+  # cache texture, redrawn from _system_stats once a second (TRIP_REPORT_CACHE_REFRESH_SECONDS). Freeze the
+  # sample and redraw the cache from it on the first frame, so a 1 s redraw between the two screens draws the
+  # same gauges (11/21: freezing the sample alone still failed 2 of 11 runs)
   fixed = r._system_stats.sample()
-  monkeypatch.setattr(r._system_stats, 'sample', lambda *a, **k: fixed)   # this worker's live CPU/MEM gauges
+  monkeypatch.setattr(r._system_stats, 'sample', lambda *a, **k: fixed)
+  monkeypatch.setattr(r, '_trip_report_cache_valid', False)
   health, marks = _h('ok', **ALL4), {}
   used = []
   outer = hud.HealthRenderer._strip_outer
