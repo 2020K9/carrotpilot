@@ -1,6 +1,7 @@
 """Small, allowlisted boot diagnostics. Never include profiles, keys or journals."""
 import ipaddress
 import json
+import math
 from pathlib import Path
 import subprocess
 import time
@@ -9,15 +10,38 @@ STAGE = Path('/run/carrot-boot-stage.json')
 UNITS = ('carrot-protected-storage', 'carrot-image-setup', 'carrot-jetlink-usbc-host',
          'nv', 'nvpmodel', 'carrot-super-firmware', 'carrot-jetlink-performance', 'NetworkManager', 'ssh',
          'carrot-jetlink-wifi', 'carrot-jetlink', 'carrot-jetlink-xorg', 'carrot-jetlink-hud')
+# Jetson server health file (= host_health.STATUS, rewritten every second while the server runs). Only its
+# first-time startup marks are read here, for the boot screen's loading %; nothing else is taken from it.
+HOST_HEALTH = Path('/dev/shm/carrot-jetlink-health.json')
+STARTUP_MARKS = ('server_start', 'hello', 'engine_req', 'engine_ready', 'infer')
 
 
-def read_json(path):
+def read_json(path, limit=32769):
   try:
     with Path(path).open() as stream:
-      value = json.loads(stream.read(32769))
+      value = json.loads(stream.read(limit))
     return value if isinstance(value, dict) else {}
   except (OSError, ValueError):
     return {}
+
+
+def _mark(value):
+  return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+
+def startup_marks(path=HOST_HEALTH, now=None):
+  """{mark: done} from a fresh server health file; None when it is missing, broken or stale (same 3 s as the HUD)."""
+  try:
+    value = read_json(path, 1 << 18)
+  except RecursionError:   # absurdly nested = broken; the screen itself must never fail on this file
+    return None
+  updated = value.get('updated')
+  diag = value.get('hud_diag')
+  startup = diag.get('startup') if isinstance(diag, dict) else None
+  now = time.monotonic() if now is None else now
+  if not _mark(updated) or not 0 <= now - updated < 3 or not isinstance(startup, dict):
+    return None
+  return {name: _mark(startup.get(name)) for name in STARTUP_MARKS}
 
 
 def stage(name, error=None):
@@ -67,7 +91,8 @@ def collect():
   return {'stage': read_json(STAGE), 'storage': read_json('/run/carrot-storage.json'),
           'firmware': read_json('/run/carrot-super-firmware.json'),
           'units': units, 'addresses': addresses[:4], 'wifi': network.get('state', 'waiting'),
-          'uptime': int(time.monotonic()), 'temp_c': max(temperatures, default=None)}
+          'uptime': int(time.monotonic()), 'temp_c': max(temperatures, default=None),
+          'jetson': startup_marks()}
 
 
 def persist_result(directory, value):

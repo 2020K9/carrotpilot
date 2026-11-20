@@ -172,7 +172,7 @@ class CarrotSession(Session):
       self.deferred_maps.clear()
       health = getattr(getattr(self, 'telemetry', None), 'health', None)
       if health is not None:
-        health.mark('engine_req')   # model preparation requested (Jetson HUD connect %)
+        health.mark('engine_req')   # model preparation requested (Jetson waiting screen loading %, boot_display.py)
     if msg.msg_type == deferred_map.MESSAGE:
       if msg.seq <= self.last_seq:
         return
