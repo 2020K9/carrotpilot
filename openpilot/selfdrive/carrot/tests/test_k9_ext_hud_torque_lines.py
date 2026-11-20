@@ -100,17 +100,16 @@ def test_renderer_fixed_slots():
   r = object.__new__(cr.ClusterUiRenderer)
   r._draw_text_with_stroke = lambda text, x, y, *a, **k: calls.append((text, y))
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(61))
-  # 대감님 11/18 18:16: 지연학습 line removed, its slot stays empty, the other lines keep their slots
-  assert calls == [(t, y) for t, y in zip(("조향비 12.90  지연설정 0.20초", None, "학습 횡가속 2745  마찰 105",
-                                         "적용 횡가속 2500  마찰 130", "학습 조향비 13.42  학습지연 0.24초"),
-                                        cr.LAT_VALUES_SLOT_Y, strict=True) if t is not None]
+  # 대감님 11/18 18:16: 지연학습 line removed; 11/20 11:39: 적용 line one up into that slot, four slots now
+  assert calls == list(zip(("조향비 12.90  지연설정 0.20초", "적용 횡가속 2500  마찰 130", "학습 횡가속 2745  마찰 105",
+                            "학습 조향비 13.42  학습지연 0.24초"), cr.LAT_VALUES_SLOT_Y, strict=True))
   first = list(calls)
   calls.clear()
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(100))
   assert calls == first                                   # 2026-11-11: 토크학습 % line removed, torque calPerc changes nothing
   calls.clear()
   cr.ClusterUiRenderer._draw_lat_values(r, _lat_state(unknown=True))
-  assert [t for t, _ in calls][1:] == ["학습 횡가속 -  마찰 -", "적용 횡가속 -  마찰 -", "학습 조향비 --  학습지연 --"]
+  assert [t for t, _ in calls][1:] == ["적용 횡가속 -  마찰 -", "학습 횡가속 -  마찰 -", "학습 조향비 --  학습지연 --"]
   ys = list(cr.LAT_VALUES_SLOT_Y)
   assert ys == sorted(ys) and ys[-1] < cr.TPMS_STATUS_CAR_CENTER_Y - cr.TPMS_STATUS_ICON_H * 0.5
   assert cr.LAT_VALUES_SLOT_Y[:3] == cr.LAT_VALUES_LINE_Y and cr.LAT_VALUES_SLOT_Y[3:] == cr.TORQUE_LINE_Y
@@ -168,9 +167,6 @@ def test_torque_lines_fixed_slots_no_overlap():
         for i, y in enumerate(cr.LAT_VALUES_SLOT_Y):
           band = (drive[0], int(round((y - half) * sy)), drive[2], int(round((y + half) * sy)))
           b = diff.crop(band).getbbox()
-          if i == 1:   # 대감님 11/18 18:16: 지연학습 line removed, its slot stays empty
-            assert b is None, (layout, name, i)
-            continue
           # 2026-11-11: line 5 is 학습 조향비 now, drawn in every case (토크학습 % line removed)
           assert b is not None, (layout, name, i)
           box = (b[0] + band[0], b[1] + band[1], b[2] + band[0], b[3] + band[1])

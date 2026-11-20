@@ -311,8 +311,8 @@ K9_TURZX_BG_TOP = (11, 17, 34)
 K9_TURZX_CARD = (12, 19, 36)
 K9_TURZX_EDGE = (52, 64, 88)
 K9_TURZX_TEXT = (242, 246, 252)
-K9_TURZX_MUTED = (170, 178, 194)             # label tier 1 (silver)
-K9_TURZX_DIM = (100, 114, 138)               # label tier 2 / no value
+K9_TURZX_MUTED = (200, 207, 220)             # label tier 1 (silver; 11/20 11:41 brighter, was 170 178 194)
+K9_TURZX_DIM = (138, 150, 172)               # label tier 2 / no value (11/20 11:41 brighter, was 100 114 138)
 K9_TURZX_ACCENT = (84, 176, 255)
 K9_TURZX_GOOD = (110, 206, 255)
 K9_TURZX_LINE = (206, 186, 148, 46)          # champagne hairline separators
@@ -345,8 +345,10 @@ K9T_UNITS = ("cm", "km", "m", "초", "%", "°")
 K9T_LIST_UNITS = ("cm", "m", "초", "%")
 K9T_CAR_UNITS = ("km", "°")
 K9T_WIDE_VALUE = "999.9"     # widest car value: meters end left of it
-K9L_NUM_FONT_PATH = OPENPILOT_FONT_DIR / "Inter-Light.ttf"
-K9L_KR_FONT_PATH = OPENPILOT_FONT_DIR / "Pretendard-Medium.ttf"
+# 대감님 11/20 11:41 "글씨들 개선좀해봐 너무안보여": Inter-Light / Pretendard-Medium were too thin on the HUD glass;
+# numbers Inter-Medium, Hangul Pretendard-SemiBold (sizes, slots and baselines unchanged)
+K9L_NUM_FONT_PATH = OPENPILOT_FONT_DIR / "Inter-Medium.ttf"
+K9L_KR_FONT_PATH = OPENPILOT_FONT_DIR / "Pretendard-SemiBold.ttf"
 K9L_NUM_EXTRA = "°²·"
 K9L_KR_GLYPHS = "".join((
     '°²·←↑→↓가각간감값갔거것게계고과구균그급기꺼나넣노놓놔는능니님다달대데도돌되들따띄',
@@ -382,8 +384,8 @@ K9L_ROAD = (16, 30, 58, 178)
 K9L_FOG = (40, 64, 100)   # light haze toward the glowing horizon
 K9L_SIDE = (3, 5, 12)
 K9L_LABEL = (196, 178, 142)
-K9L_MUTED = (150, 162, 182)
-K9L_DIM = (86, 98, 120)
+K9L_MUTED = (192, 201, 216)   # 11/20 11:41 brighter (was 150 162 182)
+K9L_DIM = (126, 138, 160)     # 11/20 11:41 brighter (was 86 98 120)
 K9L_VALUE = (238, 243, 250)
 K9L_LAT = (206, 216, 230)
 # 11/12 22:10 "그게 최선이야?" final pass: one baseline / margin grid for the whole screen (design px, baselines)
@@ -831,8 +833,13 @@ LAT_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X + TPMS_STATUS_ICON_W * 0.5 - 2.0
 # glyph) touched line 4 by a row (test_k9_ext_hud_torque_lines.py); at 19.0 every line keeps an empty row.
 # The new lines are narrower than the old line 3, so lines 4 / 5 sit
 # beside the right lane-probability badge, far to its right, instead of above it (render px in the commit report).
-LAT_VALUES_FONT_SIZE = 19.0
-LAT_VALUES_COLOR = (214, 224, 231, 255)
+# 2026-11-20 (대감님 11:39 / 11:41 "글씨들 개선좀해봐 너무안보여"): four lines now (조향비 / 적용 / 학습 / 학습 조향비, the
+# empty 지연학습 slot is gone), so the same room (top limit TPMS car centre - 150 .. TPMS icon top) holds 24.0 / 27 px
+# instead of 19.0 / 22 px (+26 %): top edge at car centre - 146; brighter white and a 3 px black outline (was 2).
+LAT_VALUES_FONT_SIZE = 24.0
+LAT_VALUES_COLOR = (240, 245, 250, 255)
+LAT_VALUES_STROKE = 3
+LAT_VALUES_LINES = 4
 # 2026-10-26 (k9-hud-ld-lt, 보노보노 2026-10-25 20:28~20:53): five Korean lines (since 18:04 lines 1..3 above the TPMS car,
 # line 3 where SR / SAD was (4a44e564), lines 4 / 5 left of the car, see below):
 #   1 '조향비 12.90  지연설정 0.20초'  2 '지연학습 63%  0.24초'  3 '토크학습 61%  횡가속 3.16  마찰 0.09'   (_draw_lat_values)
@@ -842,10 +849,10 @@ HUD_LINE_STEP = LAT_VALUES_FONT_SIZE + 3.0
 # to the left of the TPMS car (right edge LANE_VALUES_GAP_X left of the icon incl. the left pressure badges, the two lines
 # centred on the car's height); lines 1..3 moved down so that line 3 sits right above the car (where line 5 was).
 LAT_VALUES_SLOT_Y = tuple(TPMS_STATUS_CAR_CENTER_Y - TPMS_STATUS_ICON_H * 0.5 - 2.0 - LAT_VALUES_FONT_SIZE * 0.5
-                          - HUD_LINE_STEP * (4 - i) for i in range(5))
-LAT_VALUES_LINE_Y = LAT_VALUES_SLOT_Y[:3]       # lines 1..3: 조향비 / 지연학습 / 학습
+                          - HUD_LINE_STEP * (LAT_VALUES_LINES - 1 - i) for i in range(LAT_VALUES_LINES))
+LAT_VALUES_LINE_Y = LAT_VALUES_SLOT_Y[:3]       # lines 1..3: 조향비 / 적용 / 학습 (11/20)
 LAT_VALUES_CENTER_Y = LAT_VALUES_LINE_Y[2]
-TORQUE_LINE_Y = LAT_VALUES_SLOT_Y[3:]           # 적용 / 토크학습 % (fixed slots below line 3)
+TORQUE_LINE_Y = LAT_VALUES_SLOT_Y[3:]           # 학습 조향비 (fixed slot below line 3)
 LANE_VALUES_GAP_X = 8.0
 LANE_VALUES_RIGHT_X = TPMS_STATUS_CENTER_X - TPMS_STATUS_ICON_W * 0.5 - LANE_VALUES_GAP_X
 # 2026-10-29 07:08 (보노보노 "차선좌우 글씨작던데 더키워") 17.0 -> 22.0, then 18:12 ("차선치우침 / 좌.우 글씨크기 더크게만들어")
@@ -5766,17 +5773,16 @@ class ClusterUiRenderer:
     def _draw_lat_values(self, state: ClusterUiState) -> None:
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
-            None,  # 대감님 11/18 18:16: 지연학습 줄 삭제 (자리만 비움, 나머지 줄 위치 그대로)
-            torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
-                                getattr(state, "torque_filtered_friction", None)),
+            # 대감님 11/18 18:16 지연학습 줄 삭제; 11/20 11:39 적용 줄이 한 칸 위로 (그 빈자리), 학습 줄은 그 아래
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
                                 getattr(state, "torque_learn_friction", None)),
+            torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
+                                getattr(state, "torque_filtered_friction", None)),
             learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
         for text, y in zip(texts, LAT_VALUES_SLOT_Y):
-            if text is None:
-                continue
-            self._draw_text_with_stroke(text, LAT_VALUES_RIGHT_X, y, LAT_VALUES_FONT_SIZE, LAT_VALUES_COLOR, (0, 0, 0), 2,
+            self._draw_text_with_stroke(text, LAT_VALUES_RIGHT_X, y, LAT_VALUES_FONT_SIZE, LAT_VALUES_COLOR, (0, 0, 0),
+                                        LAT_VALUES_STROKE,
                                         anchor="right", cache=True)
 
     def _draw_lane_values(self, state: ClusterUiState) -> None:
@@ -6971,7 +6977,7 @@ class ClusterUiRenderer:
         hair = b + g * hgaps * 0.5
         self._k9l_hair(x0, hair, x1 - x0, 110) if lux else self._k9_turzx_metal_h(x0, hair, x1 - x0, 130)
         b = hair + g * hgaps * 0.5 + ca
-        title("조향 학습", b)
+        title("조향", b)   # 대감님 11/20 11:39: 학습 빠짐
         rows: list[list[tuple[str, list[str]]]] = []
         for name, values, second in self.k9_lat_lines(state):
             if second and rows and len(rows[-1]) < 2:
@@ -7633,11 +7639,11 @@ class ClusterUiRenderer:
         a nameless value ('지연학습 100%  0.20초') stays on its item's line"""
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
-            None,  # 대감님 11/18 18:16: 지연학습 줄 삭제 (자리만 비움, 나머지 줄 위치 그대로)
-            torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
-                                getattr(state, "torque_filtered_friction", None)),
+            # 대감님 11/18 18:16 지연학습 줄 삭제; 11/20 11:39 적용 줄이 한 칸 위로 (그 빈자리), 학습 줄은 그 아래
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
                                 getattr(state, "torque_learn_friction", None)),
+            torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
+                                getattr(state, "torque_filtered_friction", None)),
             learned_steer_ratio_text(getattr(state, "learned_steer_ratio", None), getattr(state, "delay_learn_s", None)),
         )
         lines: list[tuple[str, list[str], bool]] = []
