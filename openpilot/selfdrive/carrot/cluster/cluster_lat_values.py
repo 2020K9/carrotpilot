@@ -218,7 +218,7 @@ def _web_units(value: Any) -> str:
 
 
 def delay_learn_text(perc: int | None, delay_s: float | None) -> str:
-    """HUD line 2: '지연학습 63%  0.24초'."""
+    """(not drawn since 대감님 11/18 18:16: HUD line 2 slot stays empty) 지연학습 63% 0.24초."""
     return f"지연학습 {'-' if perc is None else f'{perc}%'}  {_fmt(delay_s, '.2f', '초')}"
 
 

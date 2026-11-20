@@ -112,7 +112,7 @@ from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_k9_3d import K9Scene3D, draw_car as k9v_draw_car  # noqa: F401  (K9HudNavdy 3)
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
-from cluster_lat_values import (delay_learn_text, lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
+from cluster_lat_values import (lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
                                 learned_steer_ratio_text, torque_learned_text)
 from cluster_vehicle_models import ego_model_name
 from cluster_utils import blink_visible, clamp
@@ -2793,6 +2793,16 @@ class ClusterUiRenderer:
             sprite = self._k9_park_sprite
         return sprite or None
 
+    def _prewarm_park_screen(self, state: ClusterUiState) -> None:
+        """대감님 11/19 06:18/06:49 (R -> P slow): while R is shown, load the P screen images now (outside the frame
+        target), so the first P frame after R draws at once instead of decoding PNGs / building mipmaps on the Jetson CPU."""
+        if ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9":
+            self._k9_park_sprite_texture()
+            self._k9_park_floor_texture()
+            self._k9_park_bottom_profile()
+        elif getattr(self, "_ev6_park_textures", None) is None:
+            self._ev6_park_car_texture(False)
+
     def _k9_park_floor_texture(self):
         floor = getattr(self, "_k9_park_floor", None)
         if floor is None:
@@ -3710,6 +3720,8 @@ class ClusterUiRenderer:
             self._load_park_vehicle_models()
             self._prepare_park_model_texture(state)
             self._ev6_prepare_reverse_sprite(state)
+            if self._ev6_reverse_screen_active(state):
+                self._prewarm_park_screen(state)
             self._trip_report_cache_visible = False
             return
         if self.taxi_meter_enabled and self._taxi_meter_panel_active(self._effective_screen_mode(state)):
@@ -5754,7 +5766,7 @@ class ClusterUiRenderer:
     def _draw_lat_values(self, state: ClusterUiState) -> None:
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
-            delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
+            None,  # 대감님 11/18 18:16: 지연학습 줄 삭제 (자리만 비움, 나머지 줄 위치 그대로)
             torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
                                 getattr(state, "torque_filtered_friction", None)),
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
@@ -7621,7 +7633,7 @@ class ClusterUiRenderer:
         a nameless value ('지연학습 100%  0.20초') stays on its item's line"""
         texts = (
             lat_values_text(getattr(state, "applied_steer_ratio", None), getattr(state, "applied_steer_delay_s", None)),
-            delay_learn_text(getattr(state, "delay_learn_perc", None), getattr(state, "delay_learn_s", None)),
+            None,  # 대감님 11/18 18:16: 지연학습 줄 삭제 (자리만 비움, 나머지 줄 위치 그대로)
             torque_learned_text(getattr(state, "torque_filtered_lat_accel_factor", None),
                                 getattr(state, "torque_filtered_friction", None)),
             torque_applied_text(getattr(state, "torque_learn_lat_accel_factor", None),
