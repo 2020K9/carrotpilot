@@ -153,8 +153,14 @@ def jetson_diag(health):
           'startup': {k: _num(v, 0) for k, v in startup.items() if isinstance(k, str)}}
 
 
+STRIP_H = 32.   # top strip (stage text / overheating / warnings / connect %), design px
+STRIP_GAP = 4.  # empty gap between the strip and the smaller screen below, design px
+
+
 class HealthRenderer(ClusterUiRenderer):
   startup_marks = {}   # hud.py MARKS (Jetson monotonic)
+  _strip_deferred = False
+  _strip_inner = None
 
   def k9_jetson_resources(self):
     return jetson_resources(getattr(self, 'host_health', None) or {})
@@ -173,10 +179,74 @@ class HealthRenderer(ClusterUiRenderer):
     return {'connect': (server.get('hello'), '젯슨'), 'model': (server.get('engine_ready'), '젯슨'),
             'car': (marks.get('car'), '젯슨'), 'frame': (marks.get('frame'), '젯슨')}
 
+  def _strip_reached(self, state):
+    # Same branches as ClusterUiRenderer.render: the K9 road boards return before _draw_alert_overlay.
+    return (self._ev6_park_screen_active(state) or self._ev6_reverse_screen_active(state)
+            or not self._k9_turzx_active(state))
+
+  def _strip_outer(self):
+    """0 = screen, the capture target, or None when the active target is unknown (then draw as before)."""
+    get = getattr(rl, 'rl_get_active_framebuffer', None)
+    if get is None:
+      return None
+    fbo = get()
+    if fbo == 0:
+      return 0
+    cap = getattr(self, '_capture_target', None)
+    return cap if cap is not None and cap.id == fbo else None
+
   def render(self, state, signal_lights=None):
     self.host_health = _fresh(STATUS, time.monotonic())
     self.host_badge_drawn = False
-    super().render(state, signal_lights)
+    # 11/20 12:48: while the top strip / connect % is shown, the whole screen is drawn a little smaller
+    # below it (y 32~), so the strip covers no text, icon or card. No strip (incl. 100%) = exactly as before.
+    shown = (getattr(self, '_window_open', False) and self._strip_reached(state)
+             and self._health_strip_plan(getattr(state, 'alert', None), measure=False) is not None)
+    outer = self._strip_outer() if shown else None
+    if outer is None:
+      super().render(state, signal_lights)
+      return
+    inner = self._strip_inner
+    if inner is None or inner.texture.width != self.width or inner.texture.height != self.height:
+      if inner is not None:
+        rl.unload_render_texture(inner)
+      inner = self._strip_inner = rl.load_render_texture(self.width, self.height)
+      rl.set_texture_filter(inner.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+    if outer != 0:
+      rl.end_texture_mode()
+    rl.begin_texture_mode(inner)
+    self._strip_deferred = True
+    try:
+      rl.clear_background(rl_color(self._current_theme().bg))
+      super().render(state, signal_lights)
+    finally:
+      self._strip_deferred = False
+      rl.end_texture_mode()
+      if outer != 0:
+        rl.begin_texture_mode(outer)
+    strip_px = (STRIP_H + STRIP_GAP) * self.height / DESIGN_HEIGHT
+    scale = (self.height - strip_px) / self.height
+    w, h = self.width * scale, self.height * scale
+    rl.clear_background(rl_color(self._current_theme().bg))
+    rl.rl_set_blend_factors(rl.RL_ONE, rl.RL_ZERO, rl.RL_FUNC_ADD)
+    rl.begin_blend_mode(rl.BlendMode.BLEND_CUSTOM)
+    try:
+      rl.draw_texture_pro(inner.texture, rl.Rectangle(0, 0, float(self.width), -float(self.height)),
+                          rl.Rectangle((self.width - w) / 2, strip_px, w, h), rl.Vector2(0, 0), 0., rl.WHITE)
+    finally:
+      rl.end_blend_mode()
+    rl.rl_push_matrix()
+    rl.rl_scalef(self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT, 1.)
+    try:
+      self._draw_health_strip(self._health_strip_plan(None))
+    finally:
+      rl.rl_pop_matrix()
+
+  def close(self):
+    if self._strip_inner is not None:
+      rl.unload_render_texture(self._strip_inner)
+      self._strip_inner = None
+    super().close()
 
   def _temperature_badge(self, x, y):
     label, color = temperature_label(self.host_health)
@@ -198,30 +268,43 @@ class HealthRenderer(ClusterUiRenderer):
       if not self.host_badge_drawn:
         # Full navigation/graph modes omit the driving status row.
         self._temperature_badge(DESIGN_WIDTH - 66, TOP_STATUS_CENTER_Y)
-      message, color = health_banner(self.host_health, self.language)
-      vehicle_alert = alert is not None and alert.size > 0 and (alert.text1 or alert.text2)
-      # Connect % sits inside the top strip at the left edge, so it covers nothing below y 32
-      # (대감님 11/20 11:21 단계 문구 그대로; 12:30 아래 +0.00·막대·제목 가림 고침).
-      # Same priority as before: overheating / real Jetson warnings and errors stay alone.
-      progress = connect_progress(self.host_health, self.startup_marks, self.language)
-      plain = not message or (self.host_health.get('severity', 'unknown') == 'unknown'
-                              and self.host_health.get('thermal_severity') not in ('warning', 'error'))
-      show_progress = progress is not None and plain and not vehicle_alert
-      pct_box = progress_box(self, progress[1]) if show_progress else None
-      if message and not vehicle_alert:
-        rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
-        limit = DESIGN_WIDTH - 40
-        if pct_box is not None:
-          # keep the centred stage text clear of the % on the left (short texts are unchanged)
-          limit = min(limit, DESIGN_WIDTH - 2 * (pct_box[2] + PROGRESS_GAP))
-        self._draw_text(self._ellipsize_text(message, 22, limit),
-                        DESIGN_WIDTH / 2, 16, 22, color, anchor='center')
-      if pct_box is not None:
-        if not message:
-          rl.draw_rectangle(int(pct_box[0]), int(pct_box[1]), int(pct_box[2] - pct_box[0]),
-                            int(pct_box[3] - pct_box[1]), rl_color((0, 0, 0), 220))
-        self._draw_text(progress[1], PROGRESS_X, 16, PROGRESS_SIZE, WARNING, anchor='left')
+      if not self._strip_deferred:
+        # render() draws it above the shrunken screen; a direct call still draws it in place
+        self._draw_health_strip(self._health_strip_plan(alert))
     finally:
       rl.rl_pop_matrix()
     # Vehicle alerts remain last and take precedence over the health strip.
     super()._draw_alert_overlay(alert)
+
+  def _health_strip_plan(self, alert, measure=True):
+    """(message, color, progress, pct_box) for the top strip; None when nothing is shown there."""
+    message, color = health_banner(self.host_health, self.language)
+    vehicle_alert = alert is not None and alert.size > 0 and (alert.text1 or alert.text2)
+    # Connect % sits inside the top strip at the left edge (대감님 11/20 11:21 단계 문구 그대로).
+    # Same priority as before: overheating / real Jetson warnings and errors stay alone.
+    progress = connect_progress(self.host_health, self.startup_marks, self.language)
+    plain = not message or (self.host_health.get('severity', 'unknown') == 'unknown'
+                            and self.host_health.get('thermal_severity') not in ('warning', 'error'))
+    show_progress = progress is not None and plain and not vehicle_alert
+    if vehicle_alert or not (message or show_progress):
+      return None
+    pct_box = (progress_box(self, progress[1]) if measure else ()) if show_progress else None
+    return message, color, progress, pct_box
+
+  def _draw_health_strip(self, plan):
+    if plan is None:
+      return
+    message, color, progress, pct_box = plan
+    if message:
+      rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
+      limit = DESIGN_WIDTH - 40
+      if pct_box is not None:
+        # keep the centred stage text clear of the % on the left (short texts are unchanged)
+        limit = min(limit, DESIGN_WIDTH - 2 * (pct_box[2] + PROGRESS_GAP))
+      self._draw_text(self._ellipsize_text(message, 22, limit),
+                      DESIGN_WIDTH / 2, 16, 22, color, anchor='center')
+    if pct_box is not None:
+      if not message:
+        rl.draw_rectangle(int(pct_box[0]), int(pct_box[1]), int(pct_box[2] - pct_box[0]),
+                          int(pct_box[3] - pct_box[1]), rl_color((0, 0, 0), 220))
+      self._draw_text(progress[1], PROGRESS_X, 16, PROGRESS_SIZE, WARNING, anchor='left')
