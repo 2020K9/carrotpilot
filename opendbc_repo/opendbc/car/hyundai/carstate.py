@@ -19,6 +19,9 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, Buttons, CarContr
                                        HyundaiSafetyFlags, EV_MODE_ACTIVE_VALUES, EV_MODE_STATUS_ADDR, EV_MODE_STATUS_DLC, EV_MODE_STATUS_MSG, \
                                        EV_MODE_STATUS_SIGNAL
 from opendbc.car.interfaces import CarStateBase
+from opendbc.car.hyundai.values import get_pedal_interceptor_params
+from opendbc.car.pedal_interceptor import (PEDAL_INTERCEPTOR_BUS,
+                                         PEDAL_INTERCEPTOR_RX_FREQUENCY, PedalInterceptorState)
 
 from openpilot.common.params import Params
 
@@ -45,7 +48,9 @@ SPEEDCAM_GAS_TOK_FRAMES = 40   # matches cruise.py _gas_tok_timer (0.4 s at 100 
 VEHICLE_NAVI_ROUTE_TIMEOUT_NS = 2_000_000_000
 CANFD_HDA_INFO_MSG = "CANFD_HDA_INFO_364"
 CANFD_NAVI_PROFILE_MSG = "CANFD_NAVI_PROFILE_093"
+CANFD_NAVI_SEGMENT_MSG = "CANFD_NAVI_SEGMENT_099"
 CANFD_NAVI_STATUS_MSG = "CANFD_NAVI_STATUS_380"
+LEGACY_NAVI_PROFILE_4B8_MSG = "NEW_MSG_4B8"  # Alternate 8-byte PROLONG address, selected by receipt rather than vehicle model.
 CANFD_NAVI_CAMERA_ACTIVE_BIT = 0x40
 CANFD_NAVI_STATUS_TIMEOUT_NS = 1_000_000_000
 STANDSTILL_THRESHOLD = 12 * 0.03125 * CV.KPH_TO_MS
@@ -203,12 +208,16 @@ class CarState(CarStateBase):
     self.adrv_0x160 = None
     self.ccnc_0x162 = None
     self.canfd_wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
-    self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if self.canfd_wrapped_navi else "NEW_MSG_4BE"
+    self.canfd_ev4_navi = CP.carFingerprint == CAR.KIA_EV4
+    self.hda_info_msg = CANFD_HDA_INFO_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "HDA_INFO_4A3"
+    self.navi_segment_msg = CANFD_NAVI_SEGMENT_MSG if self.canfd_ev4_navi else "NEW_MSG_4B9"
+    self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "NEW_MSG_4BE"
     self.vehicleNaviZoneControlSupported = not self.canfd_wrapped_navi  # Legacy kind-7 profile zones only
     self.hda_info_4a3 = None
     self.navi_position_4b4 = None
     self.navi_segment_4b9 = None
     self.navi_profile_4be = None
+    self.navi_profile_4b8 = None
     self.navi_status_380 = None
     self.pv5_section_start_prev = False
     self.pv5_completed_camera_speed = 0
@@ -257,6 +266,9 @@ class CarState(CarStateBase):
                                 and CP.openpilotLongitudinalControl)
     self.stock_adopt_kph = 0.
     self.stock_adopt_frames = 0
+    self.pedal_interceptor_params = get_pedal_interceptor_params(CP)
+    self.pedal_interceptor_state = PedalInterceptorState() if self.pedal_interceptor_params is not None else None
+    self.pedal_interceptor_cruise_blocked = True
     self.manual_main_off_latched = False
     self.gear_shifter = GearShifter.drive # Gear_init for Nexo ?? unknown 21.02.23.LSW
 
@@ -284,6 +296,7 @@ class CarState(CarStateBase):
     self._read_speedcam_params()
     self.vehicleNaviSegmentTimestamp = 0
     self.vehicleNaviProfileTimestamp = 0
+    self.vehicleNaviProfile4b8Timestamp = 0
     self.vehicleNaviAvailable = False
     self.vehicleNaviRouteResetTimestamp = 0
     self.vehicleNaviRouteState = 0
@@ -520,10 +533,11 @@ class CarState(CarStateBase):
             if self.cp_alt is not None:
               add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
           else:
-            add_and_cache(self.cp, "HDA_INFO_4A3", "hda_info_4a3")
+            add_and_cache(self.cp, self.hda_info_msg, "hda_info_4a3")
             add_and_cache(self.cp, "NEW_MSG_4B4", "navi_position_4b4")
-            add_and_cache(self.cp, "NEW_MSG_4B9", "navi_segment_4b9")
-            add_and_cache(self.cp, "NEW_MSG_4BE", "navi_profile_4be")
+            add_and_cache(self.cp, self.navi_segment_msg, "navi_segment_4b9")
+            add_and_cache(self.cp, self.navi_profile_msg, "navi_profile_4be")
+          add_and_cache(self.cp, LEGACY_NAVI_PROFILE_4B8_MSG, "navi_profile_4b8")
           add_and_cache(self.cp, "STEER_TOUCH_2AF", "steer_touch_2af")
         elif self.controls_ready_count == 124:
           add_and_cache(self.cp, self.cruise_btns_msg_canfd, "cruise_buttons_msg")
@@ -623,9 +637,25 @@ class CarState(CarStateBase):
 
       ret.pcmCruiseGap = cp_cruise.vl["SCC11"]["TauGapSet"]
 
+    if self.pedal_interceptor_params is not None:
+      pedal_interceptor_params = self.pedal_interceptor_params
+      self.pedal_interceptor_state.update(can_parsers[Bus.party], pedal_interceptor_params)
+      message, signal = pedal_interceptor_params.cruise_ready
+      address, bit = pedal_interceptor_params.cruise_enabled_bit
+      payload = cp.dat.get(address, b"")
+      ret.cruiseState.enabled = len(payload) == 8 and bool(int.from_bytes(payload, "little") & (1 << bit))
+      cruise_valid = (cp.ts_nanos[message][signal] > 0 and len(payload) == 8 and
+                      cp.message_states[address].valid(cp._last_update_nanos, False))
+      self.pedal_interceptor_cruise_blocked = (not cruise_valid or bool(cp.vl[message][signal]) or ret.cruiseState.enabled)
+      # OEM Cruise ready/engaged takes priority. Keep Carrot's independent
+      # main-switch/controls-initialization gate as well.
+      ret.cruiseState.available = ret.cruiseState.available and not self.pedal_interceptor_cruise_blocked
+      message, signal = pedal_interceptor_params.cruise_speed
+      ret.cruiseState.speed = cp.vl[message][signal] * speed_conv
+
     # TODO: Find brake pressure
     ret.brake = 0
-    if not self.CP.flags & HyundaiFlags.CC_ONLY_CAR:
+    if not self.CP.flags & HyundaiFlags.CC_ONLY_CAR or self.pedal_interceptor_params is not None:
       ret.brakePressed = cp.vl["TCS13"]["DriverOverride"] == 2  # 2 includes regen braking by user on HEV/EV
       ret.brakeHoldActive = cp.vl["TCS15"]["AVH_LAMP"] == 2  # 0 OFF, 1 ERROR, 2 ACTIVE, 3 READY
       ret.parkingBrake = cp.vl["TCS13"]["PBRAKE_ACT"] == 1
@@ -633,6 +663,11 @@ class CarState(CarStateBase):
       ret.espActive = cp.vl["TCS11"]["ABS_ACT"] == 1
       ret.accFaulted = cp.vl["TCS13"]["ACCEnable"] != 0  # 0 ACC CONTROL ENABLED, 1-3 ACC CONTROL DISABLED
       ret.brakeLights = bool(cp.vl["TCS13"]["BrakeLight"] or ret.brakePressed)
+
+    if self.pedal_interceptor_state is not None:
+      # ACCEnable describes a nonexistent SCC in this adapter. Brake/hold,
+      # parking, ESP, main/READY and CAN health continue through Carrot's paths.
+      ret.accFaulted = self.pedal_interceptor_state.faulted
 
     if self.CP.flags & (HyundaiFlags.HYBRID | HyundaiFlags.EV | HyundaiFlags.FCEV):
       if self.CP.flags & HyundaiFlags.FCEV:
@@ -645,6 +680,9 @@ class CarState(CarStateBase):
     else:
       ret.gas = cp.vl["EMS12"]["PV_AV_CAN"] / 100.
       ret.gasPressed = bool(cp.vl["EMS16"]["CF_Ems_AclAct"])
+
+    if self.pedal_interceptor_state is not None and self.pedal_interceptor_state.valid:
+      ret.gasPressed = self.pedal_interceptor_state.gas_pressed
 
     # Gear Selection via Cluster - For those Kia/Hyundai which are not fully discovered, we can use the Cluster Indicator for Gear Selection,
     # as this seems to be standard over all cars, but is not the preferred method.
@@ -1132,6 +1170,32 @@ class CarState(CarStateBase):
       return None
     return "camera", (speed_code - 1) * 5, kind
 
+  def _handle_vehicle_navi_profile(self, values, timestamp, ret, speed_limit_cam, on_controlled_access_road):
+    profile = self._decode_vehicle_navi_profile(values)
+    if (not self.canfd_wrapped_navi and profile["profile_type"] == 16 and
+        timestamp > self.vehicleNaviRouteResetTimestamp):
+      self.speedcam_policy.add_preview(profile["value"], profile["offset"], self.totalDistance)
+    event = self._classify_vehicle_navi_profile(profile)
+    if event is not None and timestamp > self.vehicleNaviRouteResetTimestamp:
+      if event[0] == "speed_limit_zone":
+        if self.vehicleNaviZoneControlSupported:
+          if self._vehicle_navi_profile_allowed("camera", profile) and event[1] > 30:
+            self.vehicleNaviSpeedZoneActive = True
+            self.vehicleNaviSpeedZoneSpeed = event[1]
+          if self.vehicleNaviSchoolZoneControl:
+            # 0x77 describes a generic 30 km/h zone and also appears outside
+            # school zones. Only use it for the school cap while 0x4A3
+            # independently confirms an active 30 km/h camera/zone.
+            if event[1] == 30 and speed_limit_cam and ret.speedLimit == 30 and not on_controlled_access_road:
+              self.vehicleNaviSchoolZoneActive = True
+              self.vehicleNaviSchoolZoneStartDistance = self.totalDistance
+              self.vehicleNaviSchoolZoneUsesCameraStatus = True
+            else:
+              self._clear_vehicle_navi_school_zone()
+      elif self._vehicle_navi_profile_allowed(event[0], profile) and (not on_controlled_access_road or
+                                                                      (event[0] != "bump" and not (event[0] == "camera" and event[1] == 30))):
+        self._add_vehicle_navi_event(*event, profile["offset"])
+
   def _add_vehicle_navi_event(self, event_type, speed, kind, offset):
     target = self.totalDistance + offset
     for event in self.vehicleNaviEvents:
@@ -1152,7 +1216,14 @@ class CarState(CarStateBase):
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
     profile_timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg)
-    self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or self.vehicleNaviSpeedZoneActive
+    profile_4b8_timestamp = 0
+    if len(cp.dat.get(0x4b8, b"")) == 8:
+      # The address alone is insufficient: other CAN-FD payload sizes must
+      # not be decoded as this legacy profile, on any vehicle model.
+      profile_4b8_timestamp = self._vehicle_navi_message_timestamp(cp, LEGACY_NAVI_PROFILE_4B8_MSG)
+      profile_timestamp = max(profile_timestamp, profile_4b8_timestamp)
+    hda_timestamp = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg) if self.canfd_ev4_navi else 0
+    self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or hda_timestamp > 0 or self.vehicleNaviSpeedZoneActive
     ret.vehicleNaviAvailable = self.vehicleNaviAvailable
     self.vehicleNaviCameraTarget = None
 
@@ -1177,8 +1248,12 @@ class CarState(CarStateBase):
     range_section_active = 0 < range_avg_speed < 511
 
     if self.navi_segment_4b9 is not None:
-      timestamp = self._vehicle_navi_message_timestamp(cp, "NEW_MSG_4B9")
-      if timestamp > self.vehicleNaviSegmentTimestamp:
+      timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_segment_msg)
+      # EV4 wraps padding after sparse route updates. Padding supplies no new
+      # route evidence and must not renew the existing route timeout.
+      empty_wrapped_segment = self.canfd_ev4_navi and all(
+        int(self.navi_segment_4b9.get(f"BYTE_{i + 1}", 0)) == 0xff for i in range(8))
+      if timestamp > self.vehicleNaviSegmentTimestamp and not empty_wrapped_segment:
         self.vehicleNaviSegmentTimestamp = timestamp
         segment = self._decode_vehicle_navi_segment(self.navi_segment_4b9)
         previous_route_state = self.vehicleNaviRouteState
@@ -1211,34 +1286,16 @@ class CarState(CarStateBase):
     if not (self.vehicleNaviCanControl or self.vehicleNaviSchoolZoneControl):
       return False
 
-    if self.navi_profile_4be is not None:
-      timestamp = profile_timestamp
-      if timestamp > self.vehicleNaviProfileTimestamp:
-        self.vehicleNaviProfileTimestamp = timestamp
-        profile = self._decode_vehicle_navi_profile(self.navi_profile_4be)
-        if (not self.canfd_wrapped_navi and profile["profile_type"] == 16 and
-            timestamp > self.vehicleNaviRouteResetTimestamp):
-          self.speedcam_policy.add_preview(profile["value"], profile["offset"], self.totalDistance)
-        event = self._classify_vehicle_navi_profile(profile)
-        if event is not None and timestamp > self.vehicleNaviRouteResetTimestamp:
-          if event[0] == "speed_limit_zone":
-            if self.vehicleNaviZoneControlSupported:
-              if self._vehicle_navi_profile_allowed("camera", profile) and event[1] > 30:
-                self.vehicleNaviSpeedZoneActive = True
-                self.vehicleNaviSpeedZoneSpeed = event[1]
-              if self.vehicleNaviSchoolZoneControl:
-                # 0x77 describes a generic 30 km/h zone and also appears outside
-                # school zones. Only use it for the school cap while 0x4A3
-                # independently confirms an active 30 km/h camera/zone.
-                if event[1] == 30 and speed_limit_cam and ret.speedLimit == 30 and not on_controlled_access_road:
-                  self.vehicleNaviSchoolZoneActive = True
-                  self.vehicleNaviSchoolZoneStartDistance = self.totalDistance
-                  self.vehicleNaviSchoolZoneUsesCameraStatus = True
-                else:
-                  self._clear_vehicle_navi_school_zone()
-          elif self._vehicle_navi_profile_allowed(event[0], profile) and (not on_controlled_access_road or
-                                                                          (event[0] != "bump" and not (event[0] == "camera" and event[1] == 30))):
-            self._add_vehicle_navi_event(*event, profile["offset"])
+    # Both addresses use the same policy. Consume each new profile once and
+    # in timestamp order so an older alternate cannot overwrite a newer zone.
+    profiles = (
+      (self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg), self.navi_profile_4be, "vehicleNaviProfileTimestamp"),
+      (profile_4b8_timestamp, self.navi_profile_4b8, "vehicleNaviProfile4b8Timestamp"),
+    )
+    for timestamp, values, timestamp_attr in sorted(profiles, key=lambda profile: profile[0]):
+      if values is not None and timestamp > getattr(self, timestamp_attr):
+        setattr(self, timestamp_attr, timestamp)
+        self._handle_vehicle_navi_profile(values, timestamp, ret, speed_limit_cam, on_controlled_access_road)
 
     if position_seen:
       if not range_section_active or not self.vehicleNaviCanControl or 0 < ret.speedLimit <= 30:
@@ -1710,9 +1767,17 @@ class CarState(CarStateBase):
     # Register stock-navigation position/route/profile messages as optional
     # from startup so dynamic fingerprint timing cannot miss sparse profiles.
     wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
-    msgs = ([(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)] if wrapped_navi else
-            [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan)])
-    alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)] if wrapped_navi else []
+    ev4_navi = CP.carFingerprint == CAR.KIA_EV4
+    if wrapped_navi:
+      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
+      alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
+    elif ev4_navi:
+      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
+      alt_msgs = []
+    else:
+      msgs = [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan)]
+      alt_msgs = []
+    msgs.append((LEGACY_NAVI_PROFILE_4B8_MSG, math.nan))
     if not (CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS):
       # TODO: this can be removed once we add dynamic support to vl_all
       msgs += [
@@ -1736,9 +1801,16 @@ class CarState(CarStateBase):
     if CP.flags & HyundaiFlags.CANFD:
       return self.get_can_parsers_canfd(CP)
 
-    return {
+    parsers = {
       # EMS21 carries SCR_UREA_LEVEL on diesel platforms. NaN frequency makes
       # it optional, so gasoline/EV platforms do not fail CAN validity.
       Bus.pt: register_vehicle_gps(CANParser(DBC[CP.carFingerprint][Bus.pt], [("EMS21", math.nan)], 0)),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
     }
+    pedal_interceptor_params = get_pedal_interceptor_params(CP)
+    if pedal_interceptor_params is not None:
+      parsers[Bus.party] = CANParser(pedal_interceptor_params.dbc_name, [("GAS_SENSOR", PEDAL_INTERCEPTOR_RX_FREQUENCY)],
+                                    PEDAL_INTERCEPTOR_BUS)
+      # Register the configured OEM CC input at its actual receive rate.
+      parsers[Bus.pt]._add_message(pedal_interceptor_params.cruise_ready[0], 10)
+    return parsers
