@@ -768,12 +768,16 @@ SPEED_DRIVING_MODE_STYLES = {
     3: ("driving_mode_normal", (255, 255, 255, 200)),
     4: ("driving_mode_sport", (255, 0, 0, 200)),
 }
-SIDE_GAUGE_TOP = 88
-SIDE_GAUGE_BOTTOM = 186
-SIDE_GAUGE_LOWER_TOP = 248
-SIDE_GAUGE_LOWER_BOTTOM = 346
+# 대감님 11/20 12:28: the lower battery / DEF gauge (248..346 + label) ran into the external HUD steering lines (24 px
+# since 88540720, line 1 ink top ~284). Same columns (x unchanged), both rows moved up and shortened so the lower
+# label ends above line 1: accel / steer value 64 -> 44, gauge 88..186 -> 62..146, battery / DEF 248..346 -> 196..256
+# (label ink bottom ~278). Checked by test_k9_hud_no_overlap.py (text / gauge boxes on every layout).
+SIDE_GAUGE_TOP = 62
+SIDE_GAUGE_BOTTOM = 146
+SIDE_GAUGE_LOWER_TOP = 196
+SIDE_GAUGE_LOWER_BOTTOM = 256
 SIDE_GAUGE_WIDTH = 62
-SIDE_GAUGE_VALUE_Y = 64
+SIDE_GAUGE_VALUE_Y = 44
 SIDE_GAUGE_LABEL_OFFSET = 15
 SIDE_GAUGE_LEFT_CENTER_X = 968
 SIDE_GAUGE_COLUMN_GAP = 78
@@ -8392,7 +8396,8 @@ class ClusterUiRenderer:
             tw = self._k9l_width(tag, 22.0, True)
             keep_out = self._k9l_perc_rects(state)
             out = 1.0 if lx >= K9L_CX else -1.0
-            keep_out = keep_out + self._k9l_navi_rects(state)
+            speed_box = self._k9l_speed_rect(state)
+            keep_out = keep_out + self._k9l_navi_rects(state) + [speed_box]
             if getattr(self, "_k9_ind_active", False):  # the automatic indicator box sits on the far road
                 ix = K9L_CX - 230.0
                 keep_out.append((ix, K9L_IND_Y, ix + 460.0, K9L_IND_Y + 24.0 * 2.7))
@@ -8405,6 +8410,11 @@ class ClusterUiRenderer:
                     return False
                 return all(px + tw < x0 or px > x1 or cy + 10.0 < y0 or cy - 10.0 > y1 for x0, y0, x1, y1 in keep_out)
             spot = next((p for p in spots if free(*p)), None if getattr(self, "_k9_ind_active", False) else spots[0])
+            if spot is not None and not free(*spot):
+                # 11/20 12:28: a far lead hidden under the speed digits: no tag on the speed (앞차 line keeps the distance)
+                sx0_, sy0_, sx1_, sy1_ = speed_box
+                if not (spot[0] + tw < sx0_ or spot[0] > sx1_ or spot[1] + 10.0 < sy0_ or spot[1] - 10.0 > sy1_):
+                    spot = None
             if spot is not None and la >= 0.4:  # under the indicator box: no tag (the lead line keeps the distance)
                 tc = self.k9_look().l_tag
                 self._k9l_text(tag, spot[0], 0.0, 22.0, tc if la >= 1.0 else (*tc, int(255 * la)),
@@ -8510,6 +8520,14 @@ class ClusterUiRenderer:
 
     def _k9l_perc_y(self) -> float:
         return K9L_PERC_Y_IND if getattr(self, "_k9_ind_active", False) else K9L_PERC_Y
+
+    def _k9l_speed_rect(self, state: ClusterUiState) -> tuple[float, float, float, float]:
+        """대감님 11/20 12:28 (no overlaps): the top speed + km/h box; a near lead's distance tag ('22 m') ran into km/h
+        in K9HudNavdy 1, so the tag takes its side spot instead"""
+        kph = state.display_speed_kph if state.display_speed_kph is not None else state.speed_kph
+        text = str(int(round(display_speed(clamp(kph, 0.0, MAX_SPEED_KPH), self.is_metric))))
+        w = max(self._k9l_width(text, K9L_SPEED_SIZE, True), self._k9l_width("km/h", K9_TURZX_SUB_SIZE, True, 0.06))
+        return (K9L_CX - w * 0.5 - 6.0, 0.0, K9L_CX + w * 0.5 + 6.0, K9L_KMH_BASE + 6.0)
 
     def _k9l_navi_rects(self, state: ClusterUiState) -> list[tuple[float, float, float, float]]:
         """screen boxes of the scene navi items (kept free by the lead distance tag)"""
