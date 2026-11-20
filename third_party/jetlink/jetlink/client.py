@@ -253,6 +253,7 @@ class JetlinkClient:
     client = {'nonce': self.nonce, 'name': self.name}
     from jetlink import deferred_map
     if version == 2:
+      client['finite_detail_v1'] = True
       client[deferred_map.CAPABILITY] = deferred_map.descriptor()
     if version == 2 and self._allow_output_projection:
       client[projection.CAPABILITY] = projection.descriptor()
@@ -533,7 +534,13 @@ class JetlinkClient:
     self.last_timings = (gpu_us, queue_us, total_us)
     if status != P.Status.OK:
       self.dead = True
-      raise LinkError(f"inference failed: {_name(P.Status, status)} (frame {fid})")
+      detail = ''
+      if status == P.Status.NOT_FINITE and self.spec is not None:
+        start = P.INFER_RESP_SIZE + self.spec.output_nelem * 4
+        trailer = bytes(msg.payload[start:start + 221]).split(b'\x00', 1)[0]
+        if trailer.startswith(b'JL_NF ') and trailer.isascii() and all(32 <= c < 127 for c in trailer):
+          detail = ' ' + trailer.decode('ascii')
+      raise LinkError(f"inference failed: {_name(P.Status, status)} (frame {fid}){detail}")
     if fid != self._infer_frame_id:
       self.dead = True
       raise LinkError(f'inference response frame {fid}, expected {self._infer_frame_id}')

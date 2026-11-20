@@ -195,7 +195,9 @@ def test_nonfinite_output_rejected_and_next_reset_frame_is_fresh(runtime, monkey
   e, q, host = make_engine(runtime, True, monkeypatch)
   q.step_into(np.ones((2, 2), np.uint8), np.zeros(2, np.float32), host)
   e.bad_name = bad_name
-  with pytest.raises(FloatingPointError): q.feedback(e.run())
+  with pytest.raises(FloatingPointError) as exc: q.feedback(e.run())
+  if bad_name != 'outputs':
+    assert f'backend=gpu tensor={bad_name} index={e.outputs[bad_name].host.size - 1} value=NaN count=1' in str(exc.value)
   assert e.device_state.needs_reset
   e.bad_name = None
   q.feedback(e.run())

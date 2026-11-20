@@ -122,7 +122,16 @@ class DeviceState:
   def validate(self):
     if self.bad[0]:
       self.reset()
-      raise FloatingPointError('Non-finite stateful GPU output')
+      from jetlink.queues import finite_detail
+      # Error only: the flag is aggregate. Read the same frame's output bindings
+      # before another inference; trailing same-stream D2D does not modify them.
+      for _, b in self.pairs:
+        cudart.memcpy_d2h_async(b.host_ptr, b.device_ptr, b.nbytes, self.stream)
+      cudart.stream_sync(self.stream)
+      for _, b in self.pairs:
+        if not np.isfinite(b.host).all():
+          raise FloatingPointError('backend=gpu ' + finite_detail(b.name, b.host))
+      raise FloatingPointError('backend=gpu reason=detector_disagreement')
 
   def close(self):
     # Caller synchronizes the owning stream first, including trailing D2D.
