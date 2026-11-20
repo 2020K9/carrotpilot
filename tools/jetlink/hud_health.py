@@ -43,6 +43,36 @@ def health_banner(health, language):
   return '', NORMAL
 
 
+# Jetson HUD only (대감님 11/20 10:38/10:39): one connect % from real first-time stage marks, no timer.
+# Each stage counts once it has happened (Jetson CLOCK_MONOTONIC marks); % = done / all; hidden at 100.
+CONNECT_STAGES = (
+  ('server', '젯슨 서버 시작', 'Jetson server'),     # host_health STATUS fresh (daemon running)
+  ('hello', '콤마 연결', 'comma link'),              # HELLO_REQ from comma
+  ('engine_req', '모델 요청', 'model request'),      # ENGINE_REQ received
+  ('engine_ready', '모델 준비', 'model prepare'),    # ENGINE_RESP ready
+  ('infer', '첫 계산', 'first inference'),          # first successful INFER_RESP
+  ('car', '차량 정보', 'vehicle data'),              # first valid carState in the HUD
+)
+
+
+def connect_progress(health, hud_marks, language='ko'):
+  """(percent int, text) while connecting, None once every stage is done."""
+  diag = health.get('hud_diag') if isinstance(health, dict) and isinstance(health.get('hud_diag'), dict) else {}
+  server = diag.get('startup') if isinstance(diag.get('startup'), dict) else {}
+  done = {'server': bool(health) and _num(server.get('server_start'), 0) is not None,
+          'car': _num((hud_marks or {}).get('car'), 0) is not None}
+  for key in ('hello', 'engine_req', 'engine_ready', 'infer'):
+    done[key] = done['server'] and _num(server.get(key), 0) is not None
+  count = sum(1 for key, _ko, _en in CONNECT_STAGES if done[key])
+  if count == len(CONNECT_STAGES):
+    return None
+  pct = int(100 * count / len(CONNECT_STAGES))
+  waiting = next((ko, en) for key, ko, en in CONNECT_STAGES if not done[key])
+  if language == 'ko':
+    return pct, f'젯슨 연결 중 {pct}% · {waiting[0]} 대기'
+  return pct, f'Jetson connecting {pct}% · waiting for {waiting[1]}'
+
+
 def _pct(value):
   return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 100 else None
 
@@ -160,6 +190,11 @@ class HealthRenderer(ClusterUiRenderer):
         # Full navigation/graph modes omit the driving status row.
         self._temperature_badge(DESIGN_WIDTH - 66, TOP_STATUS_CENTER_Y)
       message, color = health_banner(self.host_health, self.language)
+      progress = connect_progress(self.host_health, self.startup_marks, self.language)
+      # The connect % replaces only the plain 'no information yet' strip; thermal/real errors keep priority.
+      if progress is not None and (not message or self.host_health.get('severity', 'unknown') == 'unknown'
+                                   and self.host_health.get('thermal_severity') not in ('warning', 'error')):
+        message, color = progress[1], WARNING
       vehicle_alert = alert is not None and alert.size > 0 and (alert.text1 or alert.text2)
       if message and not vehicle_alert:
         rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))

@@ -170,6 +170,9 @@ class CarrotSession(Session):
       raise request_chunks.LinkError('interrupted chunked request')
     if msg.msg_type == P.Msg.ENGINE_REQ:
       self.deferred_maps.clear()
+      health = getattr(getattr(self, 'telemetry', None), 'health', None)
+      if health is not None:
+        health.mark('engine_req')   # model preparation requested (Jetson HUD connect %)
     if msg.msg_type == deferred_map.MESSAGE:
       if msg.seq <= self.last_seq:
         return
