@@ -73,6 +73,15 @@ def connect_progress(health, hud_marks, language='ko'):
   return pct, f'Jetson connecting {pct}%'
 
 
+PROGRESS_X, PROGRESS_SIZE, PROGRESS_PAD, PROGRESS_GAP = 20., 20., 8., 24.
+
+
+def progress_box(renderer, text):
+  """(x0, y0, x1, y1) of the connect % background, always inside the top strip (y 0~32)."""
+  width = renderer._measure_text(text, PROGRESS_SIZE)[0]
+  return (PROGRESS_X - PROGRESS_PAD, 0., PROGRESS_X + width + PROGRESS_PAD, 32.)
+
+
 def _pct(value):
   return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 100 else None
 
@@ -191,18 +200,27 @@ class HealthRenderer(ClusterUiRenderer):
         self._temperature_badge(DESIGN_WIDTH - 66, TOP_STATUS_CENTER_Y)
       message, color = health_banner(self.host_health, self.language)
       vehicle_alert = alert is not None and alert.size > 0 and (alert.text1 or alert.text2)
-      if message and not vehicle_alert:
-        rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
-        self._draw_text(self._ellipsize_text(message, 22, DESIGN_WIDTH - 40),
-                        DESIGN_WIDTH / 2, 16, 22, color, anchor='center')
-      # Connect % on its own line right under the unchanged status strip (대감님 11/20 11:21).
+      # Connect % sits inside the top strip at the left edge, so it covers nothing below y 32
+      # (대감님 11/20 11:21 단계 문구 그대로; 12:30 아래 +0.00·막대·제목 가림 고침).
       # Same priority as before: overheating / real Jetson warnings and errors stay alone.
       progress = connect_progress(self.host_health, self.startup_marks, self.language)
       plain = not message or (self.host_health.get('severity', 'unknown') == 'unknown'
                               and self.host_health.get('thermal_severity') not in ('warning', 'error'))
-      if progress is not None and plain and not vehicle_alert:
-        rl.draw_rectangle(0, 32, int(DESIGN_WIDTH), 28, rl_color((0, 0, 0), 200))
-        self._draw_text(progress[1], DESIGN_WIDTH / 2, 46, 20, WARNING, anchor='center')
+      show_progress = progress is not None and plain and not vehicle_alert
+      pct_box = progress_box(self, progress[1]) if show_progress else None
+      if message and not vehicle_alert:
+        rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
+        limit = DESIGN_WIDTH - 40
+        if pct_box is not None:
+          # keep the centred stage text clear of the % on the left (short texts are unchanged)
+          limit = min(limit, DESIGN_WIDTH - 2 * (pct_box[2] + PROGRESS_GAP))
+        self._draw_text(self._ellipsize_text(message, 22, limit),
+                        DESIGN_WIDTH / 2, 16, 22, color, anchor='center')
+      if pct_box is not None:
+        if not message:
+          rl.draw_rectangle(int(pct_box[0]), int(pct_box[1]), int(pct_box[2] - pct_box[0]),
+                            int(pct_box[3] - pct_box[1]), rl_color((0, 0, 0), 220))
+        self._draw_text(progress[1], PROGRESS_X, 16, PROGRESS_SIZE, WARNING, anchor='left')
     finally:
       rl.rl_pop_matrix()
     # Vehicle alerts remain last and take precedence over the health strip.
