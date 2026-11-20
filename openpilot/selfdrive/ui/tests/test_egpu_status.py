@@ -17,9 +17,17 @@ def _method(path: Path, class_name: str, method_name: str) -> ast.FunctionDef:
 
 def test_both_device_huds_render_egpu_badge_with_shared_runtime_state():
   for path in HUD_PATHS:
+    # Upstream moved the static HUD drawing from _render into _paint, which _render
+    # hands to the cached overlay (self._overlay.draw(rect, self._paint, ...)).
     render = _method(path, "HudRenderer", "_render")
+    assert any(
+      isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "draw"
+      and len(node.args) >= 2 and isinstance(node.args[1], ast.Attribute) and node.args[1].attr == "_paint"
+      for node in ast.walk(render)
+    )
+    paint = _method(path, "HudRenderer", "_paint")
     calls = [
-      node for node in ast.walk(render)
+      node for node in ast.walk(paint)
       if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     ]
     assert any(call.func.attr == "_draw_egpu_badge" for call in calls)
@@ -98,7 +106,7 @@ def test_modeld_retries_transient_egpu_pcie_startup():
 def test_modeld_restarts_instead_of_racing_a_timed_out_egpu_loader():
   source = (UI_DIR.parent / "modeld" / "modeld.py").read_text(encoding="utf-8")
 
-  assert "USBGPU_MODEL_LOAD_TIMEOUT = 40" in source
+  assert "USBGPU_MODEL_LOAD_TIMEOUT = 120" in source   # upstream raised 40 -> 120 s
   assert 'params.put_bool("UsbGpuStartupFailed", True)' in source
   assert 'raise RuntimeError("eGPU model loader did not terminate")' in source
 
@@ -114,16 +122,21 @@ def test_modeld_keeps_egpu_loading_until_first_output_is_published():
   assert "eGPU first model output published; startup complete" in source[clear:]
 
 
-def test_modeld_runs_internal_fallback_on_the_same_frame():
+def test_modeld_runs_internal_fallback_on_the_next_fresh_frame():
+  # Upstream: the failed USB wait can outlive the camera buffer, so the internal
+  # model runs on the next synchronized pair (consume the failed frame, continue)
+  # instead of re-running on the stale one.
   source = (UI_DIR.parent / "modeld" / "modeld.py").read_text(encoding="utf-8")
 
   fallback = source[source.index("eGPU model failed, falling back to internal GPU"):]
   failed_set = fallback.index('params.put_bool("UsbGpuStartupFailed", True)')
   loading_clear = fallback.index('params.put_bool("UsbGpuLoading", False)')
   pending_clear = fallback.index("usbgpu_startup_pending = False")
-  assert "model = small_model" in fallback
-  assert "model_output = model.run(bufs, transforms, inputs, prepare_only)" in fallback
-  assert failed_set < loading_clear < pending_clear < fallback.index("model = small_model")
+  switched = fallback.index("model = small_model")
+  consumed = fallback.index("last_vipc_frame_id = meta_main.frame_id", switched)
+  next_frame = fallback.index("continue", consumed)
+  assert "model_output = model.run(bufs, transforms, inputs, prepare_only)" not in fallback[:next_frame]
+  assert failed_set < loading_clear < pending_clear < switched < consumed < next_frame
 
 
 def test_modeld_queues_tmux_capture_for_all_egpu_failure_paths():
@@ -143,7 +156,9 @@ def test_selfdrived_allows_five_seconds_for_egpu_fallback_to_settle():
   assert "def _big_model_settling" in source
   assert "self.big_model_active and not active" in source
   assert "self.big_model_ready_t + 5.0" in source
-  assert "and not big_model_settling" in source
+  # Upstream folded the settle window into model_starting (also needs startup not complete, no startup fault).
+  assert "model_starting = big_model_settling and not self.model_startup_complete and not startup_fault" in source
+  assert "and no_system_errors and not model_starting:" in source
 
 
 def test_tinygrad_retries_interrupted_usb_event_waits():

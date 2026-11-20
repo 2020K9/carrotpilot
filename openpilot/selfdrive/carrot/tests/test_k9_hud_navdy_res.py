@@ -36,7 +36,7 @@ def test_reader_passes_2_and_main_maps_it_to_scene_plus_res():
     assert reader.read() == want
   src = (CLUSTER / "main.py").read_text()
   assert src.count("renderer.set_k9_hud_style(min(k9_hud_menu, 1))") == 2
-  assert src.count("renderer.set_k9_hud_res(k9_hud_menu == 2)") == 2
+  assert src.count("renderer.set_k9_hud_res(k9_hud_menu in (1, 2))") == 2   # 11/18 17:17: 1 too (71b1977d)
 
 
 def test_renderer_res_off_by_default_and_no_jetson_values():

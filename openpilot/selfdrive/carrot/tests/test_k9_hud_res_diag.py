@@ -115,7 +115,9 @@ def test_host_health_diag_is_memory_only_and_expires(monkeypatch):
   assert d["inference"]["gpu_ms"] == 11.0 and d["inference"]["total_ms"] == 12.4 and d["startup"]["hello"] == first
   assert "inference" not in h.diagnostics(now + 3.5)   # old inference time is dropped, not kept
   src = (JETLINK / "host_health.py").read_text()
-  assert "json.dumps({**value, 'hud_diag': self.diagnostics(started)})" in src and "self.snapshot = value" in src
+  # 71b1977d (11/18 17:29): hud_diag is judged at write time, not at sample start
+  assert "json.dumps({**value, 'hud_diag': self.diagnostics(time.monotonic())})" in src and "self.snapshot = value" in src
+  assert "self.diagnostics(started)" not in src
 
 
 def test_server_and_hud_hooks_are_record_only():

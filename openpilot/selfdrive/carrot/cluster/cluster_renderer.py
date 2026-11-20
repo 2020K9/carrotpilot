@@ -2662,6 +2662,8 @@ class ClusterUiRenderer:
         """Cache the selected car before binding the main frame's render target."""
         if not self._ev6_park_screen_active(state):
             return
+        if ego_model_name(state.car_fingerprint) == "k9" and self._k9_park_sprite_texture() is not None:
+            return  # K9 P screen draws the photo sprite, never this texture: skip the 3D render on the first P frame
         model, key = self._ego_model(ego_model_name(state.car_fingerprint))
         if model is None or key == self._park_model_key:
             return
