@@ -1,5 +1,6 @@
-"""11/20 12:48: the Jetson top strip (stage text / overheating / warnings / connect %) never covers or touches
-any other drawing (text, icon, card border). Real raylib render (needs a display, e.g. xvfb-run like the HUD tests)."""
+"""11/20 12:48: the Jetson top strip (stage text / overheating / warnings) never covers or touches
+any other drawing (text, icon, card border). Real raylib render (needs a display, e.g. xvfb-run like the HUD tests).
+11/20 23:12: the driving screen has no loading % any more (it is on the waiting screen, boot_display.py)."""
 import io
 import sys
 from dataclasses import replace
@@ -25,7 +26,6 @@ ALL4 = dict(hello=2., engine_req=2., engine_ready=2., infer=2.)
 STRIP_CASES = {
   'nostatus_0': ({}, {}),
   'stage_50': (_h('unknown', '모델 준비 중', hello=2., engine_req=2.), {}),
-  'ok_83': (_h('ok', **ALL4), {}),
   'hot_50': ({**_h('ok', hello=2., engine_req=2.), 'thermal_severity': 'error',
               'thermal_trip': {'temp_c': 99., 'limit_c': 97.}}, {}),
   'warm_50': ({**_h('ok', hello=2., engine_req=2.), 'thermal_severity': 'warning'}, {}),
@@ -115,3 +115,48 @@ def test_k9_road_boards_keep_their_own_screen(renderer, monkeypatch):
   r, st = renderer
   monkeypatch.setattr(hud.HealthRenderer, '_k9_turzx_active', lambda *a: True)
   assert not r._strip_reached(st)
+
+
+@pytest.mark.parametrize('name', list(STRIP_CASES))
+def test_strip_draws_only_the_stage_text_no_percent(renderer, monkeypatch, name):
+  # 23:12: real render; the strip draws its stage/overheat/warning text exactly as before the %, and no % text
+  health, marks = STRIP_CASES[name]
+  inside, texts = [False], []
+  strip, draw = hud.HealthRenderer._draw_health_strip, hud.HealthRenderer._draw_text
+
+  def strip_spy(self, plan):
+    inside[0] = True
+    try:
+      return strip(self, plan)
+    finally:
+      inside[0] = False
+
+  def draw_spy(self, text, *a, **k):
+    if inside[0]:
+      texts.append(text)
+    return draw(self, text, *a, **k)
+  monkeypatch.setattr(hud.HealthRenderer, '_draw_health_strip', strip_spy)
+  monkeypatch.setattr(hud.HealthRenderer, '_draw_text', draw_spy)
+  _img, r = _frame(renderer, health, marks, monkeypatch)
+  message, _color = hud.health_banner(health, 'ko')
+  assert message and texts
+  assert set(texts) == {r._ellipsize_text(message, 22, hud.DESIGN_WIDTH - 40)}
+  assert not [t for t in texts if '%' in t or '연결 중' in t or 'connecting' in t]
+
+
+def test_ok_jetson_without_car_data_has_no_strip_any_more(renderer, monkeypatch):
+  # 23:12: this state (all server stages done, no car data yet) used to get a %-only strip ('ok_83');
+  # without the % there is no strip: the normal full-size screen, pixel-identical to the old path
+  r, _st = renderer
+  fixed = r._system_stats.sample()
+  monkeypatch.setattr(r._system_stats, 'sample', lambda *a, **k: fixed)   # this worker's live CPU/MEM gauges
+  health, marks = _h('ok', **ALL4), {}
+  used = []
+  outer = hud.HealthRenderer._strip_outer
+  monkeypatch.setattr(hud.HealthRenderer, '_strip_outer', lambda self: used.append(1) or outer(self))
+  img, _ = _frame(renderer, health, marks, monkeypatch)
+  assert r._health_strip_plan(None) is None and not used
+  monkeypatch.setattr(hud.HealthRenderer, '_draw_health_strip', lambda *a: None)
+  monkeypatch.setattr(hud.HealthRenderer, '_strip_outer', lambda *a: None)   # = old full-size path
+  ref, _ = _frame(renderer, health, marks, monkeypatch)
+  assert np.array_equal(img, ref)

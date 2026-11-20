@@ -126,7 +126,7 @@ class HostHealth:
 
   def note_inference(self, gpu_us, total_us):
     self.inference = (time.monotonic(), gpu_us / 1000, total_us / 1000)
-    self.mark('infer')   # first successful inference (Jetson HUD connect %)
+    self.mark('infer')   # first successful inference (Jetson waiting screen loading %, boot_display.py)
 
   def mark(self, name):
     self.marks.setdefault(name, time.monotonic())

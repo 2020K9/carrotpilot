@@ -1,3 +1,6 @@
+"""The Jetson driving screen (HUD) shows no loading % (대감님 11/20 23:12: it belongs on the waiting screen,
+boot_display.py, see test_boot_loading.py). The server/host marks that feed that % stay; the HUD top strip is
+the stage/overheat/warning strip exactly as before the % was added."""
 import sys
 
 import pytest
@@ -10,32 +13,6 @@ from host_health import HostHealth
 
 def health(**startup):
   return {'severity': 'ok', 'updated': 1., 'hud_diag': {'startup': {'server_start': 1., **startup}}}
-
-
-def test_no_status_is_zero_and_waits_for_server():
-  assert hud.connect_progress({}, {}, 'ko') == (0, '젯슨 연결 중 0%')
-  assert hud.connect_progress({}, {}, 'en')[0] == 0
-
-
-def test_each_real_stage_adds_one_sixth_in_order():
-  marks = {}
-  steps = [('hello', 33, '모델 요청'), ('engine_req', 50, '모델 준비'), ('engine_ready', 66, '첫 계산'),
-           ('infer', 83, '차량 정보')]
-  assert hud.connect_progress(health(), marks, 'ko') == (16, '젯슨 연결 중 16%')
-  startup = {}
-  for key, pct, _nxt in steps:
-    startup[key] = 2.
-    assert hud.connect_progress(health(**startup), marks, 'ko') == (pct, f'젯슨 연결 중 {pct}%')
-  assert hud.connect_progress(health(**startup), {'car': 3.}, 'ko') is None
-
-
-def test_stale_server_marks_do_not_count_without_fresh_status():
-  # the HUD's own car mark alone is one stage; server stages need a fresh daemon snapshot
-  assert hud.connect_progress({}, {'car': 3.}, 'ko')[0] == 16
-
-
-def test_bad_values_are_not_done():
-  assert hud.connect_progress(health(hello=float('nan'), infer=True), {'car': None}, 'ko')[0] == 16
 
 
 def test_host_marks_infer_once_on_first_inference():
@@ -54,25 +31,14 @@ def test_server_marks_hello_and_engine_request():
   assert "self.telemetry.health.mark('engine_ready')" in src
 
 
-def test_percent_line_has_no_stage_words():
-  # the stage/status strip stays as before; the % line only carries the percent
-  assert hud.connect_progress({}, {}, 'en') == (0, 'Jetson connecting 0%')
-  assert '대기' not in hud.connect_progress(health(hello=2.), {}, 'ko')[1]
-
-
-def test_status_strip_is_unchanged_and_percent_is_separate_line():
+def test_driving_screen_has_no_percent_code():
+  # 23:12: no connect % on the driving screen at all (no function, no text, no drawing of it)
   src = (Path(__file__).parent / 'hud_health.py').read_text()
-  body = src[src.index('def _draw_alert_overlay'):]
-  assert 'message, color = progress' not in body
-  # 12:30: the % now lives inside the unchanged strip (no second band under it); drawn after the strip
-  assert body.index('rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32') < body.index('self._draw_text(progress[1]')
-
-
-def test_percent_line_hidden_behind_overheat_and_real_errors():
-  src = (Path(__file__).parent / 'hud_health.py').read_text()
-  body = src[src.index('def _draw_alert_overlay'):]
-  assert "self.host_health.get('thermal_severity') not in ('warning', 'error')" in body
-  assert 'progress is not None and plain and not vehicle_alert' in body
+  assert not hasattr(hud, 'connect_progress') and not hasattr(hud, 'progress_box')
+  for word in ('connect_progress', 'progress[1]', '연결 중', 'connecting', 'PROGRESS_'):
+    assert word not in src, word
+  body = src[src.index('def _draw_health_strip'):]
+  assert body.count('self._draw_text(') == 1   # the stage/status text only
 
 
 def _overlay_calls(monkeypatch, health, marks, alert=None, width=11.):
@@ -97,25 +63,22 @@ def _overlay_calls(monkeypatch, health, marks, alert=None, width=11.):
   return rects, texts
 
 
-def _hit(a, b):
-  return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
 @pytest.mark.parametrize('health_in,marks', [
   ({}, {}), ({'severity': 'unknown', 'reason': '모델 준비 중', 'updated': 1., 'hud_diag': {'startup': {'server_start': 1., 'hello': 2.}}}, {}),
   (health(hello=2., engine_req=2., engine_ready=2., infer=2.), {}),
   ({'severity': 'unknown', 'reason': '아주 긴 상태 문구 ' * 30, 'updated': 1., 'hud_diag': {'startup': {'server_start': 1.}}}, {})])
-def test_percent_stays_inside_top_strip_and_never_overlaps(monkeypatch, health_in, marks):
+def test_driving_screen_draws_no_percent(monkeypatch, health_in, marks):
   rects, texts = _overlay_calls(monkeypatch, health_in, marks)
-  pct = [t for t in texts if t[0].startswith('젯슨 연결 중')]
-  assert len(pct) == 1
-  box = pct[0][1]
-  # nothing below the 32 px top strip is covered: the + 0.00 / gauge bar / '주행 요약'·'시스템' titles stay visible
-  assert all(r[3] <= 32 for r in rects) and box[1] >= 0 and box[3] <= 32
-  for other in texts:
-    if other is not pct[0]:
-      assert not _hit(box, other[1]), other[0]
-      assert other[1][1] >= 0 and other[1][3] <= 32
+  assert not [t for t in texts if '%' in t[0] or t[0].startswith('젯슨 연결 중')]
+  message, color = hud.health_banner(health_in, 'ko')
+  # only the stage/status strip as before the %: its text at the old full width (DESIGN_WIDTH - 40), or nothing
+  fake = type('Measure', (), {'_measure_text': lambda self, text, size, *a: (11. * size / 20 * len(text), size)})()
+  expected = [hud.ClusterUiRenderer._ellipsize_text(fake, message, 22, hud.DESIGN_WIDTH - 40)] if message else []
+  assert [t[0] for t in texts] == expected
+  assert len(rects) == len(expected)
+  for _text, box, size, col in texts:
+    assert col == color and size == 22 and box[1] >= 0 and box[3] <= 32
+  assert all(r == (0, 0, int(hud.DESIGN_WIDTH), 32) for r in rects)
 
 
 def test_stage_text_same_as_before_when_short(monkeypatch):

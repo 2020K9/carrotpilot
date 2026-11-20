@@ -43,43 +43,7 @@ def health_banner(health, language):
   return '', NORMAL
 
 
-# Jetson HUD only (대감님 11/20 10:38/10:39): one connect % from real first-time stage marks, no timer.
-# Each stage counts once it has happened (Jetson CLOCK_MONOTONIC marks); % = done / all; hidden at 100.
-CONNECT_STAGES = (
-  ('server', '젯슨 서버 시작', 'Jetson server'),     # host_health STATUS fresh (daemon running)
-  ('hello', '콤마 연결', 'comma link'),              # HELLO_REQ from comma
-  ('engine_req', '모델 요청', 'model request'),      # ENGINE_REQ received
-  ('engine_ready', '모델 준비', 'model prepare'),    # ENGINE_RESP ready
-  ('infer', '첫 계산', 'first inference'),          # first successful INFER_RESP
-  ('car', '차량 정보', 'vehicle data'),              # first valid carState in the HUD
-)
-
-
-def connect_progress(health, hud_marks, language='ko'):
-  """(percent int, text) while connecting, None once every stage is done."""
-  diag = health.get('hud_diag') if isinstance(health, dict) and isinstance(health.get('hud_diag'), dict) else {}
-  server = diag.get('startup') if isinstance(diag.get('startup'), dict) else {}
-  done = {'server': bool(health) and _num(server.get('server_start'), 0) is not None,
-          'car': _num((hud_marks or {}).get('car'), 0) is not None}
-  for key in ('hello', 'engine_req', 'engine_ready', 'infer'):
-    done[key] = done['server'] and _num(server.get(key), 0) is not None
-  count = sum(1 for key, _ko, _en in CONNECT_STAGES if done[key])
-  if count == len(CONNECT_STAGES):
-    return None
-  pct = int(100 * count / len(CONNECT_STAGES))
-  # Percent only: the existing stage/status strip above stays exactly as before (대감님 11/20 11:21).
-  if language == 'ko':
-    return pct, f'젯슨 연결 중 {pct}%'
-  return pct, f'Jetson connecting {pct}%'
-
-
-PROGRESS_X, PROGRESS_SIZE, PROGRESS_PAD, PROGRESS_GAP = 20., 20., 8., 24.
-
-
-def progress_box(renderer, text):
-  """(x0, y0, x1, y1) of the connect % background, always inside the top strip (y 0~32)."""
-  width = renderer._measure_text(text, PROGRESS_SIZE)[0]
-  return (PROGRESS_X - PROGRESS_PAD, 0., PROGRESS_X + width + PROGRESS_PAD, 32.)
+# The loading % is on the Jetson waiting screen (boot_display.py), not on this driving screen (대감님 11/20 23:12).
 
 
 def _pct(value):
@@ -153,7 +117,7 @@ def jetson_diag(health):
           'startup': {k: _num(v, 0) for k, v in startup.items() if isinstance(k, str)}}
 
 
-STRIP_H = 32.   # top strip (stage text / overheating / warnings / connect %), design px
+STRIP_H = 32.   # top strip (stage text / overheating / warnings), design px
 STRIP_GAP = 4.  # empty gap between the strip and the smaller screen below, design px
 
 
@@ -198,10 +162,10 @@ class HealthRenderer(ClusterUiRenderer):
   def render(self, state, signal_lights=None):
     self.host_health = _fresh(STATUS, time.monotonic())
     self.host_badge_drawn = False
-    # 11/20 12:48: while the top strip / connect % is shown, the whole screen is drawn a little smaller
-    # below it (y 32~), so the strip covers no text, icon or card. No strip (incl. 100%) = exactly as before.
+    # 11/20 12:48: while the top strip is shown, the whole screen is drawn a little smaller
+    # below it (y 32~), so the strip covers no text, icon or card. No strip = exactly as before.
     shown = (getattr(self, '_window_open', False) and self._strip_reached(state)
-             and self._health_strip_plan(getattr(state, 'alert', None), measure=False) is not None)
+             and self._health_strip_plan(getattr(state, 'alert', None)) is not None)
     outer = self._strip_outer() if shown else None
     if outer is None:
       super().render(state, signal_lights)
@@ -276,35 +240,18 @@ class HealthRenderer(ClusterUiRenderer):
     # Vehicle alerts remain last and take precedence over the health strip.
     super()._draw_alert_overlay(alert)
 
-  def _health_strip_plan(self, alert, measure=True):
-    """(message, color, progress, pct_box) for the top strip; None when nothing is shown there."""
+  def _health_strip_plan(self, alert):
+    """(message, color) for the top strip; None when nothing is shown there. Vehicle alerts win."""
     message, color = health_banner(self.host_health, self.language)
     vehicle_alert = alert is not None and alert.size > 0 and (alert.text1 or alert.text2)
-    # Connect % sits inside the top strip at the left edge (대감님 11/20 11:21 단계 문구 그대로).
-    # Same priority as before: overheating / real Jetson warnings and errors stay alone.
-    progress = connect_progress(self.host_health, self.startup_marks, self.language)
-    plain = not message or (self.host_health.get('severity', 'unknown') == 'unknown'
-                            and self.host_health.get('thermal_severity') not in ('warning', 'error'))
-    show_progress = progress is not None and plain and not vehicle_alert
-    if vehicle_alert or not (message or show_progress):
+    if vehicle_alert or not message:
       return None
-    pct_box = (progress_box(self, progress[1]) if measure else ()) if show_progress else None
-    return message, color, progress, pct_box
+    return message, color
 
   def _draw_health_strip(self, plan):
     if plan is None:
       return
-    message, color, progress, pct_box = plan
-    if message:
-      rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
-      limit = DESIGN_WIDTH - 40
-      if pct_box is not None:
-        # keep the centred stage text clear of the % on the left (short texts are unchanged)
-        limit = min(limit, DESIGN_WIDTH - 2 * (pct_box[2] + PROGRESS_GAP))
-      self._draw_text(self._ellipsize_text(message, 22, limit),
-                      DESIGN_WIDTH / 2, 16, 22, color, anchor='center')
-    if pct_box is not None:
-      if not message:
-        rl.draw_rectangle(int(pct_box[0]), int(pct_box[1]), int(pct_box[2] - pct_box[0]),
-                          int(pct_box[3] - pct_box[1]), rl_color((0, 0, 0), 220))
-      self._draw_text(progress[1], PROGRESS_X, 16, PROGRESS_SIZE, WARNING, anchor='left')
+    message, color = plan
+    rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
+    self._draw_text(self._ellipsize_text(message, 22, DESIGN_WIDTH - 40),
+                    DESIGN_WIDTH / 2, 16, 22, color, anchor='center')

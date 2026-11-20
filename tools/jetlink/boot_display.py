@@ -7,8 +7,33 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'openpilot/selfdrive/carrot/cluster'))
-from boot_status import collect
+from boot_status import collect, startup_marks
 from display_owner import hud_requested, panel_owner
+
+# Loading % on this waiting screen (대감님 11/20 10:38·11:21·23:12). Only stages that really pass while this
+# screen is up, in the order the code makes them happen; % = stages done / 6, never a timer or a guess.
+# The first five are the server's first-time marks in its health file (boot_status.startup_marks); without a
+# fresh, readable file there is no % line at all and the screen is drawn exactly as before. The comma sends
+# HUD data only after its warm-up inferences, and hud.py asks for the panel only after that data says
+# IsOnroad, so the last stage (the hand-over to the HUD) is 100%.
+LOADING_STAGES = (
+  ('server_start', '젯슨 서버 시작'),    # server.py start: host_health.HostHealth() writes the health file
+  ('hello', '콤마 연결'),               # server.py HELLO_REQ (comma jetlink daemon greet)
+  ('engine_req', '모델 요청'),           # server.py ENGINE_REQ (comma prepare -> ensure_engine)
+  ('engine_ready', '모델 준비'),         # server.py ENGINE_RESP ready
+  ('infer', '첫 계산'),                 # host_health.note_inference: first OK INFER_RESP (comma warm-up)
+  ('hud', 'HUD 화면으로 넘김'),          # display_owner.hud_requested(): hud.py takes the panel
+)
+LOADING_DY, LOADING_SIZE = 94, 21      # one line right below the stage cell's value (y+61, 23 px), above the next row
+
+
+def loading(status):
+  """% of the loading stages done, or None (no fresh server health file: then no % line)."""
+  marks = status.get('jetson')
+  if not isinstance(marks, dict):
+    return None
+  done = sum(1 for name, _ in LOADING_STAGES[:-1] if marks.get(name) is True) + (status.get('hud') is True)
+  return 100 * done // len(LOADING_STAGES)
 
 
 def lines(status):
@@ -50,6 +75,7 @@ def render(status, root=ROOT, size=(1920, 462)):
   font = lambda n: ImageFont.truetype(str(font_path), n)
   title, rows, detail, error = lines(status)
   accent = '#ff8876' if error else '#65d7bb'
+  pct = loading(status)
   draw.rectangle((0, 0, 12, size[1]), fill=accent)
   draw.text((38, 20), title[0], font=font(36), fill='white')
   draw.text((40, 65), title[1], font=font(19), fill=accent)
@@ -65,6 +91,9 @@ def render(status, root=ROOT, size=(1920, 462)):
     while value and draw.textlength(value, font=value_font) > 585:
       value = value[:-4] + '...' if len(value) > 4 else ''
     draw.text((x, y+61), value, font=value_font, fill=accent)
+    if index == 1 and pct is not None:
+      # The stage cell stays as it is; its loading % is one more line right below it (same column and colour).
+      draw.text((x, y + LOADING_DY), f'로딩 {pct}%', font=font(LOADING_SIZE), fill=accent)
   footer = detail or '콤마 연결과 계기판 화면 준비를 기다립니다'
   draw.text((40, 373), footer[:105], font=font(22), fill=accent)
   draw.text((40, 410), 'Waiting for comma / dashboard. This is a status screen, not driving guidance.',
@@ -76,6 +105,25 @@ def panel_frame(frame):
   from PIL import Image
   # Match cluster_renderer portrait_upload's render/readback transform.
   return frame.transpose(Image.Transpose.ROTATE_270)
+
+
+def show(panel, status):
+  frame = render(status, size=(panel.landscape_width, panel.landscape_height))
+  stream = BytesIO()
+  panel_frame(frame).save(stream, format='JPEG', quality=82)
+  panel.send_jpeg(stream.getvalue())
+
+
+def show_until_hud(panel, read=collect, requested=hud_requested, marks=startup_marks, sleep=time.sleep):
+  """A status frame every second until the HUD asks for the panel; then one hand-over frame (100%) that stays
+  on the panel until the HUD's first frame. Its other fields are the last ones read (no new systemctl wait)."""
+  status = None
+  while not requested():
+    status = read()
+    show(panel, status)
+    sleep(1)
+  if status is not None:
+    show(panel, {**status, 'jetson': marks(), 'hud': True})
 
 
 def main():
@@ -96,12 +144,7 @@ def main():
         panel = Panel(brightness=65, display_fps=1, expected_product_id=0x0092)
         try:
           panel.open()
-          while not hud_requested():
-            frame = render(collect(), size=(panel.landscape_width, panel.landscape_height))
-            stream = BytesIO()
-            panel_frame(frame).save(stream, format='JPEG', quality=82)
-            panel.send_jpeg(stream.getvalue())
-            time.sleep(1)
+          show_until_hud(panel)
         except Exception as error:
           print('Boot display retry:', type(error).__name__, flush=True)
         finally:
