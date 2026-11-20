@@ -67,10 +67,10 @@ def connect_progress(health, hud_marks, language='ko'):
   if count == len(CONNECT_STAGES):
     return None
   pct = int(100 * count / len(CONNECT_STAGES))
-  waiting = next((ko, en) for key, ko, en in CONNECT_STAGES if not done[key])
+  # Percent only: the existing stage/status strip above stays exactly as before (대감님 11/20 11:21).
   if language == 'ko':
-    return pct, f'젯슨 연결 중 {pct}% · {waiting[0]} 대기'
-  return pct, f'Jetson connecting {pct}% · waiting for {waiting[1]}'
+    return pct, f'젯슨 연결 중 {pct}%'
+  return pct, f'Jetson connecting {pct}%'
 
 
 def _pct(value):
@@ -190,16 +190,19 @@ class HealthRenderer(ClusterUiRenderer):
         # Full navigation/graph modes omit the driving status row.
         self._temperature_badge(DESIGN_WIDTH - 66, TOP_STATUS_CENTER_Y)
       message, color = health_banner(self.host_health, self.language)
-      progress = connect_progress(self.host_health, self.startup_marks, self.language)
-      # The connect % replaces only the plain 'no information yet' strip; thermal/real errors keep priority.
-      if progress is not None and (not message or self.host_health.get('severity', 'unknown') == 'unknown'
-                                   and self.host_health.get('thermal_severity') not in ('warning', 'error')):
-        message, color = progress[1], WARNING
       vehicle_alert = alert is not None and alert.size > 0 and (alert.text1 or alert.text2)
       if message and not vehicle_alert:
         rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32, rl_color((0, 0, 0), 220))
         self._draw_text(self._ellipsize_text(message, 22, DESIGN_WIDTH - 40),
                         DESIGN_WIDTH / 2, 16, 22, color, anchor='center')
+      # Connect % on its own line right under the unchanged status strip (대감님 11/20 11:21).
+      # Same priority as before: overheating / real Jetson warnings and errors stay alone.
+      progress = connect_progress(self.host_health, self.startup_marks, self.language)
+      plain = not message or (self.host_health.get('severity', 'unknown') == 'unknown'
+                              and self.host_health.get('thermal_severity') not in ('warning', 'error'))
+      if progress is not None and plain and not vehicle_alert:
+        rl.draw_rectangle(0, 32, int(DESIGN_WIDTH), 28, rl_color((0, 0, 0), 200))
+        self._draw_text(progress[1], DESIGN_WIDTH / 2, 46, 20, WARNING, anchor='center')
     finally:
       rl.rl_pop_matrix()
     # Vehicle alerts remain last and take precedence over the health strip.

@@ -11,7 +11,7 @@ def health(**startup):
 
 
 def test_no_status_is_zero_and_waits_for_server():
-  assert hud.connect_progress({}, {}, 'ko') == (0, '젯슨 연결 중 0% · 젯슨 서버 시작 대기')
+  assert hud.connect_progress({}, {}, 'ko') == (0, '젯슨 연결 중 0%')
   assert hud.connect_progress({}, {}, 'en')[0] == 0
 
 
@@ -19,11 +19,11 @@ def test_each_real_stage_adds_one_sixth_in_order():
   marks = {}
   steps = [('hello', 33, '모델 요청'), ('engine_req', 50, '모델 준비'), ('engine_ready', 66, '첫 계산'),
            ('infer', 83, '차량 정보')]
-  assert hud.connect_progress(health(), marks, 'ko') == (16, '젯슨 연결 중 16% · 콤마 연결 대기')
+  assert hud.connect_progress(health(), marks, 'ko') == (16, '젯슨 연결 중 16%')
   startup = {}
-  for key, pct, nxt in steps:
+  for key, pct, _nxt in steps:
     startup[key] = 2.
-    assert hud.connect_progress(health(**startup), marks, 'ko') == (pct, f'젯슨 연결 중 {pct}% · {nxt} 대기')
+    assert hud.connect_progress(health(**startup), marks, 'ko') == (pct, f'젯슨 연결 중 {pct}%')
   assert hud.connect_progress(health(**startup), {'car': 3.}, 'ko') is None
 
 
@@ -50,3 +50,23 @@ def test_server_marks_hello_and_engine_request():
   src = (Path(__file__).parent / 'server.py').read_text()
   assert "health.mark('hello')" in src and "health.mark('engine_req')" in src
   assert "self.telemetry.health.mark('engine_ready')" in src
+
+
+def test_percent_line_has_no_stage_words():
+  # the stage/status strip stays as before; the % line only carries the percent
+  assert hud.connect_progress({}, {}, 'en') == (0, 'Jetson connecting 0%')
+  assert '대기' not in hud.connect_progress(health(hello=2.), {}, 'ko')[1]
+
+
+def test_status_strip_is_unchanged_and_percent_is_separate_line():
+  src = (Path(__file__).parent / 'hud_health.py').read_text()
+  body = src[src.index('def _draw_alert_overlay'):]
+  assert 'message, color = progress' not in body
+  assert body.index('rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), 32') < body.index('rl.draw_rectangle(0, 32,')
+
+
+def test_percent_line_hidden_behind_overheat_and_real_errors():
+  src = (Path(__file__).parent / 'hud_health.py').read_text()
+  body = src[src.index('def _draw_alert_overlay'):]
+  assert "self.host_health.get('thermal_severity') not in ('warning', 'error')" in body
+  assert 'progress is not None and plain and not vehicle_alert' in body
