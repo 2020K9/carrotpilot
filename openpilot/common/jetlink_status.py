@@ -92,6 +92,83 @@ def err_delay(now=None):
   return count, max(0., now - at)
 
 
+# Jetson connect progress on the comma screen (대감님 11/21 16:07 "접속 로드율(%)과 남은 예상 시간(초)"). An ESTIMATE:
+# seconds each step took in the comma logs of the car (swaglog jetlinkConnectionState + jetsonPerformance):
+BOOT_WAIT_S = 22.4          # first connecting to the Jetson answering (runtime-handoff), 11/18 15:12 cold start (1 log)
+HANDOFF_TO_LOAD_S = 9.1     # runtime-handoff to loading: 8.9 s (11/18 15:12), 9.3 s (11/21 15:07)
+RECONNECT_TO_LOAD_S = 5.3   # connecting to loading when the Jetson is already up: median of 7 (11/21 14:52~14:59)
+LOAD_TO_READY_S = 0.4       # loading to ready: 0.36~0.45 s, 9 logs
+READY_TO_FIRST_S = 1.05     # ready to the first Jetson result (1 Hz jetsonPerformance, upper bound): median of 6
+_TRACK = {}                 # phase: first time seen in this wait (UI process clock), reset once the Jetson model runs
+_PROGRESS = [None, -1.0]    # (result, time) cache: the badge is drawn every frame, the files are read twice a second
+
+
+def _phase(link, model):
+  if model.get("active"):
+    return "active"
+  state, stage = link.get("state"), (link.get("preparation") or {}).get("stage")
+  if state == "ready":
+    return "ready"
+  if state == "loading":
+    return None if stage in ("waiting", "resident-wait") else "loading"
+  if state == "connecting":
+    if stage == "runtime-handoff":
+      return "handoff"
+    return "down" if stage in ("transport-selection", "usb-probe", "waiting-host") else "connecting"
+  return "reset" if state in ("waiting", "updating", "stopped", "blocked") else None
+
+
+def progress(now=None, link=None, model=None):
+  """(percent 0..99, whole seconds left >= 1) while the comma connects to the Jetson, else None. ESTIMATE: the
+  measured time of every step still ahead minus the time already spent in the current one (constants above)."""
+  now = time.monotonic() if now is None else now
+  link = _fresh(LINK_STATUS, now, handshake=True) if link is None else link
+  model = _fresh(MODEL_STATUS, now) if model is None else model
+  phase, t = _phase(link, model), _TRACK
+  if phase in ("active", "reset"):
+    t.clear()
+    return None
+  if phase is None:
+    return None
+  t.setdefault("start", now)
+  if phase in ("connecting", "down", "handoff") and ("loading" in t or "ready" in t):
+    t.pop("loading", None)      # a new attempt after the model step: those steps are ahead again
+    t.pop("ready", None)
+    t.pop("connecting", None)   # and this attempt is timed from now
+  if phase == "connecting" and "handoff" in t:
+    phase = "handoff"           # the USB setup right after the hand-off belongs to that step
+  t.setdefault(phase, now)
+
+  def left(key, seconds):
+    return max(0., seconds - (now - t[key]))
+  tail = LOAD_TO_READY_S + READY_TO_FIRST_S
+  if "ready" in t:
+    rest = left("ready", READY_TO_FIRST_S)
+  elif "loading" in t:
+    rest = left("loading", LOAD_TO_READY_S) + READY_TO_FIRST_S
+  elif "handoff" in t:
+    rest = left("handoff", HANDOFF_TO_LOAD_S) + tail
+  elif "down" in t:
+    rest = left("start", BOOT_WAIT_S) + HANDOFF_TO_LOAD_S + tail
+  else:
+    rest = left("connecting", RECONNECT_TO_LOAD_S) + tail
+  rest = max(1., rest)
+  spent = now - t["start"]
+  return min(99, int(100 * spent / (spent + rest))), int(math.ceil(rest))
+
+
+def progress_text(now=None):
+  """short suffix for the comma eGPU/Jetson badge, e.g. 45% · 약 8초 (estimate); empty when there is none."""
+  now = time.monotonic() if now is None else now
+  if _PROGRESS[0] is None or not 0 <= now - _PROGRESS[1] < .5:
+    try:
+      _PROGRESS[:] = [progress(now) or (), now]
+    except Exception:
+      _PROGRESS[:] = [(), now]
+  value = _PROGRESS[0]
+  return f" {value[0]}% · 약 {value[1]}초" if value else ""
+
+
 def preparation_text(link, model):
   if model.get('active'):
     return ''

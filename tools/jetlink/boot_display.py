@@ -25,6 +25,28 @@ LOADING_STAGES = (
   ('hud', 'HUD 화면으로 넘김'),          # display_owner.hud_requested(): hud.py takes the panel
 )
 LOADING_DY, LOADING_SIZE = 94, 21      # one line right below the stage cell's value (y+61, 23 px), above the next row
+# Remaining time next to the %, an ESTIMATE from measured stage times (대감님 11/21 16:07). Seconds each stage took
+# after the previous one, from the comma logs of the car (swaglog jetlinkConnectionState + jetsonPerformance; the
+# comma sees these Jetson steps): 11/18 15:12 cold start (comma_logs_1118 c) and 11/21 14:52~15:07 (7 reconnects,
+# 1 Jetson reboot). hello: Jetson ready to comma HELLO+ENGINE_REQ, 6.3 / 6.7 s after a Jetson (re)start;
+# engine_req: sent in the same step as HELLO (not separable, 0); engine_ready: comma loading to ready, 0.36~0.45 s
+# (median of 9: 0.37); infer: ready to first Jetson result, median of 6 = 1.05 s (1 Hz log, upper bound); hud: comma
+# warm-up (10 frames at 20 Hz) + HUD data + IsOnroad: NOT in any log, 1.5 s is a guess from those code constants.
+# Server start itself has no % line (no health file yet), so no time either.
+STAGE_SECONDS = {"hello": 6.5, "engine_req": 0.0, "engine_ready": 0.37, "infer": 1.05, "hud": 1.5}
+
+
+def remaining(status):
+  """estimated whole seconds until the HUD takes the panel, or None (no fresh timed marks / already handed over):
+  the measured time of every stage not done yet, minus the time already spent in the current one (never below 1)."""
+  at, marks = status.get("jetson_at"), status.get("jetson")
+  if not isinstance(at, dict) or not isinstance(marks, dict) or status.get("hud") is True or "server_start" not in at:
+    return None
+  todo = [name for name, _ in LOADING_STAGES[1:] if name == "hud" or marks.get(name) is not True]
+  done = [t for name, t in at.items() if name != "now" and (name == "server_start" or marks.get(name) is True)]
+  spent = max(0.0, at["now"] - max(done))
+  left = max(0.0, STAGE_SECONDS[todo[0]] - spent) + sum(STAGE_SECONDS[name] for name in todo[1:])
+  return max(1, round(left))
 
 
 def loading(status):
@@ -94,6 +116,10 @@ def render(status, root=ROOT, size=(1920, 462)):
     if index == 1 and pct is not None:
       # The stage cell stays as it is; its loading % is one more line right below it (same column and colour).
       draw.text((x, y + LOADING_DY), f'로딩 {pct}%', font=font(LOADING_SIZE), fill=accent)
+      left = remaining(status)
+      if left is not None:   # its own draw call after the % (same line, same font): the % text itself is unchanged
+        dx = draw.textlength(f"로딩 {pct}%", font=font(LOADING_SIZE))
+        draw.text((x + dx, y + LOADING_DY), f" · 남은 시간 약 {left}초 (추정)", font=font(LOADING_SIZE), fill=accent)
   footer = detail or '콤마 연결과 계기판 화면 준비를 기다립니다'
   draw.text((40, 373), footer[:105], font=font(22), fill=accent)
   draw.text((40, 410), 'Waiting for comma / dashboard. This is a status screen, not driving guidance.',

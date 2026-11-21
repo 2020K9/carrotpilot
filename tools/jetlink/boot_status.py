@@ -44,6 +44,20 @@ def startup_marks(path=HOST_HEALTH, now=None):
   return {name: _mark(startup.get(name)) for name in STARTUP_MARKS}
 
 
+def startup_times(path=HOST_HEALTH, now=None):
+  """{"now": this clock, mark: Jetson monotonic time it happened} from the same fresh health file as startup_marks
+  (same clock: both are time.monotonic on this Jetson); None when the file is missing, broken or stale. Used only for
+  the remaining-time estimate next to the loading % of the boot screen."""
+  now = time.monotonic() if now is None else now
+  if startup_marks(path, now) is None:
+    return None
+  try:
+    startup = read_json(path, 262144)["hud_diag"]["startup"]
+  except (KeyError, TypeError, RecursionError):
+    return None
+  return {"now": now, **{name: float(startup[name]) for name in STARTUP_MARKS if _mark(startup.get(name))}}
+
+
 def stage(name, error=None):
   value = {'stage': name, 'updated': time.monotonic()}
   if error:
@@ -92,7 +106,7 @@ def collect():
           'firmware': read_json('/run/carrot-super-firmware.json'),
           'units': units, 'addresses': addresses[:4], 'wifi': network.get('state', 'waiting'),
           'uptime': int(time.monotonic()), 'temp_c': max(temperatures, default=None),
-          'jetson': startup_marks()}
+          'jetson': startup_marks(), 'jetson_at': startup_times()}
 
 
 def persist_result(directory, value):

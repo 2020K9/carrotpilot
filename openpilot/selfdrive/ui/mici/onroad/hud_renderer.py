@@ -339,6 +339,9 @@ class HudRenderer(Widget):
       text, state = ui_state.usbgpu_delivery_badge
     if getattr(ui_state, 'jetlink_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.jetlink_badge
+      if state == "loading" and not any(word in text for word in ("HOT", "업데이트")):
+        from openpilot.common.jetlink_status import progress_text
+        text += progress_text()   # 11/21 16:07: connect % + seconds left (estimate) while the Jetson gets ready
     if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.usbgpu_recovery_badge
     font = gui_app.font(FontWeight.DISPLAY) if not text.isascii() else self._font_semi_bold
