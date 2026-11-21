@@ -447,7 +447,7 @@ def test_menu_schema():
       for v in node:
         yield from groups(v)
   exp = list(groups(settings["menu"]))
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain", "K9ClampAlert", "K9JetHostState"]   # 2026-11-21 K9JetHostState appended (대감님 17:13, registration pin updated deliberately); 2026-11-18 K9Clamp appended (대감님 13:55); 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain", "K9ClampAlert", "K9JetHostState", "K9JetErrDelay"]   # 2026-11-21 +K9JetErrDelay last (대감님 16:07); 2026-11-21 K9JetHostState appended (대감님 17:13, registration pin updated deliberately); 2026-11-18 K9Clamp appended (대감님 13:55); 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
   params = settings["params"]
   p = next(x for x in params if x["name"] == "K9LaneAssist")
   assert (p["min"], p["max"], p["default"], p["unit"], p["control"]) == (0, 1, 0, 1, "select")

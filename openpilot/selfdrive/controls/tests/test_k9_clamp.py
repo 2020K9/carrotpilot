@@ -265,7 +265,7 @@ def test_menu_entry():
     assert p[k]
   exp = [g for t in d["menu"] for g in t.get("groups", []) if g.get("id") == "EXPERIMENTAL"]
   # 2026-11-21 K9JetHostState appended after the five (registration pin updated deliberately)
-  assert exp and exp[0]["params"][-6:] == FIVE + ["K9JetHostState"]
+  assert exp and exp[0]["params"][-7:-1] == FIVE + ["K9JetHostState"]   # 2026-11-21 +K9JetErrDelay last (대감님 16:07)
   by = {x["name"]: x for x in d["params"]}
   assert [(by[n]["min"], by[n]["max"], by[n]["default"], by[n]["unit"]) for n in FIVE[1:]] == \
     [(0, 300, 135, 1), (0, 300, 115, 1), (0, 20, 10, 1), (0, 1, 1, 1)]   # 1 cm steps, ej defaults
