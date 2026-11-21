@@ -24,10 +24,6 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-
-# K9JetHostState (2026-11-21): comma 실험중 toggle, recurrent state kept on the host (pre-10/21 path).
-HOST_STATE_CAPABILITY = 'carrot_host_state_v1'
-HOST_STATE_KEY = 'host_state'
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +59,6 @@ class Loaded:
   engine: object
   queues: object
   host_inputs: dict
-  host_state: bool = False   # K9JetHostState: recurrent state kept on the host (CPU) for this load
 
 
 @dataclass
@@ -122,7 +117,6 @@ class Request:
   sha256: str
   nbytes: int
   frame_skip: int
-  host_state: bool = False   # K9JetHostState: comma asked for host (CPU) recurrent state
 
   def __post_init__(self):
     EngineCache._validate_sha256(self.sha256)
@@ -224,10 +218,6 @@ class EngineHost:
     loaded, job = self.loaded, self.job
     if sha256 is None:
       return {'state': 'none', 'detail': '', 'sha256': None, 'chunk': CHUNK}
-    if (job is not None and job.sha256 == sha256 and job.state == 'building'
-        and loaded is not None and loaded.sha256 == sha256):
-      # K9JetHostState reload of the resident model: never answer ready for the engine being replaced.
-      return {'state': job.state, 'detail': job.detail, 'sha256': sha256, 'chunk': CHUNK}
     if (loaded is not None and loaded.sha256 == sha256
         and (frame_skip is None or loaded.spec.frame_skip == frame_skip)):
       return {'state': 'ready', 'detail': '', 'sha256': sha256, 'chunk': CHUNK,
@@ -265,8 +255,7 @@ class EngineHost:
         # comma's session from the progress it is waiting on.
         self.session = session
       if (self.loaded is not None and self.loaded.sha256 == req.sha256
-          and self.loaded.spec.frame_skip == req.frame_skip
-          and self.loaded.host_state == req.host_state):
+          and self.loaded.spec.frame_skip == req.frame_skip):
         return self._ready(self.loaded)
       if self.job is not None and self.job.state == 'building':
         # Either this model's build, which the client attaches to, or another
@@ -426,7 +415,7 @@ class EngineHost:
         self._write_spec(entry, spec)
         self._progress('load', 0.0, 'deserializing engine', force=True)
         engine = self._load_engine(entry.path)
-      loaded = self._warm(engine, spec, host_state=req.host_state)
+      loaded = self._warm(engine, spec)
       engine = None   # owned by `loaded` from here
       with self.lock:
         self.loaded = loaded
@@ -459,8 +448,7 @@ class EngineHost:
     answer.
     """
     req = session.request
-    if req is None or (done.sha256 == req.sha256
-                       and (self.loaded is None or self.loaded.host_state == req.host_state)):
+    if req is None or done.sha256 == req.sha256:
       return
     self.request(req, session)
 
@@ -487,16 +475,13 @@ class EngineHost:
     if 'spec' not in meta:
       entry.write_meta({**meta, 'spec': spec.to_dict()})
 
-  def _warm(self, engine, spec: ModelSpec, host_state: bool = False) -> Loaded:
+  def _warm(self, engine, spec: ModelSpec) -> Loaded:
     from jetlink.queues import make_queues
     _check_shapes(engine, spec)
     # Warm runs on zeros, so the first real frame pays for nothing lazy: CUDA
     # state and the graph capture for TensorRT, a first replay for the others.
     if spec.stateful and hasattr(engine, 'configure_state_feedback'):
-      if host_state:
-        engine.configure_state_feedback(spec.state_pairs, device_state=False)
-      else:
-        engine.configure_state_feedback(spec.state_pairs)
+      engine.configure_state_feedback(spec.state_pairs)
     host_inputs = {n: engine.host_input(n) for n in engine.inputs}
     # Only the reviewed N16 model AND full tensor contract default to the new
     # staging paths. Explicit 0 retains the original diagnostic path.
@@ -511,9 +496,7 @@ class EngineHost:
     queues.step_into(warped, packed, host_inputs)
     log.info("%s", engine.warm())
     queues.reset()
-    if host_state:
-      log.info("K9JetHostState: recurrent state on the host for %s", spec.sha256[:16])
-    return Loaded(spec.sha256, spec, engine, queues, host_inputs, host_state=bool(host_state))
+    return Loaded(spec.sha256, spec, engine, queues, host_inputs)
 
   def unload(self) -> None:
     """Release the engine on a client's say-so. The job thread uses _unload."""
@@ -722,7 +705,6 @@ class Session:
       # Legacy v2 hosts must not be assumed to support stateful input contracts.
       'stateful_v2': True,
       'carrot_nav_u8_v1': True,
-      HOST_STATE_CAPABILITY: True,   # K9JetHostState: ENGINE_REQ may carry host_state
       'carrot_lz4_v1': self._block_codec_available(),
       # Flag.HOLD_STATE: one non-finite frame restores the previous valid recurrent state (stateful models)
       P.HOLD_STATE_CAPABILITY: True,
@@ -748,8 +730,7 @@ class Session:
   def on_engine_req(self, msg: Message) -> None:
     d = json.loads(bytes(msg.payload))
     self.request = Request(str(d['sha256']), int(d['nbytes']),
-                           int(d.get('frame_skip', DEFAULT_FRAME_SKIP)),
-                           host_state=d.get(HOST_STATE_KEY) is True)
+                           int(d.get('frame_skip', DEFAULT_FRAME_SKIP)))
     self._send_json(P.Msg.ENGINE_RESP, msg.seq, self.host.request(self.request, self))
 
   def _respond_engine(self, seq: int) -> None:

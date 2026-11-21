@@ -292,18 +292,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
   usb_display = publisher is not None and (peer.get('carrot_host') != 'jetson' or peer.get(HUD_USB_CAPABILITY) is True)
   requested = True
   follows_app = peer.get('protocol') == 3 and may_provision(peer, session_mode())
-  from openpilot.selfdrive.modeld.jetlink import host_state as jet_host_state
-  host_state_latch = jet_host_state.HostStateLatch(params) if jet_host_state.supported(peer) else None
-
-  def host_state_changed():
-    # K9JetHostState committed (offroad, or stopped with assistance off): the next ENGINE_REQ reloads the engine
-    nonlocal requested
-    if host_state_latch is None or not host_state_latch.poll(bool(getattr(client, 'host_state', False))):
-      return False
-    client.host_state = host_state_latch.committed()
-    requested = False
-    log.info('K9JetHostState committed %d: reloading the Jetson engine on the next request', int(client.host_state))
-    return True
   while host_attached():
     if follows_app and requested and params.get_bool('IsOffroad') and not params.get_bool('IsOnroad'):
       # The App's Use Model must not compete with our old ENGINE_REQ.
@@ -320,7 +308,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
     except TimeoutError:
       library.idle(client, params)
       host_reboot.idle(client, params)
-      host_state_changed()
       if time.monotonic() - last_ping > (.2 if blinker is not None else 2):
         client.last_state = client.state()
         check_loaded(client, client.last_state)
@@ -373,8 +360,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
                     telemetry=client.last_state, telemetry_updated=telemetry_updated,
                     navigation_tail=getattr(publisher, 'tail_stats', {}))
             last_status = time.monotonic()
-            if host_state_changed():
-              raise ValueError('K9JetHostState changed while stopped; reconnecting with the committed state mode')
           receive_started = time.monotonic()
           try:
             request = reader.receive(connection)
@@ -709,9 +694,6 @@ def main():
           from openpilot.common.params import Params
           params = Params()
           last_progress = 0.
-          from openpilot.selfdrive.modeld.jetlink import host_state as jet_host_state
-          # K9JetHostState: every ENGINE_REQ of this session carries the last committed value
-          jet_host_state.apply(client, peer, jet_host_state.HostStateLatch(params))
 
           def progress(stage, fraction, message, current_peer=peer):
             nonlocal last_progress

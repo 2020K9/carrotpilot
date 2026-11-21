@@ -107,9 +107,6 @@ class JetlinkClient:
     self._should_stop: StopFn = lambda: False
     self.dead = False
     self.last_timings = (0, 0, 0)  # gpu_us, queue_us, total_us, server-side
-    # K9JetHostState: ask the Jetson for host (CPU) recurrent state on every ENGINE_REQ.
-    # Set only for a peer advertising carrot_host_state_v1; False sends the old payload unchanged.
-    self.host_state = False
     self.last_state: dict | None = None  # most recent piggybacked telemetry
     self._infer_started = 0.0
     self._infer_frame_id: int | None = None
@@ -361,10 +358,7 @@ class JetlinkClient:
     self._engine_state = None
 
     seq = self._next_seq()
-    request = {'sha256': sha256, 'nbytes': nbytes, 'frame_skip': frame_skip}
-    if self.host_state is True:
-      request['host_state'] = True
-    self.t.send_json(P.Msg.ENGINE_REQ, seq, request)
+    self.t.send_json(P.Msg.ENGINE_REQ, seq, {'sha256': sha256, 'nbytes': nbytes, 'frame_skip': frame_skip})
     resp = json.loads(bytes(self._expect(P.Msg.ENGINE_RESP, seq, 60.0).payload))
     if not isinstance(resp, dict):
       raise LinkError("engine response is not an object")

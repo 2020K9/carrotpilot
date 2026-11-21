@@ -295,8 +295,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9ClampEdgeCm", {PERSISTENT, INT, "115"}},  // K9Clamp min distance from a road edge [cm] (ej ClampMinDistEdge)
     {"K9ClampGain", {PERSISTENT, INT, "10"}},     // K9Clamp laneless steering correction gain x0.1 (ej ClampSteerGain)
     {"K9ClampAlert", {PERSISTENT, INT, "1"}},     // K9Clamp correction alert 0 off / 1 on (ej ClampSteerAlert)
-    {"K9JetHostState", {PERSISTENT, INT, "0"}},   // 0 GPU 상태값(지금) / 1 젯슨 순환 상태값 CPU(10/21 전 방식), modeld/jetlink/host_state.py
-    {"K9JetHostStateSet", {PERSISTENT, INT, "0"}},  // K9JetHostState 마지막 확정값(정차·주행보조 꺼짐·offroad에서만 바뀜), 메뉴 아님
     {"K9JetErrDelay", {PERSISTENT, INT, "0"}},    // 0 off / 1 젯슨 4번(NaN) 한 장 버티기 (modeld/jetlink/output_recovery.py)
     {"K9LaneVer", {PERSISTENT, INT}},  // K9LaneAssist menu merge marker (one-time migration, k9_lane.py)
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},

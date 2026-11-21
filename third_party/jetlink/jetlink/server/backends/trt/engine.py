@@ -129,18 +129,14 @@ class TrtEngine:
     """Pinned array for an input. Write into it, then call run()."""
     return self._state_host_sources.get(name, self.inputs[name]).host
 
-  def configure_state_feedback(self, pairs, device_state: bool | None = None):
+  def configure_state_feedback(self, pairs):
     if self.graph_exec is not None:
       raise RuntimeError('State staging must be configured before CUDA graph capture')
     from jetlink.server.backends.trt.state_buffers import feedback_sources
     self._state_host_sources = feedback_sources(self.inputs, self.outputs, pairs)
     # Stateful NAV keeps recurrence on the GPU by default. Explicit 0 retains
     # host staging for diagnosis; queued models never configure this path.
-    # K9JetHostState (comma 실험중, 2026-11-21): the comma may ask for the host path per load
-    # (device_state=False); None keeps the env default exactly as before.
-    if device_state is None:
-      device_state = os.getenv('CARROT_TRT_DEVICE_STATE', '1') == '1'
-    if device_state:
+    if os.getenv('CARROT_TRT_DEVICE_STATE', '1') == '1':
       if self.device_state is not None:
         raise RuntimeError('Device state already configured')
       from jetlink.server.backends.trt.device_state import DeviceState

@@ -136,7 +136,7 @@ def test_settings_menu_and_keys():
         yield n
       yield from leaves(n.get("groups", []))
   exp = [g for g in leaves(cat["menu"]) if g["id"] == "EXPERIMENTAL"]
-  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain", "K9ClampAlert", "K9JetHostState", "K9JetErrDelay"]   # 2026-11-21 +K9JetErrDelay last (대감님 16:07); 2026-11-21 K9JetHostState appended (대감님 17:13, registration pin updated deliberately); 2026-11-18 K9Clamp appended (대감님 13:55); 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
+  assert len(exp) == 1 and exp[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain", "K9ClampAlert", "K9JetErrDelay"]   # 2026-11-21 +K9JetErrDelay last (대감님 16:07); 2026-11-18 K9Clamp appended (대감님 13:55); 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
   names = [p["name"] for p in cat["params"]]
   assert not set(OLD) & set(names)
   sw = next(p for p in cat["params"] if p["name"] == "K9LaneAssist")
