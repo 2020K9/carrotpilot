@@ -47,7 +47,7 @@ def initial_connection_wait(error, *, elapsed, ready_once, preparing):
           and (isinstance(error, (TimeoutError, LinkTimeout)) or no_reader))
 
 
-def wait_for_boot_update(client, peer, wifi, connected, publish, sleep=time.sleep):
+def wait_for_boot_update(client, peer, wifi, connected, publish, sleep=time.sleep, idle=None):
   if peer.get('carrot_host') != 'jetson' or peer.get(CAPABILITY) is not True:
     return
   manifest = selected_release(RELEASE, required=True)
@@ -75,6 +75,8 @@ def wait_for_boot_update(client, peer, wifi, connected, publish, sleep=time.slee
           wifi.send(client)
         client.state()
         sleep(.5)
+        if idle is not None:
+          idle()
       upload(client, manifest, Path('/data/jetson-usb-cache'), allowed,
              lambda state, fraction: publish('updating', peer=peer,
                                             host_update={'state': state, 'fraction': fraction, 'integrity': 'sha256'}))
@@ -95,6 +97,8 @@ def wait_for_boot_update(client, peer, wifi, connected, publish, sleep=time.slee
     if value.get('state') == 'ready':
       break
     sleep(.5)
+    if idle is not None:
+      idle()
   # The gate has no model. A fresh connection must greet the real server.
   if not connected():
     raise ConnectionError('Jetson disconnected during boot release check')

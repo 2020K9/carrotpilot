@@ -656,7 +656,12 @@ def main():
             # Provision before ensure_engine: a new host may need Internet to
             # fetch its first model. This is outside every model frame deadline.
             wifi.send(client, initial=True)
-          wait_for_boot_update(client, peer, wifi, host_attached, publish)
+          from tools.jetlink.host_reboot import Client as HostReboot  # noqa: TID251 -- shared standalone host protocol
+          # Jetson reboot also while the Jetson is still loading/waiting (대감님 11/21 15:21): before this
+          # only the ready loop forwarded the request, so a stuck Jetson answered "not connected".
+          loading_reboot = HostReboot(peer)
+          reboot_idle = lambda current=client, forwarder=loading_reboot: forwarder.idle(current, None)  # noqa: E731
+          wait_for_boot_update(client, peer, wifi, host_attached, publish, idle=reboot_idle)
           publish('loading', peer=peer)
           from openpilot.common.params import Params
           params = Params()
@@ -668,9 +673,9 @@ def main():
               publish('loading', peer=current_peer, preparation={'stage': stage, 'fraction': fraction, 'message': str(message)[:160]})
               last_progress = time.monotonic()
 
-          peer = wait_for_selection(client, peer, progress)
+          peer = wait_for_selection(client, peer, progress, idle=reboot_idle)
           prepare(client, peer, lambda current=params: current.get_bool('IsOffroad') and not current.get_bool('IsOnroad'),
-                  host_attached, progress, mode=session_mode())
+                  host_attached, progress, mode=session_mode(), idle=reboot_idle)
           spec = client.spec
           if spec is None:
             raise ValueError('Jetlink preparation completed without a model spec')
@@ -791,7 +796,7 @@ def validate_speed(speed, mode, peer=None, selected=None):
     log.warning('Recognized %s App is using USB 2; real-time throughput is not guaranteed', selected)
 
 
-def wait_for_selection(client, peer, progress):
+def wait_for_selection(client, peer, progress, idle=None):
   if peer.get('protocol') != 3 or not may_provision(peer, session_mode()):
     return peer
   while peer.get('loaded') is None:
@@ -799,6 +804,8 @@ def wait_for_selection(client, peer, progress):
       raise PreparationDeferred('Jetlink host disconnected before App model preparation')
     progress('app-selection', None, 'With ignition off, select Use Model in the Jetlink App')
     time.sleep(1)
+    if idle is not None:
+      idle()
     current = client.state()
     if not isinstance(current, dict) or 'loaded' not in current:
       raise ValueError('Jetlink App did not report its loaded model')

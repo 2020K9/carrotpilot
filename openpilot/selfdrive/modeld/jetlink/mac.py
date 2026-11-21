@@ -115,7 +115,7 @@ class PreparationTransport:
         pass
 
 
-def prepare_jetson(client, peer, offroad, connected, progress):
+def prepare_jetson(client, peer, offroad, connected, progress, idle=None):
   # The host's preload worker survives a connection. Keep this connection too,
   # polling its resident engine without starting a new build while onroad.
   def check():
@@ -141,6 +141,8 @@ def prepare_jetson(client, peer, offroad, connected, progress):
         raise LinkError(f"Jetson model preparation failed: {current.get('detail', '')}")
       progress('resident-wait', None, waiting_message)
       time.sleep(.5)
+      if idle is not None:
+        idle()   # Jetson reboot request between polls, no transaction in flight
 
     check()
     original = client.t
@@ -164,12 +166,12 @@ def prepare_jetson(client, peer, offroad, connected, progress):
       client._should_stop = lambda: False
 
 
-def prepare(client, peer, offroad, connected, progress, cache=CACHE, mode='usb'):
+def prepare(client, peer, offroad, connected, progress, cache=CACHE, mode='usb', idle=None):
   """Prepare the selected engine while retaining each platform's setup gates."""
   if is_jetson(peer):
     if mode not in ('usb', 'auto'):
       raise ValueError('Jetson requires USB mode')
-    return prepare_jetson(client, peer, offroad, connected, progress)
+    return prepare_jetson(client, peer, offroad, connected, progress, idle=idle)
   protocol = peer.get('protocol') if isinstance(peer, dict) else None
   app_capable = protocol == 3 and may_provision(peer, mode)
   legacy_v3 = protocol == 3 and isinstance(peer, dict) and 'loaded' in peer and not app_capable
