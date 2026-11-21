@@ -100,6 +100,78 @@ class DeviceState:
     self.backups = None
     self.backup_valid = False
     self.needs_restore = False
+    # K9 NOT_FINITE tracer (jetlink/server/nf_trace.py): device copies of this frame's input state, taken on the stream
+    # right before the graph. Diagnostics only: never read back unless a frame failed; values never fed to a frame.
+    self.trace = None
+
+  def trace_enable(self):
+    """Allocate the tracer's copy (snapshot) and the live-state save area used around a replay. Idempotent."""
+    if self.trace is not None:
+      return
+    made = []
+    try:
+      for target, _ in self.pairs:
+        made.append((int(cudart.malloc(target.nbytes)), int(cudart.malloc(target.nbytes))))
+    except BaseException:
+      for a, b in made:
+        cudart.free(a)
+        cudart.free(b)
+      raise
+    self.trace = made
+
+  def trace_snapshot(self):
+    if self.trace is not None:
+      for (snap, _), (target, _) in zip(self.trace, self.pairs, strict=True):
+        cudart.memcpy_d2d_async(snap, target.device_ptr, target.nbytes, self.stream)
+
+  def _d2h(self, pointers_bindings):
+    out = {}
+    for ptr, b in pointers_bindings:
+      host = np.empty(b.shape, b.dtype)
+      cudart.memcpy_d2h_async(host.ctypes.data, ptr, b.nbytes, self.stream)
+      out[b.name] = host
+    cudart.stream_sync(self.stream)
+    return out
+
+  def trace_read_state(self):
+    """Failure path, before the next frame: the failed frame's input state (from the snapshot)."""
+    if self.trace is None:
+      return {}
+    cudart.stream_sync(self.stream)
+    return self._d2h([(snap, target) for (snap, _), (target, _) in zip(self.trace, self.pairs, strict=True)])
+
+  def trace_read_outputs(self):
+    """The state outputs of the last run, by output name."""
+    cudart.stream_sync(self.stream)
+    return self._d2h([(source.device_ptr, source) for _, source in self.pairs])
+
+  def trace_begin_replay(self, state):
+    """Keep the live input state and flags aside, then load `state` (host arrays by input name) into the inputs."""
+    cudart.stream_sync(self.stream)
+    for (_, save), (target, _) in zip(self.trace, self.pairs, strict=True):
+      cudart.memcpy_d2d_async(save, target.device_ptr, target.nbytes, self.stream)
+    kept = (self.needs_reset, self.needs_restore, int(self.bad[0]))
+    loaded = []
+    for target, _ in self.pairs:
+      value = state.get(target.name)
+      if value is None or value.nbytes != target.nbytes:
+        cudart.memset_async(target.device_ptr, target.nbytes, self.stream)
+      else:
+        value = np.ascontiguousarray(value, dtype=target.dtype)
+        loaded.append(value)
+        cudart.memcpy_h2d_async(target.device_ptr, value.ctypes.data, target.nbytes, self.stream)
+    cudart.stream_sync(self.stream)
+    self.needs_reset = self.needs_restore = False
+    self.bad[0] = 0
+    return kept
+
+  def trace_end_replay(self, kept):
+    """Put the live input state and flags back exactly as they were before trace_begin_replay."""
+    cudart.stream_sync(self.stream)
+    for (_, save), (target, _) in zip(self.trace, self.pairs, strict=True):
+      cudart.memcpy_d2d_async(target.device_ptr, save, target.nbytes, self.stream)
+    cudart.stream_sync(self.stream)
+    self.needs_reset, self.needs_restore, self.bad[0] = kept[0], kept[1], kept[2]
 
   def reset(self):
     # Host only; schedule zeroing before the next graph on the same stream.
@@ -157,6 +229,8 @@ class DeviceState:
       self.needs_restore = False
     elif self.bad[0]:
       raise FloatingPointError('Non-finite GPU state; reset required')
+    if self.trace is not None:
+      self.trace_snapshot()
 
   def enqueue_check(self):
     cudart.memset_async(self.bad_device, 4, self.stream)
@@ -196,6 +270,10 @@ class DeviceState:
     for backup in getattr(self, 'backups', None) or ():
       cudart.free(backup.device_ptr)
     self.backups = None
+    for a, b in getattr(self, 'trace', None) or ():
+      cudart.free(a)
+      cudart.free(b)
+    self.trace = None
     if self.kernel is not None:
       self.kernel.close()
       self.kernel = None

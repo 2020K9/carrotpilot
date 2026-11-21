@@ -30,6 +30,7 @@ from blink_protocol import Host as BlinkerHost, CAPABILITY as BLINKER_CAPABILITY
 from wifi_protocol import CAPABILITY as WIFI_CAPABILITY, MESSAGE as WIFI_MESSAGE, receive as receive_wifi
 from host_reboot import CAPABILITY as REBOOT_CAPABILITY, REQUEST as REBOOT_REQUEST, RESPONSE as REBOOT_RESPONSE, host_request as reboot_request
 from model_library import CAPABILITY as LIBRARY_CAPABILITY, REQUEST as LIBRARY_REQUEST, RESPONSE as LIBRARY_RESPONSE, host_request as library_request
+import nf_trace_link
 from jetlink import protocol as P
 from jetlink import request_chunks, deferred_map, packed_codec, output_projection
 from jetlink.transport.base import Message, LinkError
@@ -41,6 +42,7 @@ class DisplayTelemetry:
   def __init__(self, original):
     self.original = original
     self.blinker = None
+    self.nf_trace = None
     self.health = health_worker() if Path('/etc/nv_tegra_release').is_file() else None
 
   def read(self):
@@ -55,7 +57,8 @@ class DisplayTelemetry:
       pass
     return {**self.original.read(), 'carrot_hud_connected': connected,
             **({'carrot_blinker': self.blinker.telemetry()} if self.blinker is not None and self.blinker.worker is not None else {}),
-            **({'carrot_health': self.health.read()} if self.health else {})}
+            **({'carrot_health': self.health.read()} if self.health else {}),
+            **nf_trace_link.telemetry(getattr(self, 'nf_trace', None))}
 
 
 class CarrotSession(Session):
@@ -85,6 +88,10 @@ class CarrotSession(Session):
     if sys.platform == 'linux':
       self.t = ReadAheadTransport(self.t)
     self.telemetry = DisplayTelemetry(self.telemetry)
+    # K9 NOT_FINITE tracer: one per server process (on the EngineHost), Jetson only, always on, records only on errors
+    on_jetson = Path('/etc/nv_tegra_release').is_file()
+    host = getattr(self, 'host', None)
+    self.telemetry.nf_trace = nf_trace_link.attach(host) if on_jetson and host is not None else getattr(host, 'nf_trace', None)
     self.blinker = BlinkerHost()
     self.telemetry.blinker = self.blinker
     self.navi = HostForwarder() if sys.platform == 'linux' and self.usb_display else None
@@ -104,7 +111,8 @@ class CarrotSession(Session):
              PUMP_CAPABILITY: legacy_display, WIFI_CAPABILITY: host == 'jetson', 'carrot_host': host,
              HUD_WIFI_CAPABILITY: self.hud_wifi_supported,
              HUD_USB_CAPABILITY: host == 'jetson' and legacy_display, LIBRARY_CAPABILITY: host == 'jetson',
-             REBOOT_CAPABILITY: host == 'jetson'}
+             REBOOT_CAPABILITY: host == 'jetson',
+             nf_trace_link.CAPABILITY: getattr(getattr(self, 'host', None), 'nf_trace', None) is not None}
       if host == 'jetson' and self.blinker.supported():
         obj[BLINKER_CAPABILITY] = True
       if self.deferred_negotiated:
@@ -126,6 +134,12 @@ class CarrotSession(Session):
       else:
         result = {'ok': False, 'reason': 'not a jetson'}
       self._send_json(REBOOT_RESPONSE, msg.seq, result)
+      return
+    if msg.msg_type == nf_trace_link.REQUEST:
+      if msg.seq <= self.last_seq:
+        return
+      self.last_seq = msg.seq
+      self._send(nf_trace_link.RESPONSE, msg.seq, nf_trace_link.host_request(getattr(getattr(self, 'host', None), 'nf_trace', None), msg.payload))
       return
     if msg.msg_type == LIBRARY_REQUEST:
       if msg.seq <= self.last_seq:
