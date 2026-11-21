@@ -109,7 +109,6 @@ from cluster_scene import (
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
-from cluster_k9_3d import K9Scene3D, draw_car as k9v_draw_car  # noqa: F401  (K9HudNavdy 3)
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
 from cluster_lat_values import (lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
@@ -1983,7 +1982,7 @@ class ClusterUiRenderer:
     # K9ExtHud=1: the right information panel shows the taxi meter. Off (the
     # default, K9ExtHud -1/0) leaves every draw call exactly as before.
     taxi_meter_enabled = False
-    k9_hud_style = K9_HUD_STYLE_CARD   # ClusterHudK9Style (0 cards / 1 one scene), K9 D screen only
+    k9_hud_style = K9_HUD_STYLE_SCENE   # K9 D screen: one scene only (11/21 K9HudNavdy 0 카드형·2·3 지움)
     _taxi_meter_panel: C1MeterPanel | None = None
     _taxi_meter_season = 0   # K9MeterSeason (0 auto / 1 봄 / 2 여름 / 3 가을 / 4 겨울)
 
@@ -6794,40 +6793,6 @@ class ClusterUiRenderer:
         return max(forward_m, (ego_y - hy) * K9_TURZX_ROAD_Z0 / (target - hy) - K9_TURZX_ROAD_Z0)
 
     @staticmethod
-    def _k9_turzx_shadow(x: float, y: float, w: float, h: float, radius: float) -> None:
-        # soft shadow as rings outside the card only (no full-card fills: keeps the frame time)
-        roundness = max(0.0, min(1.0, radius / max(1.0, min(w, h))))
-        for grow, dy, a in ((10.0, 5.0, 22), (5.0, 3.0, 34), (2.0, 2.0, 52)):
-            rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y + dy, w, h), roundness, 12, grow, rl.Color(0, 0, 0, a))
-
-    def _k9_turzx_glass(self, x: float, y: float, w: float, h: float, radius: float = K9_TURZX_RADIUS,
-                        fill=(12, 19, 36, 232), shadow: bool = True) -> None:
-        """night card (대감님 20:27 마이바흐급): soft shadow, deep fill with a faint top sheen, champagne hairline edge,
-        chrome highlight fading out from the middle of the top edge."""
-        if shadow:
-            self._k9_turzx_shadow(x, y, w, h, radius)
-        self._rounded_rect(x, y, w, h, radius, fill)
-        sheen = min(h * 0.45, 110.0)
-        rl.draw_rectangle_gradient_v(int(x + radius * 0.5), int(y + 2), int(w - radius), int(sheen),
-                                     rl.Color(150, 175, 220, 16), rl.Color(150, 175, 220, 0))
-        roundness = max(0.0, min(1.0, radius / max(1.0, min(w, h))))
-        # 20:47 깊이: inner shadow rings (darker at the edge), bottom inner dark, faint gloss on the top-left
-        for inset, a in (((1.0, 70), (4.0, 30)) if shadow else ()):
-            r_in = max(2.0, radius - inset)
-            rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x + inset, y + inset, w - 2 * inset, h - 2 * inset),
-                                               max(0.0, min(1.0, r_in / max(1.0, min(w, h) - 2 * inset))), 12, 2.0,
-                                               rl.Color(0, 0, 0, a))
-        rl.draw_rectangle_gradient_v(int(x + radius * 0.5), int(y + h - min(h * 0.3, 60.0)), int(w - radius),
-                                     int(min(h * 0.3, 60.0) - 3), rl.Color(0, 0, 0, 0), rl.Color(0, 0, 0, 46))
-        gw = min(w * 0.42, 260.0)
-        rl.draw_rectangle_gradient_ex(rl.Rectangle(x + radius, y + 3, gw, min(sheen, 46.0)), rl.Color(255, 244, 222, 20),
-                                      rl.Color(255, 244, 222, 0), rl.Color(255, 244, 222, 0), rl.Color(255, 244, 222, 0))
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y, w, h), roundness, 12, 1.0, rl.Color(*K9_TURZX_CHAMPAGNE, 70))
-        half = (w - 2.0 * radius) * 0.5
-        mid = x + w * 0.5
-        self._k9_turzx_metal_h(mid - half, y, half * 2.0, 220)
-
-    @staticmethod
     def _k9_turzx_metal_h(x: float, y: float, w: float, a: int = 150, thick: int = 1) -> None:
         # champagne metal hairline: dark gold -> bright champagne -> dark gold, ends fade out
         q = w * 0.25
@@ -6870,14 +6835,6 @@ class ClusterUiRenderer:
             self._draw_text(unit, x + w + 8.0, y + 102.0, K9_TURZX_UNIT_SIZE, K9_TURZX_MUTED)
         if sub:
             self._draw_text(sub, x, y + 168.0, K9_TURZX_SUB_SIZE, K9_TURZX_DIM)
-
-    def _k9_turzx_bar(self, x: float, y: float, w: float, fraction: float | None, color) -> None:
-        rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, 10.0), 1.0, 6, rl.Color(8, 14, 28, 255))
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y, w, 10.0), 1.0, 6, 1.0, rl_color(K9_TURZX_EDGE))
-        if fraction is not None and fraction > 0.0:
-            fw = max(10.0, w * clamp(fraction, 0.0, 1.0))
-            rl.draw_rectangle_rounded(rl.Rectangle(x - 2.0, y - 2.0, fw + 4.0, 14.0), 1.0, 6, rl_color(color, 50))
-            rl.draw_rectangle_rounded(rl.Rectangle(x, y, fw, 10.0), 1.0, 6, rl_color(color))
 
     # ---- K9 D side blocks: one three-tier type system for both sides and both styles (11/13 00:47) -----------------
     @staticmethod
@@ -7076,71 +7033,6 @@ class ClusterUiRenderer:
             self._k9t_value(lux, x1, vb, value, val if value != "-" else muted, slot)
             if bar is not None:
                 meter(x0, vb - cv * 0.5, mx1 - x0, bar[0], bar[1])
-
-    def _k9_turzx_draw_left(self, state: ClusterUiState) -> None:
-        # 19:55: fuel % (CF_Clu_FuelDispLvl always 0) and fuel economy (none on the K9) removed.
-        # 11/13 00:47 (352 px card): range / trip / accel + pedal / steering angle in the K9T tiers, TPMS row
-        x0, y0, h, w = K9_TURZX_LEFT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9_TURZX_LEFT_W
-        self._k9_turzx_glass(x0, y0, w, h)
-        xa, xb = x0 + 20.0, x0 + w - 20.0
-
-        def meter(x, cy, mw, kind, fraction):
-            y = cy - 5.0
-            if kind == "plain":
-                self._k9_turzx_bar(x, y, mw, fraction, K9_TURZX_ACCENT)
-            elif kind == "accel":
-                self._k9_turzx_center_bar(x, y, mw, fraction, K9_TURZX_ACCENT, (255, 120, 90))
-            else:
-                self._k9_turzx_center_bar(x, y, mw, fraction, K9_TURZX_CHAMPAGNE, K9_TURZX_CHAMPAGNE)
-
-        self._k9t_car_rows(state, False, xa, xb, y0 + 12.0, y0 + K9C_TPMS_Y - 4.0, meter)
-        self._k9_turzx_metal_h(xa, y0 + K9C_TPMS_Y + 2.0, xb - xa, 150)
-        ty = y0 + K9C_TPMS_Y
-        self._k9_turzx_draw_tpms(state, x0, ty, w, y0 + h - ty, K9C_TPMS_SCALE)
-
-    def _k9_turzx_center_bar(self, x: float, y: float, bw: float, fraction: float | None, pos_color, neg_color) -> None:
-        # zero-centred bar: + right of the centre tick, - left
-        rl.draw_rectangle_rounded(rl.Rectangle(x, y, bw, 10.0), 1.0, 6, rl.Color(8, 14, 28, 255))
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x, y, bw, 10.0), 1.0, 6, 1.0, rl_color(K9_TURZX_EDGE))
-        cx = x + bw * 0.5
-        if fraction is not None and math.isfinite(fraction):
-            span = bw * 0.5 * clamp(abs(fraction), 0.0, 1.0)
-            color = pos_color if fraction >= 0.0 else neg_color
-            bx = cx if fraction >= 0.0 else cx - span
-            rl.draw_rectangle_rec(rl.Rectangle(bx, y - 2.0, span, 14.0), rl_color(color, 50))
-            rl.draw_rectangle_rec(rl.Rectangle(bx, y, span, 10.0), rl_color(color))
-        rl.draw_line_ex(rl.Vector2(cx, y - 6.0), rl.Vector2(cx, y + 16.0), 2.0, rl_color(K9_TURZX_MUTED))
-
-    def _k9_turzx_draw_tpms(self, state: ClusterUiState, x: float, y: float, w: float, h: float, k: float = 1.0) -> None:
-        # 23:44 one row across the card: car in the middle, name + number beside each wheel, TPMS / psi at the row ends
-        # 00:20 k scales the top view (sizes of the text unchanged)
-        cx, cy = x + w * 0.5, y + h * 0.5 + 4.0
-        self._draw_text("TPMS", x + 20, cy, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED)
-        self._draw_text("psi", x + w - 20, cy, K9_TURZX_LABEL_SIZE, K9_TURZX_DIM, anchor="right")
-        car_w, car_h = 56.0 * k, 150.0 * k
-        top, left = cy - car_h * 0.5, cx - car_w * 0.5
-        rl.draw_ellipse(int(cx), int(cy + 4), car_w * 0.9, car_h * 0.56, rl.Color(0, 0, 0, 60))
-        for wx in (left - 5.0, left + car_w - 1.0):  # tyres
-            for wy in (top + 22.0 * k, top + car_h - 50.0 * k):
-                self._rounded_rect(wx, wy, 6.0, 28.0 * k, 3.0, (30, 34, 44), (*K9_TURZX_CHAMPAGNE, 110), 1.0)
-        self._rounded_rect(left - 3, top - 3, car_w + 6, car_h + 6, 25.0 * k, (*K9_TURZX_LANE, 22))
-        self._rounded_rect(left, top, car_w, car_h, 22.0 * k, (14, 22, 40), None)
-        rl.draw_rectangle_gradient_h(int(left + 6 * k), int(top + 8 * k), int(car_w * 0.5 - 6 * k), int(car_h - 16 * k),
-                                     rl.Color(60, 74, 100, 90), rl.Color(60, 74, 100, 0))
-        self._rounded_rect(left, top, car_w, car_h, 22.0 * k, (0, 0, 0, 0), (*K9_TURZX_CHAMPAGNE, 190), 1.5)
-        self._rounded_rect(left + 8 * k, top + 30 * k, car_w - 16 * k, 26 * k, 8.0 * k, (40, 58, 90), (*K9_TURZX_CHROME, 90), 1.0)
-        self._rounded_rect(left + 9 * k, top + car_h - 40 * k, car_w - 18 * k, 18 * k, 6.0 * k, (34, 48, 74),
-                           (*K9_TURZX_CHROME, 70), 1.0)
-        rl.draw_line_ex(rl.Vector2(cx, top + 62 * k), rl.Vector2(cx, top + car_h - 46 * k), 1.0, rl.Color(*K9_TURZX_CHAMPAGNE, 60))
-        tpms = state.tpms
-        for value, sx, wy, name in ((tpms.fl, -1, top + 36.0 * k, "FL"), (tpms.fr, 1, top + 36.0 * k, "FR"),
-                                    (tpms.rl, -1, top + car_h - 36.0 * k, "RL"), (tpms.rr, 1, top + car_h - 36.0 * k, "RR")):
-            text = "-" if value is None or not math.isfinite(value) else str(int(round(value)))
-            near = cx + sx * (car_w * 0.5 + 22.0)   # number next to the wheel, name outside it
-            far = cx + sx * (car_w * 0.5 + 72.0)
-            self._k9_turzx_value_text(text, near, wy, K9T_VALUE, K9_TURZX_TEXT if text != "-" else K9_TURZX_DIM,
-                                      anchor="right" if sx < 0 else "left")
-            self._draw_text(name, far, wy, K9_TURZX_LABEL_SIZE, K9_TURZX_MUTED, anchor="right" if sx < 0 else "left")
 
     # middle panel: 2D perspective road (TURZX-style, drawn from scratch; no code / art from the photo repo)
     def k9_turzx_road_project(self, forward_m: float, lateral_m: float) -> tuple[float, float, float]:
@@ -7417,255 +7309,6 @@ class ClusterUiRenderer:
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(cx - w * 0.5, by - h, w, h),
                             rl.Vector2(0, 0), 0.0, rl.WHITE)
 
-    def _k9_turzx_pill(self, x: float, cy: float, text: str, anchor: str, dot=None) -> None:
-        size = 26.0
-        tw, _ = self._measure_text(text, size, max(1.0, size * 0.02), self._font_for_text(text))
-        pw = tw + 28.0 + (22.0 if dot is not None else 0.0)
-        px = x if anchor == "left" else x - pw
-        self._k9_turzx_glass(px, cy - 20.0, pw, 40.0, K9_TURZX_RADIUS, K9_TURZX_MID_CARD, shadow=False)
-        tx = px + 14.0
-        if dot is not None:
-            rl.draw_circle_v(rl.Vector2(tx + 6.0, cy), 6.0, rl_color(dot))
-            tx += 22.0
-        self._draw_text(text, tx, cy, size, K9_TURZX_TEXT)
-
-    def _k9_turzx_draw_road(self, state: ClusterUiState) -> None:
-        x0, y0, w, h = K9_TURZX_MID_X, K9_TURZX_MARGIN, K9_TURZX_MID_W, K9_TURZX_TOP_H
-        rl.draw_rectangle_gradient_v(int(x0), int(y0), int(w), int(h), rl_color(K9_TURZX_MID_TOP), rl_color(K9_TURZX_MID_BOTTOM))
-        lanes = list(getattr(state, "lanes", ()) or ())
-        lane_pts = [(lane, self._k9_turzx_points(lane.model_points)) for lane in lanes]
-        lane_pts = [(lane, pts) for lane, pts in lane_pts if len(pts) >= 2]
-        def near(pts):
-            return self._k9_turzx_lat_at(pts, 5.0) or pts[0][1]
-        lefts = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) < 0.0], key=lambda t: t[0])
-        rights = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) >= 0.0], key=lambda t: t[0])
-        ego_l = lefts[-1] if lefts else None
-        ego_r = rights[0] if rights else None
-        # road surface between the road edges (else the outermost lane lines)
-        le = self._k9_turzx_points(getattr(state, "left_road_edge_points", ()))
-        re_ = self._k9_turzx_points(getattr(state, "right_road_edge_points", ()))
-        if len(le) < 2 and lefts:
-            le = lefts[0][2]
-        if len(re_) < 2 and rights:
-            re_ = rights[-1][2]
-        if len(le) >= 2 and len(re_) >= 2:
-            lk = self.k9_look()
-            self._k9_turzx_band(le, re_, (*lk.road, 255))
-            self._k9_turzx_line(le, lk.kerb, lk.kerb_w, False, False, lk.kerb_a)
-            self._k9_turzx_line(re_, lk.kerb, lk.kerb_w, False, False, lk.kerb_a)
-        # horizon haze + faint sky-blue glow on the horizon
-        hy = getattr(self, "_k9_geo", K9C_ROAD_GEO)[0]
-        rl.draw_rectangle_gradient_v(int(x0), int(hy - 40), int(w), 40,
-                                     rl.Color(*self.k9_look().haze, 0), rl.Color(*self.k9_look().haze, self.k9_look().haze_a))
-        rl.draw_rectangle_gradient_v(int(x0), int(hy - 6), int(w), 46,
-                                     rl.Color(*K9_TURZX_MID_TOP, 255), rl.Color(*K9_TURZX_MID_TOP, 0))
-        # adjacent lane lines: dashed, dim
-        for group in (lefts[:-1], rights[1:]):
-            for _, lane, pts in group:
-                if getattr(lane, "visible", True):
-                    self._k9_turzx_line(pts, self.k9_look().adj, 0.12, False, True, 0.7 * self._k9_fade(lane))
-        # planned path band + arrows, ends at the lead car
-        lead = self.k9_turzx_lead(state)
-        path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
-        end_m = None if lead is None else max(7.0, lead[0])  # band runs under the lead car (drawn on top)
-        if len(path) >= 2:
-            path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only, nothing behind it
-            if path[0][0] > 0.0:
-                path.insert(0, (0.0, path[0][1]))
-            if self.k9_navdy_on():
-                bl_ = [(f, lat - 1.62) for f, lat in path]  # my lane, deep blue, along the plan (lane changes swing it)
-                br_ = [(f, lat + 1.62) for f, lat in path]
-                self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
-            else:  # K9HudNavdy 0: teal path band before b7e81bbd4
-                self._k9_old_path_band(path, end_m, 1.05, 0.5, (*K9_TURZX_PATH, 128), (170, 250, 232, 62),
-                                       (120, 255, 220), 0.10, 1.0)
-            top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)
-            f = 2.0
-            while f < top - 2.0:
-                lat = self._k9_turzx_lat_at(path, f)
-                lat2 = self._k9_turzx_lat_at(path, f + 1.2)
-                if lat is None or lat2 is None:
-                    break
-                ax, ay, sc = self.k9_turzx_road_project(f + 1.2, lat2)
-                bl = self.k9_turzx_road_project(f, lat - 0.42)
-                br = self.k9_turzx_road_project(f, lat + 0.42)
-                aw = max(1.2, 0.09 * sc)
-                col = rl.Color(*self.k9_look().arrow, int(self.k9_look().arrow_a * clamp(1.0 - max(0.0, f) / 70.0, 0.3, 1.0)))
-                rl.draw_line_ex(rl.Vector2(bl[0], bl[1]), rl.Vector2(ax, ay), aw, col)
-                rl.draw_line_ex(rl.Vector2(br[0], br[1]), rl.Vector2(ax, ay), aw, col)
-                f += 4.0 if f < 20.0 else 8.0
-        # ego lane lines: cyan light beams, fainter when the model is unsure
-        for item, conf in ((ego_l, getattr(state, "left_lane_line_confidence", None)),
-                           (ego_r, getattr(state, "right_lane_line_confidence", None))):
-            if item is None:
-                continue
-            a = 1.0 if conf is None or not math.isfinite(conf) else clamp(0.35 + conf * 0.65, 0.35, 1.0)
-            if self.k9_navdy_on():
-                self._k9_turzx_line(item[2], K9_NAVDY_LINE, 0.09, False, False, a * 0.9 * self._k9_fade(item[1]))
-            else:
-                self._k9_turzx_line(item[2], K9_TURZX_LANE, 0.13, True, False, a * self._k9_fade(item[1]))
-        # depth: far road fades into the sky
-        rl.draw_rectangle_gradient_v(int(x0), int(hy - 2), int(w), 110,
-                                     rl.Color(*K9_TURZX_MID_TOP, 200), rl.Color(*K9_TURZX_MID_TOP, 0))
-        # other cars (dim), then the lead (pink + yellow distance tag)
-        # 11/13 01:29: one car per real car, turned with the road, never under the ego car (screen only)
-        for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
-            f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
-            self._k9_va = self._k9_fade(v)
-            self._k9_turzx_draw_vehicle(f, v.lateral_m, (46, 66, 110), (96, 130, 186), self.k9_road_heading_deg(state, f))
-        self._k9_va = la = self._k9_lead_fade(state)
-        if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
-            lat = lead[0] * math.tan(math.radians(lead[1]))
-            f = self.k9_road_clear_of_ego(lead[0], lat)
-            lx, ly, lw = self._k9_turzx_draw_vehicle(f, lat, K9_TURZX_LEAD, (255, 236, 196), self.k9_road_heading_deg(state, f))
-            tag = f"{lead[0]:.0f} m" if self.k9_navdy_on() else f"{lead[0]:.0f}m"
-            tw, _ = self._measure_text(tag, 22.0, max(1.0, 22.0 * 0.02), self._font_for_text(tag))
-            tbt = getattr(self, "_k9c_tbt_rect", None)  # 22:41 taller TBT card: a far lead tag would hide under it
-            if tbt is not None and lx + tw * 0.5 + 8.0 > tbt[0] and ly - 32.0 < tbt[3]:
-                ly = self.k9_turzx_road_project(f, lat)[1] + 36.0  # under the car instead
-            if self.k9_navdy_on():
-                self._draw_text(tag, lx + 1.0, ly - 18.0, 22.0, (0, 0, 0, int(150 * la)), anchor="center")  # floating above the car
-                self._draw_text(tag, lx, ly - 19.0, 22.0, K9_NAVDY_LINE if la >= 1.0 else (*K9_NAVDY_LINE, int(255 * la)),
-                                anchor="center")
-            else:  # K9HudNavdy 0: gold tag box before b7e81bbd4
-                self._rounded_rect(lx - tw * 0.5 - 7.0, ly - 31.0, tw + 16.0, 26.0, 8.0, (0, 0, 0, int(90 * la)), None)
-                self._rounded_rect(lx - tw * 0.5 - 8.0, ly - 32.0, tw + 16.0, 26.0, 8.0,
-                                   K9_TURZX_TAG if la >= 1.0 else (*K9_TURZX_TAG[:3], int(255 * la)), None)
-                self._draw_text(tag, lx, ly - 19.0, 22.0, (34, 26, 12) if la >= 1.0 else (34, 26, 12, int(255 * la)), anchor="center")
-        self._k9_va = 1.0
-        self._k9_turzx_draw_ego()
-
-    def _k9_turzx_draw_middle(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
-        x0, y0, w, h = K9_TURZX_MID_X, K9_TURZX_MARGIN, K9_TURZX_MID_W, K9_TURZX_TOP_H
-        guidance, nxt, _, _ = self.k9_navi_items(state)
-        self._k9c_tbt_rect = None if guidance is None else (x0 + w - 260.0, y0 + 12.0, x0 + w - 12.0,
-                                                            y0 + 12.0 + (124.0 if nxt is not None else 100.0))
-        sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
-        self._k9_turzx_shadow(x0, y0, w, h, K9_TURZX_RADIUS)
-        rl.begin_scissor_mode(int(x0 * sx), int(y0 * sy), int(w * sx), int(h * sy))
-        try:
-            self._k9_turzx_draw_road(state)
-        finally:
-            rl.end_scissor_mode()
-        # mask the square scissor corners to the card radius, then the glass edge
-        rr = K9_TURZX_RADIUS
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x0 - 6.0, y0 - 6.0, w + 12.0, h + 12.0), (rr + 6.0) / (h + 12.0), 12,
-                                           6.0, rl_color(K9_TURZX_BG))
-        rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(x0, y0, w, h), rr / h, 12, 1.0, rl.Color(*K9_TURZX_CHAMPAGNE, 80))
-        rl.draw_rectangle_gradient_h(int(x0 + rr), int(y0), int(w * 0.5 - rr), 1, rl.Color(*K9_TURZX_CHROME, 0),
-                                     rl.Color(*K9_TURZX_CHROME, 170))
-        rl.draw_rectangle_gradient_h(int(x0 + w * 0.5), int(y0), int(w * 0.5 - rr), 1, rl.Color(*K9_TURZX_CHROME, 170),
-                                     rl.Color(*K9_TURZX_CHROME, 0))
-        theme = self._current_theme()
-        # speed box: gear / speed / MAX (cruise set)
-        bx, by, bw, bh = x0 + 12, y0 + 12, 264.0, 88.0
-        self._k9_turzx_glass(bx, by, bw, bh, K9_TURZX_RADIUS, K9_TURZX_MID_CARD, shadow=False)
-        gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
-        gear = "D" if gear.isdigit() else gear
-        gx, gy = bx + 12, by + bh * 0.5 - 22.0
-        self._rounded_rect(gx - 2, gy - 2, 44.0, 48.0, 12.0, (0, 0, 0, 0), (*K9_TURZX_CHAMPAGNE, 50), 1.0)
-        self._rounded_rect(gx, gy, 40.0, 44.0, 10.0, (14, 30, 58, 240), None)
-        rl.draw_rectangle_gradient_v(int(gx + 4), int(gy + 2), 32, 18, rl.Color(170, 200, 255, 40), rl.Color(170, 200, 255, 0))
-        self._rounded_rect(gx, gy, 40.0, 44.0, 10.0, (0, 0, 0, 0), (*K9_TURZX_CHAMPAGNE, 170), 1.2)
-        self._draw_text(gear, bx + 32, by + bh * 0.5, 36.0, K9_TURZX_ACCENT, anchor="center")
-        display_speed_kph = state.display_speed_kph if state.display_speed_kph is not None else state.speed_kph
-        speed_value = int(round(display_speed(clamp(display_speed_kph, 0.0, MAX_SPEED_KPH), self.is_metric)))
-        self._k9_turzx_value_text(str(speed_value), bx + 116, by + bh * 0.5, 66.0, K9_TURZX_TEXT, anchor="center")
-        self._draw_text("MAX", bx + 216, by + 26.0, 22.0, K9_TURZX_DIM, anchor="center")
-        cruise = self._cruise_set_speed_text(state) if self._cruise_set_visible(state) else "-"
-        self._draw_text(cruise, bx + 216, by + 60.0, 36.0, self._cruise_set_color(state, theme) if cruise != "-"
-                        else K9_TURZX_DIM, anchor="center")
-        left_lit, right_lit = signal_lights
-        for lit, side in ((left_lit, -1.0), (right_lit, 1.0)):
-            if not lit:
-                continue
-            ax = x0 + 348.0 + side * 30.0  # beside the speed box (was 960 + 60)
-            rl.draw_triangle(rl.Vector2(ax + side * 22, by + 44), rl.Vector2(ax, by + 28) if side > 0 else rl.Vector2(ax, by + 60),
-                             rl.Vector2(ax, by + 60) if side > 0 else rl.Vector2(ax, by + 28), rl_color(K9_TURZX_SIGNAL))
-        # TBT card (navi guidance only); 22:41 bigger arrow / distance, next guidance small at the bottom
-        navi = getattr(state, "navi_live", None)
-        guidance, nxt, lane, cam = self.k9_navi_items(state)
-        tbt_bottom = None
-        if guidance is not None:
-            tx, tw = x0 + w - 12 - 248.0, 248.0
-            th = 124.0 if nxt is not None else 100.0
-            self._k9_turzx_glass(tx, by, tw, th, K9_TURZX_RADIUS, K9_TURZX_MID_CARD, shadow=False)
-            self._draw_navi_turn_icon(guidance.turn_type, tx + 42, by + 40, 60.0)
-            self._draw_text(self._format_navi_distance(guidance.distance_m), tx + 84, by + 40.0, 48.0, K9_TURZX_TEXT)
-            road = self._ellipsize_text(guidance.road_name or guidance.main_text or "", 24.0, tw - 28)
-            self._draw_text(road, tx + 14, by + 84.0, 24.0, K9_TURZX_MUTED)
-            if nxt is not None:
-                self._k9_turzx_metal_h(tx + 14, by + 99.0, tw - 28, 90)
-                self._draw_text("다음", tx + 14, by + 112.0, 20.0, K9_TURZX_DIM)
-                self._draw_navi_turn_icon(nxt.turn_type, tx + 80, by + 112.0, 22.0)
-                self._draw_text(self._format_navi_distance(nxt.distance_m), tx + tw - 14, by + 112.0, 22.0,
-                                K9_TURZX_MUTED, anchor="right")
-            tbt_bottom = by + th
-        if cam is not None:
-            self._k9c_draw_camera(cam)
-        if lane is not None:
-            lx1 = x0 + w - 12.0
-            box = self._k9_lane_strip(lane, self.k9_turn_dir(guidance), lx1, K9C_LANE_Y, 216.0, "right", False)
-            if lane.distance_m > 0:
-                self._draw_text(self._format_navi_distance(lane.distance_m), lx1, K9C_LANE_Y - 14.0, 22.0, K9_TURZX_MUTED,
-                                anchor="right")
-            self._draw_text("차로", box[0], K9C_LANE_Y - 14.0, 22.0, K9_TURZX_MUTED)
-        # speed limit / section enforcement
-        speed = getattr(navi, "speed", None) if navi is not None else None
-        sign_cx, sign_cy, r = x0 + 60.0, y0 + 178.0, 36.0
-        section = speed is not None and speed.section_active and speed.section_speed_limit_kph
-        limit = speed.section_speed_limit_kph if section else state.speed_limit_kph
-        if limit is not None:
-            center = rl.Vector2(sign_cx, sign_cy)
-            rl.draw_circle_v(rl.Vector2(sign_cx + 1.0, sign_cy + 3.0), r + 3.0, rl.Color(0, 0, 0, 110))
-            rl.draw_ring(center, r + 1.0, r + 3.0, 0.0, 360.0, 48, rl.Color(*K9_TURZX_CHAMPAGNE, 150))
-            rl.draw_circle_v(center, r, rl_color(RED))
-            rl.draw_circle_v(center, r - 7.0, rl_color(WHITE))
-            rl.draw_ring(center, r - 8.0, r - 7.0, 0.0, 360.0, 48, rl.Color(120, 0, 0, 90))
-            text = str(int(round(display_speed(limit, self.is_metric))))
-            self._draw_text(text, sign_cx, sign_cy, 36.0 if len(text) <= 2 else 30.0, TEXT, anchor="center")
-            if section:
-                self._rounded_rect(sign_cx - 28.0, sign_cy - r - 30.0, 56.0, 26.0, 6.0, (236, 240, 246), None)
-                self._draw_text("구간", sign_cx, sign_cy - r - 17.0, 20.0, (20, 26, 40), anchor="center")
-                if speed.section_remaining_distance_m is not None:
-                    dist = f"{speed.section_remaining_distance_m / 1000.0:.1f} km"
-                    self._rounded_rect(sign_cx - 46.0, sign_cy + r + 6.0, 92.0, 28.0, 6.0, K9_TURZX_MID_CARD, K9_TURZX_MID_EDGE, 1.5)
-                    self._draw_text(dist, sign_cx, sign_cy + r + 20.0, 22.0, K9_TURZX_TEXT, anchor="center")
-                if speed.section_average_kph is not None:
-                    ax0 = sign_cx + r + 12.0
-                    self._rounded_rect(ax0, sign_cy - 36.0, 104.0, 72.0, 10.0, K9_TURZX_MID_CARD, K9_TURZX_MID_EDGE, 1.5)
-                    self._draw_text("평균속도", ax0 + 52.0, sign_cy - 18.0, 20.0, K9_TURZX_MUTED, anchor="center")
-                    self._draw_text(f"{speed.section_average_kph:.0f}", ax0 + 52.0, sign_cy + 14.0, 34.0, K9_TURZX_GOOD,
-                                    anchor="center")
-        # bottom pills: lane % (left), lead (right)
-        pill_y = y0 + 132.0  # 20:48: off the bottom so my car sits at the panel floor; under the TBT card, right side
-        if tbt_bottom is not None:
-            pill_y = max(pill_y, tbt_bottom + 32.0)  # taller TBT card: pills stay under it
-        if self._lane_confidence_label_visible(state):
-            lc = getattr(state, "left_lane_line_confidence", None)
-            rc = getattr(state, "right_lane_line_confidence", None)
-            known = [c for c in (lc, rc) if c is not None and math.isfinite(c)]
-            dot = (120, 130, 150) if not known else (K9_TURZX_GOOD if min(known) >= 0.5 else (255, 190, 70))
-            text = f"차선 {self._lane_confidence_text(lc)} · {self._lane_confidence_text(rc)}"
-            self._k9_turzx_pill(x0 + w - 12.0, pill_y, text, "right", dot)
-        lead = self.k9_turzx_lead(state)
-        if lead is not None:
-            self._k9_turzx_pill(x0 + w - 12.0, pill_y + 48.0, f"앞차 {lead[0]:.0f}m · {lead[1]:+.1f}°", "right")
-
-    def _k9c_draw_camera(self, cam) -> None:
-        name, dist, limit, progress, warn = cam
-        x, y, w, h = K9C_CAM_X, K9C_CAM_Y, K9C_CAM_W, K9C_CAM_H
-        self._k9_turzx_glass(x, y, w, h, 12.0, K9_TURZX_MID_CARD, shadow=False)
-        name = self._ellipsize_text(name, 20.0, w - 84.0)
-        self._draw_text(name, x + 14, y + 17.0, 20.0, K9_TURZX_MUTED)
-        self._draw_text(self._format_navi_distance(dist), x + 14, y + 38.0, 30.0, warn or K9_TURZX_TEXT)
-        cx, cy, r = x + w - 32.0, y + h * 0.5 - 2.0, 22.0
-        rl.draw_circle_v(rl.Vector2(cx, cy), r, rl_color(RED))
-        rl.draw_circle_v(rl.Vector2(cx, cy), r - 5.0, rl_color(WHITE))
-        text = str(int(round(display_speed(limit, self.is_metric))))
-        self._draw_text(text, cx, cy, 22.0 if len(text) <= 2 else 18.0, TEXT, anchor="center")
-        self._draw_clean_progress(x + 14.0, y + h - 7.0, w - 70.0, progress, warn or K9_TURZX_PATH, K9_TURZX_DIM)
-
     def k9_lat_lines(self, state: ClusterUiState) -> list[tuple[str, list[str], bool]]:
         """steering-learn texts as one item per line (00:20): [(name, values, second item of its text)], text unchanged;
         a nameless value ('지연학습 100%  0.20초') stays on its item's line"""
@@ -7688,14 +7331,6 @@ class ClusterUiRenderer:
                 else:
                     lines.append((name, [value], j > 0))
         return lines
-
-    def _k9_turzx_draw_right(self, state: ClusterUiState) -> None:
-        # 대감님 18:30: music card removed; lane position + steering-learn lines moved here from the middle (same text)
-        # 23:12: drawn at card 3's x and moved to card 1 (K9C_SWAP_DX), only K9C_LANE_W wide now
-        # 11/13 00:47: K9T tiers (same as the car card), steering learn as name-over-value items, two per line
-        x0, y0, h, w = K9_TURZX_RIGHT_X, K9_TURZX_MARGIN, K9_TURZX_TOP_H, K9C_LANE_W
-        self._k9_turzx_glass(x0, y0, w, h)
-        self._k9t_list(state, False, x0 + 20.0, x0 + w - 20.0, y0 + 12.0, y0 + h - 8.0)
 
     def _k9_turzx_draw_alert(self, alert: ClusterAlert | None) -> None:
         # alert as a band at the top of the middle panel (was centred on the 1920 screen over the left panel)
@@ -7731,20 +7366,14 @@ class ClusterUiRenderer:
         rl.rl_scalef(sx, sy, 1.0)
         try:
             self._k9_ind_active = self._k9_indicator_active()
-            if self.k9_hud_3d:  # K9HudNavdy 3 (11/18): smooth 3D board
-                self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
-                self._k9v_draw_hud(state, signal_lights)
-            elif self.k9_hud_style == K9_HUD_STYLE_SCENE:
-                self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
-                self._k9_exp1_setup(state)
-                try:
-                    self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
-                finally:
-                    self._k9_exp1_cam, _K9_BACK[0] = None, 0.0
-                    self._k9l_car_rec = None
-            else:
-                self._k9_geo, self._k9_cx = K9C_ROAD_GEO, K9C_CX
-                self._k9c_draw_hud(state, signal_lights)  # b03a700cc cards
+            # 11/21 대감님 "외부hud 0.2.3지우란거": K9HudNavdy 1 one scene only (0 cards, 2, 3 3D board removed)
+            self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
+            self._k9_exp1_setup(state)
+            try:
+                self._k9l_draw_hud(state, signal_lights)  # 21:44 one-scene redesign
+            finally:
+                self._k9_exp1_cam, _K9_BACK[0] = None, 0.0
+                self._k9l_car_rec = None
         finally:
             rl.rl_pop_matrix()
 
@@ -7752,7 +7381,7 @@ class ClusterUiRenderer:
     _k9_exp1_cam = None  # K9HudNavdy 1 only: debug 1 drive camera (k9_exp1_camera), None = old road projection
 
     def _k9_exp1_setup(self, state: ClusterUiState) -> None:
-        on = self.k9_hud_menu == 1 and self.k9_navdy_on() and not self.k9_hud_3d
+        on = self.k9_hud_menu == 1 and self.k9_navdy_on()
         ego_bottom = getattr(state, "camera_view_mode", None) == _k9_cs.CLUSTER_CAMERA_VIEW_MODE_EGO_BOTTOM
         self._k9_exp1_cam = k9_exp1_camera(ego_bottom) if on else None
         _K9_BACK[0] = K9_EXP1_BACK_M if on else 0.0
@@ -7798,107 +7427,6 @@ class ClusterUiRenderer:
         """Jetson CPU / GPU / memory %; the plain renderer has no Jetson (the Jetlink HUD overrides this)."""
         return (None, None, None)
 
-    k9_hud_3d = False   # K9HudNavdy 3 (11/18 11:49): smooth 3D board (cluster_k9_3d), K9 D only
-
-    def set_k9_hud_3d(self, on) -> None:
-        self.k9_hud_3d = bool(on)
-
-    # 11/18 13:18 대감님 "아래 스타일 양옆에다가도 정보 넣어야지": 3 = left info block | 3D scene | right diagnostics,
-    # side blocks as wide as the 2 diagnostics block (480), the scene kept at its scale and cut to the middle
-    K9V_SIDE_W = K9R_W
-    K9V_SCENE_X0 = K9L_EDGE + K9R_W + K9R_SCENE_GAP          # 528
-    K9V_SCENE_X1 = K9R_X0 - K9R_SCENE_GAP                     # 1392 (scene centre 960 = the 3D camera centre)
-    K9V_CAM = (K9L_EDGE + (K9R_W - 288.0) * 0.5, 300.0, 288.0, 162.0)   # small front camera, bottom of the left block
-
-    def _k9v_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
-        scene = getattr(self, "_k9v_scene", None)
-        if scene is None:
-            clock = getattr(self, "k9v_clock", None)
-            scene = self._k9v_scene = K9Scene3D(clock or time.monotonic)
-        sample = scene.update(state, self._k9_is_lead, self.k9_road_others)
-        if sample is None:
-            return
-        rl.draw_rectangle(0, 0, int(DESIGN_WIDTH), int(DESIGN_HEIGHT), rl.Color(6, 6, 8, 255))
-        sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
-        x0, x1 = self.K9V_SCENE_X0, self.K9V_SCENE_X1
-        rl.begin_scissor_mode(int(round(x0 * sx)), 0, int(round((x1 - x0) * sx)), int(round(DESIGN_HEIGHT * sy)))
-        try:
-            scene.draw_scene(sample, lambda f: self.k9_road_heading_deg(state, f), signal_lights)
-        finally:
-            rl.end_scissor_mode()
-        for x in (x0 - 8.0, x1 + 7.0):   # thin divider between the scene and each side block
-            rl.draw_rectangle_rec(rl.Rectangle(x, 24.0, 1.0, DESIGN_HEIGHT - 48.0), rl.Color(70, 74, 84, 160))
-        self._k9v_draw_text(state, sample)
-        self._k9v_draw_camera(state)
-        with self._k9_shift(K9R_SWAP_DX):
-            self._k9l_draw_res(state)
-
-    def k9v_left_layout(self, state: ClusterUiState, sample, width=None):
-        """left block rows under the speed: (text, x_left, base, size, color), labels left / values right-aligned"""
-        width = width or self._k9r_width
-        x0, x1 = K9L_EDGE, K9L_EDGE + self.K9V_SIDE_W
-        out = []
-        lead = next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None)
-        dist = rel = gap = None
-        if lead is not None:
-            dist = f"{lead.longitudinal_m:.0f} m"
-            if lead.relative_speed_mps is not None and math.isfinite(lead.relative_speed_mps):
-                rel = f"{lead.relative_speed_mps * 3.6:+.0f} km/h"
-            v = max(0.0, (state.speed_kph or 0.0) / 3.6)
-            if v > 1.0:
-                gap = f"{lead.longitudinal_m / v:.1f}초"
-        out.append(("앞차", x0, 178.0, K9R_HEAD, K9L_LABEL))
-        if lead is None:
-            text = "없음"
-            out.append((text, x1 - width(text, K9R_HEAD), 178.0, K9R_HEAD, K9L_MUTED))
-        for i, (label, value) in enumerate((("거리", dist), ("상대속도", rel), ("시간", gap))):
-            base = 212.0 + i * 30.0
-            value = value or "--"
-            out.append((label, x0, base, K9R_VALUE, K9L_MUTED))
-            out.append((value, x1 - width(value, K9R_VALUE), base, K9R_VALUE, K9L_MUTED if value == "--" else K9L_VALUE))
-        return out
-
-    def _k9v_draw_text(self, state: ClusterUiState, sample) -> None:
-        speed = state.display_speed_kph if state.display_speed_kph is not None else sample.speed
-        value = int(round(display_speed(clamp(speed, 0.0, MAX_SPEED_KPH), self.is_metric)))
-        x, x1 = K9L_EDGE + 8.0, K9L_EDGE + self.K9V_SIDE_W
-        self._k9l_text(str(value), x, 0.0, 112.0, (240, 242, 246), numeric=True, base=104.0)
-        self._k9l_text("km/h" if self.is_metric else "mph", x + 2.0, 0.0, 24.0, (150, 154, 164), numeric=True, base=136.0)
-        gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
-        gear = "D" if gear.isdigit() else gear
-        gx = x + max(170.0, self._k9l_width(str(value), 112.0, True) + 36.0)
-        for i, g in enumerate("PRND"):
-            on = g == gear
-            self._k9l_text(g, gx + i * 34.0, 0.0, 30.0, (245, 247, 250) if on else (84, 88, 98), numeric=True, base=52.0)
-        if self._cruise_set_visible(state):
-            text = self._cruise_set_speed_text(state)
-            w = self._k9l_width(text, 30.0, True) + 32.0
-            cy = 95.0
-            rl.draw_rectangle_rounded(rl.Rectangle(gx, cy - 21.0, w, 42.0), 0.9, 8, rl.Color(52, 56, 64, 255))
-            self._k9l_text(text, gx + w * 0.5, 0.0, 30.0, (240, 242, 246), anchor="center", numeric=True, cap_cy=cy - 1.0)
-        clock = getattr(state, "center_clock_text", None) or time.strftime("%H:%M")
-        self._k9l_text(clock, x1, 0.0, 30.0, (196, 200, 210), anchor="right", numeric=True, base=52.0)
-        self._k9l_hair(K9L_EDGE, 150.0, self.K9V_SIDE_W, 110)
-        self._k9r_draw_texts(self.k9v_left_layout(state, sample))
-
-    def _k9v_draw_camera(self, state: ClusterUiState) -> None:
-        x, y, w, h = self.K9V_CAM
-        rl.draw_rectangle_rounded(rl.Rectangle(x - 3, y - 3, w + 6, h + 6), 0.08, 6, rl.Color(70, 74, 84, 255))
-        rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, h), 0.06, 6, rl.Color(14, 15, 18, 255))
-        live = self._live_road_camera_view() if getattr(state, "onroad", False) else None
-        if live is None:
-            return
-        sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
-        rl.rl_draw_render_batch_active()
-        rl.begin_scissor_mode(int(x * sx), int(y * sy), int(w * sx), int(h * sy))
-        try:
-            live.draw(rl.Rectangle(x, y, w, h))
-        except Exception as exc:
-            print(f"K9 3D camera preview failed: {exc}", flush=True)
-            self._close_live_road_camera()
-        finally:
-            rl.end_scissor_mode()
-
     k9_res_page = 0   # K9HudNavdy 2: 0 = summary, 1 = per core; manual only (set_k9_res_page)
 
     def set_k9_res_page(self, page) -> None:
@@ -7943,11 +7471,8 @@ class ClusterUiRenderer:
         self._k9_turzx_line(pr_e, edge_col, edge_w, False, False, edge_a)
 
     def set_k9_hud_style(self, style) -> None:
-        try:
-            value = int(style)
-        except (TypeError, ValueError):
-            value = K9_HUD_STYLE_CARD
-        self.k9_hud_style = value if value in (K9_HUD_STYLE_CARD, K9_HUD_STYLE_SCENE) else K9_HUD_STYLE_CARD
+        """11/21: only the one scene is left (K9HudNavdy 0 cards removed); any value draws the scene"""
+        self.k9_hud_style = K9_HUD_STYLE_SCENE
 
     @staticmethod
     def _k9_indicator_active() -> bool:
@@ -7971,17 +7496,6 @@ class ClusterUiRenderer:
         finally:
             rl.rl_pop_matrix()
             self._k9_dx = 0.0
-
-    def _k9c_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
-        rl.draw_rectangle_gradient_v(0, 0, int(DESIGN_WIDTH), int(DESIGN_HEIGHT), rl_color(K9_TURZX_BG_TOP),
-                                     rl_color(K9_TURZX_BG))
-        rl.draw_rectangle_gradient_v(0, int(DESIGN_HEIGHT) - 24, int(DESIGN_WIDTH), 24, rl.Color(*K9_TURZX_LANE, 0),
-                                     rl.Color(*K9_TURZX_LANE, 10))
-        with self._k9_shift(K9C_SWAP_DX):
-            self._k9_turzx_draw_left(state)
-        self._k9_turzx_draw_middle(state, signal_lights)
-        with self._k9_shift(-K9C_SWAP_DX):
-            self._k9_turzx_draw_right(state)
 
     # ---- navi items for both K9 D layouts (11/12 22:41) ------------------------------------------------------------
     def k9_navi_items(self, state: ClusterUiState):

@@ -7,7 +7,6 @@ MAIN = Path(__file__).resolve().parents[1] / "cluster" / "main.py"
 
 def test_main_maps_menu_1_and_2_to_the_right_diagnostics_block():
   src = MAIN.read_text()
-  assert src.count("renderer.set_k9_hud_res(k9_hud_menu in (1, 2))") == 2   # start + 1 s poll
-  assert "renderer.set_k9_hud_res(k9_hud_menu == 2)" not in src
-  assert src.count("renderer.set_k9_hud_3d(k9_hud_menu == 3)") == 2
-  assert src.count("renderer.set_k9_hud_style(min(k9_hud_menu, 1))") == 2
+  assert src.count("renderer.set_k9_hud_res(True)") == 1   # 11/21: only 1 is left, its right block = diagnostics
+  assert "set_k9_hud_3d" not in src and "K9_MENU_FPS_POLICY" not in src   # 3 (3D board) removed
+  assert src.count("renderer.set_k9_hud_style(1)") == 1

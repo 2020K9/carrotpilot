@@ -179,7 +179,6 @@ def _set_menu(r, menu):
   r.set_k9_hud_style(min(menu, 1))   # the same calls main.py makes for K9HudNavdy
   r.set_k9_hud_navdy(1)
   r.set_k9_hud_res(menu in (1, 2))
-  r.set_k9_hud_3d(menu == 3)
   r.set_k9_hud_menu(menu)
 
 
@@ -218,9 +217,9 @@ def test_classic_no_overlap(hud, layout, extra):
     r.set_panel_layout(CLUSTER_PANEL_LAYOUT_DRIVING_LEFT)
 
 
-@pytest.mark.parametrize("menu", (0, 1, 2, 3))
+@pytest.mark.parametrize("menu", (1,))   # 11/21: 0 / 2 / 3 removed
 def test_k9_hud_navdy_no_overlap(hud, menu):
-  from test_k9_hud_3d import road_state
+  from k9_hud_road_state import road_state
   r, _, rg = hud
   _set_menu(r, menu)
   try:
@@ -243,7 +242,7 @@ def k9_state(base):
 
 def k9_road(lead_d, lane):
   import render_gear_screens as rg
-  from test_k9_hud_3d import road_state
+  from k9_hud_road_state import road_state
   from cluster_models import DetectedVehicle
   st = road_state(rg.synthetic_state("D"), lead_d=22.0 if lead_d is None else lead_d)
   others = tuple(v for v in st.detected_vehicles if not v.primary) + (DetectedVehicle("R3", 38.0, -3.7, "radar", radar_track_id=9),)
@@ -308,10 +307,10 @@ def test_k9_real_no_overlap_no_text_on_cars(hud, screen, lane):
     _set_menu(r, 0)
 
 
-@pytest.mark.parametrize("menu", (0, 1, 2, 3))
+@pytest.mark.parametrize("menu", (1,))   # 11/21: 0 / 2 / 3 removed
 def test_ev_road_text_off_cars_too(hud, menu):
   """the old EV-labelled road sample (battery) on every K9HudNavdy menu, with the cars and the 4 px gap"""
-  from test_k9_hud_3d import road_state
+  from k9_hud_road_state import road_state
   r, _, rg = hud
   _set_menu(r, menu)
   try:

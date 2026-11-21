@@ -389,14 +389,8 @@ class ClusterHudK9StyleParamReader:
             return 0
 
 
-# K9HudNavdy 3 (11/18): a renderer host may set this to menu -> wanted render FPS (or None = keep). When the wanted
-# rate differs from the running one the loop exits and the host's service restarts it at that rate (the Jetson HUD:
-# 10 FPS, 20 FPS with the 3D board). None here = no policy (the comma HUD keeps its own USB FPS policy).
-K9_MENU_FPS_POLICY = None
-
-
 class K9HudNavdyParamReader:
-    """K9HudNavdy (실험중): K9 D road look, 0 = before b7e81bbd4 / 1 = Navdy grey. Read like ClusterHudK9Style."""
+    """K9HudNavdy: only menu 1 is left (11/21 대감님 "외부hud 0.2.3지우란거"). A stored 0 / 2 / 3 runs as 1."""
 
     def __init__(self) -> None:
         self._params = None
@@ -408,13 +402,7 @@ class K9HudNavdyParamReader:
             pass
 
     def read(self) -> int:
-        if self._params is None:
-            return 0
-        try:
-            value = int(self._params.get_int("K9HudNavdy"))
-            return value if value in (0, 1, 2, 3) else 0  # 11/16 00:55: 2 = 1 + comma/Jetson resources; 11/18: 3 = 3D board
-        except Exception:
-            return 0
+        return 1
 
 
 class ClusterScreenModeParamReader:
@@ -1107,10 +1095,9 @@ def run_demo(
     next_hud_output_gate_param_read = start_time
     next_hud_mirror_param_read = start_time + HUD_MIRROR_PARAM_POLL_SECONDS
     k9_hud_menu = k9_navdy_param_reader.read()
-    renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # 11/13 17:31: K9HudNavdy 0 = cards / 1 = one scene (2 = scene too)
-    renderer.set_k9_hud_navdy(1)  # both layouts keep the Navdy road look
-    renderer.set_k9_hud_res(k9_hud_menu in (1, 2))  # 11/16 2 = scene + diagnostics right; 11/18 17:17 1 too
-    renderer.set_k9_hud_3d(k9_hud_menu == 3)  # 11/18: 3 = smooth 3D board (cluster_k9_3d)
+    renderer.set_k9_hud_style(1)  # 11/21: K9HudNavdy 1 one scene only
+    renderer.set_k9_hud_navdy(1)  # Navdy road look
+    renderer.set_k9_hud_res(True)  # 11/18 17:17: 1 = diagnostics in the screen-right block
     renderer.set_k9_hud_menu(k9_hud_menu)  # 11/18 17:35: menu 1 band on the ego lane lines
     report_frames = 0
     display_actual_fps: float | None = None
@@ -1323,17 +1310,6 @@ def run_demo(
                     )
                     active_hud_mirror_mode = next_hud_mirror_mode
                 next_hud_mirror_param_read = now + HUD_MIRROR_PARAM_POLL_SECONDS
-                k9_hud_menu = k9_navdy_param_reader.read()
-                renderer.set_k9_hud_style(min(k9_hud_menu, 1))  # K9HudNavdy picks the layout, 1 s poll, no restart
-                renderer.set_k9_hud_navdy(1)  # Navdy look in both layouts
-                renderer.set_k9_hud_res(k9_hud_menu in (1, 2))  # 11/18 17:17 "1번 오른쪽칸을 3번처럼"
-                renderer.set_k9_hud_3d(k9_hud_menu == 3)
-                renderer.set_k9_hud_menu(k9_hud_menu)
-                wanted_fps = K9_MENU_FPS_POLICY(k9_hud_menu) if K9_MENU_FPS_POLICY is not None else None
-                if wanted_fps and abs(wanted_fps - target_fps) > 0.01:
-                    print(f"K9HudNavdy {k9_hud_menu} wants {wanted_fps:g} FPS (running {target_fps:g}); exiting for restart",
-                          flush=True)
-                    break
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"

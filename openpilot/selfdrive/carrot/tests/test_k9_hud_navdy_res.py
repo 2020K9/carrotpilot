@@ -20,23 +20,21 @@ import cluster_renderer as cr
 from cluster_live import live_comma_resources
 
 
-def test_settings_menu_has_three_values():
+def test_settings_menu_has_only_1():
   data = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text())
   item = next(p for p in data["params"] if p["name"] == "K9HudNavdy")
-  assert (item["min"], item["max"], item["default"]) == (0, 3, 0)   # 11/18: 3 = smooth 3D board (test_k9_hud_3d)
-  assert all(len(v) == 4 for v in item["options"].values())
-  assert "2" in item["descr"] and "2" in item["edescr"] and "2" in item["cdescr"]
+  assert (item["min"], item["max"], item["default"]) == (1, 1, 1)   # 11/21 대감님 "외부hud 0.2.3지우란거"
+  assert all(len(v) == 1 and v[0].startswith("1 ") for v in item["options"].values())
 
 
-def test_reader_passes_2_and_main_maps_it_to_scene_plus_res():
+def test_reader_runs_every_stored_value_as_1():
   import main
   reader = main.K9HudNavdyParamReader()
-  for raw, want in ((0, 0), (1, 1), (2, 2), (3, 3), (4, 0), (-1, 0)):   # 11/18: 3 passes (3D board)
+  for raw in (0, 1, 2, 3, 4, -1):   # 11/21: a device that still stores 0 / 2 / 3 runs menu 1
     reader._params = SimpleNamespace(get_int=lambda _k, v=raw: v)
-    assert reader.read() == want
-  src = (CLUSTER / "main.py").read_text()
-  assert src.count("renderer.set_k9_hud_style(min(k9_hud_menu, 1))") == 2
-  assert src.count("renderer.set_k9_hud_res(k9_hud_menu in (1, 2))") == 2   # 11/18 17:17: 1 too (71b1977d)
+    assert reader.read() == 1
+  reader._params = None
+  assert reader.read() == 1
 
 
 def test_renderer_res_off_by_default_and_no_jetson_values():

@@ -40,7 +40,6 @@ def _renderer(menu, view=CLUSTER_CAMERA_VIEW_MODE_DEFAULT):
   r = cr.ClusterUiRenderer()
   r.set_k9_hud_style(1)
   r.set_k9_hud_navdy(1)
-  r.set_k9_hud_3d(False)
   r.set_k9_hud_menu(menu)
   r._k9_geo, r._k9_cx = cr.K9L_ROAD_GEO, cr.K9L_CX
   r._k9_exp1_setup(_state(view))
@@ -76,7 +75,7 @@ def test_menu1_horizon_ego_and_back_from_debug1():
   assert r.k9_road_clear_of_ego(4.0, 0.0) == 4.0                 # cars at their own distance, like debug 1
 
 
-@pytest.mark.parametrize("menu", [0, 2, None])
+@pytest.mark.parametrize("menu", [None])   # 11/21: 0 / 2 removed
 def test_other_menus_keep_the_old_projection(menu):
   r = _renderer(menu)
   assert r._k9_exp1_cam is None and cr._K9_BACK[0] == 0.0
@@ -84,14 +83,3 @@ def test_other_menus_keep_the_old_projection(menu):
   for f, lat in ((0.0, 0.0), (20.0, 1.8), (80.0, -5.4)):
     z = f + cr.K9_TURZX_ROAD_Z0
     assert r.k9_turzx_road_project(f, lat) == pytest.approx((cr.K9L_CX + lat * kx / z, hy + (ego_y - hy) * cr.K9_TURZX_ROAD_Z0 / z, kx / z))
-
-
-def test_menu3_board_and_menu1_reset_after_a_frame():
-  r = _renderer(1)
-  r.set_k9_hud_3d(True)
-  r._k9_exp1_setup(_state())
-  assert r._k9_exp1_cam is None
-  r.set_k9_hud_3d(False)
-  r.set_k9_hud_navdy(0)
-  r._k9_exp1_setup(_state())
-  assert r._k9_exp1_cam is None
