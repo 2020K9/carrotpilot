@@ -20,19 +20,19 @@ import cluster_renderer as cr
 from cluster_live import live_comma_resources
 
 
-def test_settings_menu_has_only_1():
+def test_settings_menu_has_0_and_1():
   data = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text())
   item = next(p for p in data["params"] if p["name"] == "K9HudNavdy")
-  assert (item["min"], item["max"], item["default"]) == (1, 1, 1)   # 11/21 대감님 "외부hud 0.2.3지우란거"
-  assert all(len(v) == 1 and v[0].startswith("1 ") for v in item["options"].values())
+  assert (item["min"], item["max"], item["default"]) == (0, 1, 1)   # 11/21 17:55: 0 = 1 + 흔들림 줄임, default 1
+  assert all(len(v) == 2 and v[0].startswith("0 ") and v[1].startswith("1 ") for v in item["options"].values())
 
 
-def test_reader_runs_every_stored_value_as_1():
+def test_reader_0_is_0_everything_else_1():
   import main
   reader = main.K9HudNavdyParamReader()
-  for raw in (0, 1, 2, 3, 4, -1):   # 11/21: a device that still stores 0 / 2 / 3 runs menu 1
+  for raw, want in ((0, 0), (1, 1), (2, 1), (3, 1), (4, 1), (-1, 1)):   # 2 / 3 were removed 11/21: run as 1
     reader._params = SimpleNamespace(get_int=lambda _k, v=raw: v)
-    assert reader.read() == 1
+    assert reader.read() == want
   reader._params = None
   assert reader.read() == 1
 

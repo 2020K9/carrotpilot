@@ -390,7 +390,8 @@ class ClusterHudK9StyleParamReader:
 
 
 class K9HudNavdyParamReader:
-    """K9HudNavdy: only menu 1 is left (11/21 대감님 "외부hud 0.2.3지우란거"). A stored 0 / 2 / 3 runs as 1."""
+    """K9HudNavdy: 1 = one scene (d2c46ecbb) / 0 = the same scene + 흔들림 줄임 (대감님 11/21 17:55).
+    A stored 2 / 3 (removed 11/21) or no value runs as 1."""
 
     def __init__(self) -> None:
         self._params = None
@@ -402,7 +403,12 @@ class K9HudNavdyParamReader:
             pass
 
     def read(self) -> int:
-        return 1
+        if self._params is None:
+            return 1
+        try:
+            return 0 if int(self._params.get_int("K9HudNavdy")) == 0 else 1
+        except Exception:
+            return 1
 
 
 class ClusterScreenModeParamReader:
@@ -1098,7 +1104,8 @@ def run_demo(
     renderer.set_k9_hud_style(1)  # 11/21: K9HudNavdy 1 one scene only
     renderer.set_k9_hud_navdy(1)  # Navdy road look
     renderer.set_k9_hud_res(True)  # 11/18 17:17: 1 = diagnostics in the screen-right block
-    renderer.set_k9_hud_menu(k9_hud_menu)  # 11/18 17:35: menu 1 band on the ego lane lines
+    renderer.set_k9_hud_menu(1)  # 11/18 17:35: menu 1 band on the ego lane lines (0 draws the same picture)
+    renderer.set_k9_hud_smooth(k9_hud_menu == 0)  # 11/21 17:55: 0 = 1 + 흔들림 줄임
     report_frames = 0
     display_actual_fps: float | None = None
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -1310,6 +1317,7 @@ def run_demo(
                     )
                     active_hud_mirror_mode = next_hud_mirror_mode
                 next_hud_mirror_param_read = now + HUD_MIRROR_PARAM_POLL_SECONDS
+                renderer.set_k9_hud_smooth(k9_navdy_param_reader.read() == 0)  # K9HudNavdy 0/1, 1 s poll, no restart
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"

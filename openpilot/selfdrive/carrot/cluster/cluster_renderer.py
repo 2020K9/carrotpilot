@@ -2557,8 +2557,9 @@ class ClusterUiRenderer:
         self._lane_confidence_held_indices = self._lane_confidence_hold_indices(state)
         self._road_edge_held_sides = self._road_edge_hold_sides(state)
         k9_road = self._k9_turzx_active(state)
-        if not k9_road:
-            self._k9_road_hold = None  # back in D later: start fresh, nothing held from before
+        if not k9_road or not self.k9_hud_smooth:
+            self._k9_road_hold = None  # back in D later / smoothing off: start fresh, nothing held from before
+            self._k9_alpha = {}
         alert_slot = {}
         if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
             self._ev6_draw_park_screen(state)
@@ -2567,7 +2568,8 @@ class ClusterUiRenderer:
             if ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9":
                 alert_slot = {"center": K9_REVERSE_ALERT_CENTER, "max_w": K9_REVERSE_ALERT_MAX_W}
         elif k9_road:
-            state = self._k9_hold_state(state)  # 11/13 01:59 screen-only hold / fade of lane lines and cars
+            if self.k9_hud_smooth:  # K9HudNavdy 0 only (11/21 17:55): screen-only hold / fade of lane lines and cars
+                state = self._k9_hold_state(state)
             if signal_lights is None:
                 signal_lights = self._turn_signal_lights(state)
             profile_stage = self._profile_start()
@@ -7161,6 +7163,8 @@ class ClusterUiRenderer:
 
     def _k9_lanesm(self, key: str, pts: list[tuple[float, float]], conf: float | None = None) -> list[tuple[float, float]]:
         """K9 D road lines smoothed for drawing only (대감님 11/13 04:59 "D단 차선 흐물흐물"); see cluster_k9_lanesm"""
+        if not self.k9_hud_smooth:  # K9HudNavdy 1: lines drawn as given (d2c46ecbb)
+            return pts
         if len(pts) < 2:
             return pts
         sm = getattr(self, "_k9_lanesm_state", None)
@@ -7171,7 +7175,7 @@ class ClusterUiRenderer:
 
     def _k9_lanesm_lanes(self, state: ClusterUiState, lefts: list, rights: list) -> tuple[list, list]:
         """(near, lane, pts) lists, outermost-left first; slots = ego line, then 1st, 2nd .. line further out"""
-        if not lefts and not rights:
+        if not self.k9_hud_smooth or (not lefts and not rights):
             return lefts, rights
         lc = getattr(state, "left_lane_line_confidence", None)
         rc = getattr(state, "right_lane_line_confidence", None)
@@ -7469,6 +7473,18 @@ class ClusterUiRenderer:
         self.k9_hud_navdy = v if v in (0, 1) else 0
 
     k9_hud_menu = None   # K9HudNavdy value itself (11/18 17:35): only menu 1 uses k9l_ego_lane_band
+
+    # K9HudNavdy 0 (대감님 11/21 17:55 "1번은 그대로, 흔들림 없앤거 0번에 추가"): the menu-1 picture plus the
+    # display-only hold / fade (cluster_k9_hold) and line smoothing (cluster_k9_lanesm). False = menu 1 as d2c46ecbb.
+    k9_hud_smooth = False
+
+    def set_k9_hud_smooth(self, on) -> None:
+        on = bool(on)
+        if on != self.k9_hud_smooth:
+            self._k9_road_hold = None
+            self._k9_lanesm_state = None
+            self._k9_alpha = {}
+        self.k9_hud_smooth = on
 
     def set_k9_hud_menu(self, value) -> None:
         try:
