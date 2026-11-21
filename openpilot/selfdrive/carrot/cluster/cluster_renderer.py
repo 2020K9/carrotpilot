@@ -8325,7 +8325,9 @@ class ClusterUiRenderer:
         prev = [0.0]   # size of the line above (line() only)
 
         def room(size):
-            return y[0] + size + 6.0 <= K9R_BOTTOM
+            # +3: a line lands up to size + 6 below y and its descenders reach 3 px under the base line (11/21: the
+            # named per-core rows moved the rows below so a line could end at base 470 = 1 px outside the block)
+            return y[0] + size + 6.0 + 3.0 <= K9R_BOTTOM
 
         def put(text, x, base, size, color, anchor="left"):
             w = width(text, size)
@@ -8402,13 +8404,29 @@ class ClusterUiRenderer:
                 put(value, cx0 + cw, y[0], size, K9L_MUTED if value.startswith("--") else K9L_VALUE, "right")
             return True
 
-        def core_strip(values):
-            """per-core load as thin bars only, right under the 코어 최대 row"""
-            if values:
-                cell = (x1 - x0) / len(values)
-                for i, v in enumerate(values):
-                    bars.append((x0 + i * cell + 1.0, y[0] + 4.0, max(1.0, cell - 2.0), None if v is None else v / 100.0))
-            y[0] += 4.5
+        def core_cells(cells, size=K9R_SMALL - 1.0):
+            """대감님 11/21 16:08: the per-core thin bars -> named numbers (C0 12%), lines split in equal columns; the
+            group values that sat on the old 코어 최대 row (온도 / 전력 or 클럭) follow the cores as named cells.
+            cells = [(label, value)]; label and value are one text so each number keeps its name next to it"""
+            texts_ = [f"{label} {value}" for label, value in cells]
+            # equal columns as wide as the widest item up to 1.3 x a core item + 12 px (5 at 17 px); a wider named cell
+            # (클럭 1510MHz) takes as many columns as it needs; 온도 in whole degrees here so it fits one column (the
+            # decimals stay on page 1); a line wraps before a cell that would run out
+            cores = [t for t, (label, _v) in zip(texts_, cells, strict=True) if label[:1] == "C" and label[1:].isdigit()]
+            core_w = max((width(t, size) for t in cores or texts_), default=0.0)
+            cw = max([core_w] + [w for w in (width(t, size) for t in texts_) if w <= 1.3 * core_w]) + 12.0
+            cols = max(1, int((x1 - x0 + 12.0) // cw))
+            col = cols
+            for text, (_label, value) in zip(texts_, cells, strict=True):
+                span = min(cols, max(1, math.ceil((width(text, size) + 12.0) / cw)))
+                if col + span > cols:
+                    if not room(size):
+                        return
+                    y[0] += size + 6.0   # 6: clear of the 23 px CPU / GPU / MEM row above (its descenders)
+                    prev[0] = size
+                    col = 0
+                put(text, x0 + col * cw, y[0], size, K9L_MUTED if value.startswith("--") else K9L_VALUE)
+                col += span
 
         def top(values):
             got = [v for v in values if v is not None]
@@ -8422,10 +8440,9 @@ class ClusterUiRenderer:
                  rcolor=K9R_WARN if comma is None else K9L_MUTED)
             grid([("CPU", self.k9r_pct(c.get("cpu"))), ("GPU", self.k9r_pct(c.get("gpu"))),
                   ("MEM", self.k9r_pct(c.get("mem_pct")))], K9R_VALUE)
-            grid([("코어 최대", self.k9r_pct(top(c.get("cores") or []))),
-                  ("온도", self.k9r_num(top([t for _, t, _v in c.get("temps") or ()]), ".1f", "°")),
-                  ("전력", self.k9r_num(c.get("power_w"), ".1f", "W"))], K9R_ROW)
-            core_strip(c.get("cores") or [])
+            core_cells([(f"C{i}", self.k9r_pct(v)) for i, v in enumerate(c.get("cores") or [])] +
+                       [("온도", self.k9r_num(top([t for _, t, _v in c.get("temps") or ()]), ".0f", "°")),
+                        ("전력", self.k9r_num(c.get("power_w"), ".1f", "W"))])
             hair(9.0)
             # 젯슨
             mem = None if j.get("mem_used_gb") is None else f"{j['mem_used_gb']:.1f}/{j['mem_total_gb']:.1f} GB"
@@ -8435,13 +8452,12 @@ class ClusterUiRenderer:
             grid([("CPU", self.k9r_pct(j.get("cpu"))), ("GPU", self.k9r_pct(j.get("gpu"))),
                   ("MEM", self.k9r_pct(j.get("mem_pct")))], K9R_VALUE)
             jc = j.get("cores") or []
-            grid([("코어 최대", self.k9r_pct(top([v for v, _, online in jc if online]))),
-                  ("온도", self.k9r_num(top([t for _, t in j.get("temps") or ()]), ".1f", "°")),
-                  ("클럭", self.k9r_num(top([mhz for _, mhz, online in jc if online]), ".0f", "MHz"))], K9R_ROW)
-            core_strip([v for v, _, online in jc if online])
+            core_cells([(f"C{i}", self.k9r_pct(v)) for i, (v, _, online) in enumerate(jc) if online] +   # real numbers
+                       [("온도", self.k9r_num(top([t for _, t in j.get("temps") or ()]), ".0f", "°")),
+                        ("클럭", self.k9r_num(top([mhz for _, mhz, online in jc if online]), ".0f", "MHz"))])
             hair(9.0)
-            # 모델 시간
-            line(K9R_HEAD, "모델 시간", None)
+            # 모델 시간 + 전송 · FPS under one title (11/21 16:08: room for the named per-core numbers above)
+            line(K9R_HEAD, "모델 시간 · 전송 FPS", None)
             line(K9R_ROW, "콤마 모델 실행 · 콤마", self.k9r_num(c.get("model_ms"), ".1f", " ms"), K9L_MUTED,
                  K9L_VALUE if c.get("model_ms") is not None else K9L_MUTED)
             line(K9R_ROW, "젯슨 왕복 · 콤마", self.k9r_num(c.get("roundtrip_ms"), ".1f", " ms"), K9L_MUTED,
@@ -8451,9 +8467,6 @@ class ClusterUiRenderer:
                  "--" if gpu_ms is None and total_ms is None else
                  f"{self.k9r_num(gpu_ms, '.1f')}/{self.k9r_num(total_ms, '.1f')} ms", K9L_MUTED,
                  K9L_VALUE if total_ms is not None else K9L_MUTED)
-            hair(9.0)
-            # 전송 · FPS
-            line(K9R_HEAD, "전송 · FPS", None)
             fps = getattr(state, "actual_fps", None)
             fps = fps if isinstance(fps, (int, float)) and math.isfinite(fps) and fps > 0.0 else None
             line(K9R_ROW, "화면 생성 FPS", self.k9r_num(fps, ".1f"), K9L_MUTED, K9L_VALUE if fps else K9L_MUTED)

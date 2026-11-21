@@ -172,7 +172,12 @@ def test_layout_inside_block_no_overlap_many_cores():
       texts, bars = renderer(jet, STARTUP, page).k9_res_layout(state(comma_diag=comma), fake_width)
       assert_clean(texts, bars)
       if page == 0:
-        assert len([b for b in bars if b[3] is not None or b[2] <= 60]) == n_comma + len([c for c in jet["cores"] if c[2]])
+        # 11/21 16:08 대감님: the per-core bars became named numbers (C0 12%): no load bar left, one C-number per
+        # core that fits (the block drops what does not fit, never draws outside it)
+        assert [b for b in bars if b[3] is not None] == []
+        cores = [w for w in all_text(texts) if w[:1] == "C" and w[1:2].isdigit()]
+        if n_comma + n_jet <= 16:
+          assert len(cores) == n_comma + len([c for c in jet["cores"] if c[2]])
 
 
 def test_page_switch_is_manual_only(monkeypatch):
