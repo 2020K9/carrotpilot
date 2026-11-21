@@ -193,9 +193,10 @@ def test_menu_and_keys():
   # 2026-10-29 K9CenterToFront removed again; K9MeterSeason is last in EXPERIMENTAL (registration pin updated deliberately)
   # 2026-11-13 54c7adfa K9HudNavdy (K9 D 화면 판) added after K9MeterSeason (registration pin updated deliberately)
   # 2026-11-18 K9Clamp appended last (대감님 13:55 클램프), 15:16 + its 4 settings (registration pin updated deliberately)
-  assert len(exp) == 1 and exp[0]["params"][-11:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason",
+  # 2026-11-21 K9JetHostState appended last (대감님 17:13 젯슨 상태값 CPU) (registration pin updated deliberately)
+  assert len(exp) == 1 and exp[0]["params"][-12:] == ["K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason",
                                                       "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain",
-                                                      "K9ClampAlert"]
+                                                      "K9ClampAlert", "K9JetHostState"]
   p = next(x for x in data["params"] if x["name"] == "K9ExtHud")
   assert (p["min"], p["max"], p["default"], p["control"]) == (-1, 1, -1, "select")
   assert all(len(p["options"][loc]) == 3 for loc in ("ko", "en", "zh"))

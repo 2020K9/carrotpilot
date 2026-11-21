@@ -429,7 +429,8 @@
             "K9ClampLaneCm",
             "K9ClampEdgeCm",
             "K9ClampGain",
-            "K9ClampAlert"
+            "K9ClampAlert",
+            "K9JetHostState"
           ]
         }
       ]
@@ -3985,6 +3986,38 @@
         "zh": [
           "0 关闭",
           "1 开启"
+        ]
+      },
+      "risk": "high"
+    },
+    {
+      "group": "시스템",
+      "name": "K9JetHostState",
+      "title": "젯슨 상태값 CPU (실험)",
+      "descr": "1 = 젯슨 모델의 순환 상태값(다음 장에 넘기는 기억)을 GPU 안에 두지 않고 CPU(호스트)로 주고받음 = 당근 10/21(9cfe8669) 전 방식. 모델·입력·결과 검사는 같음. 0 = 지금 그대로(GPU 상태값). 콤마·젯슨 재부팅 없이 적용: 시동 꺼짐이나 정차·주행보조 꺼짐일 때 확정되고, 젯슨이 같은 모델을 몇 초 다시 불러옴(그동안 콤마 자체 모델). 주행 중에 바꾸면 다음 정차까지 이전 값 유지, 주행 중 재연결도 마지막 확정값. 옛 젯슨 배포판은 1이어도 지금처럼. 4번(NaN)을 없앤다는 보장은 없음(시험 기록 참고). 실차 미확인.",
+      "egroup": "SYSTEM",
+      "etitle": "Jetson state on CPU (experimental)",
+      "edescr": "1 = the Jetson model recurrent state (the memory passed to the next frame) is staged through the host (CPU) instead of staying on the GPU = Carrot before 10/21 (9cfe8669). Same model, inputs and output checks. 0 = as now (GPU state). No comma or Jetson reboot: committed with ignition off, or stopped with driver assistance off; the Jetson reloads the same model for a few seconds (comma own model meanwhile). A change while driving waits for the next stop; a reconnect while driving uses the last committed value. Older Jetson bundles behave as now even with 1. Not guaranteed to remove status 4 (NaN). Not vehicle-validated.",
+      "cgroup": "系统",
+      "ctitle": "Jetson 状态值 CPU（试验）",
+      "cdescr": "1 = Jetson 模型的循环状态值（传给下一帧的记忆）不留在 GPU 内，而经由 CPU（主机）传递 = Carrot 10/21（9cfe8669）之前的方式。模型、输入与结果检查相同。0 = 与现在相同（GPU 状态值）。无需重启 comma 或 Jetson：熄火或停车且辅助驾驶关闭时确定，Jetson 重新加载同一模型数秒（期间使用 comma 自带模型）。行驶中更改将保持旧值直到下次停车，行驶中重新连接也使用最后确定的值。旧版 Jetson 即使设为 1 也与现在相同。不保证消除 4 号错误（NaN）。未实车验证。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 GPU 상태값(지금 그대로)",
+          "1 CPU 상태값(10/21 전 방식)"
+        ],
+        "en": [
+          "0 GPU state (as now)",
+          "1 CPU state (before 10/21)"
+        ],
+        "zh": [
+          "0 GPU 状态值（与现在相同）",
+          "1 CPU 状态值（10/21 之前）"
         ]
       },
       "risk": "high"
