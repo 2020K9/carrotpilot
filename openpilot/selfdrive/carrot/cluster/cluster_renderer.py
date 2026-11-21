@@ -503,6 +503,17 @@ K9C_SWAP_DX = K9_TURZX_RIGHT_X - K9_TURZX_LEFT_X   # card 1 (8..488) <-> card 3 
 K9L_SWAP_LEFT_DX = DESIGN_WIDTH - K9L_EDGE - K9L_CAR_W - K9L_EDGE  # 1436: car block 32..452 -> 1468..1888
 K9L_SWAP_RIGHT_DX = -1304.0  # lane / steer-learn list 1336..1776 -> 32..472
 K9C_IND_Y, K9L_IND_Y = 262.0, 182.0   # automatic indicator box (was y 124 = over km/h / the lane pill)
+# 젯슨 에러지연 (실험중 K9JetErrDelay, 대감님 11/21 11:09): '에러지연 작동' while modeld held the previous Jetson output
+# for one NaN frame (status 4). state.jet_err_delay comes from cluster_live (>= 1 s from the hold, longer while holds
+# repeat). Each board has one fixed slot off its texts / cards and outside its alert band: cards (0) = third pill under
+# 차선 % / 앞차, scene (1 / 2) = left of the road under the limit sign (above the camera block), 3D (3) = left block
+# right of the set-speed pill, classic = driving column under the clock. Nothing is drawn while it is False.
+JET_ERR_DELAY_TEXT = {"ko": "에러지연 작동", "en": "Error delay active"}
+JET_ERR_DELAY_FILL = (30, 18, 4, 235)
+JET_ERR_DELAY_EDGE = (255, 170, 40)
+JET_ERR_DELAY_INK = (255, 206, 84)
+JET_ERR_DELAY_SIZE = 30.0
+JET_ERR_DELAY_H = 46.0
 K9L_PERC_Y_IND = 274.0                # lane % / lead row while the indicator box sits on its usual row
 K9L_NAVI_BASE2 = 336.0                # turn-by-turn distance baseline (scene, right of the road)
 K9L_CAM_X, K9L_CAM_Y, K9L_CAM_W = K9L_SCENE_X0 + 16.0, 292.0, 244.0   # speed camera block (scene, left of the road)
@@ -2583,6 +2594,8 @@ class ClusterUiRenderer:
             profile_stage = self._profile_start()
             self._draw_hud(state, signal_lights)
             self._profile_add("render.hud", profile_stage)
+            if getattr(state, "jet_err_delay", False):
+                self._draw_classic_err_delay(state)
         profile_stage = self._profile_start()
         from openpilot.common.indicator_display import draw as draw_indicator
         draw_indicator(530, 78, 460, self._korean_font or self._font, 24)
@@ -7347,6 +7360,30 @@ class ClusterUiRenderer:
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(cx - w * 0.5, by - h, w, h),
                             rl.Vector2(0, 0), 0.0, rl.WHITE)
 
+    def _draw_jet_err_delay(self, x: float, cy: float, anchor: str = "left",
+                            size: float = JET_ERR_DELAY_SIZE) -> tuple[float, float, float, float]:
+        """'에러지연 작동' badge (K9JetErrDelay hold); x is the left / right / centre edge per anchor. Returns its box."""
+        text = JET_ERR_DELAY_TEXT.get(self.language, JET_ERR_DELAY_TEXT["en"])
+        tw, _ = self._measure_text(text, size, max(1.0, size * 0.02), self._font_for_text(text))
+        pad = 16.0 * size / JET_ERR_DELAY_SIZE
+        bw, bh = tw + 2.0 * pad, JET_ERR_DELAY_H * size / JET_ERR_DELAY_SIZE
+        bx = x if anchor == "left" else x - bw if anchor == "right" else x - bw * 0.5
+        self._rounded_rect(bx, cy - bh * 0.5, bw, bh, 10.0, JET_ERR_DELAY_FILL, JET_ERR_DELAY_EDGE, 2.0)
+        self._draw_text(text, bx + pad, cy, size, JET_ERR_DELAY_INK)
+        return bx, cy - bh * 0.5, bx + bw, cy + bh * 0.5
+
+    def _draw_classic_err_delay(self, state: ClusterUiState) -> None:
+        # classic HUD (EV, or the K9 off ClusterHudScreenMode 0): the driving column's empty field under the clock,
+        # right of the limit sign, above the centred alert text
+        sx, sy = self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT
+        rl.rl_push_matrix()
+        rl.rl_scalef(sx, sy, 1.0)
+        try:
+            x = self._driving_hud_offset_design_x(self._effective_screen_mode(state)) + 160.0
+            self._draw_jet_err_delay(x, 136.0, "left")
+        finally:
+            rl.rl_pop_matrix()
+
     def k9_lat_lines(self, state: ClusterUiState) -> list[tuple[str, list[str], bool]]:
         """steering-learn texts as one item per line (00:20): [(name, values, second item of its text)], text unchanged;
         a nameless value ('지연학습 100%  0.20초') stays on its item's line"""
@@ -8496,6 +8533,11 @@ class ClusterUiRenderer:
             rl.draw_text_ex(font, text, rl.Vector2(float(round(x)), dy + 1.0), fs, 0.0, rl.Color(0, 0, 0, 150))
             rl.draw_text_ex(font, text, rl.Vector2(float(round(x)), dy), fs, 0.0, rl_color(color))
 
+    def _k9l_draw_err_delay(self, state: ClusterUiState) -> None:
+        if getattr(state, "jet_err_delay", False):  # left of the road under the limit sign, above the camera block
+            # 34 px inside the 0.862 K9HudNavdy 1 / 2 scene transform = ~29 px on the panel, like the 30 px elsewhere
+            self._draw_jet_err_delay(K9L_CAM_X, K9L_CAM_Y - 42.0, "left", 34.0)
+
     def _k9l_draw_hud(self, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
         tex = self._k9l_background()
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT),
@@ -8508,6 +8550,7 @@ class ClusterUiRenderer:
             finally:
                 rl.end_scissor_mode()
             self._k9l_draw_top(state, signal_lights)
+            self._k9l_draw_err_delay(state)
         else:  # K9HudNavdy 2: scene scaled about its left edge, aspect kept, so the wider block fits (11/18 11:49)
             sy = self.height / DESIGN_HEIGHT
             k, dy = K9R_SCENE_S, K9R_SCENE_DY
@@ -8523,6 +8566,7 @@ class ClusterUiRenderer:
                 finally:
                     rl.end_scissor_mode()
                 self._k9l_draw_top(state, signal_lights)
+                self._k9l_draw_err_delay(state)
             finally:
                 rl.rl_pop_matrix()
         with self._k9_shift(K9R_SWAP_DX if self.k9_hud_res else K9L_SWAP_LEFT_DX):   # 22:41 1칸 <-> 3칸

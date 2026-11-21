@@ -125,6 +125,17 @@ class DisplayParams:
     snapshot = read_snapshot()   # comma clock value carried as is; never mixed with Jetson times
     return snapshot[1].get('jetlink_roundtrip_ms') if snapshot else None
 
+  def jetlink_err_delay(self):
+    """K9JetErrDelay (held count, seconds since the last held frame): the comma's age when the snapshot was made plus
+    the snapshot's age here (Jetson clock); no clock is mixed with the other."""
+    snapshot = read_snapshot()
+    value = snapshot[1].get('jetlink_err_delay') if snapshot else None
+    try:
+      count, age = int(value[0]), float(value[1])
+    except (TypeError, ValueError, IndexError):
+      return None
+    return count, age + max(0., time.monotonic() - snapshot[0])
+
   def get_int(self, key, *args, **kwargs):
     try:
       return int(self.get(key) or 0)

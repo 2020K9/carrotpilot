@@ -430,7 +430,8 @@
             "K9ClampEdgeCm",
             "K9ClampGain",
             "K9ClampAlert",
-            "K9JetHostState"
+            "K9JetHostState",
+            "K9JetErrDelay"
           ]
         }
       ]
@@ -4018,6 +4019,38 @@
         "zh": [
           "0 GPU 状态值（与现在相同）",
           "1 CPU 状态值（10/21 之前）"
+        ]
+      },
+      "risk": "high"
+    },
+    {
+      "group": "시스템",
+      "name": "K9JetErrDelay",
+      "title": "젯슨 에러지연 (실험)",
+      "descr": "1 = 젯슨 4번(NaN)이 한 장 나면 직전 결과로 버팀(그 한 장은 버리고 직전 결과를 0.05초 더 씀, 모델은 그대로, 젯슨 기억 상태도 직전 정상값으로 되돌림). 오류를 막는 기능이 아니라, 한 번 난 4번 때 연결을 유지하는 실험. 2장 연속이거나 1초 안에 두 번 나면 지금처럼 끊김(콤마 자체 모델, 주행 보조 중이면 경고). 상태를 되돌리지 못하는 옛 젯슨 배포판이면 1이어도 지금처럼 끊김. 버티면 외부 HUD에 '에러지연 작동'이 1초 이상 뜸. 켜고 끄면 바로 적용(재부팅·재시작 필요 없음). 0 = 지금 그대로. 실차 미확인.",
+      "egroup": "SYSTEM",
+      "etitle": "Jetson error delay (experimental)",
+      "edescr": "1 = when the Jetson returns one status 4 (NaN) frame, keep the previous result (that frame is dropped and the previous result is used for 0.05 s more, the model is not changed, the Jetson's recurrent state is rolled back to the last valid one). Not a fix for the error: an experiment that keeps the link through a single status 4. Two in a row, or two within 1 s, disconnect as now (comma's own model, an alert while engaged). An older Jetson bundle that cannot roll back its state disconnects as now even with 1. While holding, the external HUD shows 'Error delay active' for at least 1 s. On / off applies at once (no reboot or restart). 0 = as now. Not vehicle-validated.",
+      "cgroup": "系统",
+      "ctitle": "Jetson 错误延迟（试验）",
+      "cdescr": "1 = Jetson 出现一帧 4 号错误（NaN）时沿用上一帧结果（丢弃该帧，上一结果再用 0.05 秒，不换模型，Jetson 记忆状态也回到上一个正常值）。这不是消除错误的功能，而是在单次 4 号错误时保持连接的试验。连续 2 帧或 1 秒内出现两次则与现在一样断开（改用 comma 自带模型，辅助驾驶中会报警）。无法回滚状态的旧 Jetson 版本即使设为 1 也与现在一样断开。保持时外部 HUD 显示“错误延迟中”至少 1 秒。开关立即生效（无需重启）。0 = 与现在相同。未实车验证。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(지금 그대로)",
+          "1 켬(한 장 버티기)"
+        ],
+        "en": [
+          "0 Off (as now)",
+          "1 On (hold one frame)"
+        ],
+        "zh": [
+          "0 关闭（与现在相同）",
+          "1 开启（保持一帧）"
         ]
       },
       "risk": "high"

@@ -52,6 +52,15 @@ FRAME_TIMEOUT = 3.0
 StopFn = Callable[[], bool]
 
 
+class NonFiniteOutput(LinkError):
+  """Status NOT_FINITE: the model produced NaN/Inf (driving output or next recurrent state). The link is done."""
+
+
+class HeldOutput(NonFiniteOutput):
+  """NOT_FINITE on a HOLD_STATE request, and the server restored the previous valid recurrent state
+  (Carrot K9JetErrDelay). The link is still good; the caller drops this one frame or abandons the link itself."""
+
+
 class EngineMissing(LinkError):
   """The server has no engine and this caller has no ONNX to upload.
 
@@ -106,6 +115,8 @@ class JetlinkClient:
     self._infer_frame_id: int | None = None
     self._infer_flags = 0
     self._stateful_v2 = False
+    self._hold_state = False
+    self._infer_hold = False
     self._nav_u8 = False
     # Native comma measurements show LZ4 encoding costs more than USB savings.
     # Keep exact map packing; full-block compression requires an explicit trial.
@@ -240,6 +251,7 @@ class JetlinkClient:
     so this is also how a new owner of the gadget takes over one the server
     never saw end; see Session._greet."""
     self._stateful_v2 = False
+    self._hold_state = False
     self._nav_u8 = False
     self._lz4 = False
     self._deferred_map = False
@@ -277,6 +289,7 @@ class JetlinkClient:
     if selected != version:
       raise LinkError(f"server selected protocol {selected!r}, transport speaks protocol {version}")
     self._stateful_v2 = selected == 2 and response.get('stateful_v2') is True
+    self._hold_state = self._stateful_v2 and response.get(P.HOLD_STATE_CAPABILITY) is True
     self._projection_negotiated = (self._allow_output_projection and self._stateful_v2 and
                                   projection.matches(response.get(projection.CAPABILITY)))
     from jetlink.packed_codec import CAPABILITY
@@ -433,6 +446,12 @@ class JetlinkClient:
         continue
 
   @property
+  def hold_state_available(self) -> bool:
+    """The server can restore the previous valid recurrent state after one non-finite frame (Flag.HOLD_STATE)."""
+    return bool(getattr(self, '_hold_state', False) and self.spec is not None and self.spec.stateful
+                and self._protocol_version() == 2)
+
+  @property
   def deferred_map_available(self):
     return bool(getattr(self, '_deferred_map', False) and projection.eligible(self.spec))
 
@@ -453,7 +472,7 @@ class JetlinkClient:
 
   def infer_begin(self, warped: np.ndarray, packed: np.ndarray, frame_id: int = 0,
                   reset: bool = False, want_state: bool = False, deadline: float | None = None,
-                  nav_metadata=None) -> int:
+                  nav_metadata=None, hold: bool = False) -> int:
     """Send a frame and return immediately with its sequence number.
 
     Split from infer_end so the caller can work while the Jetson is busy;
@@ -478,6 +497,11 @@ class JetlinkClient:
       flags |= projection.FLAG
     if version == 3:
       flags |= P.Flag.WANT_HIDDEN
+    if hold:
+      if not self.hold_state_available:
+        raise LinkError('recurrent state hold was not negotiated for this model')
+      flags |= P.Flag.HOLD_STATE
+    self._infer_hold = bool(hold)
     try:
       self._infer_started = time.monotonic()
       self._infer_frame_id = frame_id
@@ -538,7 +562,12 @@ class JetlinkClient:
     fid, status, gpu_us, queue_us, total_us = P.unpack_infer_resp(msg.payload)
     self.last_timings = (gpu_us, queue_us, total_us)
     if status != P.Status.OK:
+      if (status == P.Status.NOT_FINITE and getattr(self, '_infer_hold', False) and msg.flags & P.Flag.STATE_HELD
+          and fid == self._infer_frame_id):
+        raise HeldOutput(f"inference failed: NOT_FINITE (frame {fid}); recurrent state held")
       self.dead = True
+      if status == P.Status.NOT_FINITE:
+        raise NonFiniteOutput(f"inference failed: {_name(P.Status, status)} (frame {fid})")
       raise LinkError(f"inference failed: {_name(P.Status, status)} (frame {fid})")
     if fid != self._infer_frame_id:
       self.dead = True

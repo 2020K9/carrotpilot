@@ -505,6 +505,7 @@ class ClusterUiState:
     disk_used_percent: float | None = None
     comma_resources: tuple[float | None, float | None, float | None] | None = None  # deviceState CPU avg / GPU / memory %
     comma_diag: dict | None = field(default=None, compare=False, hash=False)  # K9HudNavdy 2 (cluster_live.live_comma_diag)
+    jet_err_delay: bool = False  # K9JetErrDelay: '에러지연 작동' badge (cluster_live.JetErrDelayLatch)
     network_address: str | None = None
     network_connected: bool = False
     egpu_active: bool = False

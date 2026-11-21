@@ -5,6 +5,7 @@ copy one status word before the reply event. Never infer validity from just the
 driving output. NVRTC/driver errors refuse activation instead of bypassing validation.
 """
 import ctypes
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -95,17 +96,65 @@ class DeviceState:
       self.close()
       raise
     self.needs_reset = True
+    # Carrot K9JetErrDelay: separate device copies of the last valid next state (allocated on the first request)
+    self.backups = None
+    self.backup_valid = False
+    self.needs_restore = False
 
   def reset(self):
     # Host only; schedule zeroing before the next graph on the same stream.
     # A previous frame's trailing D2D can never overwrite the new zeros.
     self.needs_reset = True
+    self.needs_restore = False
+
+  def save_recovery(self):
+    """After a validated frame: copy its next state (the scanned outputs) aside, on the stream after the graph's
+    trailing feedback, before the next graph. Asynchronous; costs one D2D per state pair."""
+    if self.backups is None:
+      backups = []
+      try:
+        for _, source in self.pairs:
+          backups.append(SimpleNamespace(device_ptr=int(cudart.malloc(source.nbytes)), nbytes=source.nbytes,
+                                         dtype=source.dtype))
+      except BaseException:
+        for b in backups:
+          cudart.free(b.device_ptr)
+        raise
+      self.backups = backups
+    for backup, (_, source) in zip(self.backups, self.pairs, strict=True):
+      cudart.memcpy_d2d_async(backup.device_ptr, source.device_ptr, source.nbytes, self.stream)
+    self.backup_valid = True
+
+  def drop_recovery(self):
+    self.backup_valid = False
+    self.needs_restore = False
+
+  def restore_recovery(self) -> bool:
+    """A non-finite frame: scan the kept copy on the GPU (never restore a non-finite state), then schedule it into
+    the state inputs before the next graph instead of zeros. Synchronises the stream once, on this failure path."""
+    if not self.backup_valid or self.backups is None:
+      return False
+    self.backup_valid = False
+    cudart.memset_async(self.bad_device, 4, self.stream)
+    for backup in self.backups:
+      self.kernel.launch(backup, self.bad_device, self.stream)
+    cudart.memcpy_d2h_async(self.bad_host, self.bad_device, 4, self.stream)
+    cudart.stream_sync(self.stream)
+    if self.bad[0]:
+      self.needs_reset, self.needs_restore = True, False
+      return False
+    self.needs_reset, self.needs_restore = False, True
+    return True
 
   def before_run(self):
     if self.needs_reset:
       for target, _ in self.pairs:
         cudart.memset_async(target.device_ptr, target.nbytes, self.stream)
       self.needs_reset = False
+    elif self.needs_restore:
+      for backup, (target, _) in zip(self.backups, self.pairs, strict=True):
+        cudart.memcpy_d2d_async(target.device_ptr, backup.device_ptr, target.nbytes, self.stream)
+      self.needs_restore = False
     elif self.bad[0]:
       raise FloatingPointError('Non-finite GPU state; reset required')
 
@@ -135,6 +184,9 @@ class DeviceState:
     if self.bad_host is not None:
       cudart.host_free(self.bad_host)
       self.bad_host = None
+    for backup in getattr(self, 'backups', None) or ():
+      cudart.free(backup.device_ptr)
+    self.backups = None
     if self.kernel is not None:
       self.kernel.close()
       self.kernel = None

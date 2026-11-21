@@ -16,6 +16,7 @@ from openpilot.common.jetlink_status import badge  # noqa: F401
 from jetlink.spec import ModelSpec
 from jetlink import output_projection as projection, deferred_map
 from openpilot.selfdrive.modeld.jetlink.contracts import DEFAULT_SPEC, validate_model_spec
+from openpilot.selfdrive.modeld.jetlink import output_recovery
 
 SPEC = DEFAULT_SPEC
 SOCKET = '/dev/shm/carrot-jetlink.sock'
@@ -151,6 +152,8 @@ class Client:
                              projection.matches(hello.get(projection.IPC_CAPABILITY)))
       self.deferred_nav = (os.getenv('JETLINK_DEFER_NAV', '1') == '1' and projection.eligible(self.spec) and
                            deferred_map.matches(hello.get(deferred_map.IPC_CAPABILITY)))
+      # K9JetErrDelay: jetlinkd offers it only when the Jetson can restore its recurrent state
+      self.err_delay = hello.get(output_recovery.IPC_CAPABILITY) is True
       if os.getenv('JETLINK_RAM_INPUT', '1') == '1' and shared_input.supported() and hello.get(shared_input.CAPABILITY) is True:
         deadline = time.monotonic() + timeout
         send_parts(self.sock, shared_input.SETUP, deadline=deadline)
@@ -164,15 +167,16 @@ class Client:
   def image_buffer(self):
     return self.shared.begin() if self.shared is not None else None
 
-  def infer(self, image, packed, frame, reset=False, source_sof=0, nav_metadata=None):
+  def infer(self, image, packed, frame, reset=False, source_sof=0, nav_metadata=None, hold=False):
+    """The model output, or None for a frame jetlinkd held (K9JetErrDelay; only with hold=True)."""
     try:
-      return self._infer(image, packed, frame, reset, source_sof, nav_metadata)
+      return self._infer(image, packed, frame, reset, source_sof, nav_metadata, hold)
     except Exception:
       # Neither late replies nor late USB readers may outlive a reused slot.
       self.close()
       raise
 
-  def _infer(self, image, packed, frame, reset=False, source_sof=0, nav_metadata=None):
+  def _infer(self, image, packed, frame, reset=False, source_sof=0, nav_metadata=None, hold=False):
     if image.dtype != np.uint8 or image.shape != self.spec.warped_shape or not image.flags.c_contiguous:
       raise ValueError('invalid warped image')
     if packed.dtype != np.float32 or packed.size != self.spec.packed_nelem or not packed.flags.c_contiguous or not np.all(np.isfinite(packed)):
@@ -180,6 +184,9 @@ class Client:
     deadline = time.monotonic() + self.timeout
     self.sock.settimeout(self.timeout)
     request_flags = int(reset) | (projection.IPC_FLAG if self.project_output else 0)
+    hold = bool(hold) and getattr(self, 'err_delay', False)
+    if hold:
+      request_flags |= output_recovery.IPC_FLAG
     map_parts = ()
     if getattr(self, 'deferred_nav', False):
       request_flags |= deferred_map.IPC_FLAG
@@ -191,6 +198,14 @@ class Client:
     else:
       send_parts(self.sock, REQUEST.pack(frame, request_flags, source_sof), image, packed, *map_parts, deadline=deadline)
     reply = self.reader.receive(self.sock, deadline)
+    if hold and len(reply) == REPLY.size:
+      # jetlinkd held a non-finite frame: no output, nothing to publish for this camera frame
+      fid, *self.timings = REPLY.unpack_from(reply)
+      if fid != frame:
+        raise ValueError('stale inference reply')
+      if shared_request:
+        self.shared.complete()
+      return None
     count = projection.COUNT if self.project_output else self.spec.output_nelem
     if len(reply) != REPLY.size + count * 4:
       raise ValueError('invalid inference reply size')

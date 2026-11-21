@@ -30,6 +30,14 @@ normal signed host-runtime pin and boot updater.
 See docs/jetson_gpu_usb_review.md for the initial review and
 docs/jetson_gpu_state_activation_20261021.md for activation evidence and limits.
 
+Carrot K9JetErrDelay (2026-11-21, experimental setting, default off) adds an optional v2 rollback of one
+non-finite stateful frame, following Carrot's eGPU single-output recovery (dabe4f1d): `Flag.HOLD_STATE` on an
+INFER_REQ keeps the next recurrent state of that frame once it is validated (a device copy with
+CARROT_TRT_DEVICE_STATE=1, a host copy otherwise); if that frame is non-finite instead, the state kept by the
+previous frame is restored rather than cleared and INFER_RESP carries `Flag.STATE_HELD` with status NOT_FINITE.
+HELLO offers `carrot_hold_state_v1`. Requests without the flag are served exactly as before (no copy, same reset).
+The comma decides whether that one frame is dropped (openpilot/selfdrive/modeld/jetlink/output_recovery.py).
+
 Carrot coalesces `transport/watchdog.py` notifications: a pending earlier wake
 rechecks a cancelled or later-rearmed write; an earlier deadline and close still
 wake immediately. Expiry/cancellation locking, abort callback, time budgets and

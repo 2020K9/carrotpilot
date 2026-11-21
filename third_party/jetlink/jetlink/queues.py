@@ -224,6 +224,32 @@ class StatefulQueues:
     for value in self.state.values():
       value.fill(0)
 
+  # Carrot K9JetErrDelay (Flag.HOLD_STATE): a host copy of the state after the last valid frame, tagged by the
+  # session with (hello epoch, frame id). reset() leaves it: the session drops it on RESET_QUEUES itself, and a
+  # failed frame resets before it restores. Only requested frames pay for the copy.
+  _recovery = None
+  _recovery_tag = None
+
+  def save_recovery_state(self, tag) -> None:
+    if self._recovery is None:
+      self._recovery = {name: np.empty_like(value) for name, value in self.state.items()}
+    for name, value in self.state.items():
+      np.copyto(self._recovery[name], value, casting='no')
+    self._recovery_tag = tag
+
+  def drop_recovery_state(self) -> None:
+    self._recovery_tag = None
+
+  def restore_recovery_state(self, tag) -> bool:
+    """Put back the state kept by save_recovery_state(tag). False (state left as it is) for any other tag, or
+    a kept state that is not finite (never restore non-finite hidden state)."""
+    kept, self._recovery_tag = self._recovery_tag, None
+    if kept is None or kept != tag or not all(self._all_finite(v) for v in self._recovery.values()):
+      return False
+    for name, value in self.state.items():
+      np.copyto(value, self._recovery[name], casting='no')
+    return True
+
   def step_into(self, warped, packed, dest):
     if warped.shape != self.spec.warped_shape or warped.dtype != np.uint8 or packed.size != self.spec.packed_nelem:
       raise ValueError('Invalid stateful frame shape/type')
@@ -304,6 +330,23 @@ class DeviceStateQueues(StatefulQueues):
   def reset(self):
     super().reset()
     self.device_state.reset()
+
+  # K9JetErrDelay on the GPU: the kept state is a device copy (DeviceState.save_recovery), restored on the stream
+  # before the next frame; the host buffers are not used per frame here.
+  def save_recovery_state(self, tag) -> None:
+    self.device_state.save_recovery()
+    self._recovery_tag = tag
+
+  def drop_recovery_state(self) -> None:
+    self._recovery_tag = None
+    self.device_state.drop_recovery()
+
+  def restore_recovery_state(self, tag) -> bool:
+    kept, self._recovery_tag = self._recovery_tag, None
+    if kept is None or kept != tag:
+      self.device_state.drop_recovery()
+      return False
+    return self.device_state.restore_recovery()
 
   def feedback(self, outputs):
     try:

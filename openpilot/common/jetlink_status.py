@@ -80,6 +80,18 @@ def _fresh(path, now=None, *, handshake=False):
   return {}
 
 
+def err_delay(now=None):
+  """K9JetErrDelay on the comma: (frames modeld held so far, seconds since the last one) from modeld's fresh status,
+  None without a held frame or a fresh status (HUD '에러지연 작동')."""
+  if now is None:
+    now = time.monotonic()
+  status = _fresh(MODEL_STATUS, now)
+  count, at = status.get('err_delay_count'), status.get('err_delay_at')
+  if (type(count) is not int or count <= 0 or type(at) not in (int, float) or not math.isfinite(at)):
+    return None
+  return count, max(0., now - at)
+
+
 def preparation_text(link, model):
   if model.get('active'):
     return ''
