@@ -108,7 +108,9 @@ from cluster_scene import (
     clean_ui_enabled,
     cluster_scene_state_key,
 )
+from cluster_k9_lanesm import K9LaneSmoother
 from cluster_system_monitor import SystemStats, SystemStatsSampler
+from cluster_k9_hold import K9RoadHold
 from cluster_taxi_meter import TaxiMeterPanel  # noqa: F401  (bd09c076 look, kept for its tests)
 from cluster_taxi_c1 import C1MeterPanel
 from cluster_lat_values import (lane_gap_text, lane_offset_text, lat_values_text, torque_applied_text,
@@ -2544,6 +2546,8 @@ class ClusterUiRenderer:
         self._lane_confidence_held_indices = self._lane_confidence_hold_indices(state)
         self._road_edge_held_sides = self._road_edge_hold_sides(state)
         k9_road = self._k9_turzx_active(state)
+        if not k9_road:
+            self._k9_road_hold = None  # back in D later: start fresh, nothing held from before
         alert_slot = {}
         if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
             self._ev6_draw_park_screen(state)
@@ -2552,6 +2556,7 @@ class ClusterUiRenderer:
             if ego_model_name(str(getattr(state, "car_fingerprint", "") or "")) == "k9":
                 alert_slot = {"center": K9_REVERSE_ALERT_CENTER, "max_w": K9_REVERSE_ALERT_MAX_W}
         elif k9_road:
+            state = self._k9_hold_state(state)  # 11/13 01:59 screen-only hold / fade of lane lines and cars
             if signal_lights is None:
                 signal_lights = self._turn_signal_lights(state)
             profile_stage = self._profile_start()
@@ -6740,8 +6745,18 @@ class ClusterUiRenderer:
     def _k9_is_lead(vehicle) -> bool:
         return bool(vehicle.primary) and str(vehicle.label).upper() == "L1" and vehicle.longitudinal_m > 0.0
 
+    def _k9_hold_state(self, state: ClusterUiState) -> ClusterUiState:
+        """K9 D road: lane lines / kerbs / cars kept briefly and faded (cluster_k9_hold), clock = k9_hold_clock
+        (log time in replay) else monotonic. Screen copy only; a still or jumping clock draws the state as given."""
+        hold = getattr(self, "_k9_road_hold", None)
+        if hold is None:
+            hold = self._k9_road_hold = K9RoadHold()
+        clock = getattr(self, "k9_hold_clock", None) or time.monotonic
+        state, self._k9_alpha = hold.update(state, float(clock()), self.k9_road_others, self._k9_is_lead)
+        return state
+
     def _k9_fade(self, obj) -> float:
-        return 1.0  # e73e6a17 hold/fade reverted (대감님 11/18 11:56): every line / car drawn as given
+        return getattr(self, "_k9_alpha", {}).get(id(obj), 1.0) if obj is not None else 1.0
 
     def _k9_lead_fade(self, state: ClusterUiState) -> float:
         return self._k9_fade(next((v for v in getattr(state, "detected_vehicles", ()) or () if self._k9_is_lead(v)), None))
@@ -7130,6 +7145,29 @@ class ClusterUiRenderer:
                 rl.draw_line_ex(prev[0], cur[0], w, rl.Color(min(255, r + 60), min(255, g + 40), min(255, b), int(255 * fade)))
             prev = cur
             f += 3.0 if f < 0.0 else (1.5 if f < 20.0 else 2.5)
+
+    def _k9_lanesm(self, key: str, pts: list[tuple[float, float]], conf: float | None = None) -> list[tuple[float, float]]:
+        """K9 D road lines smoothed for drawing only (대감님 11/13 04:59 "D단 차선 흐물흐물"); see cluster_k9_lanesm"""
+        if len(pts) < 2:
+            return pts
+        sm = getattr(self, "_k9_lanesm_state", None)
+        if sm is None:
+            sm = self._k9_lanesm_state = K9LaneSmoother()
+        clock = getattr(self, "k9_lanesm_clock", None)
+        return sm.smooth(key, pts, float(clock() if clock is not None else time.monotonic()), conf)
+
+    def _k9_lanesm_lanes(self, state: ClusterUiState, lefts: list, rights: list) -> tuple[list, list]:
+        """(near, lane, pts) lists, outermost-left first; slots = ego line, then 1st, 2nd .. line further out"""
+        if not lefts and not rights:
+            return lefts, rights
+        lc = getattr(state, "left_lane_line_confidence", None)
+        rc = getattr(state, "right_lane_line_confidence", None)
+        n = len(lefts)
+        lefts = [(nr, ln, self._k9_lanesm("egoL" if i == n - 1 else f"adjL{n - 2 - i}", p, lc if i == n - 1 else None))
+                 for i, (nr, ln, p) in enumerate(lefts)]
+        rights = [(nr, ln, self._k9_lanesm("egoR" if i == 0 else f"adjR{i - 1}", p, rc if i == 0 else None))
+                  for i, (nr, ln, p) in enumerate(rights)]
+        return lefts, rights
 
     def _k9_navdy_sprites(self):
         """{index: (texture, w, h, anchor x, anchor y, px per m)} read once per GL context; {} = failed (old box)."""
@@ -7876,10 +7914,11 @@ class ClusterUiRenderer:
             return self._k9_turzx_lat_at(pts, 5.0) or pts[0][1]
         lefts = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) < 0.0], key=lambda t: t[0])
         rights = sorted([(near(p), lane, p) for lane, p in lane_pts if near(p) >= 0.0], key=lambda t: t[0])
+        lefts, rights = self._k9_lanesm_lanes(state, lefts, rights)  # display-only smoothing (11/13 04:59)
         ego_l = lefts[-1] if lefts else None
         ego_r = rights[0] if rights else None
-        le = self._k9_turzx_points(getattr(state, "left_road_edge_points", ()))
-        re_ = self._k9_turzx_points(getattr(state, "right_road_edge_points", ()))
+        le = self._k9_lanesm("edgeL", self._k9_turzx_points(getattr(state, "left_road_edge_points", ())))
+        re_ = self._k9_lanesm("edgeR", self._k9_turzx_points(getattr(state, "right_road_edge_points", ())))
         if len(le) < 2 and lefts:
             le = lefts[0][2]
         if len(re_) < 2 and rights:
@@ -7895,7 +7934,7 @@ class ClusterUiRenderer:
                 if getattr(lane, "visible", True):
                     self._k9_turzx_line(pts, self.k9_look().l_adj, 0.11, False, True, self.k9_look().l_adj_a * self._k9_fade(lane))
         lead = self.k9_turzx_lead(state)
-        path = self._k9_turzx_points(getattr(state, "model_path", ()), 90.0)
+        path = self._k9_lanesm("path", self._k9_turzx_points(getattr(state, "model_path", ()), 90.0))
         end_m = None if lead is None else max(7.0, lead[0])
         if len(path) >= 2:
             path = [(f, lat) for f, lat in path if f >= 0.0] or path  # ahead of my car only
