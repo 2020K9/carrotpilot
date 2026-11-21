@@ -163,7 +163,7 @@ def test_two_in_a_row_or_no_flag_clear_the_state_like_before(poison):
   loaded.engine.poison = poison
   with pytest.raises(HeldOutput):
     infer(client, 4, True)
-  with pytest.raises(NonFiniteOutput, match=r'^inference failed: NOT_FINITE \(frame 5\)$') as second:
+  with pytest.raises(NonFiniteOutput, match=r'^inference failed: NOT_FINITE \(frame 5\) JL_NF frame=5 ') as second:
     infer(client, 5, True)
   assert not isinstance(second.value, HeldOutput) and client.dead and transport.flags[-1] == 0
   assert not any(np.any(v) for v in loaded.queues.state.values())   # cleared, as before
@@ -172,7 +172,7 @@ def test_two_in_a_row_or_no_flag_clear_the_state_like_before(poison):
   for i in range(1, 4):
     infer(client, i, False, reset=i == 1)
   loaded.engine.poison = poison
-  with pytest.raises(NonFiniteOutput, match=r'^inference failed: NOT_FINITE \(frame 4\)$') as plain:
+  with pytest.raises(NonFiniteOutput, match=r'^inference failed: NOT_FINITE \(frame 4\) JL_NF frame=4 ') as plain:
     infer(client, 4, False)
   assert not isinstance(plain.value, HeldOutput) and client.dead and transport.flags[-1] == 0
   assert not any(np.any(v) for v in loaded.queues.state.values())
@@ -236,7 +236,7 @@ def device_pair(runtime, monkeypatch, graph):  # noqa: F811
   spec = NS(sha256='d' * 64, stateful=True, state_pairs={'state_a': 'next_state_a', 'state_b': 'next_state_b'},
             input_shapes=e.input_shapes, output_shapes=e.output_shapes, warped_shape=(2, 2), warped_nbytes=4,
             packed_shapes={'desire': (1, 2)}, packed_sizes=[2], packed_nelem=2, packed_nbytes=8, output_nelem=2,
-            frame_skip=4)
+            frame_skip=4, output_slices={})
   client, session, loaded, transport = pair(spec=spec, queues=q, engine=e, host_inputs=host)
   return client, loaded, transport, runtime
 
