@@ -1,6 +1,6 @@
 """K9 NOT_FINITE tracer (jetlink/server/nf_trace.py, nf_trace_link.py; 대감님 2026-11-21 20:57).
 
-Host-state path through the real Session + JetlinkClient loopback (test_err_delay_hold), device-state path on
+Host-state path through the real Session + JetlinkClient loopback (jetlink_loopback), device-state path on
 test_device_state's deferred-CUDA fake. Checks: replies unchanged with the tracer on, the saved inputs/state are the
 failed frame's, previous normal frames kept, replay verdicts, live state restored after a replay, health window,
 reboot recovery, rotation, the comma pull/rlog side. Not GPU validation."""
@@ -14,7 +14,7 @@ import pytest
 from jetlink.server.nf_trace import NfTrace, carrot_health_sample
 from jetlink.client import NonFiniteOutput
 import nf_trace_link as L
-from test_err_delay_hold import pair, infer
+from jetlink_loopback import pair, infer
 from test_device_state import make_engine, runtime  # noqa: F401
 
 
@@ -45,7 +45,7 @@ def tracer(tmp_path, clock=None, **kw):
   return t
 
 
-def run(poison_at, with_tracer, tmp_path, frames=8, hold=False):
+def run(poison_at, with_tracer, tmp_path, frames=8):
   client, session, loaded, transport = pair()
   host = session.host
   host.lock, host.loaded = threading.Lock(), loaded
@@ -58,7 +58,7 @@ def run(poison_at, with_tracer, tmp_path, frames=8, hold=False):
     loaded.engine.poison = 'outputs' if i == poison_at else None
     states.append({k: v.copy() for k, v in loaded.queues.state.items()})
     try:
-      infer(client, i, hold, reset=i == 1)
+      infer(client, i, reset=i == 1)
     except Exception as exc:
       replies.append(type(exc).__name__)
       client.dead = False
@@ -126,7 +126,7 @@ def test_rate_limit_keeps_meta_only(tmp_path):
   for i in (1, 2):
     loaded.engine.poison = 'outputs'
     with pytest.raises(NonFiniteOutput):
-      infer(client, i, False, reset=True)
+      infer(client, i, reset=True)
     client.dead = False
   first, second = tr.jobs.get_nowait(), tr.jobs.get_nowait()
   assert first['tensors'] and not second['tensors'] and '_tensors' not in second
@@ -162,7 +162,7 @@ def test_device_state_snapshot_and_replay_restore(runtime, monkeypatch, tmp_path
   runtime.cuda.stream_sync(1)
   live = {n: np.frombuffer(runtime.cuda.memory[e.inputs[n].device_ptr], dtype=e.inputs[n].dtype).copy()
           for n in q.spec.state_pairs}
-  flags = (e.device_state.needs_reset, e.device_state.needs_restore, int(e.device_state.bad[0]))
+  flags = (e.device_state.needs_reset, int(e.device_state.bad[0]))
   e.bad_name = None
   tr.clock.t += 10
   tr.process(event)
@@ -171,7 +171,7 @@ def test_device_state_snapshot_and_replay_restore(runtime, monkeypatch, tmp_path
   runtime.cuda.stream_sync(1)
   for n, v in live.items():
     np.testing.assert_array_equal(np.frombuffer(runtime.cuda.memory[e.inputs[n].device_ptr], dtype=v.dtype), v)
-  assert (e.device_state.needs_reset, e.device_state.needs_restore, int(e.device_state.bad[0])) == flags
+  assert (e.device_state.needs_reset, int(e.device_state.bad[0])) == flags
   e.close()
 
 

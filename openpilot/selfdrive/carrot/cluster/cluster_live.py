@@ -198,47 +198,6 @@ def live_comma_diag(device_state, model_v2=None, car_rx_age_s: float | None = No
     }
 
 
-JET_ERR_DELAY_SHOW_S = 1.0   # 대감님 11/21 11:09 "최소 1초": from the panel's first sight of a held frame
-JET_ERR_DELAY_READ_S = 0.1   # the status / snapshot is read this often (the panel draws at 10 FPS)
-
-
-def jetlink_err_delay(params=None) -> tuple[int, float] | None:
-    """K9JetErrDelay: (frames held so far, seconds since the last held frame), None without one. The comma panel
-    reads modeld's status file (comma clock); a Jetson panel gets the same comma value through its snapshot
-    (params.jetlink_err_delay, the age carried forward on the Jetson clock)."""
-    try:
-        if callable(getattr(params, "jetlink_err_delay", None)):
-            value = params.jetlink_err_delay()
-        else:
-            from openpilot.common.jetlink_status import err_delay
-            value = err_delay()
-        if value is None:
-            return None
-        count, age = int(value[0]), float(value[1])
-    except Exception:
-        return None
-    return (count, age) if count > 0 and math.isfinite(age) and age >= 0.0 else None
-
-
-class JetErrDelayLatch:
-    """'에러지연 작동' on this panel: shown for JET_ERR_DELAY_SHOW_S on the panel's own clock from the first sight of a
-    new held frame (a changed count, held less than JET_ERR_DELAY_SHOW_S ago), longer while held frames keep coming
-    (each one extends it), never for an old one (a panel starting late or a status that was missed)."""
-
-    def __init__(self):
-        self.count = None
-        self.until = 0.0
-
-    def update(self, now: float, value: tuple[int, float] | None) -> bool:
-        if value is not None:
-            count, age = value
-            if count != self.count:
-                if age < JET_ERR_DELAY_SHOW_S:
-                    self.until = max(self.until, now + JET_ERR_DELAY_SHOW_S)
-                self.count = count
-        return now < self.until
-
-
 def jetlink_roundtrip_ms(params=None) -> float | None:
     """K9HudNavdy 2 젯슨 왕복: modeld's fresh Jetlink status (comma monotonic, request sent -> result received).
     None when the Jetson is not the active model (comma's own model ran) or the status is missing / stale.
@@ -607,14 +566,6 @@ class OpenpilotLiveSource:
             self._k9_roundtrip_ms = jetlink_roundtrip_ms(params)
             self._next_egpu_param_read_t = now + 1.0
 
-        if now >= getattr(self, "_jet_err_delay_next_read", 0.0):   # K9JetErrDelay badge source
-            self._jet_err_delay_value = jetlink_err_delay(getattr(self, "params", None))
-            self._jet_err_delay_next_read = now + JET_ERR_DELAY_READ_S
-        latch = getattr(self, "_jet_err_delay_latch", None)
-        if latch is None:
-            latch = self._jet_err_delay_latch = JetErrDelayLatch()
-        jet_err_delay = latch.update(now, getattr(self, "_jet_err_delay_value", None))
-
         device_state = self._service_data("deviceState")
         onroad = self._service_alive("deviceState") and bool(safe_get(device_state, "started", False))
         comma_resources = live_comma_resources(device_state) if self._service_alive("deviceState") else None
@@ -761,7 +712,6 @@ class OpenpilotLiveSource:
             egpu_active=getattr(self, "_egpu_active", False),
             comma_resources=comma_resources,
             comma_diag=comma_diag,
-            jet_err_delay=jet_err_delay,
             external_compute_label=getattr(self, '_external_compute_label', ''),
             external_nav_active=external_nav_active,
             vehicle_navi_available=vehicle_navi_available,

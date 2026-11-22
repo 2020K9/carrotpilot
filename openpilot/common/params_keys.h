@@ -295,7 +295,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9ClampEdgeCm", {PERSISTENT, INT, "115"}},  // K9Clamp min distance from a road edge [cm] (ej ClampMinDistEdge)
     {"K9ClampGain", {PERSISTENT, INT, "10"}},     // K9Clamp laneless steering correction gain x0.1 (ej ClampSteerGain)
     {"K9ClampAlert", {PERSISTENT, INT, "1"}},     // K9Clamp correction alert 0 off / 1 on (ej ClampSteerAlert)
-    {"K9JetErrDelay", {PERSISTENT, INT, "0"}},    // 0 off / 1 젯슨 4번(NaN) 한 장 버티기 (modeld/jetlink/output_recovery.py)
     {"K9LaneVer", {PERSISTENT, INT}},  // K9LaneAssist menu merge marker (one-time migration, k9_lane.py)
     {"CruiseButtonMode", {PERSISTENT, INT, "0"}},
     {"CancelButtonMode", {PERSISTENT, INT, "0"}},

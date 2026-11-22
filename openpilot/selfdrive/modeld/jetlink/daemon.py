@@ -269,10 +269,6 @@ def serve_local(listener, client, peer, wifi=None):
 
 def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=None):
   from openpilot.common.params import Params
-  # K9JetErrDelay: one status-4 history and hold decision for the life of jetlinkd (setting changes, reconnects keep it)
-  from openpilot.selfdrive.modeld.jetlink import output_recovery
-  from jetlink.client import HeldOutput, NonFiniteOutput
-  RECOVERY = output_recovery.process_recovery()
   from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
   from openpilot.common.swaglog import cloudlog
   params = Params()
@@ -341,11 +337,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
         from jetlink import output_projection as projection
         compact_reply = client.output_projection_available
         deferred_available = bool(getattr(client, 'deferred_map_available', False))
-        hold_offered = getattr(client, 'hold_state_available', False) is True
-        RECOVERY.connected()
         hello = {'spec': spec.to_dict(), 'peer': peer, shared_input.CAPABILITY: shared_input.supported()}
-        if hold_offered:
-          hello[output_recovery.IPC_CAPABILITY] = True
         if compact_reply:
           hello[projection.IPC_CAPABILITY] = projection.descriptor()
         if deferred_available:
@@ -405,10 +397,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
             frame, reset, source_sof = REQUEST.unpack_from(request)
             images = np.frombuffer(request, np.uint8, spec.warped_nbytes, REQUEST.size).reshape(spec.warped_shape)
             packed = np.frombuffer(request, np.float32, spec.packed_nelem, REQUEST.size + spec.warped_nbytes)
-          # K9JetErrDelay on for this frame (modeld reads the setting); only offered when the Jetson can restore
-          hold = hold_offered and bool(reset & output_recovery.IPC_FLAG)
-          if hold_offered:
-            reset &= ~output_recovery.IPC_FLAG
           if (reset not in range(8) or (reset & projection.IPC_FLAG and not compact_reply) or
               bool(reset & deferred_map.IPC_FLAG) != (nav_meta is not None) or
               (nav_meta is not None and not deferred_available)):
@@ -422,7 +410,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
           # usual 1 Hz display telemetry would repeatedly expire that lease.
           want_state = blinker is not None or time.monotonic() - last_state_request >= 1
           seq = client.infer_begin(images, packed, frame, reset=bool(reset & 1),
-                                   want_state=want_state, **map_options, **({'hold': True} if hold else {}))
+                                   want_state=want_state, **map_options)
           if want_state:
             last_state_request = time.monotonic()
           sent = time.monotonic()
@@ -442,23 +430,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
               early_media_ms = (time.monotonic() - early_started) * 1000
           hud_done = time.monotonic()
           previous_state = client.last_state
-          try:
-            output = client.infer_end(seq)
-          except NonFiniteOutput as exc:
-            # status 4: recorded whatever the setting; held only within the bounds (output_recovery)
-            held = isinstance(exc, HeldOutput)
-            if not RECOVERY.fault(frame, hold, held):
-              client.dead = True
-              if hold:
-                log.warning('USB frame %d: status 4 not held (%s); link abandoned', frame, RECOVERY.last_reason)
-              if held:   # the Jetson restored its state, but this frame is outside the bounds: the existing failure
-                raise NonFiniteOutput(str(exc).split(';')[0]) from None
-              raise
-            send_parts(connection, REPLY.pack(frame, *client.last_timings))   # held: header only, no outputs
-            log.warning('USB frame %d: status 4 held, previous output kept (K9JetErrDelay, %d held, %d status 4 kept)',
-                        frame, RECOVERY.held, len(RECOVERY.faults))
-            continue
-          RECOVERY.ok(frame)
+          output = client.infer_end(seq)
           receive = getattr(getattr(client, 't', None), 'last_receive', None) or {}
           receive_metrics = {f'response_reader_{key}_max_ms': receive[key] * 1000
                              for key in ('prepare', 'read_wait', 'handoff') if key in receive}

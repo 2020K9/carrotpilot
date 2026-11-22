@@ -80,18 +80,6 @@ def _fresh(path, now=None, *, handshake=False):
   return {}
 
 
-def err_delay(now=None):
-  """K9JetErrDelay on the comma: (frames modeld held so far, seconds since the last one) from modeld's fresh status,
-  None without a held frame or a fresh status (HUD '에러지연 작동')."""
-  if now is None:
-    now = time.monotonic()
-  status = _fresh(MODEL_STATUS, now)
-  count, at = status.get('err_delay_count'), status.get('err_delay_at')
-  if (type(count) is not int or count <= 0 or type(at) not in (int, float) or not math.isfinite(at)):
-    return None
-  return count, max(0., now - at)
-
-
 # Jetson connect progress on the comma screen (대감님 11/21 16:07 "접속 로드율(%)과 남은 예상 시간(초)"). An ESTIMATE:
 # seconds each step took in the comma logs of the car (swaglog jetlinkConnectionState + jetsonPerformance):
 BOOT_WAIT_S = 22.4          # first connecting to the Jetson answering (runtime-handoff), 11/18 15:12 cold start (1 log)

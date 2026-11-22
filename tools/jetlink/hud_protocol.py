@@ -263,7 +263,6 @@ class SnapshotBuilder:
     from hud_signal import signal_packet
     record['signal_display'] = signal_packet(now)
     record['jetlink_roundtrip_ms'] = jetlink_roundtrip_ms()   # K9HudNavdy 2, comma clock; None = comma's own model
-    record['jetlink_err_delay'] = jetlink_err_delay()         # K9JetErrDelay [held count, seconds since the last] or None
     from openpilot.common.indicator_display import current
     record['indicator_display'] = current()
     if self.nav_map is not None:
@@ -358,15 +357,6 @@ def snapshot_report(record, data):
   sizes.update({k: len(json.dumps(record[k])) for k in ('cameras', 'nav_map_preview') if record.get(k)})
   largest = dict(sorted(sizes.items(), key=lambda kv: -kv[1])[:8])
   return {'bytes': len(data), 'limit': SNAPSHOT_LIMIT, 'largest': largest, 'dropped': record.get('dropped', {})}
-
-
-def jetlink_err_delay():
-  try:
-    from openpilot.common.jetlink_status import err_delay
-    value = err_delay()
-    return None if value is None else [int(value[0]), round(float(value[1]), 3)]
-  except Exception:
-    return None
 
 
 def jetlink_roundtrip_ms():

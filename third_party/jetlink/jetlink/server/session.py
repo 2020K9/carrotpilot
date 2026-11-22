@@ -581,8 +581,6 @@ class Session:
     self.last_seq = seq
     self.request: Request | None = None
     self.frames = 0
-    # Carrot K9JetErrDelay: kept states are tagged (epoch, frame); a new hello never restores an older one
-    self.hold_epoch = getattr(self, 'hold_epoch', 0) + 1
     self._projection_negotiated = False
     self._projection_spec = None
     self._projection_spec_ok = False
@@ -706,8 +704,6 @@ class Session:
       'stateful_v2': True,
       'carrot_nav_u8_v1': True,
       'carrot_lz4_v1': self._block_codec_available(),
-      # Flag.HOLD_STATE: one non-finite frame restores the previous valid recurrent state (stateful models)
-      P.HOLD_STATE_CAPABILITY: True,
       **info,   # backend, runtime_version, device
       'engine_state': self.host.status(*self._wanted())['state'],
       'loaded': self.host.loaded_sha(),
@@ -825,12 +821,8 @@ class Session:
       self._send(P.Msg.INFER_RESP, msg.seq,
                  (P.pack_infer_resp(0, P.Status.BAD_SHAPE, 0, 0, 0),))
       return
-    hold = bool(flags & P.Flag.HOLD_STATE) and spec.stateful and self.t.protocol_version == 2
-    recovery = getattr(loaded.queues, 'restore_recovery_state', None) is not None
     if flags & P.Flag.RESET_QUEUES:
       loaded.queues.reset()
-      if recovery and getattr(loaded.queues, '_recovery_tag', None) is not None:
-        loaded.queues.drop_recovery_state()
     warped = np.frombuffer(frame, np.uint8, spec.warped_nbytes).reshape(spec.warped_shape)
 
     # Stage into the engine-owned input buffers. The optional compact path
@@ -871,15 +863,6 @@ class Session:
     if status == P.Status.NOT_FINITE:
       self._finite_event = f'JL_NF frame={frame_id} model={spec.sha256[:12]} {detail}'[:220]
       log.error('%s', self._finite_event)
-    held = False
-    if hold and recovery:
-      # K9JetErrDelay: keep this valid frame's next state, or put the previous frame's back (never a broken one)
-      if status == P.Status.OK:
-        loaded.queues.save_recovery_state((self.hold_epoch, frame_id))
-      else:
-        held = loaded.queues.restore_recovery_state((self.hold_epoch, (frame_id - 1) & 0xFFFFFFFF))
-    elif recovery and getattr(loaded.queues, '_recovery_tag', None) is not None:
-      loaded.queues.drop_recovery_state()
 
     total_us = int((time.perf_counter() - t0) * 1e6)
     # Do not trim before full output validation and queues.feedback above.
@@ -895,8 +878,6 @@ class Session:
     send_started = time.perf_counter()
     if projected:
       self._send(P.Msg.INFER_RESP, msg.seq, parts, flags=projection.FLAG)
-    elif held:
-      self._send(P.Msg.INFER_RESP, msg.seq, parts, flags=int(P.Flag.STATE_HELD))
     else:
       self._send(P.Msg.INFER_RESP, msg.seq, parts)
     send_us = int((time.perf_counter() - send_started) * 1e6)
@@ -906,10 +887,6 @@ class Session:
       tracer.after_frame(loaded, frame_id, status == P.Status.NOT_FINITE, out32, outputs,
                          self._finite_event if status == P.Status.NOT_FINITE else '',
                          (loaded.engine.last_gpu_us, queue_us, total_us))
-    if hold and status != P.Status.OK:
-      # after the reply, like the slow-frame line: one line per held / not held frame
-      log.warning("frame %d non-finite: recurrent state %s (K9JetErrDelay)", frame_id,
-                  f"held at frame {(frame_id - 1) & 0xFFFFFFFF}" if held else "cleared, no valid previous state")
     if total_us > SLOW_FRAME_US or send_us > 10_000:
       # After the reply, so the log never delays it. The comma logs the same
       # frame by its own stages; together they place a slow frame.

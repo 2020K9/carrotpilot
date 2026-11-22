@@ -147,7 +147,7 @@ def test_catalog_param_keys_and_experimental_menu_removed():
   # K9StopMode(옛 K9CreepMode, 2026-10-22 교체)와 K9LaneFix·K9LRView가 있다(옛 K9StopTaper 항목은 2026-10-22 삭제됨).
   experimental = [x for x in entries if x.get("id") == "EXPERIMENTAL"]
   # 2026-10-25 차선 실험 메뉴 통합: K9LaneFix·K9LRView·K9OneLaneHold·K9LaneCenter -> K9LaneAssist + K9LaneCenterGain
-  assert len(experimental) == 1 and experimental[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain", "K9ClampAlert", "K9JetErrDelay"]   # 2026-11-21 +K9JetErrDelay last (대감님 16:07); 2026-11-18 K9Clamp appended (대감님 13:55); 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
+  assert len(experimental) == 1 and experimental[0]["params"] == ["K9StopMode", "K9LaneAssist", "K9LaneCenterGain", "PathOffset", "K9ExtHud", "K9MeterSeason", "K9HudNavdy", "K9Clamp", "K9ClampLaneCm", "K9ClampEdgeCm", "K9ClampGain", "K9ClampAlert"]   # 2026-11-18 K9Clamp appended (대감님 13:55); 2026-10-25 23:30: PathOffset under the lane switch; 2026-10-29 K9CenterToFront removed
   assert "LongMpcJerkCost" not in text
 
 

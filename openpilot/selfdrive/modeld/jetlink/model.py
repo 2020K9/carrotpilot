@@ -11,7 +11,6 @@ from openpilot.selfdrive.modeld.jetlink.link import ClientConnection, SPEC, FAUL
 from openpilot.selfdrive.modeld.jetlink.prepare import WarpPreparation
 from openpilot.selfdrive.modeld.jetlink.contracts import model_name, parse_outputs
 from openpilot.selfdrive.modeld.jetlink.inputs import fill_inputs
-from openpilot.selfdrive.modeld.jetlink import output_recovery
 from openpilot.selfdrive.modeld.model_join import may_join
 
 MODEL_STATUS = Path('/dev/shm/carrot-jetlink-model.json')
@@ -132,15 +131,6 @@ class Warp:
 
 
 class JoiningModel:
-  # K9JetErrDelay (실험중 '젯슨 에러지연'): the setting read every 0.5 s, modeld's own bound on a held frame (100 ms
-  # + 50 ms IPC margin; jetlinkd decides with 100 ms), and the HUD badge source (count / time of the last held frame)
-  err_delay_on = False
-  err_delay_next_read = 0.
-  err_delay_count = 0
-  err_delay_at = None
-  _err_params = None
-  _err_recovery = None
-
   def __init__(self, small, width, height):
     from openpilot.selfdrive.modeld.parse_model_outputs import Parser
     from openpilot.system.hardware import HARDWARE
@@ -188,8 +178,6 @@ class JoiningModel:
               'nav_model': 'nav_map' in self.spec.input_shapes,
               'error': self.error, 'updated': now, 'warp_preparing': self.preparation is not None,
               'roundtrip_ms': getattr(self, 'roundtrip_ms', None) if self.active else None,
-              # K9JetErrDelay: held frames since modeld started, comma monotonic time of the last (HUD '에러지연 작동')
-              'err_delay_count': self.err_delay_count, 'err_delay_at': self.err_delay_at,
               'execution': {'cpu_overlap': os.getenv('JETLINK_CPU_OVERLAP', '1') != '0',
                             'shared_input': getattr(self.client, 'shared', None) is not None,
                             'compact_reply': bool(getattr(self.client, 'project_output', False))}}
@@ -197,39 +185,6 @@ class JoiningModel:
     tmp.write_text(json.dumps(record))
     os.replace(tmp, MODEL_STATUS)
     self.next_status = now + 1
-
-  def _err_delay_recovery(self):
-    if self._err_recovery is None:
-      self._err_recovery = output_recovery.JetlinkOutputRecovery(max_hold=output_recovery.MAX_HOLD_SECONDS + .05)
-    return self._err_recovery
-
-  def _err_delay_enabled(self, now) -> bool:
-    """K9JetErrDelay == 1, re-read every 0.5 s (on / off reaches the next status 4 without a restart; a read error = off)"""
-    if now >= self.err_delay_next_read:
-      self.err_delay_next_read = now + output_recovery.PARAM_READ_SECONDS
-      try:
-        if self._err_params is None:
-          from openpilot.common.params import Params
-          self._err_params = Params()
-        self.err_delay_on = int(self._err_params.get_int(output_recovery.PARAM)) == 1
-      except Exception:
-        self.err_delay_on = False
-    return self.err_delay_on
-
-  def _held(self, now, prev_desire):
-    """jetlinkd held this non-finite frame and the Jetson restored its state: publish nothing for it (Carrot eGPU:
-    never relabel an old prediction), keep the client. Outside modeld's own bound -> the existing fallback."""
-    from openpilot.common.swaglog import cloudlog
-    recovery = self._err_delay_recovery()
-    if prev_desire is None or not recovery.fault(self.frame, True, True, now):
-      raise ValueError(f'held Jetlink frame refused by modeld: {recovery.last_reason or "hold not requested"}')
-    self.prev_desire[:] = prev_desire   # the dropped frame's desire edge is not used up either (Carrot eGPU)
-    self.err_delay_count += 1
-    self.err_delay_at = now
-    cloudlog.warning('Jetlink output held: frame %d status 4, previous output kept (K9JetErrDelay, %d held)',
-                     self.frame, self.err_delay_count)
-    self._write_status(now)   # the HUD badge source at once, not at the next 1 s status
-    return None
 
   def set_nav_metadata(self, value):
     self.nav_metadata = value
@@ -287,7 +242,6 @@ class JoiningModel:
             self.spec.packed_shapes.items(), np.split(self.packed, np.cumsum(self.spec.packed_sizes[:-1])), strict=True)}
           self.prev_desire[:] = 0
           self.reset = True
-          self._err_delay_recovery().connected()
       except Exception as exc:
         self.connection = None
         self.error = str(exc)
@@ -296,9 +250,6 @@ class JoiningModel:
       try:
         self.frame = (self.frame + 1) & 0xFFFFFFFF
         started = time.monotonic()
-        # K9JetErrDelay: ask jetlinkd to hold one non-finite frame (only a client whose Jetson can restore its state)
-        hold = getattr(self.client, 'err_delay', False) is True and self._err_delay_enabled(started)
-        prev_desire = self.prev_desire.copy() if hold else None
         # Same-frame CPU context only; Warp drains this submission even if
         # preparation fails, before the existing local-model fallback runs.
         prepare = lambda: fill_inputs(self.views, inputs, self.prev_desire)
@@ -309,14 +260,9 @@ class JoiningModel:
                            output_buffer=self.client.image_buffer())
         warped = time.monotonic()
         map_options = {'nav_metadata': getattr(self, 'nav_metadata', None)} if getattr(self.client, 'deferred_nav', False) else {}
-        if hold:
-          map_options['hold'] = True
         result = self.client.infer(images, self.packed, self.frame, self.reset, source_sof=self.source_sof, **map_options)
         replied = time.monotonic()
         self.roundtrip_ms = (replied - warped) * 1000.
-        if result is None:
-          return self._held(replied, prev_desire)
-        self._err_delay_recovery().ok(self.frame, replied)
         self.reset = False
         if 'prev_feat' in self.views:
           self.views['prev_feat'][:] = result[self.spec.output_slices['hidden_state']]

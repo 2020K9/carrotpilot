@@ -68,14 +68,6 @@ class Flag(IntEnum):
                           # would race a frame.
   WANT_HIDDEN = 1 << 2    # on protocol 3 INFER_REQ: include hidden state in the response
   PADDED = 1 << 7         # one pad byte follows the payload; see PACKET_MULTIPLE
-  # Carrot K9JetErrDelay (2026-11-21), v2 stateful only, offered as HOLD_STATE_CAPABILITY in HELLO:
-  HOLD_STATE = 1 << 8     # on INFER_REQ: once this frame is valid keep its next recurrent state; if this frame is
-                          # non-finite, restore the state kept by the previous frame instead of clearing it
-  STATE_HELD = 1 << 9     # on the INFER_RESP header: NOT_FINITE, and the recurrent state was restored to the
-                          # previous valid frame (the link and the engine stay usable)
-
-
-HOLD_STATE_CAPABILITY = 'carrot_hold_state_v1'
 
 
 # INFER_REQ: frame_id, flags. Sizes of the two arrays come from the handshake.
