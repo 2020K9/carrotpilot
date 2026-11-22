@@ -7171,7 +7171,13 @@ class ClusterUiRenderer:
         if sm is None:
             sm = self._k9_lanesm_state = K9LaneSmoother()
         clock = getattr(self, "k9_lanesm_clock", None)
-        return sm.smooth(key, pts, float(clock() if clock is not None else time.monotonic()), conf)
+        out = sm.smooth(key, pts, float(clock() if clock is not None else time.monotonic()), conf)
+        # 11/22 대감님 "외부 HUD 0번 1번 주행화면 크기": the smoother grid starts at 0 m, so menu 0 lost the part
+        # behind data forward 0 that _k9_turzx_points adds (debug 1 rear edge) and its road stopped short of my car.
+        # Same start as menu 1: the drawn line begins at the input's first station, flat back like _k9_turzx_points.
+        if out and pts[0][0] < out[0][0]:
+            out = [(pts[0][0], out[0][1])] + list(out)
+        return out
 
     def _k9_lanesm_lanes(self, state: ClusterUiState, lefts: list, rights: list) -> tuple[list, list]:
         """(near, lane, pts) lists, outermost-left first; slots = ego line, then 1st, 2nd .. line further out"""
