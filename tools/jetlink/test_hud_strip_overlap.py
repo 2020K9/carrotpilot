@@ -37,6 +37,16 @@ STRIP_CASES = {
 TEXT_COLORS = (hud.WARNING, hud.ERROR, hud.NORMAL, hud.UNKNOWN)
 
 
+@pytest.fixture(autouse=True)
+def display_params(monkeypatch):
+  # Match hud.main: use the read-only Jetson adapter, not native comma Params.
+  from hud import DisplayParams
+  from openpilot.selfdrive.carrot import signal_mode
+  monkeypatch.setattr(signal_mode, "_params", DisplayParams())
+  monkeypatch.setattr(signal_mode, "_mode", 0)
+  monkeypatch.setattr(signal_mode, "_next_read", 0.)
+
+
 @pytest.fixture(scope='module')
 def renderer():
   from cluster_models import SimulatorInput

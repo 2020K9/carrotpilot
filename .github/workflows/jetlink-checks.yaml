@@ -55,6 +55,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check out pinned independent Jetlink reference
+        uses: actions/checkout@v6
+        with:
+          repository: zoompilot/jetlink
+          ref: 9be48b18c1fa1f6f8b88ef2e14fb4aa85c54a83b
+          path: .ci/jetlink-reference
+          persist-credentials: false
+      - name: Prepare virtual HUD display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth libgl1-mesa-dri
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -93,9 +106,10 @@ jobs:
       - name: USB, fallback, navigation, Wi-Fi, signed updates and image checks
         env:
           PYTHONPATH: .:opendbc_repo:tools/jetlink
+          JETLINK_REFERENCE_ROOT: .ci/jetlink-reference
         run: |
           python -m compileall -q tools/jetlink openpilot/selfdrive/modeld/jetlink
-          python -m pytest -c /dev/null --rootdir=. --confcutdir=tools/jetlink -q \
+          xvfb-run -a python -m pytest -c /dev/null --rootdir=. --confcutdir=tools/jetlink -q \
             tools/jetlink opendbc_repo/opendbc/car/hyundai/tests/test_rear_gap.py \
             openpilot/selfdrive/modeld/tests/test_jetlink.py openpilot/selfdrive/ui/tests/test_egl_shutdown.py \
             openpilot/common/tests/test_runtime_diagnostics.py \
