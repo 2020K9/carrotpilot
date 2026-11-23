@@ -75,6 +75,13 @@ class RadarLeadInfo:
 
 
 
+# 대감님 11/23 16:06 "예상경로추종 파란색 장판 깔리는 거 레인모드 활성화 시 연두색으로": while lane mode is active
+# (controlsState.activeLaneLine) the blue path fill (palette 4 blue / 5 navy) is light lime #9be15d with the same alpha;
+# every other palette colour, the cruise-off colour and the red brake / white outline are unchanged
+CARROT_LANE_MODE_PATH_FILL = rl.Color(155, 225, 93, 120)
+CARROT_BLUE_PATH_COLORS = (4, 5)
+
+
 class ModelRenderer(Widget):
   def __init__(self):
     super().__init__()
@@ -623,6 +630,11 @@ class ModelRenderer(Widget):
   def _draw_quad_fill_carrot(self, p0, p1, p2, p3, color: rl.Color):
     pts = np.array([p0, p1, p2, p3], dtype=np.float32)
     draw_polygon_solid(pts, color)
+
+  def _carrot_path_color(self, idx: int) -> rl.Color:
+    if idx in CARROT_BLUE_PATH_COLORS and getattr(self, "_carrot_active_lane_line", False):
+      return CARROT_LANE_MODE_PATH_FILL
+    return self._carrot_colors[idx]
 
   def _draw_two_quads_from_6pts_carrot(self, x, y, fill_color: rl.Color, brake_valid: bool, color_idx: int):
     pts = np.array(list(zip(x, y)), dtype=np.float32)
@@ -1329,11 +1341,11 @@ class ModelRenderer(Widget):
       yp[2][ge] = y2
 
     if mode in (13, 14):
-      self._draw_polygon_from_xy_carrot(xp[0], yp[0], self._carrot_colors[color_idx % 10], brake_valid, color_idx)
+      self._draw_polygon_from_xy_carrot(xp[0], yp[0], self._carrot_path_color(color_idx % 10), brake_valid, color_idx)
     if mode in (13, 15):
-      self._draw_polygon_from_xy_carrot(xp[1], yp[1], self._carrot_colors[color_idx % 10], brake_valid, color_idx)
+      self._draw_polygon_from_xy_carrot(xp[1], yp[1], self._carrot_path_color(color_idx % 10), brake_valid, color_idx)
     if mode in (13, 14):
-      self._draw_polygon_from_xy_carrot(xp[2], yp[2], self._carrot_colors[color_idx % 10], brake_valid, color_idx)
+      self._draw_polygon_from_xy_carrot(xp[2], yp[2], self._carrot_path_color(color_idx % 10), brake_valid, color_idx)
 
 
   def _draw_complex_path_carrot(self, color_idx: int, brake_valid: bool):
@@ -1354,7 +1366,7 @@ class ModelRenderer(Widget):
       x[3] = float(track_vertices[e - 1][0]); y[3] = float(track_vertices[e - 1][1])
       x[4] = float(track_vertices[e][0]); y[4] = float(track_vertices[e][1])
       x[5] = (x[1] + x[3]) / 2.0; y[5] = (y[1] + y[3]) / 2.0
-      self._draw_two_quads_from_6pts_carrot(x, y, self._carrot_colors[color_idx % 10], brake_valid, color_idx)
+      self._draw_two_quads_from_6pts_carrot(x, y, self._carrot_path_color(color_idx % 10), brake_valid, color_idx)
       color_n += 1
       if color_n > 6:
         color_n = 0
@@ -1383,8 +1395,8 @@ class ModelRenderer(Widget):
         draw_seg = True
 
       if draw_seg:
-        idx = color_n if mode in (2, 6) else color_idx % 10
-        self._draw_polygon_from_xy_carrot(x, y, self._carrot_colors[idx], brake_valid, color_idx)
+        fill = self._carrot_colors[color_n] if mode in (2, 6) else self._carrot_path_color(color_idx % 10)
+        self._draw_polygon_from_xy_carrot(x, y, fill, brake_valid, color_idx)
 
       if i > 1:
         color_n += 1
@@ -1418,8 +1430,8 @@ class ModelRenderer(Widget):
         draw_seg = True
 
       if draw_seg:
-        idx = color_n if mode in (4, 8) else color_idx % 10
-        self._draw_two_quads_from_6pts_carrot(x, y, self._carrot_colors[idx], brake_valid, color_idx)
+        fill = self._carrot_colors[color_n] if mode in (4, 8) else self._carrot_path_color(color_idx % 10)
+        self._draw_two_quads_from_6pts_carrot(x, y, fill, brake_valid, color_idx)
 
       if i > 1:
         color_n += 1
@@ -1498,7 +1510,7 @@ class ModelRenderer(Widget):
     show_path_mode = self._carrot_show_path_mode
 
     if show_path_mode == 0:
-      draw_polygon_solid(self._path.projected_points, self._carrot_colors[show_path_color % 10])
+      draw_polygon_solid(self._path.projected_points, self._carrot_path_color(show_path_color % 10))
       if show_path_color >= 10 or brake_valid:
         self._draw_polygon_outline_carrot(
           self._path.projected_points,

@@ -14,6 +14,8 @@ function firstFinite(values, fallback = 0) {
   return fallback;
 }
 
+export const LANE_MODE_PATH_FILL = Object.freeze({ r: 155, g: 225, b: 93 });
+
 export function createRoadOverlayPolicy(options = {}) {
   const hudModel = options.hudModel || DriveVisionHudModel;
   if (!hudModel?.isLaneMode || !hudModel?.isLongActive) return null;
@@ -55,6 +57,8 @@ export function createRoadOverlayPolicy(options = {}) {
       mode,
       colorIndex,
       paletteIndex: colorIndex % 10,
+      // 대감님 11/23 16:06: blue path fill (palette 4 blue / 5 navy) is light lime #9be15d while lane mode is active
+      fillColor: laneMode && (colorIndex % 10 === 4 || colorIndex % 10 === 5) ? LANE_MODE_PATH_FILL : null,
       emphasisStroke: colorIndex >= 10 || Boolean(hudState?.carState?.brakeLights),
       strokeColor: hudState?.carState?.brakeLights
         ? "rgba(255, 76, 76, 0.96)"

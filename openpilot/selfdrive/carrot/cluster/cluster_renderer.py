@@ -544,6 +544,9 @@ K9_NAVDY_OTHER_TINT = (186, 188, 194)
 K9_NAVDY_LEAD_TINT = (236, 238, 242)
 K9_NAVDY_ROAD = (34, 37, 44)               # dark grey asphalt
 K9_NAVDY_EGO_LANE = (34, 78, 196)          # deep blue band of my lane
+# 대감님 11/23 16:06 "예상경로추종 파란색 장판 깔리는 거 레인모드 활성화 시 연두색으로": the same band (alpha, fade)
+# in light lime while controlsState.activeLaneLine is true; blue otherwise
+K9_NAVDY_EGO_LANE_LANEMODE = (155, 225, 93)  # #9be15d
 K9_NAVDY_LINE = (232, 235, 240)            # white lane lines / distance text
 # K9HudNavdy (실험중, 11/13 05:00 대감님 "실험중에 메뉴 넣어서 고급지게 안한거랑 한거랑"): 0 = the K9 D road look
 # before b7e81bbd4 (default) / 1 = the Navdy grey look. The ONLY switch point is k9_navdy_on() / k9_look().
@@ -7967,7 +7970,8 @@ class ClusterUiRenderer:
                 br_ = [(f, lat + 1.62) for f, lat in path]
                 if self.k9_hud_menu == 1 and ego_l is not None and ego_r is not None:
                     bl_, br_ = self.k9l_ego_lane_band(path, ego_l[2], ego_r[2])
-                self._k9_turzx_band(bl_, br_, (*K9_NAVDY_EGO_LANE, 215), fade=True)
+                band = K9_NAVDY_EGO_LANE_LANEMODE if getattr(state, "active_lane_line", None) else K9_NAVDY_EGO_LANE
+                self._k9_turzx_band(bl_, br_, (*band, 215), fade=True)
             else:  # K9HudNavdy 0: ice path band before b7e81bbd4
                 self._k9_old_path_band(path, end_m, 1.05, 0.42, (*K9L_ICE, 120), (220, 240, 255, 54), K9L_ICE, 0.07, 0.95)
             top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)

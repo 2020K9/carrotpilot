@@ -97,7 +97,7 @@ export function createRoadOverlayGeometryRenderer(options = {}) {
 
   function drawSegmentBands(left, right, style, step) {
     if (!Array.isArray(left) || left.length < 3 || left.length !== right.length) return;
-    const baseColor = paletteColor(style.paletteIndex);
+    const baseColor = style.fillColor || paletteColor(style.paletteIndex);
     const stroke = style.emphasisStroke ? style.strokeColor : "";
     for (let i = 0; i < left.length - 2; i += step) {
       const next = Math.min(i + 2, left.length - 1);
@@ -131,7 +131,7 @@ export function createRoadOverlayGeometryRenderer(options = {}) {
 
   function drawPathRibbon(ribbon, style, canvasHeight) {
     if (!ribbon.polygon.length) return;
-    const baseColor = paletteColor(style.paletteIndex);
+    const baseColor = style.fillColor || paletteColor(style.paletteIndex);
     if (style.mode === 0) {
       geometry.drawPolygon(
         ribbon.polygon,
@@ -170,7 +170,7 @@ export function createRoadOverlayGeometryRenderer(options = {}) {
       7: [20, 8, 4, 8],
       8: [8, 6],
     };
-    const baseColor = paletteColor(style.paletteIndex);
+    const baseColor = style.fillColor || paletteColor(style.paletteIndex);
     const dash = dashPresets[style.mode] || dashPresets[1];
     const dashLength = dash.reduce((sum, value) => sum + value, 0);
     const dashOffset = -((performance.now() / 120) % dashLength);
@@ -186,7 +186,7 @@ export function createRoadOverlayGeometryRenderer(options = {}) {
   }
 
   function drawSpecialPath(ribbon, style) {
-    const baseColor = paletteColor(style.paletteIndex);
+    const baseColor = style.fillColor || paletteColor(style.paletteIndex);
     const bands = [];
     if (style.mode === 13 || style.mode === 14) {
       bands.push(geometry.buildBandPolygon(ribbon.left, ribbon.right, 0.0, 0.18));
