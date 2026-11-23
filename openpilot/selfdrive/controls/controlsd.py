@@ -19,7 +19,7 @@ from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
+from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, LatLimitUp
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -88,6 +88,7 @@ class Controls:
                                                       pos_limit=MEB_CURVATURE_MAX, neg_limit=-MEB_CURVATURE_MAX)
                               if self.is_vw_meb else None)
     self.atc_turn_speed = self.params.get_int("AutoTurnControlSpeedTurn")
+    self.k9_lat_limit = LatLimitUp(self.params)   # K9LatLimitUp (실험중): 1 Hz param read, applied without restart
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -299,7 +300,11 @@ class Controls:
           self.k9_handover_k = k + 1
       self.k9_lane_cmd_prev = lane_cmd_active
 
-    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
+    # K9LatLimitUp 1: carrot-dev clip_curvature limits (drive_helpers.LatLimitUp; no state = 0, the old limits)
+    k9_lat_limit = getattr(self, "k9_lat_limit", None)
+    lat_limit_up = k9_lat_limit.step(self.sm.frame, CS.vEgo, self.desired_curvature, lp.roll) if k9_lat_limit is not None else False
+    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
+                                                               lat_limit_up=lat_limit_up)
 
     actuators.curvature = float(self.desired_curvature)
 

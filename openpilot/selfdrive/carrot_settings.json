@@ -418,6 +418,7 @@
           "en": "Experimental",
           "zh": "试验中",
           "params": [
+            "K9LatLimitUp",
             "K9StopMode",
             "K9LaneAssist",
             "K9LaneCenterGain",
@@ -3870,6 +3871,38 @@
       "unit": 1,
       "control": "select",
       "options": {"ko": ["0 기본 제동", "1 bono1739 원본2 + 선 뒤 1초 뒤 더 세게", "2 격차수정 + 1 km/h 아래 서서히 더 잡기", "3 격차 반만 + 1 km/h 아래 서서히 더 잡기"], "en": ["0 Base braking", "1 bono1739 original2 + harder 1 s after the stop", "2 Gap fix + gradually harder below 1 km/h", "3 Half gap + gradually harder below 1 km/h"], "zh": ["0 基本制动", "1 bono1739原版2＋停后1秒起加压", "2 差距修正＋1 km/h以下逐渐加大制动", "3 半差距＋1 km/h以下逐渐加大制动"]},
+      "risk": "high"
+    },
+    {
+      "group": "조향튜닝",
+      "name": "K9LatLimitUp",
+      "title": "조향 한도 올림 (실험)",
+      "descr": "0 끔(기본): 지금 한도 그대로(횡가속 4.5/3.0, 횡저크 5.0, 곡률 0.2)\n1 켬: 조향 한도 올림: 급커브 더 꺾음, 튀면 핸들 더 크게. carrot-dev 값(횡가속 6.5(80km/h 이하)/4.5(120km/h 이상), 횡저크 7.0, 곡률 0.4). 주행 중 바꿔도 1초 안에 바로 적용(끌 때는 지금 조향이 기본 한도 안으로 들어온 뒤). 차량 토크 한도·판다 안전 제한은 그대로. 실차 미확인.",
+      "egroup": "LAT",
+      "etitle": "Steering limit up (experimental)",
+      "edescr": "0 Off (default): current limits (lateral accel 4.5/3.0, lateral jerk 5.0, curvature 0.2)\n1 On: steering limit up: steers harder in sharp curves; a glitch can also move the wheel more. carrot-dev values (lateral accel 6.5 (<=80 km/h) / 4.5 (>=120 km/h), lateral jerk 7.0, curvature 0.4). Applies within 1 s while driving (turning off waits until the current steering fits the normal limits). Car torque limits and panda safety unchanged. Not vehicle-validated.",
+      "cgroup": "转向",
+      "ctitle": "转向限制提高（试验）",
+      "cdescr": "0 关闭（默认）：保持现有限制（横向加速度4.5/3.0、横向急动度5.0、曲率0.2）\n1 开启：转向限制提高：急弯转得更多，异常时方向盘也会转得更大。carrot-dev数值（横向加速度6.5（80km/h以下）/4.5（120km/h以上）、横向急动度7.0、曲率0.4）。行驶中切换1秒内生效（关闭时等当前转向回到默认限制内）。车辆扭矩限制和panda安全限制不变。未实车验证。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "0 끔(기존 그대로)",
+          "1 켬(한도 올림)"
+        ],
+        "en": [
+          "0 Off (existing)",
+          "1 On (limit up)"
+        ],
+        "zh": [
+          "0 关闭（现有）",
+          "1 开启（提高限制）"
+        ]
+      },
       "risk": "high"
     },
     {

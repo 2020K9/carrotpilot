@@ -24,6 +24,43 @@ MAX_LATERAL_JERK = 5.0  # m/s^3
 MAX_LATERAL_ACCEL_NO_ROLL = 3.0  # m/s^2
 MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 4.5  # m/s^2
 
+# K9LatLimitUp (실험중 맨 위, 대감님 11/23 17:47): 1 = carrot-dev 한도. 0 / 읽기 실패 = 위 값 그대로.
+K9_LAT_LIMIT_UP_PARAM = "K9LatLimitUp"
+K9_UP_MAX_CURVATURE = 0.4
+K9_UP_MAX_LATERAL_JERK = 7.0  # m/s^3
+K9_UP_MAX_LATERAL_ACCEL_NO_ROLL = 4.5  # m/s^2 (120 km/h 이상)
+K9_UP_MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 6.5  # m/s^2 (80 km/h 이하)
+
+
+def read_lat_limit_up(params) -> bool:
+  try:
+    return params.get_int(K9_LAT_LIMIT_UP_PARAM) == 1
+  except Exception:
+    return False
+
+
+def lat_limit_fits_normal(v_ego, curvature, roll) -> bool:
+  # 1 -> 0: 지금 곡률이 기본 한도 안에 들어올 때만 기본 한도로 돌아감(한도가 갑자기 줄어 조향이 튀지 않게)
+  return clip_curvature(v_ego, curvature, curvature, roll)[0] == float(curvature)
+
+
+class LatLimitUp:
+  """K9LatLimitUp live switch for controlsd: param read at 1 Hz (every 100th control tick), never per tick.
+  0 -> 1 applies at once; 1 -> 0 waits until the current command fits the normal limits."""
+  def __init__(self, params):
+    self.params = params
+    self.req = read_lat_limit_up(params)
+    self.active = self.req
+
+  def step(self, frame, v_ego, curvature, roll) -> bool:
+    if frame % 100 == 0:
+      self.req = read_lat_limit_up(self.params)
+    if self.req:
+      self.active = True
+    elif self.active and lat_limit_fits_normal(v_ego, curvature, roll):
+      self.active = False
+    return self.active
+
 def apply_deadzone(error, deadzone):
   if error > deadzone:
     error -= deadzone
@@ -82,10 +119,17 @@ def smooth_value(val, prev_val, tau, dt=DT_MDL):
   alpha = 1 - np.exp(-dt/tau) if tau > 0 else 1
   return alpha * val + (1 - alpha) * prev_val
 
-def clip_curvature(v_ego, prev_curvature, new_curvature, roll):
+def clip_curvature(v_ego, prev_curvature, new_curvature, roll, lat_limit_up=False):
   # This function respects ISO lateral jerk and acceleration limits + a max curvature
+  # lat_limit_up (K9LatLimitUp 1): carrot-dev limits 6.5/4.5 m/s^2, 7.0 m/s^3, 0.4 1/m
+  if lat_limit_up:
+    max_jerk, accel_low, accel_high, max_curv = (K9_UP_MAX_LATERAL_JERK, K9_UP_MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED,
+                                                 K9_UP_MAX_LATERAL_ACCEL_NO_ROLL, K9_UP_MAX_CURVATURE)
+  else:
+    max_jerk, accel_low, accel_high, max_curv = (MAX_LATERAL_JERK, MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED,
+                                                 MAX_LATERAL_ACCEL_NO_ROLL, MAX_CURVATURE)
   v_ego = max(v_ego, MIN_SPEED)
-  max_curvature_rate = MAX_LATERAL_JERK / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
+  max_curvature_rate = max_jerk / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
   new_curvature = np.clip(new_curvature,
                           prev_curvature - max_curvature_rate * DT_CTRL,
                           prev_curvature + max_curvature_rate * DT_CTRL)
@@ -96,13 +140,13 @@ def clip_curvature(v_ego, prev_curvature, new_curvature, roll):
   max_lateral_accel_no_roll = float(np.interp(
     v_ego,
     [80 / 3.6, 120 / 3.6],
-    [MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED, MAX_LATERAL_ACCEL_NO_ROLL],
+    [accel_low, accel_high],
   ))
   max_lat_accel = max_lateral_accel_no_roll + roll_compensation
   min_lat_accel = -max_lateral_accel_no_roll + roll_compensation
   new_curvature, limited_accel = clamp(new_curvature, min_lat_accel / v_ego ** 2, max_lat_accel / v_ego ** 2)
 
-  new_curvature, limited_max_curv = clamp(new_curvature, -MAX_CURVATURE, MAX_CURVATURE)
+  new_curvature, limited_max_curv = clamp(new_curvature, -max_curv, max_curv)
   return float(new_curvature), limited_accel or limited_max_curv
 
 

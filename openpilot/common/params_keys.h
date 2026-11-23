@@ -290,6 +290,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"K9LaneCenter", {PERSISTENT, INT, "0"}},   // old lane switch, migrated to K9LaneAssist (k9_lane.py), no effect
     {"K9LaneAssist", {PERSISTENT, INT, "0"}},
     {"K9LaneCenterGain", {PERSISTENT, INT, "100"}},
+    {"K9LatLimitUp", {PERSISTENT, INT, "0"}},  // 0 off / 1 carrot-dev clip_curvature limits 6.5/4.5 m/s^2, 7.0 m/s^3, 0.4 (drive_helpers.py)
     {"K9Clamp", {PERSISTENT, INT, "0"}},  // 0 off / 1 lane-line & road-edge minimum-distance clamp (k9_clamp.py)
     {"K9ClampLaneCm", {PERSISTENT, INT, "135"}},  // K9Clamp min distance from a lane line [cm] (ej ClampMinDistLane)
     {"K9ClampEdgeCm", {PERSISTENT, INT, "115"}},  // K9Clamp min distance from a road edge [cm] (ej ClampMinDistEdge)
