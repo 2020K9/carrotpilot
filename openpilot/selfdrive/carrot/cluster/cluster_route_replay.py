@@ -111,6 +111,16 @@ RADAR_POINT_STALE_S = 0.25
 CORNER_DETECTION_STALE_S = 0.8
 RADAR_MIN_LONGITUDINAL_M = 0.0
 RADAR_FRONT_MAX_LONGITUDINAL_M = 180.0
+# Side cars (radarState leadLeft/leadRight, 11/23 "어떤 모델이든 옆차도 보이게"): drawn like any other car.
+# Moving objects only while driving (a guardrail / parked car / sign reads ~0 km/h), the next lane only.
+SIDE_LEAD_LABELS = (("SL", "leadLeft"), ("SR", "leadRight"))
+SIDE_LEAD_MIN_M = 3.0
+SIDE_LEAD_MAX_M = 80.0
+SIDE_LEAD_MIN_LANE_OFFSET = 0.55   # |lateral - ego lane centre| in lane widths (fallback from liveTracks)
+SIDE_LEAD_MAX_LANE_OFFSET = 1.60
+SIDE_LEAD_SAME_AS_LEAD_DF_M = 3.0
+SIDE_LEAD_QUEUE_MAX_M = 25.0       # a standing side car is drawn only while the ego car stands/creeps too
+SIDE_LEAD_SAME_AS_LEAD_DL_M = 1.2
 CORNER_RADAR_REAR_MIN_LONGITUDINAL_M = -180.0
 CCNC_CORNER_RADAR_ADDRESS = 0x162
 ADRV_CORNER_RADAR_ADDRESS = 0x1EA
@@ -1630,6 +1640,8 @@ class RouteLogParser:
         self.live_track_radar_t = -999.0
         self.radar_detections: tuple[DetectedVehicle, ...] = ()
         self.radar_detection_t = -999.0
+        self.radar_side_detections: tuple[DetectedVehicle, ...] = ()
+        self.radar_side_in_state = False
         self.current_speed_kph = 0.0
         self.v_ego_cluster_seen = False
 
@@ -2365,6 +2377,13 @@ class RouteLogParser:
                     radar_track_id=track_id,
                 )
             )
+        self.radar_side_in_state = radar_state_has_side_leads(radar_state)
+        self.radar_side_detections = tuple(
+            vehicle for vehicle in (
+                self._side_lead_vehicle(label, safe_get(radar_state, name), primary_track_ids, detections)
+                for label, name in SIDE_LEAD_LABELS
+            ) if vehicle is not None
+        )
         self.radar_detections = tuple(detections)
         self.radar_detection_t = event_t
         if not self.recompute_cutins:
@@ -2396,6 +2415,104 @@ class RouteLogParser:
                 else:
                     self.recorded_cutin_detections = ()
                     self.cutin_debug_text = "LOG CUT-IN: NO"
+
+    def _side_lead_vehicle(
+        self,
+        label: str,
+        lead: Any,
+        primary_track_ids: set[int],
+        leads: list[DetectedVehicle],
+    ) -> DetectedVehicle | None:
+        """radarState leadLeft/leadRight as a car, None when absent, standing still or the same car as L1/L2."""
+        if lead is None or not bool(safe_get(lead, "status", False)):
+            return None
+        d_rel = safe_optional_float(lead, "dRel")
+        if d_rel is None or not SIDE_LEAD_MIN_M <= d_rel <= SIDE_LEAD_MAX_M:
+            return None
+        lateral_m = -safe_float(lead, "yRel", 0.0)
+        if radar_position_is_zero(d_rel, lateral_m) or not math.isfinite(lateral_m):
+            return None
+        track_id = safe_optional_int(lead, "radarTrackId")
+        if self.front_radar_only and self.car_brand == "hyundai" and radar_track_id_is_corner_object(track_id):
+            return None
+        if track_id is not None and track_id >= 0 and track_id in primary_track_ids:
+            return None
+        relative_speed_mps = safe_optional_float(lead, "vRel")
+        lead_speed_mps = safe_optional_float(lead, "vLead")
+        absolute_speed_kph = (
+            lead_speed_mps * 3.6 if lead_speed_mps is not None
+            else (self.current_speed_kph + relative_speed_mps * 3.6 if relative_speed_mps is not None else None)
+        )
+        if not self._side_object_is_car(absolute_speed_kph, d_rel):
+            return None
+        vehicle = DetectedVehicle(
+            label=label,
+            longitudinal_m=d_rel,
+            lateral_m=clamp(lateral_m, -8.0, 8.0),
+            source="radarState",
+            relative_speed_mps=relative_speed_mps,
+            absolute_speed_kph=absolute_speed_kph,
+            acceleration_mps2=safe_optional_float(lead, "aLeadK"),
+            ttc_s=ttc_from_relative_speed(d_rel, relative_speed_mps),
+            radar_track_id=track_id,
+        )
+        if has_nearby_vehicle(leads, vehicle, SIDE_LEAD_SAME_AS_LEAD_DF_M, SIDE_LEAD_SAME_AS_LEAD_DL_M):
+            return None
+        return vehicle
+
+    def _side_object_is_car(self, absolute_speed_kph: float | None, d_rel: float) -> bool:
+        """moving, or standing beside a standing/creeping ego car (a queue at a light); a still object passed at speed
+        (guardrail, parked car, sign) is not drawn"""
+        if absolute_speed_kph is None or not math.isfinite(absolute_speed_kph):
+            return False
+        if abs(absolute_speed_kph) >= RADAR_MOVING_VEHICLE_MIN_SPEED_KPH:
+            return True
+        return self.current_speed_kph < RADAR_MOVING_VEHICLE_MIN_SPEED_KPH and d_rel <= SIDE_LEAD_QUEUE_MAX_M
+
+    def _side_vehicles_from_live_tracks(
+        self,
+        event_t: float,
+        lane_values: dict[str, Any],
+        detections: list[DetectedVehicle],
+    ) -> tuple[DetectedVehicle, ...]:
+        """Side cars for a radarState without leadLeft/leadRight (an older comma): the nearest moving, measured front
+        radar track in each next lane."""
+        if event_t - self.live_track_radar_t >= RADAR_POINT_STALE_S * 4.0:
+            return ()
+        center_m = lane_values.get("center")
+        center_m = float(center_m) if center_m is not None else 0.0
+        width_m = max(2.5, float(lane_values.get("width") or DEFAULT_LANE_WIDTH_M))
+        best: dict[str, RadarPoint] = {}
+        for point in self.live_track_radar_points.values():
+            if point.source != "liveTracks" or point.valid != 1:
+                continue
+            if not SIDE_LEAD_MIN_M <= point.longitudinal_m <= SIDE_LEAD_MAX_M:
+                continue
+            if not self._side_object_is_car(point.absolute_speed_kph, point.longitudinal_m):
+                continue
+            offset = (point.lateral_m - center_m) / width_m
+            if not SIDE_LEAD_MIN_LANE_OFFSET <= abs(offset) <= SIDE_LEAD_MAX_LANE_OFFSET:
+                continue
+            label = "SR" if offset > 0.0 else "SL"
+            if label not in best or point.longitudinal_m < best[label].longitudinal_m:
+                best[label] = point
+        out = []
+        for label in ("SL", "SR"):
+            point = best.get(label)
+            if point is None:
+                continue
+            vehicle = DetectedVehicle(
+                label=label,
+                longitudinal_m=point.longitudinal_m,
+                lateral_m=clamp(point.lateral_m, -8.0, 8.0),
+                source="radarState",
+                relative_speed_mps=point.relative_speed_mps,
+                absolute_speed_kph=point.absolute_speed_kph,
+                ttc_s=ttc_from_relative_speed(point.longitudinal_m, point.relative_speed_mps),
+            )
+            if not has_nearby_vehicle(detections, vehicle, SIDE_LEAD_SAME_AS_LEAD_DF_M, SIDE_LEAD_SAME_AS_LEAD_DL_M):
+                out.append(vehicle)
+        return tuple(out)
 
     def _update_can_detections(self, can_messages: Any, event_t: float, source_service: str = "can") -> None:
         if self.front_radar_only:
@@ -3203,6 +3320,17 @@ class RouteLogParser:
                     longitudinal_tolerance=4.0,
                     lateral_tolerance=1.4,
                 ):
+                    detections.append(vehicle)
+
+        if event_t - self.radar_detection_t < 0.8:
+            sides = (self.radar_side_detections if self.radar_side_in_state
+                     else self._side_vehicles_from_live_tracks(event_t, lane_values, detections))
+            for vehicle in sides:
+                # one car per real car: the corner radar (LF/RF) / model report of it is already there
+                if vehicle_is_blocked_by_near_road_edge(vehicle, lane_values) or not vehicle_is_inside_road_edges(
+                        vehicle, lane_values):
+                    continue
+                if not has_nearby_vehicle(detections, vehicle, longitudinal_tolerance=4.0, lateral_tolerance=1.4):
                     detections.append(vehicle)
 
         return tuple(sorted(detections, key=lambda vehicle: vehicle.longitudinal_m))
@@ -5109,6 +5237,18 @@ def point_is_corner_group(point: Any, group: str) -> bool:
 
 def route_corner_source_or_default(source: str | None) -> str:
     return source if source in ROUTE_CORNER_SOURCE_CHOICES else ROUTE_CORNER_SOURCE_LIVE
+
+
+def radar_state_has_side_leads(radar_state: Any) -> bool:
+    """True when the radarState carries leadLeft/leadRight (radard always fills them; a HUD snapshot from a comma
+    older than 11/23 leaves them unset, then the side cars come from liveTracks)."""
+    has = getattr(radar_state, "_has", None)
+    if callable(has):
+        try:
+            return bool(has("leadLeft") or has("leadRight"))
+        except Exception:
+            return False
+    return safe_get(radar_state, "leadLeft") is not None or safe_get(radar_state, "leadRight") is not None
 
 
 def has_nearby_vehicle(

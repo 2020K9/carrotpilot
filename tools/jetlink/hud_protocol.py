@@ -48,7 +48,9 @@ SERVICE_FIELDS = {
   'modelV2': ('frameAge', 'frameDropPerc', 'position', 'orientation', 'velocity', 'orientationRate', 'laneLines',
               'laneLineProbs', 'roadEdges', 'leads', 'meta', 'laneLineStds', 'roadEdgeStds', 'modelExecutionTime',
               'leadsV3', 'acceleration', 'confidence', 'action'),
-  'radarState': ('leadOne', 'leadTwo', 'leadsCutIn'),
+  # leadLeft/leadRight (11/23): side cars on the HUD road; +~190 B, the largest 11/18 copy stays < EVENT_LIMIT, and an
+  # older Jetson reads the event as before (unknown-to-it fields are ignored, an older comma simply omits them)
+  'radarState': ('leadOne', 'leadTwo', 'leadsCutIn', 'leadLeft', 'leadRight'),
   'liveTracks': ('points', 'errors'),
   'longitudinalPlan': ('fcw', 'longitudinalPlanSource', 'accels', 'speeds', 'jerks', 'shouldStop', 'allowThrottle',
                        'allowBrake', 'trafficState', 'events', 'vTargetNow', 'cruiseTarget', 'jTargetNow', 'tFollow',
