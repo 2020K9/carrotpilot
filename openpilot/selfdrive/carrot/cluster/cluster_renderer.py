@@ -463,6 +463,10 @@ K9_EXP1_EGO_REAR_M = -VEHICLE_LENGTH_M / K9_EXP1_DATA_SCALE   # my rear bumper i
 K9_EXP1_BACK_M = -_k9_cs.DRIVE_VIEW_REAR_RELATIVE_M / K9_EXP1_DATA_SCALE
 
 
+K9_CAM_BAND_A = 120       # ClusterHudCameraViewMode 2/3/4 on K9HudNavdy 1: path band alpha over the camera picture
+K9_CAM_LINE_MAX_W = 9.0   # and the widest lane line (design px)
+
+
 def k9_exp1_camera(ego_bottom: bool = False) -> tuple:
     """debug 1 drive camera as (pos, fwd, right, up, focal px) in design px (raylib Camera3D, up = +z, fovy vertical)"""
     if ego_bottom:
@@ -4042,9 +4046,10 @@ class ClusterUiRenderer:
         default_device_camera = DEVICE_CAMERAS["tici", "ar0231"]
         return default_device_camera.ecam if wide_camera else CAMERA_OVERLAY_DEFAULT_CAMERA
 
-    def _camera_overlay_projection(self, state: ClusterUiState) -> CameraOverlayProjection | None:
+    def _camera_overlay_projection(self, state: ClusterUiState, dest=None) -> CameraOverlayProjection | None:
         overlay = state.route_overlay
-        dest = self._camera_overlay_content_rect()
+        if dest is None:
+            dest = self._camera_overlay_content_rect()
         roll = pitch = yaw = 0.0
         if state.camera_calibration_euler is not None and len(state.camera_calibration_euler) >= 3:
             roll, pitch, yaw = state.camera_calibration_euler
@@ -7057,6 +7062,9 @@ class ClusterUiRenderer:
     # middle panel: 2D perspective road (TURZX-style, drawn from scratch; no code / art from the photo repo)
     def k9_turzx_road_project(self, forward_m: float, lateral_m: float) -> tuple[float, float, float]:
         """(screen x, screen y, px per m) of a road point, design px. forward >= -Z0 * 0.5."""
+        proj = getattr(self, "_k9_cam_proj", None)
+        if proj is not None:  # ClusterHudCameraViewMode 2/3/4: the road / wide camera picture under the drawing
+            return self.k9_cam_project(proj, forward_m, lateral_m)
         cam = getattr(self, "_k9_exp1_cam", None)
         if cam is not None:  # K9HudNavdy 1: the debug 1 camera
             x, y, k, _ = k9_exp1_project(cam, forward_m, lateral_m, getattr(self, "_k9_cx", K9L_CX))
@@ -7142,6 +7150,8 @@ class ClusterUiRenderer:
             cur = (rl.Vector2(x, y), scale)
             if prev is not None and (not dashed or int((f + 60.0) // 4.0) % 2 == 0):
                 w = max(1.4, width_m * (prev[1] + scale) * 0.5)
+                if getattr(self, "_k9_cam_proj", None) is not None:  # camera: no fat line right under the windshield
+                    w = min(w, K9_CAM_LINE_MAX_W)
                 fade = clamp(1.0 - f / K9_TURZX_ROAD_MAX_M * 0.7, 0.25, 1.0) * alpha
                 if glow:
                     rl.draw_line_ex(prev[0], cur[0], w * 7.0, rl.Color(r, g, b, int(22 * fade)))
@@ -7939,8 +7949,69 @@ class ClusterUiRenderer:
                                      rl.Color(255, 60, 80, 40), rl.Color(255, 60, 80, 0))  # light bar on the wet road
         return x, y - h, w
 
+    _k9_cam_proj = None  # camera projection while the camera picture is the road background (None = 3D road)
+
+    @staticmethod
+    def k9_cam_project(proj, forward_m: float, lateral_m: float, height_m: float = 0.0) -> tuple[float, float, float]:
+        """(x, y, px per m) of a road point (model frame: forward from the device, right +) on the camera picture;
+        same calibration / intrinsics as the comma UI camera overlay (_camera_overlay_screen_xy), no clipping"""
+        rx, ry, rz = proj.view_from_road
+        f, left, up = max(CAMERA_OVERLAY_MIN_DEPTH_M, float(forward_m)), -float(lateral_m), float(height_m)
+        vx = rx[0] * f + rx[1] * left + rx[2] * up
+        vy = ry[0] * f + ry[1] * left + ry[2] * up + proj.camera_height_m
+        vz = max(CAMERA_OVERLAY_MIN_DEPTH_M, rz[0] * f + rz[1] * left + rz[2] * up)
+        k = proj.zoom * proj.focal_length / vz
+        return (k * vx + proj.zoom * proj.camera_width * 0.5 + proj.video_tx,
+                k * vy + proj.zoom * proj.camera_height * 0.5 + proj.video_ty, k)
+
+    def k9_cam_scene_rect(self) -> rl.Rectangle:
+        """middle road area in the drawing coordinates of _k9l_draw_road (the res scene is scaled about its left edge)"""
+        if self.k9_hud_res:
+            k = K9R_SCENE_S
+            return rl.Rectangle(K9L_SCENE_X0, -K9R_SCENE_DY / k, K9L_SCENE_X1 - K9L_SCENE_X0, DESIGN_HEIGHT / k)
+        return rl.Rectangle(K9L_SCENE_X0, 0.0, K9L_SCENE_X1 - K9L_SCENE_X0, DESIGN_HEIGHT)
+
+    def _k9_cam_background(self, state: ClusterUiState):
+        """대감님 11/23 18:15 "주행화면에 일반카메라·광각카메라도 선택": K9HudNavdy 1 road area = the camera picture when
+        ClusterHudCameraViewMode is 2 (road) / 3 (wide) / 4 (by speed). Returns the projection when a fresh frame was
+        drawn; None = draw the 3D road as before (mode 0/1, no frame, stale > 0.3 s, error)."""
+        if getattr(self, "_k9_exp1_cam", None) is None or not cluster_camera_view_is_road_camera(state.camera_view_mode):
+            if getattr(self, "_live_road_camera", None) is not None:
+                self._close_live_road_camera()
+            return None
+        overlay = getattr(state, "route_overlay", None)
+        try:
+            self._camera_overlay_wide = self._select_camera_overlay_stream(state)
+            proj = self._camera_overlay_projection(state, self.k9_cam_scene_rect())
+            if proj is None:
+                return None
+            if overlay is not None and overlay.video_rgba is not None:  # route replay video
+                tex = self._route_video_texture_for_overlay(overlay)
+                if tex is None:
+                    return None
+                rl.draw_texture_pro(tex, proj.source, proj.video_dest, rl.Vector2(0.0, 0.0), 0.0, rl.WHITE)
+            else:
+                live = self._live_road_camera_view() if state.onroad else None
+                if live is None or not live.draw(proj.video_dest):
+                    return None
+        except Exception as exc:
+            print(f"K9 HUD camera background failed: {exc}", flush=True)
+            self._close_live_road_camera()
+            return None
+        d = proj.dest
+        rl.draw_rectangle_rec(d, rl_color((0, 0, 0), CAMERA_BACKGROUND_VIGNETTE_ALPHA))
+        return proj
+
     def _k9l_draw_road(self, state: ClusterUiState) -> None:
+        self._k9_cam_proj = self._k9_cam_background(state)
+        try:
+            self._k9l_draw_road_inner(state)
+        finally:
+            self._k9_cam_proj = None
+
+    def _k9l_draw_road_inner(self, state: ClusterUiState) -> None:
         sx0, sx1 = K9L_SCENE_X0, K9L_SCENE_X1
+        on_cam = self._k9_cam_proj is not None
         cam = getattr(self, "_k9_exp1_cam", None)
         hy = K9_TURZX_ROAD_HORIZON_Y if cam is None else k9_exp1_horizon_y(cam)  # menu 1: fog at the debug 1 horizon
         lanes = list(getattr(state, "lanes", ()) or ())
@@ -7962,7 +8033,8 @@ class ClusterUiRenderer:
         if len(le) >= 2 and len(re_) >= 2:
             # translucent asphalt: the horizon light reflection of the background shows through it (wet road)
             lk = self.k9_look()
-            self._k9_turzx_band(le, re_, lk.l_road)
+            if not on_cam:  # camera picture: the real road shows, no painted asphalt
+                self._k9_turzx_band(le, re_, lk.l_road)
             self._k9_turzx_line(le, lk.l_kerb, 0.06, False, False, lk.l_kerb_a)  # kerbs
             self._k9_turzx_line(re_, lk.l_kerb, 0.06, False, False, lk.l_kerb_a)
         for group in (lefts[:-1], rights[1:]):
@@ -7982,7 +8054,8 @@ class ClusterUiRenderer:
                 if self.k9_hud_menu == 1 and ego_l is not None and ego_r is not None:
                     bl_, br_ = self.k9l_ego_lane_band(path, ego_l[2], ego_r[2])
                 band = K9_NAVDY_EGO_LANE_LANEMODE if getattr(state, "active_lane_line", None) else K9_NAVDY_EGO_LANE
-                self._k9_turzx_band(bl_, br_, (*band, 215), fade=True)
+                # camera picture: see-through band (the real road and cars stay visible under it)
+                self._k9_turzx_band(bl_, br_, (*band, K9_CAM_BAND_A if on_cam else 215), fade=True)
             else:  # K9HudNavdy 0: ice path band before b7e81bbd4
                 self._k9_old_path_band(path, end_m, 1.05, 0.42, (*K9L_ICE, 120), (220, 240, 255, 54), K9L_ICE, 0.07, 0.95)
             top = min(path[-1][0], end_m if end_m is not None else 1e9, 60.0)
@@ -8010,8 +8083,9 @@ class ClusterUiRenderer:
             else:
                 self._k9_turzx_line(item[2], K9L_LANE, 0.10, True, False, a * self._k9_fade(item[1]))
         # perspective fog: the far road dissolves into the horizon light
-        rl.draw_rectangle_gradient_v(int(sx0), int(hy + 1), int(sx1 - sx0), 90, rl.Color(*K9L_FOG, self.k9_look().l_fog_a),
-                                     rl.Color(*K9L_FOG, 0))
+        if not on_cam:
+            rl.draw_rectangle_gradient_v(int(sx0), int(hy + 1), int(sx1 - sx0), 90, rl.Color(*K9L_FOG, self.k9_look().l_fog_a),
+                                         rl.Color(*K9L_FOG, 0))
         # 11/20 12:29: every car box is kept (self._k9l_cars) so the lane % / lead row and the distance tag stay off the cars
         self._k9l_cars, self._k9l_car_rec = [], ()
         for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
@@ -8066,7 +8140,8 @@ class ClusterUiRenderer:
         for yy, hh, cl, cr in rows:
             rl.draw_rectangle_gradient_h(int(sx0), yy, fw, hh, rl.Color(*cl, 255), rl.Color(*cl, 0))
             rl.draw_rectangle_gradient_h(int(sx1) - fw, yy, fw, hh, rl.Color(*cr, 0), rl.Color(*cr, 255))
-        self._k9_turzx_draw_ego()
+        if not on_cam:  # the windshield camera has no own car in view
+            self._k9_turzx_draw_ego()
 
     def _k9l_perc_texts(self, state: ClusterUiState) -> tuple[str | None, str | None]:
         lane = None
