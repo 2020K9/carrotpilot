@@ -7434,7 +7434,18 @@ class ClusterUiRenderer:
     def _k9_exp1_setup(self, state: ClusterUiState) -> None:
         on = self.k9_hud_menu == 1 and self.k9_navdy_on()
         ego_bottom = getattr(state, "camera_view_mode", None) == _k9_cs.CLUSTER_CAMERA_VIEW_MODE_EGO_BOTTOM
-        self._k9_exp1_cam = k9_exp1_camera(ego_bottom) if on else None
+        cam = k9_exp1_camera(ego_bottom) if on else None
+        if cam is not None and self.k9_hud_res:
+            # 대감님 11/23 16:03 "가운데 화면 맨 위에 공간 있는데 왜 거기까지 안 채워?": the res scene is drawn at
+            # K9R_SCENE_S about its left edge (y K9R_SCENE_DY .. 480 - K9R_SCENE_DY), so the road stopped short of the
+            # screen top and bottom. Zoom the same camera by 1 / K9R_SCENE_S about the scene middle (focal only, the
+            # perspective, my car's place and every car / line stay in one projection): the road reaches y 0 .. 480.
+            # Plain drive camera: a little more (x1.033) so its horizon sits just above y 0 - no dark strip over the far
+            # road. The ego-bottom camera keeps the plain 1 / K9R_SCENE_S (its sky above the horizon is that view's own).
+            room = max(1.0, DESIGN_HEIGHT * 0.5 - k9_exp1_horizon_y(cam))
+            kz = 1.0 if ego_bottom else max(1.0, (DESIGN_HEIGHT * 0.5 + 1.0) / room)
+            cam = (*cam[:4], cam[4] * kz / K9R_SCENE_S)
+        self._k9_exp1_cam = cam
         _K9_BACK[0] = K9_EXP1_BACK_M if on else 0.0
 
     def set_k9_hud_navdy(self, value) -> None:
@@ -8031,6 +8042,8 @@ class ClusterUiRenderer:
             spots = [(lx - tw * 0.5, ly - 24.0)]
             for side in (out, -out):
                 spots.append((lx + lw * 0.5 + 8.0 if side > 0 else lx - lw * 0.5 - 8.0 - tw, ly + lw * 0.29))
+            if self._k9l_cars:  # 11/23: last, under the car (the zoomed res scene puts a near lead under km/h)
+                spots.append((lx - tw * 0.5, self._k9l_cars[-1][3] + K9L_CAR_GAP + 14.0))
 
             def free(px: float, cy: float) -> bool:
                 if not (K9L_SCENE_X0 + 12.0 <= px and px + tw <= K9L_SCENE_X1 - 12.0):
@@ -8045,7 +8058,12 @@ class ClusterUiRenderer:
         self._k9_va = 1.0
         # the scene has no frame: the sides melt into the night field
         fw = int(K9L_SCENE_FADE)
-        for yy, hh, cl, cr in getattr(self, "_k9l_side_rows", ()):
+        rows = list(getattr(self, "_k9l_side_rows", ()))
+        if rows and self.k9_hud_res and cam is not None:  # 11/23: the res scene reaches past 0 .. 480 (K9R_SCENE_DY)
+            ext = int(math.ceil(K9R_SCENE_DY / K9R_SCENE_S)) + 1
+            y_end = rows[-1][0] + rows[-1][1]
+            rows.append((y_end, ext, rows[-1][2], rows[-1][3]))
+        for yy, hh, cl, cr in rows:
             rl.draw_rectangle_gradient_h(int(sx0), yy, fw, hh, rl.Color(*cl, 255), rl.Color(*cl, 0))
             rl.draw_rectangle_gradient_h(int(sx1) - fw, yy, fw, hh, rl.Color(*cr, 0), rl.Color(*cr, 255))
         self._k9_turzx_draw_ego()
@@ -8554,8 +8572,13 @@ class ClusterUiRenderer:
             rl.rl_scalef(k, k, 1.0)
             rl.rl_translatef(-K9L_SCENE_X0, 0.0, 0.0)
             try:
-                rl.begin_scissor_mode(int(K9L_SCENE_X0 * sx), int(dy * sy), int((K9L_SCENE_X1 - K9L_SCENE_X0) * k * sx),
-                                      int(round(DESIGN_HEIGHT * k * sy)))
+                # 11/23: full screen height, the zoomed road (_k9_exp1_setup) runs to the top and bottom edges
+                if getattr(self, "_k9_exp1_cam", None) is not None:
+                    rl.begin_scissor_mode(int(K9L_SCENE_X0 * sx), 0, int((K9L_SCENE_X1 - K9L_SCENE_X0) * k * sx),
+                                          int(self.height))
+                else:  # K9HudNavdy 0 look: old projection, old clip
+                    rl.begin_scissor_mode(int(K9L_SCENE_X0 * sx), int(dy * sy), int((K9L_SCENE_X1 - K9L_SCENE_X0) * k * sx),
+                                          int(round(DESIGN_HEIGHT * k * sy)))
                 try:
                     self._k9l_draw_road(state)
                 finally:
