@@ -18,7 +18,10 @@ from PIL import Image, ImageFilter
 
 HERE = Path(__file__).resolve().parent
 IMG = HERE / "assets" / "images"
-PAIRS = (("k9_ego_car.png", "k9_ego_car_brake.png"), ("k9_navdy_ego.png", "k9_navdy_ego_brake.png"))
+# third item: move the high-mount stop lamp line to the top of the rear window (대감님 11/23 22:35 "내 뒷유리 브레이크보조등은
+# 뒷유리 하단이 아닌 상단임"; K9HudNavdy 1 sprite only, the K9HudNavdy 0 / 3D sprite stays as it was)
+PAIRS = (("k9_ego_car.png", "k9_ego_car_brake.png", False), ("k9_navdy_ego.png", "k9_navdy_ego_brake.png", True))
+HM_TOP_FRAC = 0.06  # lamp line top = first opaque row of the rear window middle + 6 % of the sprite height (just under the roof)
 CORE = np.array((255.0, 46.0, 30.0))
 GLOW = np.array((255.0, 30.0, 18.0))
 
@@ -59,7 +62,7 @@ def biggest_patch(m: np.ndarray) -> np.ndarray:
   return out
 
 
-def lamp_mask(a: np.ndarray) -> np.ndarray:
+def lamp_mask(a: np.ndarray, hm_top: bool = False) -> np.ndarray:
   r, g, b, al = (a[..., i].astype(np.float64) for i in range(4))
   red = (al > 128) & (r >= 60) & (r > 1.6 * g) & (r > 1.5 * b)
   w = a.shape[1]
@@ -83,13 +86,18 @@ def lamp_mask(a: np.ndarray) -> np.ndarray:
     line = band.copy()
     line[:, : xs.min()] = False
     line[:, xs.max() + 1:] = False
+    if hm_top:  # same line (width, thickness), moved up to the top of the rear window
+      h = a.shape[0]
+      cols = np.nonzero(line.any(axis=0))[0]
+      top = int(np.nonzero((al[:, cols] > 128).any(axis=1))[0].min()) + int(round(h * HM_TOP_FRAC))
+      line = np.roll(line, top - int(ys.min()), axis=0)
     keep |= line & (al > 128)
   return keep
 
 
-def make(src_name: str, out_name: str) -> None:
+def make(src_name: str, out_name: str, hm_top: bool = False) -> None:
   a = np.asarray(Image.open(IMG / src_name).convert("RGBA"))
-  core = dilate(lamp_mask(a), 1) & (a[..., 3] > 64)
+  core = dilate(lamp_mask(a, hm_top), 1) & (a[..., 3] > 64)
   w = a.shape[1]
   core_a = Image.fromarray((core * 255).astype(np.uint8))
   glow_a = np.asarray(core_a.filter(ImageFilter.GaussianBlur(max(2.0, w * 0.022)))).astype(np.float64) / 255.0
@@ -106,8 +114,8 @@ def make(src_name: str, out_name: str) -> None:
 
 
 def main() -> None:
-  for s, o in PAIRS:
-    make(s, o)
+  for s, o, t in PAIRS:
+    make(s, o, t)
 
 
 if __name__ == "__main__":
