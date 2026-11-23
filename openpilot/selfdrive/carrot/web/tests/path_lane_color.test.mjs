@@ -33,3 +33,20 @@ test("other colours and cruise-off colour are unchanged in lane mode", () => {
   assert.equal(style.colorIndex, 19);
   assert.equal(style.fillColor, null);
 });
+
+test("sharp curve: useLaneLines=1 but activeLaneLine=0 (laneless steering) stays blue", () => {
+  const policy = createRoadOverlayPolicy();
+  const curve = { lateralPlan: { useLaneLines: true }, controlsState: { activeLaneLine: false } };
+  for (const color of [4, 14, 5, 15]) {
+    const params = { ShowPathMode: 13, ShowPathColor: color, ShowPathModeLane: 14, ShowPathColorLane: color };
+    const { selectedPath, pathStyle } = policy.resolve(overlayState, curve, params);
+    assert.equal(pathStyle.fillColor, null);
+    // path shape/mode selection still follows lateralPlan.useLaneLines (unchanged)
+    assert.equal(selectedPath.pathSource, "lateralPlan");
+    assert.equal(pathStyle.laneMode, true);
+  }
+  // activeLaneLine missing -> previous fallback (useLaneLines) decides
+  const noActive = { lateralPlan: { useLaneLines: true }, controlsState: {} };
+  const params = { ShowPathColor: 4, ShowPathColorLane: 4 };
+  assert.equal(policy.resolve(overlayState, noActive, params).pathStyle.fillColor, LANE_MODE_PATH_FILL);
+});
