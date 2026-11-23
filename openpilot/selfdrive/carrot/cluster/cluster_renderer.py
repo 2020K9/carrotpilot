@@ -96,6 +96,7 @@ from cluster_models import (
     NaviTrafficLightInfo,
     RouteOverlay,
     TripReportState,
+    DetectedVehicle,
 )
 from cluster_scene import (
     ClusterScene,
@@ -538,6 +539,18 @@ K9_NAVDY_MIN_W_M = 1.9                     # same 18 px floor as the old box (w 
 # Measured on 12 K9 rlogs of 11/12 (720 s, 1238 reports): model vs L1 |d forward| 95 % 5.8 m (up to 12 m at 40-52 m),
 # |d lateral| 99 % 1.76 m while |d forward| < 8 m; real cars in the next lane sit 3.3 m off (kept).
 K9_ROAD_SAME_LAT_M, K9_ROAD_SAME_DF_M, K9_ROAD_SAME_DF_K = 2.0, 6.0, 0.25
+# 대감님 11/23 20:43 "BSD까지 넣자": carState.leftBlindspot/rightBlindspot on -> a car in that next lane right beside /
+# a little behind my car, same 'other car' look. Not drawn when a radar side car already is drawn on that side within
+# K9_BSD_NEAR_M. The road shows nothing behind my car's front on some views, so the car goes to the nearest spot that
+# is on screen, clear of my car and of the text boxes (K9_BSD_SCAN_MAX_M at most).
+K9_BSD_SOURCE = "carState BSD"
+K9_BSD_LABELS = (("BL", "left_blindspot", -1.0), ("BR", "right_blindspot", 1.0))
+K9_BSD_NEAR_M = 10.0
+K9_BSD_SIDE_MIN_M = 1.0        # |lateral| of a car that counts as "that side" (my lane half width ~1.8)
+K9_BSD_NOMINAL_M = 0.5         # data distance of the BSD car before placement (> 0: kept by the road / hold)
+K9_BSD_BEHIND_M = 1.0          # wanted rear: this much behind my rear bumper (beside / a little behind)
+K9_BSD_SCAN_STEP_M, K9_BSD_SCAN_MAX_M = 0.5, 25.0
+K9_BSD_PAD_PX = 6.0
 K9_ROAD_EGO_OVERLAP_PX = 6.0               # a car right ahead keeps its rear above the ego roof (only this much hidden)
 # 11/13 01:58 대감님 "나브디 준거파일로 자연스럽게": one grey Navdy look for the whole K9 D road (both styles) -
 # my car = the straight rear sprite (car_12) in light white-grey, ~0.6 of my lane wide; other cars plain grey (no tint),
@@ -6785,7 +6798,82 @@ class ClusterUiRenderer:
             if not any(abs(v.lateral_m - k.lateral_m) < K9_ROAD_SAME_LAT_M and abs(v.longitudinal_m - k.longitudinal_m) <
                        max(K9_ROAD_SAME_DF_M, K9_ROAD_SAME_DF_K * max(v.longitudinal_m, k.longitudinal_m)) for k in kept):
                 kept.append(v)
-        return [v for v in kept if rank(v) > 0 and v.longitudinal_m <= K9_TURZX_ROAD_MAX_M]
+        out = [v for v in kept if rank(v) > 0 and v.longitudinal_m <= K9_TURZX_ROAD_MAX_M]
+        lane_w = float(getattr(state, "lane_width_m", None) or 3.5)
+        lane_w = lane_w if math.isfinite(lane_w) and 2.5 <= lane_w <= 5.0 else 3.5
+        for label, attr, side in K9_BSD_LABELS:
+            if not bool(getattr(state, attr, False)):
+                continue
+            if any(side * v.lateral_m >= K9_BSD_SIDE_MIN_M and v.longitudinal_m <= K9_BSD_NEAR_M for v in out):
+                continue  # the radar side car (or the held BSD car) is already there
+            out.append(DetectedVehicle(label=label, longitudinal_m=K9_BSD_NOMINAL_M, lateral_m=side * lane_w,
+                                       source=K9_BSD_SOURCE))
+        return out
+
+    def _k9_vehicle_box(self, forward_m: float, lateral_m: float) -> tuple[float, float, float, float]:
+        """screen box a road car would get (straight-rear sprite, no drawing)"""
+        x, y, scale = self.k9_turzx_road_project(forward_m, lateral_m)
+        sprites = self._k9_navdy_sprites()
+        if sprites:
+            _, w, h, ax, ay, ppm = sprites[K9_NAVDY_MID]
+            k = max(18.0 / K9_NAVDY_MIN_W_M, scale) / ppm
+            return x - ax * k, y - ay * k, x - ax * k + w * k, y - ay * k + h * k
+        w = max(18.0, 1.9 * scale)
+        return x - w * 0.5, y - w * 0.62, x + w * 0.5, y
+
+    def _k9_bsd_lat(self, side: float, f: float, lefts: list, rights: list, fallback: float) -> float:
+        """middle of the next lane at f from the drawn lane lines, else my lane centre +- the lane width"""
+        group = lefts[::-1] if side < 0.0 else rights  # ego line first, then outward
+        lats = [self._k9_turzx_lat_at(pts, f) for _, _, pts in group[:2]]
+        if len(lats) == 2 and None not in lats and abs(lats[1] - lats[0]) >= 2.4:
+            return (lats[0] + lats[1]) * 0.5
+        if lats and lats[0] is not None:
+            return lats[0] + side * abs(fallback) * 0.5
+        return fallback
+
+    def k9_bsd_spot(self, state: ClusterUiState, vehicle, lefts: list, rights: list) -> tuple[float, float] | None:
+        """(drawn forward, lateral) of a BSD car: beside / a little behind my car when that is on screen, else the
+        nearest spot ahead that is on screen and clear of my car and the text boxes. self._k9_bsd_moved notes it."""
+        side = 1.0 if vehicle.lateral_m > 0.0 else -1.0
+        cam = getattr(self, "_k9_exp1_cam", None)
+        on_cam = getattr(self, "_k9_cam_proj", None) is not None
+        if on_cam:
+            start, ego = 0.0, None   # windshield picture: my car is not in view
+        elif cam is not None:
+            start, ego = K9_EXP1_EGO_REAR_M - K9_BSD_BEHIND_M, self._k9_vehicle_box(K9_EXP1_EGO_REAR_M, 0.0)
+        else:
+            start = -K9_BSD_BEHIND_M
+            hy, ego_y, _, ego_w = getattr(self, "_k9_geo", K9L_ROAD_GEO)
+            cx = getattr(self, "_k9_cx", K9L_CX)
+            ego = (cx - ego_w * 0.5, ego_y - ego_w * 0.8, cx + ego_w * 0.5, ego_y + 4.0)
+        rect = self.k9_cam_scene_rect()
+        x0, y0, x1, y1 = rect.x, rect.y, rect.x + rect.width, rect.y + rect.height
+        try:
+            texts = list(self._k9l_perc_rects(state)) + list(self._k9l_navi_rects(state)) + list(self._k9l_top_rects(state))
+        except Exception:
+            texts = []
+        pad = K9_BSD_PAD_PX
+
+        def hit(a, b) -> bool:
+            return not (a[2] + pad < b[0] or a[0] - pad > b[2] or a[3] + pad < b[1] or a[1] - pad > b[3])
+        first_visible = None
+        f = start
+        while f <= K9_BSD_SCAN_MAX_M:
+            lat = self._k9_bsd_lat(side, max(0.0, f), lefts, rights, vehicle.lateral_m)
+            box = self._k9_vehicle_box(f, lat)
+            visible = box[0] >= x0 and box[2] <= x1 and box[3] <= y1 and box[1] >= y0
+            if visible and (ego is None or not hit(box, ego)):
+                if first_visible is None:
+                    first_visible = (f, lat)
+                if not any(hit(box, t) for t in texts):
+                    self._k9_bsd_moved = getattr(self, "_k9_bsd_moved", {})
+                    self._k9_bsd_moved[vehicle.label] = f > start
+                    return f, lat
+            f += K9_BSD_SCAN_STEP_M
+        if first_visible is not None:  # every on-screen spot touches a text box: nearest visible one
+            self._k9_bsd_moved = getattr(self, "_k9_bsd_moved", {})
+            self._k9_bsd_moved[vehicle.label] = first_visible[0] > start
+        return first_visible
 
     def k9_road_heading_deg(self, state: ClusterUiState, forward_m: float) -> float:
         """direction of the road (mean of the lane lines, right positive) at that distance, 0 without lane lines"""
@@ -8089,9 +8177,16 @@ class ClusterUiRenderer:
         # 11/20 12:29: every car box is kept (self._k9l_cars) so the lane % / lead row and the distance tag stay off the cars
         self._k9l_cars, self._k9l_car_rec = [], ()
         for v in sorted(self.k9_road_others(state), key=lambda v: -v.longitudinal_m):
-            f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
+            lat = v.lateral_m
+            if v.source == K9_BSD_SOURCE:  # 11/23 20:43 BSD car: beside my car or the nearest spot on screen
+                spot = self.k9_bsd_spot(state, v, lefts, rights)
+                if spot is None:
+                    continue
+                f, lat = spot
+            else:
+                f = self.k9_road_clear_of_ego(v.longitudinal_m, v.lateral_m)
             self._k9_va = self._k9_fade(v)
-            self._k9l_vehicle(f, v.lateral_m, False, self.k9_road_heading_deg(state, f))
+            self._k9l_vehicle(f, lat, False, self.k9_road_heading_deg(state, max(0.0, f)))
         self._k9_va = la = self._k9_lead_fade(state)
         lead_drawn = None
         if lead is not None and lead[0] <= K9_TURZX_ROAD_MAX_M:
