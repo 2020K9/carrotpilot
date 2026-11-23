@@ -8122,7 +8122,6 @@ class ClusterUiRenderer:
         self._k9l_text("km/h", K9L_CX, 0.0, K9_TURZX_SUB_SIZE, K9L_MUTED, anchor="center", numeric=True, track=0.06,
                        base=K9L_KMH_BASE)
         gear = str(getattr(state, "gear_text", "") or "").strip().upper() or "-"
-        gear = "D" if gear.isdigit() else gear
         gx = K9L_CX - K9L_SIDE_DX
         self._k9l_text(gear, gx, 0.0, K9L_GEAR_SIZE, K9L_ICE, anchor="center", numeric=True, glow=True, cap_cy=cy)
         rl.draw_ring(rl.Vector2(gx, cy), 33.0, 34.2, 0.0, 360.0, 64, rl.Color(*K9L_CHAMPAGNE, 150))

@@ -136,7 +136,7 @@
       },
       driveMode: driveMode(payload),
       gear: displayGear(payload?.gear),
-      gearStep: gearStep != null && gearStep >= 1 && gearStep <= 7 ? gearStep : null,
+      gearStep: gearStep != null && gearStep >= 1 && gearStep <= 8 ? gearStep : null,
     };
   }
 
