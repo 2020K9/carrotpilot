@@ -569,6 +569,7 @@ K9_NAVDY_LINE = (232, 235, 240)            # white lane lines / distance text
 # before b7e81bbd4 (default) / 1 = the Navdy grey look. The ONLY switch point is k9_navdy_on() / k9_look().
 K9_HUD_NAVDY_PARAM = "K9HudNavdy"
 K9_NAVDY_EGO_BOTTOM_PAD = 28.0            # Navdy ego (1): whole car inside the screen, bottom edge this far up
+K9_EXP1_EGO_BOTTOM_PAD = 6.0             # K9HudNavdy 1 ego: bottom edge at most this many screen px above the screen bottom
 K9_NAVDY_EGO_TINT_LIFT = 60               # Navdy ego (1): additive lift, clearly lighter than the grey cars ahead
 # 대감님 11/13 05:46 "기본.고급판 둘다 k9으로넣어야지": Navdy ego (1) = the mode-0 K9 rear (k9_ego_car.png),
 # own colours (06:17 "왜 내차를 나브디로만듬?": no Navdy grey)
@@ -7459,6 +7460,14 @@ class ClusterUiRenderer:
             limit = (8.0 + K9_TURZX_TOP_H if tuple(geo) == tuple(K9C_ROAD_GEO) else float(self.height)) - K9_NAVDY_EGO_BOTTOM_PAD
             cam = getattr(self, "_k9_exp1_cam", None)
             if cam is not None:  # K9HudNavdy 1: debug 1 ego box rear bumper / sprite px per m (like the other cars)
+                # 대감님 11/24 05:04 "외부hud 내차 너무앞으로 가잇다 뒤로붙여": the limit was the drawing height - 28, but
+                # the res scene is drawn at K9R_SCENE_S below K9R_SCENE_DY, so that put the bottom 57 screen px above the
+                # screen edge and lifted my car ~39 px off its own projected place (closer to the car ahead than the
+                # real gap). Limit = the real screen bottom in drawing px, so my car sits where the same camera puts it.
+                if self.k9_hud_res:
+                    limit = (float(self.height) - K9R_SCENE_DY) / K9R_SCENE_S - K9_EXP1_EGO_BOTTOM_PAD / K9R_SCENE_S
+                else:
+                    limit = float(self.height) - K9_EXP1_EGO_BOTTOM_PAD
                 _, by, kk, _ = k9_exp1_project(cam, K9_EXP1_EGO_REAR_M, 0.0, cx)
                 k = kk / max(1e-6, sprites[K9_NAVDY_MID][5])
                 dw, dh = sw * k, sh * k
