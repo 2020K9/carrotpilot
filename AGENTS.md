@@ -1,5 +1,32 @@
 # Repository memory
 
+- 2026-11-23: Preserve fresh original camera 0x161 lane display states only on
+  real PV5. Keep departure/BSD/boundary, green availability and trailer policy;
+  stock orange beats availability. Accept DBC 0/1/2/4/6 plus observed8, with
+  per-side legacy fallback. Use controller time for250ms expiry even with no
+  CAN traffic; reject wrong-source/template, invalid, ambiguous or older data.
+  No lane-control/paint-color inference, geometry, schema or other-car change.
+  Local729 checks pass,2native skips. Recorded-input sender comparison covers
+  21602 packets across10 segments with display0/1:19204 non-PV5 packets exactly
+  match baseline. PV5 preserves125 dashed packets per setting, retaining706
+  higher-priority sides. No live vehicle writes or physical display validation.
+
+- 2026-11-22: Route1209/10 on77dd33357a reproduces native ATC right-lamp
+  feedback being suppressed by Kick's display-only mask, followed by valid
+  front-gap cancellation. Preserve isolation and add a request-bound200ms
+  permission only for admitted high-speed TBT; revoke on cancellation/handover.
+  Real lamp, independent neutral lever and ordinary lane admission still apply.
+  No longer flash duration or relaxed gap/BSD gates. Max setting2000m; explicit
+  fresh motorway/expressway uses selected distance, other/unknown roads cap500m.
+  Stored400m remains400m. Recorded-input comparison first admits lane change at
+  segment+6.720s versus no baseline initiation in that request; no physical or
+  closed-loop completion claim.1562 local checks pass,2skip/26Linux-native
+  safety deselected,25Wiki checks pass. Native CI follows publication. No device
+  writes. See docs/atc_native_lane_20261122.md; private evidence in task
+  work/log1209 (full rlog/qcamera SHA-matched to read-only vehicle originals).
+  Published bd6e537 passes Linux signal, Jetson, docs and Wiki CI. Correct the
+  web catalog test's obsolete500m expectation;31web checks pass locally.
+
 - 2026-11-21: Latest I5PE drives1206/1207 add24 full rlogs+qcamera,48 SHA-matched
   files, read-only retrieval on3d43de5ca6. All28 requests have SPAS and raw lamp
   response, observation-to-lamp503..651ms/mean576. Each repeats unanswered APRK
