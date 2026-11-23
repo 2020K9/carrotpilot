@@ -574,6 +574,11 @@ K9_NAVDY_EGO_TINT_LIFT = 60               # Navdy ego (1): additive lift, clearl
 # own colours (06:17 "왜 내차를 나브디로만듬?": no Navdy grey)
 # made by make_k9_navdy_ego.py as a drop-in for navdy car_12 (2x its frame, same visible box / anchor)
 K9_NAVDY_EGO_PATH = CLUSTER_DIR / "assets" / "images" / "k9_navdy_ego.png"
+# 대감님 11/23 19:47 "내 차 브레이크등 쪽 이미지를 빨갛게 들어오게 해봐": carState.brakeLights on -> the photo's own tail lamps
+# (and the high-mount stop lamp) glow red; overlays made by make_k9_ego_brake.py, same size as each sprite, drawn
+# additively on the sprite's own rectangle only while the brake lights are on (off: nothing extra is drawn)
+EGO_CAR_BRAKE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_ego_car_brake.png"
+K9_NAVDY_EGO_BRAKE_PATH = CLUSTER_DIR / "assets" / "images" / "k9_navdy_ego_brake.png"
 # Rear-above photo cutout of the owner's K9; drawn in place of the 3D model for
 # the ego vehicle only. Leads/cut-ins keep the shared OBJ model.
 EGO_CAR_ICON_MAX_ROLL_DEG = 12.0
@@ -2361,6 +2366,7 @@ class ClusterUiRenderer:
         if getattr(self, "_ego_car_texture", None) is not None:
             rl.unload_texture(self._ego_car_texture)
             self._ego_car_texture = None
+        self._ego_brake_unload()
         if self._navi_guidance_texture is not None:
             rl.unload_texture(self._navi_guidance_texture)
             self._navi_guidance_texture = None
@@ -2561,6 +2567,7 @@ class ClusterUiRenderer:
 
     def render(self, state: ClusterUiState, signal_lights: tuple[bool, bool] | None = None) -> None:
         """Draw one frame into the currently active raylib render target."""
+        self._ego_brake_on = bool(getattr(state, "brake_lights", False))  # 11/23 19:47: ego car brake lamps
         # Indices only: the incoming state is not modified, so radar/object
         # decisions, sprites and the HUD see the original lane visibility.
         self._lane_confidence_held_indices = self._lane_confidence_hold_indices(state)
@@ -6092,6 +6099,8 @@ class ClusterUiRenderer:
             roll_deg,
             rl_color(WHITE, alpha),
         )
+        self._draw_ego_brake_light(EGO_CAR_BRAKE_PATH, rl.Rectangle(anchor_x, anchor_y, width, height),
+                                   rl.Vector2(width * 0.5, height), roll_deg, alpha)
 
     def _draw_vehicle_marker(self, vehicle: VehicleBox) -> None:
         alpha = int(80 + 150 * clamp(vehicle.confidence, 0.0, 1.0))
@@ -7328,6 +7337,41 @@ class ClusterUiRenderer:
             rl.unload_texture(tex)
         self._k9_navdy_ego_tex = None
         self._k9_navdy_ego_tried = False
+        self._ego_brake_unload()
+
+    def _ego_brake_unload(self) -> None:
+        for tex in (getattr(self, "_ego_brake_tex", None) or {}).values():
+            if tex is not None:
+                rl.unload_texture(tex)
+        self._ego_brake_tex = {}
+
+    def _ego_brake_texture(self, path: Path):
+        """brake-lamp glow overlay for one ego sprite, read once per GL context; None = missing (no glow)"""
+        cache = getattr(self, "_ego_brake_tex", None)
+        if cache is None:
+            cache = self._ego_brake_tex = {}
+        if path not in cache:
+            tex = self._load_icon_texture(path, "ego brake light")
+            if tex is not None:
+                try:
+                    rl.gen_texture_mipmaps(tex)
+                    rl.set_texture_filter(tex, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+                except Exception:
+                    pass
+            cache[path] = tex
+        return cache[path]
+
+    def _draw_ego_brake_light(self, path: Path, dst, origin=None, rotation: float = 0.0, alpha: int = 255) -> None:
+        """11/23 19:47: the ego sprite's tail lamps lit red while carState.brakeLights is on (additive, same rectangle)"""
+        if not getattr(self, "_ego_brake_on", False):
+            return
+        tex = self._ego_brake_texture(path)
+        if tex is None:
+            return
+        rl.begin_blend_mode(rl.BlendMode.BLEND_ADDITIVE)
+        rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), dst,
+                            origin if origin is not None else rl.Vector2(0, 0), rotation, rl.Color(255, 255, 255, int(alpha)))
+        rl.end_blend_mode()
 
     def _k9_navdy_ego_texture(self):
         """K9 ego, menu-0 photo colours (K9_NAVDY_EGO_PATH), read once per GL context; None = failed (navdy car_12 instead)"""
@@ -7436,6 +7480,8 @@ class ClusterUiRenderer:
             tex = k9 or tex  # 05:46: K9, same box as car_12 (geometry above unchanged)
             src = rl.Rectangle(0, 0, tex.width, tex.height)
             rl.draw_texture_pro(tex, src, dst, rl.Vector2(0, 0), 0.0, rl.WHITE)
+            if k9 is not None:
+                self._draw_ego_brake_light(K9_NAVDY_EGO_BRAKE_PATH, dst)
             if k9 is None:  # 06:17 "왜 내차를 나브디로만듬?": the K9 photo is drawn as is (no lift); lift only the car_12 fallback
                 rl.begin_blend_mode(rl.BlendMode.BLEND_ADDITIVE)
                 lift = K9_NAVDY_EGO_TINT_LIFT  # 05:02: clearly lighter than the grey cars ahead (was K9_NAVDY_EGO_LIFT 26)
@@ -7457,6 +7503,7 @@ class ClusterUiRenderer:
         h = w * tex.height / max(1, tex.width)
         rl.draw_texture_pro(tex, rl.Rectangle(0, 0, tex.width, tex.height), rl.Rectangle(cx - w * 0.5, by - h, w, h),
                             rl.Vector2(0, 0), 0.0, rl.WHITE)
+        self._draw_ego_brake_light(EGO_CAR_BRAKE_PATH, rl.Rectangle(cx - w * 0.5, by - h, w, h))
 
     def k9_lat_lines(self, state: ClusterUiState) -> list[tuple[str, list[str], bool]]:
         """steering-learn texts as one item per line (00:20): [(name, values, second item of its text)], text unchanged;
