@@ -47,6 +47,32 @@ def snapshot_status(now=None):
 K9_FPS_BASE = 10
 
 
+# HUD draws on the CPU (대감님 11/24 19:30 "hud cpu에서 쓰게끔해"). Jetson Xorg is the NVIDIA Tegra server, so the
+# raylib/GLFW window used libGLX_nvidia (GPU) and its draws shared the Orin GPU with the driving model. The same
+# picture is drawn by Mesa llvmpipe (software OpenGL, Ubuntu libglx-mesa0 + libgl1-mesa-dri) instead: the glvnd
+# loader is told to use the Mesa vendor and Mesa to stay in software. The shaders and draw calls stay identical.
+# Two llvmpipe threads: about the same CPU time as one thread, half the frame time (worker measurement 11/24).
+MESA_GLX = ('/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0', '/usr/lib/x86_64-linux-gnu/libGLX_mesa.so.0',
+            '/usr/lib64/libGLX_mesa.so.0')
+MESA_SWRAST = ('/usr/lib/aarch64-linux-gnu/dri/swrast_dri.so', '/usr/lib/x86_64-linux-gnu/dri/swrast_dri.so',
+               '/usr/lib64/dri/swrast_dri.so')
+CPU_RENDER_ENV = {'__GLX_VENDOR_LIBRARY_NAME': 'mesa', 'LIBGL_ALWAYS_SOFTWARE': '1', 'GALLIUM_DRIVER': 'llvmpipe',
+                  'LP_NUM_THREADS': '2'}
+RENDERER = {}
+
+
+def use_cpu_renderer(environ=os.environ, exists=os.path.exists):
+  """Select the software (CPU) OpenGL before raylib loads libGL. Returns 'cpu', or 'gpu' when Mesa is missing."""
+  if any(exists(a) for a in MESA_GLX) and any(exists(b) for b in MESA_SWRAST):
+    environ.update(CPU_RENDER_ENV)
+    RENDERER['mode'] = 'cpu'
+  else:
+    print('HUD CPU renderer unavailable (Mesa libGLX_mesa/swrast_dri missing); drawing on the GPU', file=sys.stderr,
+          flush=True)
+    RENDERER['mode'] = 'gpu'
+  return RENDERER['mode']
+
+
 def require_usb_display(scan, expected):
   product = scan(expected)
   if product is None:
@@ -231,6 +257,7 @@ def main():
     while not (settings.get_int('ClusterHud') == 1 and
                (settings.get_bool('IsOnroad') or settings.get_int('ClusterHudDebug') >= 1)):
       time.sleep(.2)
+  use_cpu_renderer()
   from openpilot.cereal import log
   params_module = types.ModuleType('openpilot.common.params')
   params_module.Params = DisplayParams
@@ -326,7 +353,7 @@ def main():
         signal_color, signal_held, signal_online = remote_signals.status()
         display_metrics['signal_display'] = dict(enabled=remote_signals.enabled, color=signal_color,
                                                 held=signal_held, online=signal_online)
-        tmp.write_text(json.dumps({'updated': now, **display_metrics, 'snapshot': snapshot_status(now),
+        tmp.write_text(json.dumps({'updated': now, **display_metrics, 'renderer': RENDERER.get('mode'), 'snapshot': snapshot_status(now),
                                   'vehicle_network_address': VehicleNetworkAddress().address(),
                                   'vehicle_cpu': stats.cpu_core_percents,
                                   'vehicle_memory_percent': stats.memory_used_percent}))
