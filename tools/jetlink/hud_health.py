@@ -1,9 +1,13 @@
 """Jetson-local temperature display; never substitute it for vehicle statistics."""
+import base64
 import math
+from pathlib import Path
+import re
 import time
 
 from host_health import STATUS
 from openpilot.common.jetlink_status import _fresh
+from cluster_models import GitBranchStatus
 from cluster_renderer import (ClusterUiRenderer, DESIGN_WIDTH, DESIGN_HEIGHT,
                               EGPU_STATUS_CENTER_X, TOP_STATUS_CENTER_Y, rl, rl_color)
 
@@ -121,6 +125,67 @@ STRIP_H = 32.   # top strip (stage text / overheating / warnings), design px
 STRIP_GAP = 4.  # empty gap between the strip and the smaller screen below, design px
 
 
+# 11/24 18:29 (대감님 "HUD 왼쪽 맨 아래 하단에 깃 저장소 띄워"): which code is running, always shown small at the
+# bottom-left. Comma = its GitRemote/GitBranch/GitCommit Params (sent in the HUD snapshot), Jetson = the
+# SOURCE_COMMIT of the running bundle. Same commit -> one line "owner/branch · commit"; different -> both.
+SOURCE_COMMIT_FILE = Path(__file__).resolve().parents[2] / 'SOURCE_COMMIT'
+REPO_LABEL_SIZE = 15
+REPO_LABEL_MARGIN = 4.
+REPO_LABEL_COLOR = (170, 178, 186)
+REPO_LABEL_MAX_W = 520.
+
+
+def _text(value):
+  if isinstance(value, bytes):
+    value = value.decode('utf-8', 'replace')
+  return value.strip() if isinstance(value, str) else ''
+
+
+def repo_owner(remote):
+  remote = _text(remote)
+  m = re.search(r'github\.com[:/]+([^/\s]+)/', remote)
+  if m:
+    return m.group(1)
+  m = re.search(r'([^/:\s]+)/[^/\s]+?(?:\.git)?/?$', remote)
+  return m.group(1) if m else ''
+
+
+def repo_label(remote, branch, commit, jetson_commit):
+  """'2020K9/carrot-wip · af8a7e0c', or 'C 2020K9/carrot-wip af8a7e0c / J b14fafe4' when they differ."""
+  branch, commit, jetson = _text(branch), _text(commit)[:8], _text(jetson_commit)[:8]
+  owner = repo_owner(remote)
+  name = f'{owner}/{branch}' if owner and branch else (branch or owner)
+  if commit and jetson and commit == jetson:
+    return f'{name} · {commit}' if name else commit
+  if commit:
+    comma = ' '.join(x for x in ('C', name, commit) if x)
+    return f'{comma} / J {jetson or "-"}'
+  if jetson:
+    return f'C {name or "-"} / J {jetson}' if name else f'J {jetson}'
+  return ''
+
+
+def read_jetson_commit(path=SOURCE_COMMIT_FILE):
+  try:
+    return path.read_text().strip()
+  except OSError:
+    return ''
+
+
+def snapshot_git(record, old):
+  """GitRemote/GitBranch/GitCommit from a HUD snapshot; a missing or bad one keeps its last value."""
+  values = dict(old)
+  params = record[1].get('params') if record and isinstance(record[1], dict) else None
+  for key in ('GitRemote', 'GitBranch', 'GitCommit'):
+    item = params.get(key) if isinstance(params, dict) else None
+    if isinstance(item, str) and len(item) <= 128:
+      try:
+        values[key] = base64.b64decode(item).decode('utf-8', 'replace')
+      except (ValueError, TypeError):
+        pass
+  return values
+
+
 class HealthRenderer(ClusterUiRenderer):
   startup_marks = {}   # hud.py MARKS (Jetson monotonic)
   _strip_deferred = False
@@ -159,7 +224,56 @@ class HealthRenderer(ClusterUiRenderer):
     cap = getattr(self, '_capture_target', None)
     return cap if cap is not None and cap.id == fbo else None
 
+  _repo_git = {}
+  _repo_next = 0.
+  _repo_jetson = None
+  _repo_in_footer = False
+
+  def repo_label(self):
+    now = time.monotonic()
+    if now >= self._repo_next:
+      self._repo_next = now + 1.
+      if self._repo_jetson is None:
+        self._repo_jetson = read_jetson_commit()
+      try:
+        from hud_protocol import read_snapshot
+        self._repo_git = snapshot_git(read_snapshot(), self._repo_git)
+      except Exception:
+        pass
+    git = self._repo_git
+    return repo_label(git.get('GitRemote'), git.get('GitBranch'), git.get('GitCommit'), self._repo_jetson)
+
+  def _draw_git_status(self, status, network_address=None, actual_fps=None):
+    # The bottom-left status row is where the running code goes (the Jetson bundle has no .git of its own).
+    label = self.repo_label()
+    if label:
+      status = GitBranchStatus(label, 'unknown')
+      self._repo_in_footer = True
+    super()._draw_git_status(status, network_address, actual_fps)
+
+  def _draw_repo_label(self):
+    """Screens without that status row (K9 boards, P/R screens): the same text at the very bottom-left."""
+    label = self.repo_label()
+    if not label:
+      return
+    rl.rl_push_matrix()
+    rl.rl_scalef(self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT, 1.)
+    try:
+      size = REPO_LABEL_SIZE
+      text = self._ellipsize_text(label, size, REPO_LABEL_MAX_W)
+      _, h = self._measure_text(text, size, max(1., size * .02))
+      self._draw_text_with_stroke(text, REPO_LABEL_MARGIN, DESIGN_HEIGHT - REPO_LABEL_MARGIN - h * .5, size,
+                                  REPO_LABEL_COLOR, (5, 9, 12), 2, cache=True)
+    finally:
+      rl.rl_pop_matrix()
+
   def render(self, state, signal_lights=None):
+    self._repo_in_footer = False
+    self._render_health(state, signal_lights)
+    if not self._repo_in_footer:
+      self._draw_repo_label()
+
+  def _render_health(self, state, signal_lights=None):
     self.host_health = _fresh(STATUS, time.monotonic())
     self.host_badge_drawn = False
     # 11/20 12:48: while the top strip is shown, the whole screen is drawn a little smaller

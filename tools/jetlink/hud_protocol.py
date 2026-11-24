@@ -28,7 +28,9 @@ PARAMS = ('ClusterHud', 'ClusterHudDebug', 'ClusterHudBrightness', 'ClusterHudOr
           # to defaults (K9 D cards/Navdy/season switches, the five lat lines above the TPMS car).
           'ClusterHudK9Style', 'K9HudNavdy', 'K9MeterSeason', 'CustomSR', 'SteerRatioRate',
           'LateralTorqueCustom', 'LateralTorqueAccelFactor', 'LateralTorqueFriction',
-          'LiveDelay', 'LiveTorqueParameters', 'LiveParameters', 'LiveParametersV2', 'UsbGpuLoading')
+          'LiveDelay', 'LiveTorqueParameters', 'LiveParameters', 'LiveParametersV2', 'UsbGpuLoading',
+          # 11/24 18:29: the comma repository/branch/commit, shown small at the HUD bottom-left (hud_health)
+          'GitRemote', 'GitBranch', 'GitCommit')
 
 # Snapshot schema 2 (2026-11-17): a snapshot carries only what the Jetson HUD draws. Every service and every
 # capnp-valued Param is rebuilt from a per-field allow list instead of being forwarded whole - 98d17e01 forwarded
