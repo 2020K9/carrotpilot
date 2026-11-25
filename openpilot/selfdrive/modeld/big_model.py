@@ -33,7 +33,8 @@ from openpilot.selfdrive.modeld.big_model_status import BigModelStatusReporter
 from openpilot.common import big_model_catalog
 
 
-DEFAULT_MANIFEST_URL = big_model_catalog.selected()['manifest_url']
+# None when the selected catalog model is Jetson-only (no eGPU entry).
+DEFAULT_MANIFEST_URL = big_model_catalog.selected().get('manifest_url')
 NAV_MODEL = {
   "model_id": "comma-nav-n16-afbf2e54-52205044",
   "filename": "big_driving_tinygrad.pkl",
@@ -150,8 +151,10 @@ def _write_state(active: BigModelManifest, previous: BigModelManifest | None, ca
 
 def fetch_manifest(manifest_url: str = DEFAULT_MANIFEST_URL, timeout: float = 15.0) -> BigModelManifest:
   # Reviewed catalog pins are resolved without network and stay fixed this boot.
+  if manifest_url is None:
+    raise ValueError('selected model is Jetson-only; no eGPU model')
   for entry in big_model_catalog.catalog().values():
-    if manifest_url == entry['manifest_url']:
+    if 'egpu' in entry and manifest_url == entry.get('manifest_url'):
       return BigModelManifest.from_dict(entry['egpu'], manifest_url)
 
   req = Request(manifest_url, headers={"Accept": "application/json", "User-Agent": "carrot-modeld/1"})
@@ -315,6 +318,9 @@ def selected_manifest(cache_dir: Path | None = None) -> BigModelManifest | None:
   if active is None:
     return None
   manifest_url = os.getenv('CARROT_BIG_MODEL_MANIFEST', DEFAULT_MANIFEST_URL)
+  if manifest_url is None:
+    # Jetson-only selection: no eGPU model may run this boot.
+    return None
   if manifest_url == DEFAULT_MANIFEST_URL:
     # This lookup is pinned in source and never uses the network.
     selected = fetch_manifest(DEFAULT_MANIFEST_URL)
@@ -448,6 +454,10 @@ def main() -> int:
 
   if args.network_wait_seconds < 0.0:
     parser.error("--network-wait-seconds must be non-negative")
+
+  if args.manifest_url is None and (args.prepare_for_startup or args.ensure_if_egpu):
+    print('selected model is Jetson-only; eGPU uses the internal model')
+    return 0
 
   if args.prepare_for_startup:
     from openpilot.common.spinner import Spinner

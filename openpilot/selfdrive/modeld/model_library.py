@@ -23,12 +23,14 @@ def delivery_lock():
 def protected_ids():
   protected = {C.effective_id(), C.preferences()['selected']}
   active = C.read_json(C.storage() / 'state.json').get('active') or {}
-  protected.update(key for key, entry in C.catalog().items() if entry['egpu']['sha256'] == active.get('sha256'))
+  protected.update(key for key, entry in C.catalog().items() if 'egpu' in entry and entry['egpu']['sha256'] == active.get('sha256'))
   return protected
 
 
 def paths(key):
-  item = C.catalog()[key]['egpu']
+  item = C.catalog()[key].get('egpu')
+  if item is None:
+    return []  # Jetson-only: no comma eGPU files
   stem, ext = os.path.splitext(item['filename'])
   model = C.storage() / f"{stem}-{item['sha256'][:16]}{ext}"
   return [model, model.with_suffix(model.suffix + '.part'), C.storage() / 'precompiled' / item['sha256']]
@@ -115,7 +117,8 @@ def status():
     sha = C.model_spec(key)['sha256']
     rows.append({'id': key, 'name': entry['name'], 'noo': C.noo(key),
                  'protected': key in protected, 'egpu_bytes': cached_bytes(key),
-                 'download_bytes': entry['egpu']['size'], 'jetson_sha256': sha,
+                 'download_bytes': entry['egpu']['size'] if 'egpu' in entry else None,
+                 'egpu': 'egpu' in entry, 'jetson_sha256': sha,
                  'jetson_bytes': host.get('models', {}).get(sha) if host_fresh else None,
                  'delete_pending': key in queue})
   return {'models': rows, 'effective': C.effective_id(), 'selected': prefs['selected'],

@@ -83,7 +83,7 @@ def build_status_payload(params: Any | None = None) -> dict[str, Any]:
 
   from openpilot.common.big_model_catalog import catalog
   displayed_sha = status.get('sha256') if status else (manifest.sha256 if manifest is not None else None)
-  entry = next((row for row in catalog().values() if row['egpu']['sha256'] == displayed_sha), None)
+  entry = next((row for row in catalog().values() if 'egpu' in row and row['egpu']['sha256'] == displayed_sha), None)
   return {
     "ok": True,
     "available": True,
@@ -186,6 +186,8 @@ async def api_library(request: web.Request) -> web.Response:
     action, key = body['action'], body['model']
     if action != 'select' or not isinstance(key, str) or key not in catalog.available():
       raise ValueError('unknown model action')
+    if 'egpu' not in catalog.available()[key] and HAS_PARAMS and Params is not None and _params_bool(Params(), 'UsbGpuHardwareSeen'):
+      raise ValueError('Jetson-only model; not available with eGPU')
     await asyncio.to_thread(catalog.select, key)
     return web.json_response({'ok': True, 'library': await asyncio.to_thread(library.status)})
   except (ValueError, OSError) as exc:

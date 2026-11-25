@@ -64,5 +64,10 @@
     },
     "jetson_spec": "light-speed-2.json",
     "jetson_release": "light-speed-2-release.json"
+  },
+  "fairy-tale": {
+    "name": "Fairy Tale",
+    "jetson_spec": "fairy-tale.json",
+    "jetson_release": "fairy-tale-release.json"
   }
 }

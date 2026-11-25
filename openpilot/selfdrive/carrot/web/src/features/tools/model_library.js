@@ -4,7 +4,8 @@ const EN = {
   help: "One choice for eGPU and Jetson. Choosing saves the next-boot selection. Reboot comma and Jetson while parked with ignition off and internet available. First use downloads files; Jetson also prepares its engine.",
   change: "Change model", close: "Close", pending_apply: "Apply after restart",
   current: "This boot", next: "Next boot", saved: "Saved. Reboot comma and Jetson to apply.",
-  noo: "NOO supported", no_noo: "NOO not supported", shared: "N16 supports navigation inputs. Flip Flop, Light speed and Light speed 2 do not.",
+  noo: "NOO supported", no_noo: "NOO not supported", shared: "N16 supports navigation inputs. Flip Flop, Light speed, Light speed 2 and Fairy Tale do not.",
+  jetson_only: "Jetson only",
 
 };
 function t(key) { return typeof getUIText === "function" ? getUIText(`model_library_${key}`, EN[key]) : EN[key]; }
@@ -73,7 +74,7 @@ export function renderLibrary(library, force = false) {
   const select = document.createElement("select");
   select.setAttribute("aria-label", t("next"));
   for (const model of library.models) {
-    const option = text("option", `${model.name} · ${t(model.noo ? "noo" : "no_noo")}`);
+    const option = text("option", `${model.name} · ${t(model.noo ? "noo" : "no_noo")}${model.egpu === false ? ` · ${t("jetson_only")}` : ""}`);
     option.value = model.id;
     select.append(option);
   }
