@@ -185,6 +185,7 @@ class SnapshotBuilder:
     release_file = Path(__file__).resolve().parents[2] / 'openpilot/selfdrive/modeld/jetlink/host_release.json'
     from openpilot.common.jetson_model import selected_release
     self.host_release = selected_release(release_file)
+    self.comma_source = comma_source()
     self.camera = None
     from hud_nav_map import NavPreviewPublisher
     self.nav_map = NavPreviewPublisher() if nav_map else None
@@ -260,6 +261,7 @@ class SnapshotBuilder:
     record = {'version': 1, 'schema': SNAPSHOT_SCHEMA, 'sent': now, 'events': self.cached, 'params': self.settings,
               'dropped': dropped,
               **({'jetson_release': self.host_release} if self.host_release is not None else {}),
+              **({'comma_source': source} if (source := getattr(self, 'comma_source', None)) else {}),
               'vehicle_network_address': self.network.address(),
               'external_compute_label': device_badge[0] if device_badge and device_badge[1] == 'active' else '',
               'received': self.sm.recv_time, 'mono': self.sm.logMonoTime,
@@ -276,6 +278,21 @@ class SnapshotBuilder:
     data = encode_snapshot(record)
     self.report = snapshot_report(record, data)
     return data
+
+
+def comma_source():
+  """11/25 20:57: where this comma runs from and the big model it selected this boot, for the Jetson HUD
+  bottom-left lines; None for a value that cannot be read (shown as '?', never guessed)."""
+  from openpilot.common.basedir import BASEDIR
+  model = None
+  if Path('/TICI').is_file():
+    try:
+      from openpilot.common.big_model_catalog import selected
+      name = selected().get('name')
+      model = name if isinstance(name, str) and name else None
+    except Exception:
+      model = None
+  return {'path': str(BASEDIR), 'model': model}
 
 
 def _pointer(field):

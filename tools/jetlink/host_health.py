@@ -128,11 +128,18 @@ class HostHealth:
     self.inference = (time.monotonic(), gpu_us / 1000, total_us / 1000)
     self.mark('infer')   # first successful inference (Jetson waiting screen loading %, boot_display.py)
 
+  def note_model(self, sha256):
+    # 11/25 20:57: the model this Jetson actually has loaded (ENGINE_RESP ready), for the HUD bottom-left line
+    if isinstance(sha256, str) and sha256:
+      self.model_sha256 = sha256
+
   def mark(self, name):
     self.marks.setdefault(name, time.monotonic())
 
   def diagnostics(self, now):
     result = {'startup': dict(self.marks)}
+    if getattr(self, 'model_sha256', None):
+      result['model_sha256'] = self.model_sha256
     inference = self.inference
     if inference is not None and 0 <= now - inference[0] < 3:
       result['inference'] = {'gpu_ms': inference[1], 'total_ms': inference[2], 'age_s': round(now - inference[0], 3)}

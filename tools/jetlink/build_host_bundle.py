@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -47,6 +48,18 @@ def export_members(source, target, model_spec=None):
       target.addfile(member, source.extractfile(member) if member.isfile() else None)
 
 
+def source_origin(git):
+  """'<remote>\n<branch>\n' of the checkout (the Jetson HUD shows it); user:password@ never kept, '' if unknown."""
+  def read(*args):
+    try:
+      return subprocess.check_output([*git, *args], stderr=subprocess.DEVNULL).decode().strip()
+    except (OSError, subprocess.CalledProcessError):
+      return ''
+  remote = re.sub(r'^([a-z+]+://)[^/@]*@', r'\1', read('remote', 'get-url', 'origin'))
+  branch = read('symbolic-ref', '--short', '-q', 'HEAD')   # detached HEAD -> ''
+  return f"{remote}\n{branch}\n".encode()
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument('output', type=Path)
@@ -58,12 +71,16 @@ def main():
   if untracked.strip():
     raise RuntimeError('Commit or remove untracked host source files before exporting')
   commit = subprocess.check_output([*git, 'rev-parse', 'HEAD'])
+  origin = source_origin(git)
   # Inspect cleanliness using the checkout's own CRLF policy; only the Linux
   # export forces LF. Changing that policy for diff misclassifies Windows files.
   archive = subprocess.check_output([*git, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf',
                                      'archive', 'HEAD', *PATHS])
   with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as source, tarfile.open(args.output, 'w:gz') as target:
     export_members(source, target, args.model_spec)
+    origin_entry = tarfile.TarInfo('SOURCE_ORIGIN')
+    origin_entry.size = len(origin)
+    target.addfile(origin_entry, io.BytesIO(origin))
     entry = tarfile.TarInfo('SOURCE_COMMIT')
     entry.size = len(commit)
     target.addfile(entry, io.BytesIO(commit))

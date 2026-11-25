@@ -1,5 +1,6 @@
 """Jetson-local temperature display; never substitute it for vehicle statistics."""
 import base64
+import json
 import math
 from pathlib import Path
 import re
@@ -126,13 +127,21 @@ STRIP_GAP = 4.  # empty gap between the strip and the smaller screen below, desi
 
 
 # 11/24 18:29 (대감님 "HUD 왼쪽 맨 아래 하단에 깃 저장소 띄워"): which code is running, always shown small at the
-# bottom-left. Comma = its GitRemote/GitBranch/GitCommit Params (sent in the HUD snapshot), Jetson = the
-# SOURCE_COMMIT of the running bundle. Same commit -> one line "owner/branch · commit"; different -> both.
-SOURCE_COMMIT_FILE = Path(__file__).resolve().parents[2] / 'SOURCE_COMMIT'
+# bottom-left. 11/25 20:57 (대감님 "콤마·젯슨 사용경로 같이 띄우게해 브랜치 뭐쓰는지 모델 뭐쓰는지"): three lines,
+#   C <owner/repo> <branch> <commit> · <model> <model sha>   (comma Git* Params + snapshot comma_source/jetson_release)
+#   J <owner/repo> <branch> <commit> · <model> <model sha>   (this bundle's SOURCE_ORIGIN/SOURCE_COMMIT + loaded engine)
+#   C <install path> · J <install path>
+# Anything not known is '?', never guessed.
+BUNDLE_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_COMMIT_FILE = BUNDLE_ROOT / 'SOURCE_COMMIT'
+SOURCE_ORIGIN_FILE = BUNDLE_ROOT / 'SOURCE_ORIGIN'
+CATALOG_DIR = BUNDLE_ROOT / 'openpilot/selfdrive/modeld/model_catalog'
 REPO_LABEL_SIZE = 15
 REPO_LABEL_MARGIN = 4.
+REPO_LABEL_LINE_GAP = 2.
 REPO_LABEL_COLOR = (170, 178, 186)
-REPO_LABEL_MAX_W = 520.
+REPO_LABEL_MAX_W = 610.
+UNKNOWN_TEXT = '?'
 
 
 def _text(value):
@@ -150,8 +159,26 @@ def repo_owner(remote):
   return m.group(1) if m else ''
 
 
+def repo_name(remote):
+  """'owner/name' of a git remote URL (never any credentials), '' when it is not one."""
+  remote = _text(remote)
+  m = re.search(r'([^/:@\s]+)/([^/\s]+?)(?:\.git)?/?$', remote)
+  return f'{m.group(1)}/{m.group(2)}' if m else ''
+
+
+def _sha8(value):
+  value = _text(value)
+  return value[:8] if re.fullmatch(r'[0-9a-fA-F]{7,64}', value) else ''
+
+
+def side_line(tag, remote, branch, commit, model, model_sha=''):
+  parts = [tag, repo_name(remote) or UNKNOWN_TEXT, _text(branch) or UNKNOWN_TEXT, _sha8(commit) or UNKNOWN_TEXT]
+  model = ' '.join(x for x in (_text(model), _sha8(model_sha)) if x)
+  return ' '.join(parts) + ' · ' + (model or UNKNOWN_TEXT)
+
+
 def repo_label(remote, branch, commit, jetson_commit):
-  """'2020K9/carrot-wip · af8a7e0c', or 'C 2020K9/carrot-wip af8a7e0c / J b14fafe4' when they differ."""
+  """One-line form (11/24): '2020K9/carrot-wip · af8a7e0c', or 'C 2020K9/carrot-wip af8a7e0c / J b14fafe4'."""
   branch, commit, jetson = _text(branch), _text(commit)[:8], _text(jetson_commit)[:8]
   owner = repo_owner(remote)
   name = f'{owner}/{branch}' if owner and branch else (branch or owner)
@@ -165,10 +192,52 @@ def repo_label(remote, branch, commit, jetson_commit):
   return ''
 
 
+REPO_KEYS = ('remote', 'branch', 'commit', 'model', 'model_sha')
+
+
+def repo_lines(comma, jetson):
+  """comma/jetson: dicts of remote, branch, commit, model, model_sha, path. [] when no repository, branch or commit is known."""
+  if not any(_text(d.get(k)) for d in (comma, jetson) for k in ('remote', 'branch', 'commit')):
+    return []
+  return [side_line('C', *(comma.get(k) for k in REPO_KEYS)),
+          side_line('J', *(jetson.get(k) for k in REPO_KEYS)),
+          f"C {_short_path(comma.get('path'))} · J {_short_path(jetson.get('path'))}"]
+
+
+def _short_path(value):
+  # releases/<40-hex commit> -> releases/<8>, so the line fits; '?' when unknown
+  return re.sub(r'\b([0-9a-f]{8})[0-9a-f]{32}\b', r'\1', _text(value)) or UNKNOWN_TEXT
+
+
 def read_jetson_commit(path=SOURCE_COMMIT_FILE):
   try:
     return path.read_text().strip()
   except OSError:
+    return ''
+
+
+def read_jetson_origin(path=SOURCE_ORIGIN_FILE):
+  """(remote, branch) the bundle was built from; ('', '') for bundles older than this file."""
+  try:
+    lines = path.read_text().splitlines()
+  except OSError:
+    return '', ''
+  return (lines[0].strip() if lines else ''), (lines[1].strip() if len(lines) > 1 else '')
+
+
+def catalog_names(sha256, directory=CATALOG_DIR):
+  """Catalog names whose Jetson spec is this ONNX ('/'-joined when several share it), '' when unknown."""
+  sha = _text(sha256).lower()
+  if not sha:
+    return ''
+  try:
+    names = []
+    for entry in json.loads((directory / 'catalog.json').read_text(encoding='utf-8')).values():
+      spec = json.loads((directory / entry['jetson_spec']).read_text(encoding='utf-8'))
+      if str(spec.get('sha256', '')).lower() == sha and entry.get('name') and entry['name'] not in names:
+        names.append(entry['name'])
+    return '/'.join(names)
+  except (OSError, ValueError, KeyError, TypeError, AttributeError):
     return ''
 
 
@@ -183,6 +252,23 @@ def snapshot_git(record, old):
         values[key] = base64.b64decode(item).decode('utf-8', 'replace')
       except (ValueError, TypeError):
         pass
+  return values
+
+
+def snapshot_comma_source(record, old):
+  """The comma's install path / selected model name (comma_source) and the model of the Jetson release it
+  asks for (jetson_release); a missing or bad value keeps its last value."""
+  values = dict(old)
+  body = record[1] if record and isinstance(record[1], dict) else {}
+  source = body.get('comma_source')
+  if isinstance(source, dict):
+    for key in ('path', 'model'):
+      if isinstance(source.get(key), str) and len(source[key]) <= 128:
+        values[key] = source[key]
+  release = body.get('jetson_release')
+  model = release.get('model') if isinstance(release, dict) else None
+  if isinstance(model, dict) and isinstance(model.get('sha256'), str):
+    values['model_sha'] = model['sha256']
   return values
 
 
@@ -225,45 +311,79 @@ class HealthRenderer(ClusterUiRenderer):
     return cap if cap is not None and cap.id == fbo else None
 
   _repo_git = {}
+  _repo_comma = {}
   _repo_next = 0.
   _repo_jetson = None
   _repo_in_footer = False
 
-  def repo_label(self):
+  def repo_lines(self):
     now = time.monotonic()
     if now >= self._repo_next:
       self._repo_next = now + 1.
       if self._repo_jetson is None:
-        self._repo_jetson = read_jetson_commit()
+        remote, branch = read_jetson_origin()
+        self._repo_jetson = {'remote': remote, 'branch': branch, 'commit': read_jetson_commit(),
+                             'path': str(BUNDLE_ROOT)}
       try:
         from hud_protocol import read_snapshot
-        self._repo_git = snapshot_git(read_snapshot(), self._repo_git)
+        record = read_snapshot()
+        self._repo_git = snapshot_git(record, self._repo_git)
+        self._repo_comma = snapshot_comma_source(record, self._repo_comma)
       except Exception:
         pass
     git = self._repo_git
-    return repo_label(git.get('GitRemote'), git.get('GitBranch'), git.get('GitCommit'), self._repo_jetson)
+    health = getattr(self, 'host_health', None)
+    diag = health.get('hud_diag') if isinstance(health, dict) else None
+    sha = diag.get('model_sha256') if isinstance(diag, dict) else None
+    jetson = {**self._repo_jetson, 'model': catalog_names(sha), 'model_sha': _text(sha)}
+    comma = {'remote': git.get('GitRemote'), 'branch': git.get('GitBranch'), 'commit': git.get('GitCommit'),
+             **self._repo_comma}
+    return repo_lines(comma, jetson)
+
+  def _repo_line_height(self):
+    _, h = self._measure_text('0', REPO_LABEL_SIZE, max(1., REPO_LABEL_SIZE * .02))
+    return h
+
+  def _draw_repo_lines(self, lines):
+    """Bottom line at the very bottom-left, the others stacked above it (design coordinates)."""
+    h = self._repo_line_height()
+    y = DESIGN_HEIGHT - REPO_LABEL_MARGIN - h * .5
+    for text in reversed(lines):
+      text = self._ellipsize_text(text, REPO_LABEL_SIZE, REPO_LABEL_MAX_W)
+      self._draw_text_with_stroke(text, REPO_LABEL_MARGIN, y, REPO_LABEL_SIZE, REPO_LABEL_COLOR, (5, 9, 12), 2,
+                                  cache=True)
+      y -= h + REPO_LABEL_LINE_GAP
+    return len(lines) * h + (len(lines) - 1) * REPO_LABEL_LINE_GAP
 
   def _draw_git_status(self, status, network_address=None, actual_fps=None):
     # The bottom-left status row is where the running code goes (the Jetson bundle has no .git of its own).
-    label = self.repo_label()
-    if label:
-      status = GitBranchStatus(label, 'unknown')
-      self._repo_in_footer = True
-    super()._draw_git_status(status, network_address, actual_fps)
+    # The network/FPS row that sits above that row moves up so the lines never cover it.
+    lines = self.repo_lines()
+    if not lines:
+      super()._draw_git_status(status, network_address, actual_fps)
+      return
+    self._repo_in_footer = True
+    block = self._draw_repo_lines(lines)
+    if network_address:
+      row_h = max(self._measure_text('0', 20, .4)[1], 14.)   # the base status row (text 20, dot 7)
+      # base network row bottom = 12 + row_h + 4 above the bottom edge; keep it 2 px above the top line
+      shift = max(0., REPO_LABEL_MARGIN + block + 2. - (12. + row_h + 4.))
+      rl.rl_push_matrix()
+      rl.rl_translatef(0., -shift, 0.)
+      try:
+        super()._draw_git_status(None, network_address, actual_fps)
+      finally:
+        rl.rl_pop_matrix()
 
   def _draw_repo_label(self):
-    """Screens without that status row (K9 boards, P/R screens): the same text at the very bottom-left."""
-    label = self.repo_label()
-    if not label:
+    """Screens without that status row (K9 boards, P/R screens): the same lines at the very bottom-left."""
+    lines = self.repo_lines()
+    if not lines:
       return
     rl.rl_push_matrix()
     rl.rl_scalef(self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT, 1.)
     try:
-      size = REPO_LABEL_SIZE
-      text = self._ellipsize_text(label, size, REPO_LABEL_MAX_W)
-      _, h = self._measure_text(text, size, max(1., size * .02))
-      self._draw_text_with_stroke(text, REPO_LABEL_MARGIN, DESIGN_HEIGHT - REPO_LABEL_MARGIN - h * .5, size,
-                                  REPO_LABEL_COLOR, (5, 9, 12), 2, cache=True)
+      self._draw_repo_lines(lines)
     finally:
       rl.rl_pop_matrix()
 

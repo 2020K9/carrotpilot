@@ -98,6 +98,7 @@ class CarrotSession(Session):
       self.telemetry.health.record_error('Engine', obj.get('detail', 'failed'))
     if msg_type == P.Msg.ENGINE_RESP and obj.get('state') == 'ready' and self.telemetry.health is not None:
       self.telemetry.health.mark('engine_ready')
+      self.telemetry.health.note_model(obj.get('sha256'))
     if msg_type == P.Msg.HELLO_RESP:
       host = 'mac' if sys.platform == 'darwin' else (
         'jetson' if Path('/etc/nv_tegra_release').is_file() else 'unknown')
