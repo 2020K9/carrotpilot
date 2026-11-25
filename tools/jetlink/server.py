@@ -316,7 +316,5 @@ if __name__ == '__main__':
     from blink_driver import prepare_optional
     prepare_optional()
     health_worker()
-    import host_logkeep  # K9 logkeep: journal/kern/carrot logs -> DATA partition, 3 days
-    host_logkeep.start_async()
   server.Session = CarrotSession
   raise SystemExit(server.main())

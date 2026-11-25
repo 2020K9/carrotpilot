@@ -331,9 +331,7 @@ class NfTrace:
 
   @staticmethod
   def _dmesg():
-    # jetlink has kernel.dmesg_restrict=1 -> plain dmesg fails; the image grants it sudo NOPASSWD (-n: never prompts)
-    for cmd in (['sudo', '-n', 'dmesg', '--time-format', 'iso'], ['dmesg', '--time-format', 'iso'], ['dmesg'],
-                ['journalctl', '-k', '-b', '0', '-n', '3000', '--no-pager']):
+    for cmd in (['dmesg', '--time-format', 'iso'], ['dmesg'], ['journalctl', '-k', '-b', '0', '-n', '3000', '--no-pager']):
       try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
       except (OSError, subprocess.SubprocessError):
@@ -354,21 +352,8 @@ class NfTrace:
       return f'journalctl unavailable: {exc}\n'
     lines = r.stdout.splitlines()
     hits = [x for x in lines if DMESG_RE.search(x)]
-    text = (f'# journalctl -k -b -1 rc={r.returncode}: {len(lines)} lines\n' + '\n'.join(hits[-400:]) +
+    return (f'# journalctl -k -b -1 rc={r.returncode}: {len(lines)} lines\n' + '\n'.join(hits[-400:]) +
             '\n# last 120 lines\n' + '\n'.join(lines[-120:]) + '\n' + r.stderr[-400:])
-    # The protected Jetson journal is RAM-only, so -b -1 is empty there: add the K9 logkeep copy (DATA).
-    try:
-      from host_logkeep import persistent_root
-      from logkeep import previous_boot_kernel
-      root = persistent_root()
-      kept = previous_boot_kernel(root) if root is not None else ''
-    except Exception as exc:  # tools/jetlink not importable (tests, other hosts)
-      kept = f'# logkeep unavailable: {type(exc).__name__}\n'
-    if kept:
-      kl = kept.splitlines()
-      text += (f'# logkeep previous boot kern.log: {len(kl)} lines\n' + '\n'.join(x for x in kl if DMESG_RE.search(x))[-65536:] +
-               '\n# last 120 lines\n' + '\n'.join(kl[-120:]) + '\n')
-    return text
 
   # -- replay ---------------------------------------------------------------
 
@@ -593,17 +578,6 @@ class NfTrace:
       return f.read(max(0, min(int(size), 262144)))
 
 
-def _read_small(path):
-  fd = os.open(path, os.O_RDONLY)
-  try:
-    data = os.read(fd, 256)
-  finally:
-    os.close(fd)
-  if not isinstance(data, bytes):
-    raise TypeError('no data')
-  return data.decode('ascii', 'replace')
-
-
 def carrot_health_sample(status=Path('/run/carrot-jetlink-performance/status.json'), thermal=Path('/sys/class/thermal')):
   """One compact health row: what host_performance samples at 1 Hz (no extra sysfs load) + thermal zones."""
   row = {}
@@ -621,8 +595,8 @@ def carrot_health_sample(status=Path('/run/carrot-jetlink-performance/status.jso
   temps = {}
   for zone in sorted(thermal.glob('thermal_zone*')):
     try:
-      temps[_read_small(zone / 'type').strip()] = int(_read_small(zone / 'temp')) / 1000
-    except (OSError, ValueError, TypeError):
-      continue  # some Tegra zones fail their read (Path.read_text raised TypeError every second)
+      temps[(zone / 'type').read_text().strip()] = int((zone / 'temp').read_text()) / 1000
+    except (OSError, ValueError):
+      continue
   row['temp_c'] = temps
   return row

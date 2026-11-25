@@ -171,8 +171,6 @@ procs = [
   PythonProcess("hardwared", "openpilot.system.hardware.hardwared", always_run),
   PythonProcess("modem", "openpilot.system.hardware.tici.modem", always_run, enabled=TICI and HARDWARE.get_device_type() != "tici"),
   PythonProcess("tombstoned", "openpilot.system.tombstoned", always_run, enabled=not PC),
-  # K9: journal / kernel / swaglog / crash copies under /data/media/0/k9_logs, 3 days (1 GB cap)
-  PythonProcess("k9_logkeep", "openpilot.system.k9_logkeep", always_run, enabled=not PC),
   PythonProcess("updated", "openpilot.system.updated.updated", enable_updated, enabled=not PC),
   #PythonProcess("uploader", "openpilot.system.loggerd.uploader", enable_connect),
   PythonProcess("statsd", "openpilot.system.statsd", always_run),
