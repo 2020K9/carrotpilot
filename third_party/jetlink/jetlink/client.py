@@ -52,10 +52,6 @@ FRAME_TIMEOUT = 3.0
 StopFn = Callable[[], bool]
 
 
-class NonFiniteOutput(LinkError):
-  """Status NOT_FINITE: the model produced NaN/Inf (driving output or next recurrent state). The link is done."""
-
-
 class EngineMissing(LinkError):
   """The server has no engine and this caller has no ONNX to upload.
 
@@ -537,8 +533,6 @@ class JetlinkClient:
     self.last_timings = (gpu_us, queue_us, total_us)
     if status != P.Status.OK:
       self.dead = True
-      if status == P.Status.NOT_FINITE:
-        raise NonFiniteOutput(f"inference failed: {_name(P.Status, status)} (frame {fid})")
       raise LinkError(f"inference failed: {_name(P.Status, status)} (frame {fid})")
     if fid != self._infer_frame_id:
       self.dead = True

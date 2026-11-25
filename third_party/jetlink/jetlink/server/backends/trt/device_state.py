@@ -101,7 +101,6 @@ class DeviceState:
     # A previous frame's trailing D2D can never overwrite the new zeros.
     self.needs_reset = True
 
-
   def before_run(self):
     if self.needs_reset:
       for target, _ in self.pairs:
