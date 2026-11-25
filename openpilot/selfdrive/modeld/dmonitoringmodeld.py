@@ -12,7 +12,6 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
-from openpilot.selfdrive.modeld.gpu_sampler import GpuTimingDiag
 from openpilot.common.transformations.model import dmonitoringmodel_intrinsics
 from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
@@ -62,13 +61,7 @@ class ModelState:
     self.warp_inputs_np['transform'][:] = transform[:]
     self.tensor_inputs['input_img'] = self.image_warp(self._blob_cache[ptr], self.warp_inputs['transform'])
 
-    outs = self.model_run(**self.tensor_inputs)
-    # gpu_sync_wait: model_run only enqueues GPU work, so .numpy() blocks until the
-    # queued warp+model kernels finish, then copies the output to host. This is the
-    # wall time spent waiting for the GPU plus copy-out (diagnostics only).
-    sync_start = time.perf_counter()
-    output = outs.numpy().flatten()
-    self.last_gpu_sync_wait_ms = (time.perf_counter() - sync_start) * 1000
+    output = self.model_run(**self.tensor_inputs).numpy().flatten()
 
     t2 = time.perf_counter()
     return output, t2 - t1
@@ -144,7 +137,6 @@ def main():
   from openpilot.selfdrive.modeld.jetlink.phase import Gate
   phase_gate = Gate() if HARDWARE.get_device_type() == 'mici' else None
   diagnostics = RuntimeDiagnostics('dmonitoringmodeld', cloudlog.event)
-  gpu_diag = GpuTimingDiag()
 
   while True:
     loop_started, cpu_started = time.monotonic(), time.thread_time()
@@ -170,10 +162,8 @@ def main():
       phase_gate.wait(vipc_client.timestamp_sof)
     phase_done = time.perf_counter()
     inference_cpu_started = time.thread_time()
-    run_start_mono = time.monotonic()
     model_output, gpu_execution_time = model.run(buf, calib, model_transform)
     t2 = time.perf_counter()
-    run_end_mono = time.monotonic()
     inference_cpu_ms = (time.thread_time() - inference_cpu_started) * 1000
     raw_pred = model_output.tobytes() if SEND_RAW_PRED else b''
     model_output = slice_outputs(model_output, model.output_slices)
@@ -181,16 +171,8 @@ def main():
     model_output['raw_pred'] = raw_pred
     msg = get_driverstate_packet(model_output, vipc_client.frame_id, vipc_client.timestamp_sof, t2 - t1, gpu_execution_time)
     pm.send("driverStateV2", msg)
-    gpu_sync_wait_ms = float('nan')
-    try:
-      gpu_diag.add_run(run_start_mono, run_end_mono)
-      gpu_diag.poll()
-      gpu_sync_wait_ms = float(model.last_gpu_sync_wait_ms)
-    except Exception:
-      pass
     diagnostics.record(
-      context=gpu_diag.context({'frame_id': vipc_client.frame_id}),
-      run_start_mono=run_start_mono, run_end_mono=run_end_mono, gpu_sync_wait_ms=gpu_sync_wait_ms,
+      context={'frame_id': vipc_client.frame_id},
       camera_wait_ms=(camera_received-loop_started)*1000,
       phase_wait_ms=(phase_done-t1)*1000,
       inference_ms=(t2-phase_done)*1000,
@@ -199,7 +181,6 @@ def main():
       loop_ms=(time.monotonic()-loop_started)*1000,
       thread_cpu_ms=(time.thread_time()-cpu_started)*1000,
     )
-    gpu_diag.after_record(diagnostics)
 
 
 if __name__ == "__main__":
