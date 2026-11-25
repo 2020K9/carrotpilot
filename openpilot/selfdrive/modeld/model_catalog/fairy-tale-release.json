@@ -1,15 +1,15 @@
 {
   "format": 1,
-  "source_commit": "6da14570550d1175d6755872eaa4f0e95af47ee3",
+  "source_commit": "40d64aeb99f2e203c8870b56b677036038c70aa4",
   "runtime": {
     "arch": "aarch64",
     "l4t": "36.4.7",
     "tensorrt": "10.3.0"
   },
   "bundle": {
-    "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-6da14570550d1175d6755872eaa4f0e95af47ee3/precompiled-runtime.tar.gz",
-    "sha256": "c35ee4e66a90fbe057f7a70c13006d6f0cfa4ea07e8ef4ce98fe8604d7f92abc",
-    "size": 71189603
+    "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-40d64aeb99f2e203c8870b56b677036038c70aa4/precompiled-runtime.tar.gz",
+    "sha256": "74f99ebb6862c9e029a99cb795afb496641b361cd948e0dd28be340661a977f4",
+    "size": 71201235
   },
   "model": {
     "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-fairy-tale-bc125a9a/big_driving_supercombo.onnx",
@@ -17,5 +17,5 @@
     "size": 766137036
   },
   "storage_format": 1,
-  "signature": "Jb/kbnHUfOVKSjCkk0+FX4bLBem9FK0ct4pxHxws1u/bfam5xfrvFOTXeJCFTv7Qd0QT3cc2dfmA99XtOAjTCg=="
+  "signature": "gpEucLgd3XS9p04ymSHwMmXcGKV5QGcTpsjILTMKzLdizpul2SaTbx3P4iM8lRUsu9W9NgNX7IO+3xYA8t2GBg=="
 }
