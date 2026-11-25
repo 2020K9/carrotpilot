@@ -833,10 +833,6 @@ class Session:
       packed = np.frombuffer(context, np.float32, spec.packed_nelem)
       loaded.queues.step_into(warped, packed, loaded.host_inputs)
     queue_us = int((time.perf_counter() - t0) * 1e6)
-    # K9 NOT_FINITE tracer (server/nf_trace.py): copies only; never changes inputs, outputs or status.
-    tracer = getattr(self.host, 'nf_trace', None)
-    if tracer is not None:
-      tracer.before_run(loaded, frame_id, flags)
 
     outputs = loaded.engine.run()
     out = outputs['outputs'].reshape(-1)
@@ -882,11 +878,6 @@ class Session:
       self._send(P.Msg.INFER_RESP, msg.seq, parts)
     send_us = int((time.perf_counter() - send_started) * 1e6)
     self.frames += 1
-    if tracer is not None:
-      # After the reply: a NOT_FINITE frame hands its inputs/state/outputs to the tracer's writer thread.
-      tracer.after_frame(loaded, frame_id, status == P.Status.NOT_FINITE, out32, outputs,
-                         self._finite_event if status == P.Status.NOT_FINITE else '',
-                         (loaded.engine.last_gpu_us, queue_us, total_us))
     if total_us > SLOW_FRAME_US or send_us > 10_000:
       # After the reply, so the log never delays it. The comma logs the same
       # frame by its own stages; together they place a slow frame.

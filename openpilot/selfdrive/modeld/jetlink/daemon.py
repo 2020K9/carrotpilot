@@ -279,8 +279,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
   library = ModelLibrary(peer)
   from tools.jetlink.host_reboot import Client as HostReboot  # noqa: TID251 -- shared standalone host protocol
   host_reboot = HostReboot(peer)
-  from tools.jetlink.nf_trace_link import Client as NfTrace  # noqa: TID251 -- shared standalone host protocol
-  nf_trace = NfTrace(peer, cloudlog.event)
   last_status = 0.
   last_ping = time.monotonic()
   telemetry_updated = 0.
@@ -306,8 +304,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
     except TimeoutError:
       library.idle(client, params)
       host_reboot.idle(client, params)
-      nf_trace.note(client.last_state)
-      nf_trace.idle(client, params)
       if time.monotonic() - last_ping > (.2 if blinker is not None else 2):
         client.last_state = client.state()
         check_loaded(client, client.last_state)
@@ -495,7 +491,6 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
             **receive_metrics,
           )
           performance_log.record(client.last_state, telemetry_updated, frame, seq, client.last_timings)
-          nf_trace.note(client.last_state)   # rlog summary line only (offroad pull is in idle)
       except (ConnectionError, BrokenPipeError, ValueError) as exc:
         log.info('local client ended: %s', exc)
       finally:
