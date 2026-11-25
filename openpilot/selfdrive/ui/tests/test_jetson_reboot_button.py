@@ -60,10 +60,27 @@ def _apply(monkeypatch, cond):
   # (test_no_vehicle_condition_code_left); the Jetson side here has no HUD snapshot at all.
 
 
+def _jetson_server(monkeypatch):
+  """The Jetson tools/jetlink/server.py by file path: a bare `import server` picks whichever top-level
+  `server` is first on sys.path (openpilot/selfdrive/carrot/server when the carrot tests ran first)."""
+  import importlib.util
+  import sys
+  from pathlib import Path
+  jetlink = Path(__file__).resolve().parents[4] / "tools/jetlink"
+  monkeypatch.syspath_prepend(str(jetlink))   # its own sibling imports (host_reboot, jetlink, ...)
+  name = "k9_test_jetson_server"
+  if name not in sys.modules:
+    spec = importlib.util.spec_from_file_location(name, jetlink / "server.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+  return sys.modules[name]
+
+
 class _Wire:
   """jetlinkd Client <-> Jetson server.py session in one process; reboot command recorded, never run."""
   def __init__(self, monkeypatch):
-    import server
+    server = _jetson_server(monkeypatch)
     self.calls, self.replies, self.seq = [], [], 0
     self.session = server.CarrotSession.__new__(server.CarrotSession)
     self.session.last_seq = 0

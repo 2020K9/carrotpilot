@@ -136,7 +136,7 @@ def launch(root, action='activate', env=None, new_timeout=20, legacy_timeout=20,
   args = [PY, str(root / 'opt/carrot-jetlink/launcher/updater_launcher.py'), action, '--root', str(root),
           '--new-timeout', str(new_timeout), '--legacy-timeout', str(legacy_timeout)]
   if background:
-    return subprocess.Popen(args, env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return subprocess.Popen(args, env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
   return subprocess.run(args, env=e, capture_output=True, text=True, timeout=120)
 
 
@@ -226,10 +226,10 @@ def test_real_new_updater_signature_failure_is_classified_verify(tmp_path):
   wrapper.write_text(f'import sys,json;sys.path.insert(0,{str(slot)!r});import update_host as u\n'
                      + 'u.verify_signature({"source_commit":"x","signature":"AAAA"})\n')
   result = tmp_path / 'res.json'
-  lock = (root / 'run/carrot-jetlink-update.lock').open('a')
-  code = subprocess.run([PY, str(HERE / 'updater_launcher.py'), '--child', str(wrapper), 'activate', str(result),
-                         str(lock.fileno()), str(root / 'opt/carrot-jetlink')], pass_fds=(lock.fileno(),),
-                        capture_output=True, text=True, timeout=60)
+  with (root / 'run/carrot-jetlink-update.lock').open('a') as lock:
+    code = subprocess.run([PY, str(HERE / 'updater_launcher.py'), '--child', str(wrapper), 'activate', str(result),
+                           str(lock.fileno()), str(root / 'opt/carrot-jetlink')], pass_fds=(lock.fileno(),),
+                          capture_output=True, text=True, timeout=60)
   assert code.returncode == 1 and json.loads(result.read_text())['kind'] == 'verify', code.stderr
   assert real.read_bytes() == (HERE / 'update_host.py').read_bytes()
 

@@ -250,6 +250,18 @@ msgid "Change Language"
 msgstr "언어 변경"
 
 #: openpilot/selfdrive/selfdrived/events.py
+msgid "Auto Hold Active"
+msgstr "오토홀드 작동 중"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "전방 물체 주의"
+msgstr "전방 물체 주의"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "전방을 확인하고 감속을 준비하세요"
+msgstr "전방을 확인하고 감속을 준비하세요"
+
+#: openpilot/selfdrive/selfdrived/events.py
 msgid "Changing Lanes"
 msgstr "차선을 변경합니다"
 

@@ -387,7 +387,6 @@ async def device_network_context(app: web.Application):
       await asyncio.sleep(DEVICE_NETWORK_REFRESH_INTERVAL_SEC)
 
   task = asyncio.create_task(refresh_loop(), name="device-network-refresh")
-  app["device_network_refresh_task"] = task
   try:
     yield
   finally:
@@ -396,7 +395,6 @@ async def device_network_context(app: web.Application):
       await task
     except asyncio.CancelledError:
       pass
-    app.pop("device_network_refresh_task", None)
 
 
 def register(app: web.Application) -> None:

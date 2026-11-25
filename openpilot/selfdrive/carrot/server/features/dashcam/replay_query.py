@@ -522,7 +522,7 @@ def query_field_events(
     extracted_value_count += len(values)
     if exact_integer and all(isinstance(value, int) and not isinstance(value, bool) for value in values):
       integers = [int(value) for value in values]
-      value_kind = "integer64-list" if len(integers) > 1 else "integer64"
+      value_kind = "integer64-list" if "[]" in path else "integer64"
       for value in integers:
         integer64.observe(value, valid)
       if redact:
@@ -551,7 +551,7 @@ def query_field_events(
     normalized = [_scalar(value) for value in values]
     kinds = {kind for kind, _value in normalized}
     if kinds <= {"number", "nonfinite"}:
-      value_kind = "number-list" if len(values) > 1 else "number"
+      value_kind = "number-list" if "[]" in path else "number"
       finite = [float(value) for kind, value in normalized if kind == "number"]
       nonfinite_count += sum(1 for kind, _value in normalized if kind == "nonfinite")
       for value in finite:

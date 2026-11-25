@@ -250,6 +250,38 @@ msgid "Change Language"
 msgstr "更改语言"
 
 #: openpilot/selfdrive/selfdrived/events.py
+msgid "Auto Hold Active"
+msgstr "自动驻车已启用"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "전방 물체 주의"
+msgstr "注意前方物体"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "전방을 확인하고 감속을 준비하세요"
+msgstr "请注意前方并准备减速"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "CAN Controller Fault"
+msgstr "CAN 控制器故障"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "CAN Controller Fault: Check Connections"
+msgstr "CAN 控制器故障：请检查连接"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "Front Safety System Fault"
+msgstr "前方安全系统故障"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "Front Safety System Fault: Check Vehicle"
+msgstr "前方安全系统故障：请检查车辆"
+
+#: openpilot/selfdrive/selfdrived/events.py
+msgid "Rebooting into Dashcam Mode"
+msgstr "正在重启进入行车记录仪模式"
+
+#: openpilot/selfdrive/selfdrived/events.py
 msgid "Changing Lanes"
 msgstr "正在变道"
 
