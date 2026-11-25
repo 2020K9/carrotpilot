@@ -497,6 +497,8 @@ class ClusterUiState:
     traffic_state: int = 0
     driving_mode: int | None = None
     git_status: GitBranchStatus | None = None
+    # 11/26 06:18: bottom-left C4/J version lines, (text, kind) segments; () = the old branch row
+    version_lines: tuple = ()
     actual_fps: float | None = None
     cluster_core_usage_text: str | None = None
     cpu_usage_percent: float | None = None

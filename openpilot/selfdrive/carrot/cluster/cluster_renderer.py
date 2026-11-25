@@ -961,6 +961,11 @@ GIT_STATUS_BOTTOM_MARGIN = 12
 GIT_STATUS_DOT_RADIUS = 7
 GIT_STATUS_DOT_TEXT_GAP = 6
 GIT_STATUS_MAX_TEXT_W = 610
+VERSION_LINE_SIZE = 15
+VERSION_LINE_MARGIN = 4.0
+VERSION_LINE_GAP = 2.0
+VERSION_LINE_COLORS = {'text': (170, 178, 186), 'ok': (100, 225, 170), 'bad': (255, 90, 90),
+                       'unknown': (255, 205, 70)}
 FPS_STATUS_MARGIN = 4
 FPS_STATUS_DOT_RADIUS = 7
 FPS_STATUS_DOT_TEXT_GAP = 6
@@ -9026,10 +9031,12 @@ class ClusterUiRenderer:
             rl.rl_push_matrix()
             try:
                 rl.rl_translatef(offset_x, 0.0, 0.0)
+                self._version_lines = getattr(state, "version_lines", ())
                 self._draw_git_status(state.git_status, state.network_address, state.actual_fps)
             finally:
                 rl.rl_pop_matrix()
         else:
+            self._version_lines = getattr(state, "version_lines", ())
             self._draw_git_status(state.git_status, state.network_address, state.actual_fps)
         self._profile_add("hud.git_status", profile_stage)
         if include_core_usage:
@@ -11678,6 +11685,21 @@ class ClusterUiRenderer:
     ) -> None:
         if status is None and network_address is None:
             return
+        version_lines = getattr(self, "_version_lines", ())
+        if status is not None and version_lines:
+            # 11/26 06:18: C4/J version lines take the branch row; the network/FPS row moves up above them
+            block = self._draw_version_segments(version_lines)
+            if network_address:
+                _, base_h = self._measure_text("0", 20, 0.4)
+                row_h = max(base_h, GIT_STATUS_DOT_RADIUS * 2)
+                shift = max(0.0, VERSION_LINE_MARGIN + block + 2.0 - (GIT_STATUS_BOTTOM_MARGIN + row_h + 4.0))
+                rl.rl_push_matrix()
+                try:
+                    rl.rl_translatef(0.0, -shift, 0.0)
+                    self._draw_git_status(None, network_address, actual_fps)
+                finally:
+                    rl.rl_pop_matrix()
+            return
 
         theme = self._current_theme()
         text_size = 20
@@ -11708,6 +11730,34 @@ class ClusterUiRenderer:
             )
             network_width, _ = self._measure_text(network_text, text_size, spacing)
             self._draw_actual_fps(actual_fps, text_x + network_width + 18.0, network_y)
+
+    def _draw_version_segments(self, lines, max_width: float = GIT_STATUS_MAX_TEXT_W) -> float:
+        """Bottom line at the very bottom-left, the others above it; each line = (text, kind) segments,
+        'bad' (불일치/다름) red, 'unknown' (확인 불가) amber, 'ok' green. Returns the block height."""
+        size = VERSION_LINE_SIZE
+        spacing = max(1.0, size * 0.02)
+        _, h = self._measure_text("0", size, spacing)
+        y = DESIGN_HEIGHT - VERSION_LINE_MARGIN - h * 0.5
+        for line in reversed(tuple(lines)):
+            x = VERSION_LINE_MARGIN
+            if isinstance(line, str):
+                line = ((line, "text"),)
+            for text, kind in line:
+                room = VERSION_LINE_MARGIN + max_width - x
+                if room <= 8.0 or not text:
+                    break
+                # spaces around a segment as a fixed gap (raylib measures them unevenly)
+                lead, trail = len(text) - len(text.lstrip()), len(text) - len(text.rstrip())
+                x += lead * size * 0.3
+                text = self._ellipsize_text(text.strip(), size, room)
+                color = VERSION_LINE_COLORS.get(kind, VERSION_LINE_COLORS["text"])
+                if text:
+                    self._draw_text_with_stroke(text, x, y, size, color, (5, 9, 12), 2, cache=True)
+                    x += self._measure_text(text, size, spacing)[0]
+                x += trail * size * 0.3
+            y -= h + VERSION_LINE_GAP
+        n = len(tuple(lines))
+        return n * h + max(0, n - 1) * VERSION_LINE_GAP
 
     def _draw_actual_fps(self, actual_fps: float | None, x: float, center_y: float) -> None:
         if actual_fps is None or not math.isfinite(actual_fps):

@@ -115,6 +115,10 @@ class CarrotSession(Session):
       if host == 'jetson':
         obj[request_chunks.CAPABILITY] = request_chunks.descriptor()
         obj['carrot_source_commit'] = (ROOT / 'SOURCE_COMMIT').read_text().strip()
+        try:   # 11/26 06:18: owner of the bundle's checkout, for the comma HUD J line ('' = old bundle)
+          obj['carrot_source_origin'] = (ROOT / 'SOURCE_ORIGIN').read_text().splitlines()[0].strip()[:200]
+        except (OSError, IndexError):
+          obj['carrot_source_origin'] = ''
         obj['carrot_boot_update_installed'] = Path('/opt/carrot-jetlink/boot-update-required').is_file()
     return super()._send_json(msg_type, seq, obj, flags)
 

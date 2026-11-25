@@ -53,6 +53,7 @@ from cluster_config import (
 )
 from cluster_gamepad import DualSenseSimulator
 from cluster_git_status import GitBranchStatusProvider
+from cluster_version_badge import CommaVersionBadge
 from cluster_gles_dmabuf import DirectNv12DmabufError
 from cluster_gles_readback import DirectNv12ReadbackError
 from cluster_display import CLUSTER_LANGUAGE_KO, normalize_cluster_language, normalize_metric_setting
@@ -1011,6 +1012,7 @@ def run_demo(
     )
     renderer.set_profile_enabled(profile_render)
     git_status_provider = GitBranchStatusProvider(Path(__file__).resolve().parent)
+    version_badge = CommaVersionBadge(git_status_provider.repo_path)
     network_address_provider = NetworkAddressProvider()
     cluster_core_usage_sampler = (
         ClusterProcessCoreUsageSampler(debug=cluster_core_usage_debug)
@@ -1723,6 +1725,7 @@ def run_demo(
                 cluster_core_usage_text = cluster_core_usage_sampler.sample_text(now)
                 profile.add_elapsed("main.cluster_core_usage_sample", profile_stage)
             network_address = network_address_provider.address(now)
+            git_status = git_status_provider.status()
             state = replace(
                 state,
                 radar_info_mode=active_radar_info_mode,
@@ -1730,7 +1733,8 @@ def run_demo(
                 radar_source_color_mode=active_radar_source_color_mode,
                 camera_view_mode=active_camera_view_mode,
                 center_clock_text=center_clock_text,
-                git_status=git_status_provider.status(),
+                git_status=git_status,
+                version_lines=version_badge.lines(git_status),
                 network_address=network_address,
                 network_connected=network_address is not None,
                 actual_fps=display_actual_fps,

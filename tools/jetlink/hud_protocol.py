@@ -186,6 +186,9 @@ class SnapshotBuilder:
     from openpilot.common.jetson_model import selected_release
     self.host_release = selected_release(release_file)
     self.comma_source = comma_source()
+    from openpilot.common.basedir import BASEDIR
+    from openpilot.selfdrive.carrot.cluster.cluster_version_badge import RemoteHead
+    self.remote_head = RemoteHead(BASEDIR if (Path(BASEDIR) / '.git').exists() else None)
     self.camera = None
     from hud_nav_map import NavPreviewPublisher
     self.nav_map = NavPreviewPublisher() if nav_map else None
@@ -262,6 +265,8 @@ class SnapshotBuilder:
               'dropped': dropped,
               **({'jetson_release': self.host_release} if self.host_release is not None else {}),
               **({'comma_source': source} if (source := getattr(self, 'comma_source', None)) else {}),
+              **({'comma_remote': head.status(_param_text(self.settings.get('GitBranch')))}
+                 if (head := getattr(self, 'remote_head', None)) is not None else {}),
               'vehicle_network_address': self.network.address(),
               'external_compute_label': device_badge[0] if device_badge and device_badge[1] == 'active' else '',
               'received': self.sm.recv_time, 'mono': self.sm.logMonoTime,
@@ -278,6 +283,13 @@ class SnapshotBuilder:
     data = encode_snapshot(record)
     self.report = snapshot_report(record, data)
     return data
+
+
+def _param_text(value):
+  try:
+    return base64.b64decode(value).decode('utf-8', 'replace').strip() if isinstance(value, str) else ''
+  except (ValueError, TypeError):
+    return ''
 
 
 def comma_source():

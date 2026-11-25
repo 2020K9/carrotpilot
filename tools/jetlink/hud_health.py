@@ -9,6 +9,7 @@ import time
 from host_health import STATUS
 from openpilot.common.jetlink_status import _fresh
 from cluster_models import GitBranchStatus
+import cluster_version_badge as VB
 from cluster_renderer import (ClusterUiRenderer, DESIGN_WIDTH, DESIGN_HEIGHT,
                               EGPU_STATUS_CENTER_X, TOP_STATUS_CENTER_Y, rl, rl_color)
 
@@ -311,6 +312,41 @@ def snapshot_git(record, old):
   return values
 
 
+def snapshot_versions(record, old):
+  """11/26 06:18: the release.json the comma's checkout selects (source_commit + model sha only) and its
+  background remote-head check; a missing or bad value keeps its last value."""
+  values = dict(old)
+  body = record[1] if record and isinstance(record[1], dict) else {}
+  release = body.get('jetson_release')
+  if isinstance(release, dict) and isinstance(release.get('source_commit'), str):
+    model = release.get('model') if isinstance(release.get('model'), dict) else {}
+    values['release'] = {'source_commit': release['source_commit'][:64],
+                         'model': {'sha256': str(model.get('sha256', ''))[:64]}}
+  remote = body.get('comma_remote')
+  if isinstance(remote, dict) and remote.get('state') in ('ok', 'unknown', 'behind'):
+    values['remote'] = {k: remote[k] for k in ('state', 'sha', 'count') if k in remote and len(str(remote[k])) <= 64}
+  return values
+
+
+def bundle_commit(commit, path=BUNDLE_ROOT):
+  """SOURCE_COMMIT, or the 40-hex release folder name when the bundle has none; '' when neither."""
+  if _text(commit):
+    return _text(commit)
+  try:
+    name = Path(path).resolve().name
+  except OSError:
+    return ''
+  return name if re.fullmatch(r'[0-9a-f]{40}', name) else ''
+
+
+def version_lines(comma, jetson, versions):
+  """(C4 line, J line) segment tuples for the bottom-left block."""
+  c4 = VB.c4_line(comma.get('branch'), comma.get('remote'), comma.get('commit'), versions.get('remote'))
+  j = VB.j_line(jetson.get('model'), jetson.get('remote'), jetson.get('commit'), jetson.get('model_sha'),
+                comma.get('commit'), versions.get('release'))
+  return tuple(c4), tuple(j)
+
+
 def snapshot_comma_source(record, old):
   """The comma's install path / selected model name (comma_source) and the model of the Jetson release it
   asks for (jetson_release); a missing or bad value keeps its last value."""
@@ -371,6 +407,9 @@ class HealthRenderer(ClusterUiRenderer):
   _repo_next = 0.
   _repo_jetson = None
   _repo_in_footer = False
+  _repo_versions = {}
+  _repo_badge_key = None
+  _repo_badge = ()
 
   def repo_lines(self):
     now = time.monotonic()
@@ -386,6 +425,7 @@ class HealthRenderer(ClusterUiRenderer):
         record = read_snapshot()
         self._repo_git = snapshot_git(record, self._repo_git)
         self._repo_comma = snapshot_comma_source(record, self._repo_comma)
+        self._repo_versions = snapshot_versions(record, self._repo_versions)
       except Exception:
         pass
     git = self._repo_git
@@ -401,6 +441,15 @@ class HealthRenderer(ClusterUiRenderer):
         self._repo_model_sha = jetson['model_sha']
         self._repo_model_release = model_release(jetson['model_sha'])
       lines.append(link_line(getattr(self, '_repo_link', {}), *self._repo_model_release))
+      # 11/26 06:18: the C/J lines become C4/J version lines (owner 일치/불일치, commit, 같음/다름); rebuilt
+      # only when an input changes
+      key = (tuple(sorted((k, str(v)) for k, v in comma.items())), tuple(sorted((k, str(v)) for k, v in jetson.items())),
+             str(sorted(self._repo_versions.items())))
+      if key != self._repo_badge_key:
+        self._repo_badge_key = key
+        self._repo_badge = version_lines(comma, {**jetson, 'commit': bundle_commit(jetson.get('commit'))},
+                                         self._repo_versions)
+      lines[:2] = self._repo_badge
     return lines
 
   def _repo_line_height(self):
@@ -411,10 +460,27 @@ class HealthRenderer(ClusterUiRenderer):
     """Bottom line at the very bottom-left, the others stacked above it (design coordinates)."""
     h = self._repo_line_height()
     y = DESIGN_HEIGHT - REPO_LABEL_MARGIN - h * .5
+    spacing = max(1., REPO_LABEL_SIZE * .02)
     for text in reversed(lines):
-      text = self._ellipsize_text(text, REPO_LABEL_SIZE, REPO_LABEL_MAX_W)
-      self._draw_text_with_stroke(text, REPO_LABEL_MARGIN, y, REPO_LABEL_SIZE, REPO_LABEL_COLOR, (5, 9, 12), 2,
-                                  cache=True)
+      if isinstance(text, str):
+        text = self._ellipsize_text(text, REPO_LABEL_SIZE, REPO_LABEL_MAX_W)
+        self._draw_text_with_stroke(text, REPO_LABEL_MARGIN, y, REPO_LABEL_SIZE, REPO_LABEL_COLOR, (5, 9, 12), 2,
+                                    cache=True)
+      else:   # (text, kind) segments: 불일치/다름 red, 확인 불가 amber, 일치/같음 green
+        x = REPO_LABEL_MARGIN
+        for part, kind in text:
+          room = REPO_LABEL_MARGIN + REPO_LABEL_MAX_W - x
+          if room <= 8. or not part:
+            break
+          # spaces around a segment as a fixed gap (raylib measures them unevenly)
+          lead, trail = len(part) - len(part.lstrip()), len(part) - len(part.rstrip())
+          x += lead * REPO_LABEL_SIZE * .3
+          part = self._ellipsize_text(part.strip(), REPO_LABEL_SIZE, room)
+          color = {'ok': NORMAL, 'bad': ERROR, 'unknown': WARNING}.get(kind, REPO_LABEL_COLOR)
+          if part:
+            self._draw_text_with_stroke(part, x, y, REPO_LABEL_SIZE, color, (5, 9, 12), 2, cache=True)
+            x += self._measure_text(part, REPO_LABEL_SIZE, spacing)[0]
+          x += trail * REPO_LABEL_SIZE * .3
       y -= h + REPO_LABEL_LINE_GAP
     return len(lines) * h + (len(lines) - 1) * REPO_LABEL_LINE_GAP
 
