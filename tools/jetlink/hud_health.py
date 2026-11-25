@@ -209,6 +209,62 @@ def _short_path(value):
   return re.sub(r'\b([0-9a-f]{8})[0-9a-f]{32}\b', r'\1', _text(value)) or UNKNOWN_TEXT
 
 
+# 11/26 00:26 (대감님 "hud에 콤마·젯슨 어디하고 연결돼 있는지"): one more line under the three, read from what is
+# installed on this Jetson (never a fixed string):
+#   J 받기 <owner/repo of the installed updater's allowed releases> · 키 <signing key> · 모델 <release the model came from>
+UPDATER_DIR = Path('/opt/carrot-jetlink/updater')
+K9_RELEASE_KEY = '7c687e286025c2bf839062e2cb5c6ee0614d7d4fec656dd81accb7748566cefd'   # = release_parts.PUBLIC_KEY
+RELEASE_URL = re.compile(r'github\.com/([^/\s]+/[^/\s]+)/releases/download/([^/\s]+)/')
+
+
+def updater_link(directory=UPDATER_DIR):
+  """{'release': owner/repo the installed updater accepts, 'key': raw Ed25519 public key hex}; '' when unknown."""
+  link = {'release': '', 'key': ''}
+  try:
+    m = re.search(r"RELEASE_HOST, RELEASE_PREFIX = 'github\.com', '/([^/']+/[^/']+)/releases/download/'",
+                  (directory / 'update_host.py').read_text())
+    link['release'] = m.group(1) if m else ''
+  except OSError:
+    pass
+  try:
+    lines = (directory / 'release-signing-public.pem').read_text().splitlines()
+    der = base64.b64decode(''.join(x.strip() for x in lines if x.strip() and not x.startswith('-----')), validate=True)
+    link['key'] = der[-32:].hex() if len(der) == 44 else ''
+  except (OSError, ValueError):
+    pass
+  return link
+
+
+def model_release(sha256, roots=(CATALOG_DIR, BUNDLE_ROOT / 'openpilot/selfdrive/modeld/jetlink')):
+  """(owner/repo, release tag) of the signed release manifest in this bundle whose model is this ONNX; ('', '')."""
+  sha = _text(sha256).lower()
+  if not sha:
+    return '', ''
+  for root in roots:
+    try:
+      paths = sorted(Path(root).glob('*.json'))
+    except OSError:
+      continue
+    for path in paths:
+      try:
+        model = json.loads(path.read_text(encoding='utf-8')).get('model')
+        if isinstance(model, dict) and str(model.get('sha256', '')).lower() == sha:
+          m = RELEASE_URL.search(str(model.get('url', '')))
+          if m:
+            return m.group(1), m.group(2)
+      except (OSError, ValueError, AttributeError):
+        continue
+  return '', ''
+
+
+def link_line(link, model_repo='', model_tag=''):
+  release, key = _text(link.get('release')), _text(link.get('key'))
+  key_text = ('2020K9' if key == K9_RELEASE_KEY else key[:8]) if key else UNKNOWN_TEXT
+  model_tag = re.sub(r'^k9-comma4-big-', '', _text(model_tag))   # shared prefix of every model release, to fit
+  model = ' '.join(x for x in ((model_repo if model_repo != release else ''), model_tag) if x)
+  return f'J 받기 {release or UNKNOWN_TEXT} · 키 {key_text} · 모델 {model or UNKNOWN_TEXT}'
+
+
 def read_jetson_commit(path=SOURCE_COMMIT_FILE):
   try:
     return path.read_text().strip()
@@ -324,6 +380,7 @@ class HealthRenderer(ClusterUiRenderer):
         remote, branch = read_jetson_origin()
         self._repo_jetson = {'remote': remote, 'branch': branch, 'commit': read_jetson_commit(),
                              'path': str(BUNDLE_ROOT)}
+        self._repo_link = updater_link()
       try:
         from hud_protocol import read_snapshot
         record = read_snapshot()
@@ -338,7 +395,13 @@ class HealthRenderer(ClusterUiRenderer):
     jetson = {**self._repo_jetson, 'model': catalog_names(sha), 'model_sha': _text(sha)}
     comma = {'remote': git.get('GitRemote'), 'branch': git.get('GitBranch'), 'commit': git.get('GitCommit'),
              **self._repo_comma}
-    return repo_lines(comma, jetson)
+    lines = repo_lines(comma, jetson)
+    if lines:
+      if getattr(self, '_repo_model_sha', None) != jetson['model_sha']:
+        self._repo_model_sha = jetson['model_sha']
+        self._repo_model_release = model_release(jetson['model_sha'])
+      lines.append(link_line(getattr(self, '_repo_link', {}), *self._repo_model_release))
+    return lines
 
   def _repo_line_height(self):
     _, h = self._measure_text('0', REPO_LABEL_SIZE, max(1., REPO_LABEL_SIZE * .02))
@@ -362,6 +425,10 @@ class HealthRenderer(ClusterUiRenderer):
     if not lines:
       super()._draw_git_status(status, network_address, actual_fps)
       return
+    if len(lines) == 4:
+      # driving screen: four lines would reach the speed arc, so the connection line takes the install-path row
+      # here (the path is still shown on P/R and K9 board screens)
+      lines = lines[:2] + lines[3:]
     self._repo_in_footer = True
     block = self._draw_repo_lines(lines)
     if network_address:
