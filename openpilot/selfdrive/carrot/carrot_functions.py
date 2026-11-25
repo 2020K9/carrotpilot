@@ -734,7 +734,10 @@ class CarrotPlanner:
       self.traffic_starting_count = max(0, self.traffic_starting_count - 1)
       if lead_detected:
         self.xState = XState.lead
-      elif self.trafficState == TrafficState.red and is_traffic_stop_entry_allowed(carstate.steeringAngleDeg) and self.traffic_starting_count == 0:
+      # A gas still held when the red appears is no answer to a stop yet: entering here let the next frame's gas arm the
+      # 10 s red-ignore (joongyu01 b0daa949, 11-09 00:11:29.5: red ignored at 50 km/h until the driver braked at -4 m/s2).
+      elif (self.trafficState == TrafficState.red and is_traffic_stop_entry_allowed(carstate.steeringAngleDeg)
+            and self.traffic_starting_count == 0 and not carstate.gasPressed):
         self.add_signal_event(EventName.trafficStopping)
         self.xState = XState.e2eStop
         self.actual_stop_distance = stop_model_x_rl
