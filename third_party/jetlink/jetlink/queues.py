@@ -276,7 +276,7 @@ class StatefulQueues:
         if name not in outputs or outputs[name].shape != shape:
           raise ValueError(f'Invalid stateful output shape: {name}')
         if not self._all_finite(outputs[name]):
-          raise FloatingPointError(finite_detail(name, outputs[name]))
+          raise FloatingPointError(f'Non-finite stateful output: {name}')
       for name, output in self.spec.state_pairs.items():
         if outputs[output].dtype != self.state[name].dtype:
           raise ValueError(f'State feedback dtype mismatch: {name}')
@@ -285,17 +285,6 @@ class StatefulQueues:
     except (ValueError, FloatingPointError):
       self.reset()
       raise
-
-
-def finite_detail(name, value, slices=None):
-  bad = ~np.isfinite(value.reshape(-1))
-  if not bad.any():
-    return f'tensor={name} reason=detector_disagreement'
-  i = int(bad.argmax())
-  x = value.flat[i]
-  kind = 'NaN' if np.isnan(x) else '+Inf' if x > 0 else '-Inf'
-  field = next((k for k, s in (slices or {}).items() if i in range(*s.indices(value.size))), None)
-  return f'tensor={name} index={i} value={kind} count={int(bad.sum())}' + (f' field={field}' if field else '')
 
 
 class DeviceStateQueues(StatefulQueues):

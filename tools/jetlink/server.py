@@ -63,7 +63,7 @@ class CarrotSession(Session):
     if msg_type == P.Msg.INFER_RESP and self.telemetry.health is not None:
       _, status, gpu_us, _, total_us = P.unpack_infer_resp(parts[0])
       if status != P.Status.OK:
-        self.telemetry.health.record_error('Inference', self._finite_event if status == P.Status.NOT_FINITE and hasattr(self, '_finite_event') else f'result status {status}')
+        self.telemetry.health.record_error('Inference', f'result status {status}')
       else:
         self.telemetry.health.note_inference(gpu_us, total_us)  # HUD diagnostics, memory only
     return super()._send(msg_type, seq, parts, flags)

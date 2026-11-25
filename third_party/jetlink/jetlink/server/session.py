@@ -679,11 +679,9 @@ class Session:
   def _greet(self, msg: Message) -> None:
     """Start the session over for whoever just said hello."""
     who = ''
-    self._finite_detail_peer = False
     offered_projection = None
     try:
       d = json.loads(bytes(msg.payload) or b'{}').get('client') or {}
-      self._finite_detail_peer = d.get('finite_detail_v1') is True
       offered_projection = d.get(projection.CAPABILITY)
       who = f"{d.get('name') or 'client'}/{d.get('nonce') or '?'}"
     except (ValueError, AttributeError):
@@ -851,14 +849,8 @@ class Session:
         loaded.queues.feedback(outputs)
       else:
         loaded.queues.reset()
-        from jetlink.queues import finite_detail
-        detail = 'stage=output ' + finite_detail('outputs', out32, spec.output_slices)
-    except FloatingPointError as exc:
+    except FloatingPointError:
       status = P.Status.NOT_FINITE
-      detail = f'stage=feedback {exc}'
-    if status == P.Status.NOT_FINITE:
-      self._finite_event = f'JL_NF frame={frame_id} model={spec.sha256[:12]} {detail}'[:220]
-      log.error('%s', self._finite_event)
 
     total_us = int((time.perf_counter() - t0) * 1e6)
     # Do not trim before full output validation and queues.feedback above.
@@ -868,9 +860,6 @@ class Session:
              out32[:projection.COUNT] if projected else out32]
     if flags & P.Flag.WANT_STATE:
       parts.append(json.dumps(self.telemetry.read()).encode())
-    if status == P.Status.NOT_FINITE and getattr(self, '_finite_detail_peer', False):
-      # Failure-only, opt-in trailer directly after full outputs, before optional telemetry.
-      parts.insert(2, (self._finite_event + '\x00').encode('ascii', 'replace'))
     send_started = time.perf_counter()
     if projected:
       self._send(P.Msg.INFER_RESP, msg.seq, parts, flags=projection.FLAG)
