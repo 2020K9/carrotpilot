@@ -437,7 +437,8 @@ def flash_partition(target_slot_number: int, partition: dict, cloudlog, standalo
 
 
 def swap(manifest_path: str, target_slot_number: int, cloudlog) -> None:
-  update = json.load(open(manifest_path))
+  with open(manifest_path) as manifest_file:
+    update = json.load(manifest_file)
   for partition in update:
     if not partition.get('full_check', False):
       clear_partition_hash(target_slot_number, partition)
@@ -477,7 +478,8 @@ def transient_download_error(error: requests.exceptions.RequestException) -> boo
 
 
 def flash_agnos_update(manifest_path: str, target_slot_number: int, cloudlog, standalone=False, retry_network=False) -> None:
-  update = json.load(open(manifest_path))
+  with open(manifest_path) as manifest_file:
+    update = json.load(manifest_file)
 
   cloudlog.info(f"Target slot {target_slot_number}")
 
@@ -503,7 +505,8 @@ def flash_agnos_update(manifest_path: str, target_slot_number: int, cloudlog, st
 
 
 def verify_agnos_update(manifest_path: str, target_slot_number: int) -> bool:
-  update = json.load(open(manifest_path))
+  with open(manifest_path) as manifest_file:
+    update = json.load(manifest_file)
   return all(verify_partition(target_slot_number, partition) for partition in update)
 
 

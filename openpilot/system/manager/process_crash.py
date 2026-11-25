@@ -171,7 +171,7 @@ class CrashCollector:
         return
       path.with_suffix('.txt').write_text('PROCESS_EXIT ' + json.dumps(event) + '\n\n' + text, encoding='utf-8')
       self.write_json(path.with_suffix('.json'), {'event': event, 'payload': payload, 'sent': []})
-      reports = sorted(self.root.glob('*.json'), key=lambda p: p.stat().st_mtime_ns)
+      reports = sorted(self.root.glob('*.json'), key=lambda p: (p.stat().st_mtime_ns, tuple(int(x) for x in p.stem.split('-'))))
       for old in reports[:-MAX_REPORTS]:
         old.with_suffix('.txt').unlink(missing_ok=True)
         old.unlink(missing_ok=True)

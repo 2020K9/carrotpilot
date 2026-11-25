@@ -137,7 +137,7 @@ class TestStreamSession:
     proxy = CerealOutgoingMessageProxy(mocked_submaster)
     proxy.add_channel(channel)
 
-    proxy.update()
+    self.loop.run_until_complete(proxy.update())
 
     channel.send.assert_called_once_with(expected_json)
 
