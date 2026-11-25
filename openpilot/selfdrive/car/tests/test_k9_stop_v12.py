@@ -31,6 +31,7 @@ the "unknown marker" case of test_migration is 11 (10 is the current marker now)
 Pin updated 2026-10-25 evening (brake_v12k9_live_fix): test_v12k9_jerk_and_band expects the menu 2 ComfortBand (original band at
 or below 2.5 m/s, linear to 0 at 3.0 m/s, 0 above) instead of 0 everywhere.
 """
+import ast
 import hashlib
 import math
 import random
@@ -128,6 +129,35 @@ def test_menu():
     assert not hasattr(kc, gone) and not hasattr(carcontroller, gone), gone
 
 
+def _cc_added_sites(rev_a, rev_b=None):
+  """Lines added to carcontroller.py from rev_a to rev_b (None: the working tree), each with its site: the text, the
+  enclosing class / function path and the nearest code line above and below (blank and comment lines skipped)."""
+  args = ["git", "diff", "-U0", rev_a] + ([rev_b] if rev_b else []) + ["--", CC_REL]
+  d = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, check=True).stdout
+  if rev_b:
+    src = subprocess.run(["git", "show", f"{rev_b}:{CC_REL}"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+  else:
+    src = (ROOT / CC_REL).read_text(encoding="utf-8")
+  nums, n = [], 0
+  for l in d.splitlines():
+    if l.startswith("@@"):
+      n = int(l.split("+")[1].split(",")[0].split()[0])
+    elif l.startswith("+") and not l.startswith("+++"):
+      nums.append(n)
+      n += 1
+  lines = src.split("\n")
+  spans = sorted((node.lineno, node.end_lineno, node.name) for node in ast.walk(ast.parse(src))
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+  code = lambda t: t.strip() and not t.strip().startswith("#")
+  sites = []
+  for i in nums:
+    path = "/".join(name for a, b, name in spans if a <= i <= b)
+    up = next((lines[j - 1].strip() for j in range(i - 1, 0, -1) if code(lines[j - 1])), "")
+    dn = next((lines[j - 1].strip() for j in range(i + 1, len(lines) + 1) if code(lines[j - 1])), "")
+    sites.append((lines[i - 1], path, up, dn))
+  return sites
+
+
 def test_carcontroller_diff_is_menu_wiring_only():
   """Every line added to carcontroller.py since PREV is one of the listed menu-wiring lines. Both creep_fix page blocks
   left the tree with their menu entry (the v12 original 2026-10-29 05:40, the v14 original 07:10), so there is no pasted
@@ -139,20 +169,23 @@ def test_carcontroller_diff_is_menu_wiring_only():
   # 2b202df1 (never built for the K9: needs CC_ONLY_CAR + PEDAL_INTERCEPTOR on the Ray EV). Only the lines that upstream
   # file has and the K9 tree just before that restore (751fca5e) lacked count as such; every other added line still has
   # to be menu wiring.
-  back = subprocess.run(["git", "diff", "-U0", "751fca5e", "2b202df1", "--", CC_REL], cwd=ROOT, capture_output=True,
-                        text=True, check=True).stdout
-  pedal = {l[1:] for l in back.splitlines() if l.startswith("+") and not l.startswith("+++")}
   # Carrot upstream (ajouatom) commits merged 11/22 (2a0fc793) and 11/24 (b62bb4f2): APRK probe memory and the HUD call.
   # Their own added lines are upstream code, not K9 page code.
+  # 2026-11-26 (노비 05:53, test_harden_1126): an upstream line is allowed only at its own site - same class / function
+  # and the same code line above or below as in the commit that added it - and only as many times as that commit added
+  # it there. The text alone is not enough: the same text pasted at another site (e.g. a second
+  # `self.aprk_no_reply_at = 0` in __init__, or a bare `else:`) is not that upstream line.
+  allowed = _cc_added_sites("751fca5e", "2b202df1")
   for c in ("bf11c138", "77dd3335", "6a9225b5"):
-    up = subprocess.run(["git", "diff", "-U0", f"{c}^", c, "--", CC_REL], cwd=ROOT, capture_output=True,
-                        text=True, check=True).stdout
-    pedal |= {l[1:] for l in up.splitlines() if l.startswith("+") and not l.startswith("+++")}
-  for l in added:  # wiring only: comments, the K9Creep band call arguments
+    allowed += _cc_added_sites(f"{c}^", c)
+  unused = list(allowed)
+  for l, path, up, dn in _cc_added_sites(PREV):  # wiring only: comments, the K9Creep band call arguments
     s = l.strip()
-    if l in pedal:
+    if not s or s.startswith("#") or "cb_prev" in s or "creep_obj" in s:
       continue
-    assert s.startswith("#") or "cb_prev" in s or "creep_obj" in s, l
+    hit = next((k for k, (al, ap, au, ad) in enumerate(unused) if al == l and ap == path and (au == up or ad == dn)), None)
+    assert hit is not None, (l, path, up, dn)
+    unused.pop(hit)
 
 
 def test_v13_and_v14_page_code_gone():

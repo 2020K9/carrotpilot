@@ -251,22 +251,47 @@ def test_selfdrive_step_disables_and_blocks_reentry():
   assert not drive.enabled and not drive.active
 
 
-def test_final_can_boundary_neutralizes_queued_control():
+def _final_boundary_cc(reboot):
+  """Runs card.py's own statements from the impact_reboot assignment through its guard (nothing taken out, nothing
+  added) with the param set to `reboot`, and returns (impact_reboot, the CC they leave, the CC they got)."""
   path = Path(__file__).parents[2] / 'car/card.py'
   tree = ast.parse(path.read_text(encoding='utf-8'))
   # d40c8d24 (jixiexiaoge, 11/07) reads the param once into impact_reboot and reuses it below; the guard body is the same.
   assign = next(n for n in ast.walk(tree) if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == 'impact_reboot')
   assert ast.unparse(assign.value) == "self.params.get_bool('ImpactDashcamReboot')"
-  guard = next(n for n in ast.walk(tree) if isinstance(n, ast.If) and ast.unparse(n.test) == 'impact_reboot')
+  func = next(f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and any(n is assign for n in ast.walk(f)))
+  # 2026-11-26 (노비 05:53, test_harden_1126): impact_reboot is bound exactly once in that function, so the guard and the
+  # kick / Tesla gates below all see the param value (an `impact_reboot = False` anywhere else would hide the reboot).
+  stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == 'impact_reboot' and isinstance(n.ctx, ast.Store)]
+  assert len(stores) == 1, [n.lineno for n in stores]
+  body = next(b for n in ast.walk(func) for b in [getattr(n, 'body', None)] if isinstance(b, list) and assign in b)
+  i = body.index(assign)
+  j = next(k for k in range(i + 1, len(body)) if isinstance(body[k], ast.If) and ast.unparse(body[k].test) == 'impact_reboot')
   cc = car.CarControl.new_message()
   cc.enabled = cc.latActive = cc.longActive = True
   cc.actuators.accel = 2.0
   cc.actuators.torque = 0.8
   cc.cruiseControl.resume = cc.cruiseControl.override = True
-  ns = {'self': SimpleNamespace(params={REBOOT_KEY: True}), 'CC': cc.as_reader(),
+  params = Memory()
+  params[REBOOT_KEY] = reboot
+  cc_in = cc.as_reader()
+  ns = {'self': SimpleNamespace(params=params), 'CC': cc_in,
         'CS': SimpleNamespace(cruiseState=SimpleNamespace(enabled=True)), 'car': car}
-  exec(compile(ast.fix_missing_locations(ast.Module(body=guard.body, type_ignores=[])), str(path), 'exec'), ns)
-  result = ns['CC']
+  exec(compile(ast.fix_missing_locations(ast.Module(body=body[i:j + 1], type_ignores=[])), str(path), 'exec'), ns)
+  return ns['impact_reboot'], ns['CC'], cc_in
+
+
+def test_final_can_boundary_neutralizes_queued_control():
+  assert REBOOT_KEY == 'ImpactDashcamReboot'
+  impact_reboot, result, _ = _final_boundary_cc(True)
+  assert impact_reboot is True
   assert not result.enabled and not result.latActive and not result.longActive
   assert result.actuators.accel == result.actuators.torque == 0
   assert result.cruiseControl.cancel and not result.cruiseControl.resume and not result.cruiseControl.override
+
+
+def test_final_can_boundary_passes_control_without_reboot():
+  impact_reboot, result, cc_in = _final_boundary_cc(False)
+  assert impact_reboot is False
+  assert result is cc_in
+  assert result.enabled and result.latActive and result.longActive and result.actuators.accel == 2.0

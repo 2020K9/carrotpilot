@@ -187,11 +187,17 @@ class TestLoggerd:
       assert logged_params[param_key].decode() == v
 
   @pytest.mark.xdist_group("camera_encoder_tests")  # setting xdist group ensures tests are run in same worker, prevents encoderd from crashing
-  def test_rotation(self):
+  # carrot (d89dda47): fcamera / ecamera follow RecordRoadCam (> 0 / > 1), default "0" -> not recorded.
+  # 2026-11-26 (노비 05:53, test_harden_1126): the road / wide cameras are checked again, on the same fake VisionIPC frames
+  # as the driver camera: None = the default (param not written), 1 = road, 2 = road + wide.
+  @pytest.mark.parametrize("record_road_cam, road_files", [(None, set()), (1, {"fcamera.hevc"}),
+                                                           (2, {"fcamera.hevc", "ecamera.hevc"})])
+  def test_rotation(self, record_road_cam, road_files):
     Params().put("RecordFront", True)
+    if record_road_cam is not None:
+      Params().put("RecordRoadCam", record_road_cam)
 
-    # carrot (d89dda47): fcamera / ecamera follow RecordRoadCam (> 0 / > 1), default "0" -> not recorded
-    expected_files = {"rlog.zst", "qlog.zst", "qcamera.ts", "dcamera.hevc"}
+    expected_files = {"rlog.zst", "qlog.zst", "qcamera.ts", "dcamera.hevc"} | road_files
 
     num_segs = random.randint(2, 3)
     length = random.randint(4, 5) # H264 encoder uses 40 lookahead frames and does B-frame reordering, so minimum 3 seconds before qcam output
