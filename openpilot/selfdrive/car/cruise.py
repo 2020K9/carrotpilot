@@ -227,6 +227,8 @@ class VCruiseCarrot:
     self.trafficState = 0
     self.aTarget = 0
     self.nRoadLimitSpeed = 30
+    self.autoRoadSpeedOnEngage = False
+    self._road_limit_live = False  # carrot_serv keeps the last limit (boot 30) after its source goes quiet
     self.desiredSpeed = 250
     self.road_limit_kph = 30
     self.nRoadLimitSpeed_last = 30
@@ -301,6 +303,7 @@ class VCruiseCarrot:
       self._lfa_button_mode = self.params.get_int("LfaButtonMode")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
       self.autoRoadSpeedLimitOffset = self.params.get_int("AutoRoadSpeedLimitOffset")
+      self.autoRoadSpeedOnEngage = self.params.get_bool("AutoRoadSpeedOnEngage")
       self.autoNaviSpeedSafetyFactor = self.params.get_float("AutoNaviSpeedSafetyFactor") * 0.01
       self.cruiseOnDist = self.params.get_float("CruiseOnDist") * 0.01
       cruiseSpeed1 = self.params.get_float("CruiseSpeed1") * unit_factor
@@ -319,12 +322,14 @@ class VCruiseCarrot:
     carrot_man = get_carrot_man(sm)
     if carrot_man is not None:
       self.nRoadLimitSpeed = carrot_man.nRoadLimitSpeed
+      self._road_limit_live = carrot_man.activeCarrot >= 2  # navigation app / KISA limit refreshed recently
       self.desiredSpeed = carrot_man.desiredSpeed
       self.carrot_cmd_index = carrot_man.carrotCmdIndex
       self.carrot_cmd = carrot_man.carrotCmd
       self.carrot_arg = carrot_man.carrotArg
     else:
       self.nRoadLimitSpeed = 0
+      self._road_limit_live = False
       self.desiredSpeed = 250
       self.carrot_cmd = ""
       self.carrot_arg = ""
@@ -622,6 +627,12 @@ class VCruiseCarrot:
     except (OSError, ValueError, TypeError):
       return None
 
+  def _live_road_limit(self, CS):
+    # The road limit only while a source is live: the car reports one this cycle, or the navigation app / KISA does.
+    # A stale value (boot 30, or the last highway limit after leaving it) once engaged SET- at 30 from 100 km/h.
+    live = getattr(CS, 'speedLimit', 0) > 0 or self._road_limit_live
+    return self.nRoadLimitSpeed if live and self.nRoadLimitSpeed > 0 else 0
+
   def _update_cruise_buttons(self, CS, CC, v_cruise_kph):
     command_start, command_cpu_start = time.monotonic_ns(), time.thread_time_ns()
     remote = self.bluetooth_commands.read(allowed=(CS.canValid and CS.cruiseState.available and
@@ -693,10 +704,11 @@ class VCruiseCarrot:
             v_cruise_kph = self._current_speed_for_initial_resume()
             self._cruise_speed_initialized = True
             self._add_log(f"{v_cruise_kph} Cruise resume from current speed")
-          if False: #self._cruise_button_mode in [2, 3]:
-            road_limit_kph = self.nRoadLimitSpeed * self.autoSpeedUptoRoadSpeedLimit
-            if road_limit_kph > 1.0:
-              v_cruise_kph = max(v_cruise_kph, road_limit_kph)
+          # AutoRoadSpeedOnEngage (joongyu01 586bfd8f/42e92df5): engaging with RES/+ below the live road speed limit
+          # starts at the limit; afterwards it is not followed.
+          road_limit = self._live_road_limit(CS)
+          if self.autoRoadSpeedOnEngage and not CC.enabled and road_limit > 0:
+            v_cruise_kph = max(v_cruise_kph, road_limit)
         else:
           # Once cruise is already active, RES/+ is a speed adjustment. Stale resume or
           # initialization state must not consume the first press without changing speed.
@@ -719,7 +731,10 @@ class VCruiseCarrot:
           self._paddle_decel_active = True
           pass
         elif not CC.enabled:
-          v_cruise_kph = max(self.v_ego_kph_set, self._cruise_speed_min)
+          # AutoRoadSpeedOnEngage (joongyu01 06b53bf5): SET- engage starts at the live road speed limit.
+          # Off (default): the current speed, as before.
+          road_limit = self._live_road_limit(CS) if self.autoRoadSpeedOnEngage else 0
+          v_cruise_kph = road_limit if road_limit > 0 else max(self.v_ego_kph_set, self._cruise_speed_min)
         elif self.v_ego_kph_set > v_cruise_kph + 2 and self._cruise_button_mode in [2, 3]:
           v_cruise_kph = max(self.v_ego_kph_set, self._cruise_speed_min)
         elif self._cruise_button_mode in [0, 1]:
