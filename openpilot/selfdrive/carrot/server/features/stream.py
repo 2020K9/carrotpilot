@@ -4,7 +4,7 @@ import time
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from ..config import WEBRTCD_URL
+from ..config import HTTP_SESSION, WEBRTCD_URL
 from ..services.vision_diag import record_stream_proxy_event
 
 
@@ -35,7 +35,7 @@ async def proxy_stream(request: web.Request) -> web.StreamResponse:
     **_request_summary(body),
   }
 
-  sess: ClientSession = request.app["http"]
+  sess: ClientSession = request.app[HTTP_SESSION]
 
   try:
     async with sess.post(WEBRTCD_URL, data=body, headers={"Content-Type": ct},

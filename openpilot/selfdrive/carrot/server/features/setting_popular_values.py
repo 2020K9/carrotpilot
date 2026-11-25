@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aiohttp import web
 
+from ..config import HTTP_SESSION
 from ..services.popular_values import (
   get_popular_value_detail,
   read_popular_values_memory,
@@ -30,7 +31,7 @@ async def api_setting_popular_value_detail(request: web.Request) -> web.Response
 
 
 async def api_setting_popular_values_refresh(request: web.Request) -> web.Response:
-  session = request.app.get("http")
+  session = request.app.get(HTTP_SESSION)
   if session is None:
     return web.json_response(read_popular_values_memory())
   cache = await refresh_popular_values_once(session, upload=True)

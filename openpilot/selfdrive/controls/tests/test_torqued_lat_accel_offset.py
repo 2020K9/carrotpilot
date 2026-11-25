@@ -45,11 +45,16 @@ def simulate_straight_road_msgs(est):
   carControl.latActive = True
   carState.vEgo = V_EGO
   carState.steeringPressed = False
+  # torqued (carrot, 07c9e61f4) only uses livePose when its validity flags are set, and takes t from msg.timestamp
+  livePose.angularVelocityDevice.valid = True
+  livePose.orientationNED.valid = True
+  livePose.inputsOK = livePose.sensorsOK = livePose.posenetOK = True
   ts = DT_MDL*np.arange(2*POINTS_PER_BUCKET)
   steer_torques = np.concat((np.linspace(-0.03, -0.02, POINTS_PER_BUCKET), np.linspace(0.02, 0.03, POINTS_PER_BUCKET)))
   lat_accels = TORQUE_TUNE.latAccelFactor * steer_torques
   for t, steer_torque, lat_accel in zip(ts, steer_torques, lat_accels, strict=True):
     carOutput.actuatorsOutput.torque = float(-steer_torque)
+    livePose.timestamp = int(t * 1e9)
     livePose.orientationNED.x = float(np.deg2rad(ROLL_BIAS_DEG))
     livePose.angularVelocityDevice.z = float(lat_accel / V_EGO)
     for which, msg in (('carControl', carControl), ('carOutput', carOutput), ('carState', carState), ('livePose', livePose)):

@@ -20,7 +20,7 @@ from openpilot.cereal import messaging
 from ..realtime.transports import CameraWsHub, RawWsHub
 from . import features
 from openpilot.carrot.model_selector.web import routes as model_selector_routes
-from .config import SELFDRIVE_ASSETS_DIR, WEB_DIR, migrate_legacy_carrot_state
+from .config import HTTP_SESSION, SELFDRIVE_ASSETS_DIR, WEB_DIR, migrate_legacy_carrot_state
 from .live_runtime.broker import RealtimeBroker
 from .services.auto_update import auto_update_loop
 from .services.git_status import git_status_loop
@@ -88,7 +88,7 @@ async def _warm_settings_cache() -> None:
 
 
 async def on_startup(app: web.Application) -> None:
-  app["http"] = ClientSession()
+  app[HTTP_SESSION] = ClientSession()
   app["params"] = Params() if HAS_PARAMS and Params is not None else None
   app["hb_last"] = {"ok": None, "msg": "not yet", "ts": 0}
   # Keep only route metadata plus the server-side engagement safety signal
@@ -208,7 +208,7 @@ async def on_cleanup(app: web.Application) -> None:
     except Exception:
       pass
 
-  sess = app.get("http")
+  sess = app.get(HTTP_SESSION)
   if sess:
     await sess.close()
 

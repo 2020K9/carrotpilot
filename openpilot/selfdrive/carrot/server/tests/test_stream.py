@@ -7,6 +7,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from openpilot.selfdrive.carrot.server.config import HTTP_SESSION
 
 @pytest.fixture
 def stream(monkeypatch):
@@ -33,7 +34,7 @@ def test_stream_with_hud_preserves_upstream_response(monkeypatch, stream, cluste
   params = MagicMock()
   params.get_int.return_value = cluster_hud
   request = SimpleNamespace(
-    app={"params": params, "http": session}, remote="127.0.0.1",
+    app={"params": params, HTTP_SESSION: session}, remote="127.0.0.1",
     headers={"Content-Type": "application/json"}, read=AsyncMock(return_value=body),
   )
   events = []

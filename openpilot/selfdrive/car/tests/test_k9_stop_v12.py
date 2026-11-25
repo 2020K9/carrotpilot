@@ -142,6 +142,12 @@ def test_carcontroller_diff_is_menu_wiring_only():
   back = subprocess.run(["git", "diff", "-U0", "751fca5e", "2b202df1", "--", CC_REL], cwd=ROOT, capture_output=True,
                         text=True, check=True).stdout
   pedal = {l[1:] for l in back.splitlines() if l.startswith("+") and not l.startswith("+++")}
+  # Carrot upstream (ajouatom) commits merged 11/22 (2a0fc793) and 11/24 (b62bb4f2): APRK probe memory and the HUD call.
+  # Their own added lines are upstream code, not K9 page code.
+  for c in ("bf11c138", "77dd3335", "6a9225b5"):
+    up = subprocess.run(["git", "diff", "-U0", f"{c}^", c, "--", CC_REL], cwd=ROOT, capture_output=True,
+                        text=True, check=True).stdout
+    pedal |= {l[1:] for l in up.splitlines() if l.startswith("+") and not l.startswith("+++")}
   for l in added:  # wiring only: comments, the K9Creep band call arguments
     s = l.strip()
     if l in pedal:

@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from aiohttp import ClientConnectorError, ClientError, ClientTimeout, ConnectionTimeoutError, web
+from openpilot.selfdrive.carrot.server.config import HTTP_SESSION  # absolute: the tests also load this module standalone
 
 
 XIAOGE_URL = "http://127.0.0.1:8082"
@@ -48,7 +49,7 @@ async def proxy_api(request: web.Request) -> web.Response:
     headers["Content-Type"] = "application/json"
 
   try:
-    async with request.app["http"].request(
+    async with request.app[HTTP_SESSION].request(
       request.method, f"{XIAOGE_URL}/api/{endpoint}", params=query,
       data=body, headers=headers, timeout=PROXY_TIMEOUT, allow_redirects=False,
     ) as response:

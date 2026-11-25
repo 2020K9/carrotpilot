@@ -13,6 +13,7 @@ from aiohttp import ClientSession
 
 from .params import HAS_PARAMS, Params, get_param_values, infer_type_from_setting
 from .settings import get_settings_cached
+from ..config import HTTP_SESSION
 
 
 DEFAULT_TIMEOUT_S = 4.0
@@ -437,7 +438,7 @@ async def refresh_popular_values_once(session: ClientSession, *, upload: bool = 
 
 
 def start_popular_value_upload(app: Any) -> asyncio.Task | None:
-  session = app.get("http")
+  session = app.get(HTTP_SESSION)
   if session is None:
     return None
   return asyncio.create_task(refresh_popular_values_once(session, upload=True))
@@ -454,7 +455,7 @@ def schedule_popular_value_refresh(app: Any, min_interval: float | None = None) 
   reflects fleet changes within ~min_interval, without polling or websockets.
   Does NOT re-upload (that only happens once at boot)."""
   global _popular_refresh_last_at, _popular_refresh_task
-  session = app.get("http")
+  session = app.get(HTTP_SESSION)
   if session is None:
     return
   interval = (

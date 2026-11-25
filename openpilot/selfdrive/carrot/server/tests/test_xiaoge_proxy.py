@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, web
 from aiohttp.test_utils import TestClient, TestServer
+from openpilot.selfdrive.carrot.server.config import HTTP_SESSION
 
 
 # This feature has no device dependencies. Test its real HTTP routes without
@@ -18,7 +19,7 @@ spec.loader.exec_module(xiaoge)
 async def proxy_client():
   app = web.Application()
   async with ClientSession() as session:
-    app["http"] = session
+    app[HTTP_SESSION] = session
     xiaoge.register(app)
     async with TestClient(TestServer(app)) as client:
       yield client
@@ -81,7 +82,7 @@ def test_proxy_rejects_unregistered_operations_cross_origin_and_oversize_posts(m
     async with proxy_client() as client:
       def unexpected_forward(*args, **kwargs):
         raise AssertionError("invalid operations must not reach the vision service")
-      monkeypatch.setattr(client.app["http"], "request", unexpected_forward)
+      monkeypatch.setattr(client.app[HTTP_SESSION], "request", unexpected_forward)
       for method, path, kwargs, expected in (
         ("GET", "/xiaoge/api/terminal", {}, 404),
         ("POST", "/xiaoge/api/status", {"json": {}}, 405),

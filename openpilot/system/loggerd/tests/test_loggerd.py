@@ -190,7 +190,8 @@ class TestLoggerd:
   def test_rotation(self):
     Params().put("RecordFront", True)
 
-    expected_files = {"rlog.zst", "qlog.zst", "qcamera.ts", "fcamera.hevc", "dcamera.hevc", "ecamera.hevc"}
+    # carrot (d89dda47): fcamera / ecamera follow RecordRoadCam (> 0 / > 1), default "0" -> not recorded
+    expected_files = {"rlog.zst", "qlog.zst", "qcamera.ts", "dcamera.hevc"}
 
     num_segs = random.randint(2, 3)
     length = random.randint(4, 5) # H264 encoder uses 40 lookahead frames and does B-frame reordering, so minimum 3 seconds before qcam output

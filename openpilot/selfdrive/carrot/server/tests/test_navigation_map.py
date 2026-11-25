@@ -8,6 +8,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from openpilot.selfdrive.carrot.server.features import navigation
+from openpilot.selfdrive.carrot.server.config import HTTP_SESSION
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +98,7 @@ def test_search_reads_fragmented_response_and_keeps_token_server_side(monkeypatc
     yield NS(status=200, content=NS(iter_chunked=chunks))
   async def run():
     app = web.Application()
-    app['http'] = NS(get=get)
+    app[HTTP_SESSION] = NS(get=get)
     navigation.register(app)
     async with TestClient(TestServer(app)) as client:
       response = await client.get('/api/navigation/search?q=Seoul')

@@ -1,6 +1,11 @@
 import os
 import shutil
 
+from aiohttp import ClientSession, web
+
+# Shared aiohttp ClientSession of the web server (app key; aiohttp warns on plain string keys).
+HTTP_SESSION = web.AppKey("http", ClientSession)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 

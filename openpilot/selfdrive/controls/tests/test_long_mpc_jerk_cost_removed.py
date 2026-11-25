@@ -144,7 +144,14 @@ def test_long_mpc_matches_revision_before_setting():
                           capture_output=True, text=True, encoding="utf-8").stdout
   except (OSError, subprocess.CalledProcessError) as e:
     pytest.skip(f"git history unavailable: {e}")
-  assert (ROOT / LONG_MPC).read_text(encoding="utf-8") == base
+  # Since BASE_COMMIT only the carrot upstream d40c8d24 (jixiexiaoge 11/07, Tesla CAN red-light stop) changed this file;
+  # the tree must be BASE_COMMIT plus exactly that commit's change to it.
+  upstream = subprocess.run(["git", "diff", "d40c8d24^", "d40c8d24", "--", LONG_MPC], cwd=ROOT, check=True,
+                            capture_output=True, text=True, encoding="utf-8").stdout
+  now = subprocess.run(["git", "diff", BASE_COMMIT, "--", LONG_MPC], cwd=ROOT, check=True,
+                       capture_output=True, text=True, encoding="utf-8").stdout
+  hunks = lambda d: [l for l in d.splitlines() if l[:1] in "+-" and not l.startswith(("+++", "---"))]
+  assert hunks(now) == hunks(upstream)
 
 
 @pytest.mark.parametrize("personality,jerk_factor", JERK_FACTORS)

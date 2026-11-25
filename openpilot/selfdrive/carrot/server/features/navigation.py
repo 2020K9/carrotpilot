@@ -10,7 +10,7 @@ import aiohttp
 from aiohttp import web
 
 from openpilot.common.params import Params
-from ..config import WEB_DIR
+from ..config import HTTP_SESSION, WEB_DIR
 from ..services.params import get_param_value, set_param_value
 from openpilot.selfdrive.navigation.preview import PREVIEW_PATH, WEB_DEMAND_PATH, preview_fresh, preview_reason
 
@@ -53,7 +53,7 @@ async def search(request):
     state.next_request = time.monotonic() + 1.
     try:
       params = {'q': query, 'access_token': token, 'limit': '5', 'autocomplete': 'false', 'permanent': 'false'}
-      async with request.app['http'].get('https://api.mapbox.com/search/geocode/v6/forward', params=params,
+      async with request.app[HTTP_SESSION].get('https://api.mapbox.com/search/geocode/v6/forward', params=params,
                                          timeout=aiohttp.ClientTimeout(total=8)) as response:
         if response.status != 200:
           return web.json_response({'error': f'Mapbox search failed (HTTP {response.status}).'}, status=502)

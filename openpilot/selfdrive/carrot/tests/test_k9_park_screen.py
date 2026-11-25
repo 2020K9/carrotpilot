@@ -124,8 +124,9 @@ def test_k9_park_screen_renders_the_k9_model(monkeypatch, tmp_path, theme):
       with Image.open(io.BytesIO(r.render_to_png_bytes(state))) as img:
         frames[name] = np.array(img.convert("RGB")).astype(int)
     assert r._park_k9_model is not None
-    assert r._park_model_key == "k9"
-    assert r._park_model_texture is not None
+    # 0e502348 (11/20): the K9 P screen draws the photo sprite and skips the 3D model render (_prepare_park_model_texture)
+    assert r._k9_park_sprite_texture() is not None
+    assert r._park_model_key is None and r._park_model_texture is None
     assert "k9" not in r._other_vehicle_names
     # the car area (centre) is drawn, the fuel value differs only in the left column
     centre = frames["none"][60:420, 560:1020]

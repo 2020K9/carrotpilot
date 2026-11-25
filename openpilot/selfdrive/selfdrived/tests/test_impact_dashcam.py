@@ -254,8 +254,10 @@ def test_selfdrive_step_disables_and_blocks_reentry():
 def test_final_can_boundary_neutralizes_queued_control():
   path = Path(__file__).parents[2] / 'car/card.py'
   tree = ast.parse(path.read_text(encoding='utf-8'))
-  guard = next(n for n in ast.walk(tree) if isinstance(n, ast.If)
-               and ast.unparse(n.test) == "self.params.get_bool('ImpactDashcamReboot')")
+  # d40c8d24 (jixiexiaoge, 11/07) reads the param once into impact_reboot and reuses it below; the guard body is the same.
+  assign = next(n for n in ast.walk(tree) if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == 'impact_reboot')
+  assert ast.unparse(assign.value) == "self.params.get_bool('ImpactDashcamReboot')"
+  guard = next(n for n in ast.walk(tree) if isinstance(n, ast.If) and ast.unparse(n.test) == 'impact_reboot')
   cc = car.CarControl.new_message()
   cc.enabled = cc.latActive = cc.longActive = True
   cc.actuators.accel = 2.0
