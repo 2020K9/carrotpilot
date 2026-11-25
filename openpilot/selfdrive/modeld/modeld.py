@@ -3,6 +3,7 @@ import os
 os.environ['GMMU'] = '0' # for usbgpu fast loading, noop for qcom
 from tinygrad.tensor import Tensor
 import time
+from pathlib import Path
 import threading
 import numpy as np
 import openpilot.cereal.messaging as messaging
@@ -34,7 +35,7 @@ from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
-from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
+from openpilot.selfdrive.modeld.helpers import (CHEDDAR_RUNTIME_DIR, get_tg_input_devices, load_oob, modeld_pkl_path,
                                                 refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
                                                 usbgpu_pcie_not_ready, usbgpu_present, wait_for_usbgpu_present)
 
@@ -130,6 +131,17 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
 
 class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
+
+  def __new__(cls, cam_w, cam_h, usbgpu, pkl_path=None, *, enable_shadow=True):
+    # Carrot Web's model selector compiles Cheddar (recurrent state inside the
+    # ONNX) with its pinned runtime next to the pkl. The built-in CD210 directory
+    # never has this runtime, so the default internal model is unchanged.
+    if not usbgpu:
+      path = Path(pkl_path or modeld_pkl_path(False))
+      if (path.parent / CHEDDAR_RUNTIME_DIR).is_dir():
+        from openpilot.selfdrive.modeld.cheddar_model import CheddarModelState
+        return CheddarModelState(cam_w, cam_h, path)
+    return super().__new__(cls)
 
   def __init__(self, cam_w: int, cam_h: int, usbgpu: bool, pkl_path=None, *, enable_shadow=True):
     input_devices = get_tg_input_devices(PROCESS_NAME, usbgpu)

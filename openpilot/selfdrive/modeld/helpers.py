@@ -62,6 +62,9 @@ def get_tg_input_devices(process_name: str, usbgpu: bool):
   except FileNotFoundError:
     return _default_tg_input_devices(process_name, usbgpu)
 
+# Pinned runtime directory written next to a Cheddar pkl by cheddar_runtime.py.
+CHEDDAR_RUNTIME_DIR = '.cheddar-runtime'
+
 def modeld_pkl_path(usbgpu: bool, model_sha256: str | None = None):
   # carrot model selector: load a custom-compiled model dir instead of the built-in one
   models_dir = Path(override) if (override := os.getenv('MODELD_MODELS_DIR')) else MODELS_DIR

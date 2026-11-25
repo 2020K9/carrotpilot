@@ -122,6 +122,19 @@ class ModelEntry:
         return sorted(self.files.keys())
 
 
+def _pinned_runtime_model(raw: dict) -> bool:
+    """The catalog blocks Cheddar for v4 selectors (minimum_selector_version 5)
+    because the supercombo path cannot run its in-graph history. This build runs
+    exactly that ONNX with its pinned runtime, so accept only that file; every
+    other blocked entry (SSH, CH, other Cheddar variants, ...) stays hidden."""
+    from openpilot.selfdrive.modeld.cheddar_runtime import MODEL_SHA256
+    files = raw.get("files")
+    if not isinstance(files, dict) or set(files) != {"driving_supercombo.onnx"}:
+        return False
+    spec = files["driving_supercombo.onnx"]
+    return isinstance(spec, dict) and spec.get("sha256") == MODEL_SHA256
+
+
 def _min_selector_version(raw: dict) -> int | None:
     """Entry's minimum selector version; None when unparseable.
 
@@ -220,7 +233,7 @@ def _fetch_and_verify_one(url: str, timeout: float = 20.0) -> list[ModelEntry]:
         # filenames this version doesn't know, and must not fail the whole list.
         # Unreadable version requirement → fail closed (skip).
         min_ver = _min_selector_version(raw)
-        if min_ver is None or min_ver > MODEL_SELECTOR_VERSION:
+        if min_ver is None or (min_ver > MODEL_SELECTOR_VERSION and not _pinned_runtime_model(raw)):
             continue
         try:
             entry = _parse_model(raw)

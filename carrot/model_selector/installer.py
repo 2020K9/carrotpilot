@@ -215,6 +215,9 @@ def _compile_supercombo(tmp_dir: Path, env: dict[str, str]) -> None:
 
     onnx = tmp_dir / f"{SUPERCOMBO_BASE}.onnx"
     output = tmp_dir / SUPERCOMBO_PKL_NAME
+    if _is_cheddar(onnx):
+        _compile_cheddar(tmp_dir, env)
+        return
 
     # Metadata pkl is only needed here for validation and input-size
     # derivation; the runtime reads metadata from inside the unified pkl.
@@ -244,6 +247,31 @@ def _compile_supercombo(tmp_dir: Path, env: dict[str, str]) -> None:
     _run(cmd, env=env)
     if not output.exists() or output.stat().st_size == 0:
         raise InstallError(f"compile_modeld produced no output at {output}")
+
+
+def _is_cheddar(onnx: Path) -> bool:
+    import hashlib
+    from openpilot.selfdrive.modeld.cheddar_runtime import MODEL_SHA256
+    with onnx.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest() == MODEL_SHA256
+
+
+def _compile_cheddar(tmp_dir: Path, env: dict[str, str]) -> None:
+    """Cheddar keeps its image/desire/feature history inside the ONNX, so the
+    supercombo input contract above does not apply. Build it the way carrot-wip
+    built it as the internal model: the pinned runtime compiles the exact ONNX
+    (sha256 checked) and one warp per camera; modeld runs it in its worker."""
+    from openpilot.selfdrive.modeld.helpers import CHEDDAR_RUNTIME_DIR
+    output = tmp_dir / SUPERCOMBO_PKL_NAME
+    _cleanup_stale_compile_artifacts(tmp_dir)
+    cloudlog.warning("model_selector: compiling Cheddar with its pinned runtime")
+    script = OPENPILOT_ROOT / "openpilot" / "selfdrive" / "modeld" / "cheddar_runtime.py"
+    pythonpath = os.pathsep.join(p for p in (str(OPENPILOT_ROOT), env.get("PYTHONPATH", "")) if p)
+    _run(["python3", str(script), "--onnx", str(tmp_dir / f"{SUPERCOMBO_BASE}.onnx"), "--output", str(output),
+          "--camera-resolutions", *[f"{w}x{h}" for w, h in CAMERA_CONFIGS]],
+         env=env | {"PYTHONPATH": pythonpath})
+    if not output.exists() or output.stat().st_size == 0 or not (tmp_dir / CHEDDAR_RUNTIME_DIR).is_dir():
+        raise InstallError(f"Cheddar compile produced no output at {output}")
 
 
 def _compile_legacy_warp_pkls(tmp_dir: Path, env: dict[str, str]) -> None:
