@@ -23,6 +23,7 @@ from openpilot.system.manager.camera_config import configure_wide_camera
 from openpilot.selfdrive.monitoring.config import configure_monitoring
 from openpilot.selfdrive.car.k9_stop_mode_migration import migrate_k9_stop_mode
 from openpilot.selfdrive.controls.lib.k9_lane import migrate_k9_lane
+from openpilot.system.k9_nf_cleanup import cleanup_async as cleanup_k9_nf_async
 from openpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
@@ -90,6 +91,7 @@ def manager_init() -> UpdateStatus:
   configure_monitoring(params)
   migrate_k9_stop_mode(params)  # before card starts (it reads K9StopMode live); 2026-10-24 menu trim
   migrate_k9_lane(params)  # before modeld / controlsd start; 2026-10-25 lane menu merge (old 4 switches -> K9LaneAssist)
+  cleanup_k9_nf_async()  # 2026-11-25: remove /data/media/0/k9_logs and k9_nf_trace left by the retired NaN tracer / logkeep
   migrate_atc_params(params)
   migrate_lateral_geometry_params(params)
 

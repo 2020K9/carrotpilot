@@ -11,6 +11,8 @@ if __name__ == '__main__' and not CHECK_IMPORTS:
   if Path('/etc/nv_tegra_release').is_file():
     from install_updates import migrate_running_release
     migrate_running_release()
+    from k9_nf_cleanup import start_as_root as k9_nf_cleanup  # 2026-11-25: retired NaN tracer / logkeep leftovers
+    k9_nf_cleanup()
   from boot_update import wait_for_runtime
   wait_for_runtime()
 
