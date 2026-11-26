@@ -304,6 +304,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None, blinker=No
     except TimeoutError:
       library.idle(client, params)
       host_reboot.idle(client, params)
+      host_reboot.boot_reset(client)   # once per comma boot, after git pull / model change (대감님 11/26 19:57)
       if time.monotonic() - last_ping > (.2 if blinker is not None else 2):
         client.last_state = client.state()
         check_loaded(client, client.last_state)

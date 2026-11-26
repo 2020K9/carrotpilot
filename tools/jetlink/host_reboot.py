@@ -9,8 +9,13 @@ A Jetson without this file never advertises CAPABILITY, so comma reports 'old bu
 Clean reboot (대감님 11/26 18:50 "gpu.usb먼저 초기화하고 재부팅되게"): on a Jetson the request starts one root
 transient unit (PREPARE_COMMAND) that, after the reply is sent, stops the inference/HUD services, idles the nvgpu
 GPU, de-authorizes USB devices and switches USB port power off, then reboots. Every step is bounded and may fail;
-the reboot always follows (plus a 60 s fallback reboot timer). If the unit cannot be started, the plain
+the reboot always follows (plus a 20 s fallback reboot timer, 대감님 11/26 19:57). If the unit cannot be started, the plain
 REBOOT_COMMAND runs as before.
+
+Boot reset (대감님 11/26 19:57): after the comma boots with a new git commit, a new comma model (DrivingModelName)
+or a new Jetson model (frozen boot selection), jetlinkd sends the same REQUEST once, so the Jetson runs the same
+clean reboot as the button. The fingerprint is stored in BOOT_STATE_FILE; an ordinary start (same fingerprint)
+does nothing, and one request per comma boot at most.
 """
 import json
 import os
@@ -29,6 +34,8 @@ REBOOT_COMMAND = ('sudo', '-n', 'systemctl', '--no-block', 'reboot')
 PREPARE_UNIT = 'carrot-jetson-reboot-prepare'
 PREPARE_COMMAND = ('sudo', '-n', 'systemd-run', '--no-block', '--collect', f'--unit={PREPARE_UNIT}',
                    sys.executable, str(Path(__file__).resolve()), '--prepare-and-reboot')
+FALLBACK_SECONDS = 20
+BOOT_STATE_FILE = Path('/data/carrot_jetson_boot_reset.json')
 JETSON_MARKER = Path('/etc/nv_tegra_release')
 STOP_UNITS = ('carrot-jetlink-hud.service', 'carrot-jetlink.service')
 
@@ -95,7 +102,7 @@ def prepare_and_reboot(run=subprocess.run, sysfs=Path('/sys'), sleep=time.sleep,
   """Root transient unit: 1 stop inference, 2 GPU, 3 USB, 4 reboot. The reboot is never skipped."""
   steps = []
   try:
-    steps.append(('fallback', _ok(run, ('systemd-run', '--on-active=60', '--collect',
+    steps.append(('fallback', _ok(run, ('systemd-run', f'--on-active={FALLBACK_SECONDS}', '--collect',
                                         f'--unit={PREPARE_UNIT}-fallback', 'systemctl', '--no-block', 'reboot'))))
     sleep(1.)   # the RESPONSE reaches the comma before the server stops
     steps.append(('stop', _ok(run, ('systemctl', 'stop', *STOP_UNITS), timeout=30)))
@@ -153,6 +160,7 @@ class Client:
   def __init__(self, peer):
     self.enabled = isinstance(peer, dict) and peer.get(CAPABILITY) is True
     self.is_jetson = isinstance(peer, dict) and peer.get('carrot_host') == 'jetson'
+    self.boot_checked = False
 
   def idle(self, client, params, now=None):
     request = _read(REQUEST_FILE)
@@ -165,7 +173,24 @@ class Client:
         return
     except (KeyError, TypeError, ValueError):
       return
-    result = {'id': request['id']}
+    _write(RESULT_FILE, self._send(client, request['id']))
+
+  def boot_reset(self, client, fingerprint=None):
+    """Once per comma boot: same clean Jetson reboot after git pull / comma model / Jetson model change."""
+    if self.boot_checked or not self.is_jetson:
+      return None
+    self.boot_checked = True
+    try:
+      current = boot_fingerprint() if fingerprint is None else fingerprint
+      if _read(BOOT_STATE_FILE) == current:
+        return None
+      _write(BOOT_STATE_FILE, current)   # marked first: never a second automatic reboot for this state
+    except Exception:
+      return None
+    return self._send(client, 'boot-' + uuid.uuid4().hex)
+
+  def _send(self, client, request_id):
+    result = {'id': request_id}
     if not self.is_jetson:
       result.update(state='disconnected', reason='')
     elif not self.enabled:
@@ -173,7 +198,7 @@ class Client:
     else:
       try:
         seq = client._next_seq()
-        client.t.send_json(REQUEST, seq, {'reboot': True, 'id': request['id']})
+        client.t.send_json(REQUEST, seq, {'reboot': True, 'id': request_id})
         reply = json.loads(bytes(client._expect(RESPONSE, seq, 3.).payload))
         if reply.get('ok') is True:
           result.update(state='sent', reason='')
@@ -181,7 +206,23 @@ class Client:
           result.update(state='rejected', reason=str(reply.get('reason', ''))[:60])
       except Exception:
         result.update(state='disconnected', reason='')
-    _write(RESULT_FILE, result)
+    return result
+
+
+def boot_fingerprint():
+  """(comma git commit, comma model, Jetson model) of this comma boot."""
+  root = Path(__file__).resolve().parents[2]
+  try:
+    commit = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True,
+                            timeout=5, check=False).stdout.strip()
+  except (OSError, subprocess.SubprocessError):
+    commit = ''
+  from openpilot.common.params import Params
+  from openpilot.common.big_model_catalog import effective_id
+  comma_model = Params().get('DrivingModelName') or ''
+  if isinstance(comma_model, bytes):
+    comma_model = comma_model.decode(errors='replace')
+  return {'commit': commit, 'comma_model': str(comma_model), 'jetson_model': effective_id()}
 
 
 if __name__ == '__main__' and sys.argv[1:] == ['--prepare-and-reboot']:

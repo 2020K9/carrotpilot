@@ -61,7 +61,7 @@ def test_order_stop_gpu_usb_reboot(tmp_path):
   seen = []
   steps = R.prepare_and_reboot(run, root, sleep=lambda s: seen.append(('sleep', len(calls))), log=lambda m: None)
   assert [s[0] for s in steps] == ['fallback', 'stop', 'gpu', 'usb', 'reboot']
-  assert calls[0][:2] == ['systemd-run', '--on-active=60']
+  assert calls[0][:2] == ['systemd-run', '--on-active=20']
   assert calls[1] == ['systemctl', 'stop', *R.STOP_UNITS] and calls[2] == ['systemctl', '--no-block', 'reboot']
   assert seen == [('sleep', 1)]
   assert (gpu / 'force_idle').read_text() == '1'
@@ -93,4 +93,4 @@ def test_reboot_when_systemctl_raises(tmp_path):
   def run(cmd, **kw):
     raise OSError('no systemctl')
   steps = R.prepare_and_reboot(run, tmp_path, sleep=lambda s: None, log=lambda m: None)
-  assert dict(steps)['reboot'] is False   # nothing else possible; the 60 s timer is already gone too
+  assert dict(steps)['reboot'] is False   # nothing else possible; the 20 s timer is already gone too
