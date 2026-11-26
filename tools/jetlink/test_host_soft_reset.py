@@ -189,3 +189,33 @@ def test_web_button_below_reboot():
   assert 'jetson_soft_reset: "젯슨 초기화"' in ko
   for n in range(1, 6):
     assert f'jetson_soft_step{n}:' in ko
+
+
+def test_standstill_press_does_not_reboot(tmp_path):
+  """11/27: pressed while stopped/offroad (no inference) -> comma + map alive is enough, no full reboot."""
+  S.HUD_STATUS.write_text(json.dumps({'updated': 10., 'snapshot': {'ok': True}, 'map': {'sequence': 3, 'stalled': False}}))
+  S.HOST_HEALTH.write_text(json.dumps({'updated': 10., 'hud_diag': {}}))
+  assert S.health(11., expected=lambda: False) == {'comma': True, 'map': True}
+  assert S.health(11., expected=lambda: True)['model'] is False
+  steps, calls, reports, reboots, clock, _ = _run_reset(tmp_path, check=lambda: S.health(11., expected=lambda: False))
+  assert steps[-1][0] == 'done' and reboots == [] and reports[-1] == (5, 'done')
+  assert ['systemctl', 'stop', f'{S.UNIT}-fallback.timer'] in calls
+
+
+def test_inference_expected_from_snapshot():
+  import base64
+  from openpilot.cereal import log
+  from hud_protocol import display_param
+
+  def snap(onroad, v, gear='drive'):
+    ev = log.Event.new_message()
+    ev.init('carState')
+    ev.carState.vEgo = v
+    ev.carState.gearShifter = gear
+    return (0., {'params': {'IsOnroad': display_param('IsOnroad', onroad)},
+                 'events': {'carState': base64.b64encode(ev.to_bytes()).decode()}})
+  assert S.inference_expected(snap(True, 10.)) is True
+  assert S.inference_expected(snap(True, 0.)) is False
+  assert S.inference_expected(snap(True, 10., 'park')) is False
+  assert S.inference_expected(snap(False, 10.)) is False
+  assert S.inference_expected((0., {})) is True

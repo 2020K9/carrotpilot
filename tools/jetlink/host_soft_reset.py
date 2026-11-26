@@ -10,6 +10,7 @@ same places as the reboot button) -> REQUEST {'soft_reset': true} -> Jetson serv
   4 receive the comma's selected release again (the boot gate session, boot_update.Gate) and compare the
     installed bundle and model sha256 with it
   5 start the services, wait for: comma link, map video and model output all alive
+    (standing still / offroad = no inference: comma link and map video only)
 Not healthy within DEADLINE_SECONDS of the press -> the existing full reboot (host_reboot.prepare_and_reboot).
 A systemd timer (FALLBACK_SECONDS) runs that full reboot too if this unit itself hangs; it is cancelled on success.
 Progress (step 1..5, running / done / reboot) is in PROGRESS; the comma reads it from the server HELLO and from
@@ -204,8 +205,42 @@ def _fresh(value, now):
     return False
 
 
-def health(now=None):
-  """Comma link (fresh HUD snapshot), map video (current, not stalled), model output (recent inference)."""
+STANDSTILL_MPS = .1
+
+
+def inference_expected(snapshot=None):
+  """False only when a fresh comma snapshot says offroad (IsOnroad 0) or standing still (vEgo ~0 or P).
+  No snapshot / unreadable -> True (model output stays in the check, as before)."""
+  try:
+    try:
+      import hud_protocol as P
+    except ImportError:
+      from tools.jetlink import hud_protocol as P  # noqa: TID251 -- comma side
+    snapshot = P.read_snapshot() if snapshot is None else snapshot
+    if snapshot is None:
+      return True
+    value = snapshot[1]
+    params = value.get('params') if isinstance(value.get('params'), dict) else {}
+    if 'IsOnroad' in params and P._param_text(params['IsOnroad']) != '1':
+      return False
+    events = value.get('events') if isinstance(value.get('events'), dict) else {}
+    item = events.get('carState')
+    if not isinstance(item, str):
+      return True
+    import base64
+    from openpilot.cereal import log
+    with log.Event.from_bytes(base64.b64decode(item)) as reader:
+      if reader.which() != 'carState':
+        return True
+      cs = reader.carState
+      return not (abs(cs.vEgo) < STANDSTILL_MPS or str(cs.gearShifter) == 'park')
+  except Exception:   # noqa: BLE001 -- unknown state keeps the model check
+    return True
+
+
+def health(now=None, expected=None):
+  """Comma link (fresh HUD snapshot), map video (current, not stalled), model output (recent inference).
+  11/27: standing still / offroad (no inference) -> model output is left out; comma link + map only."""
   now = time.monotonic() if now is None else now
   hud = R._read(HUD_STATUS) or {}
   host = R._read(HOST_HEALTH) or {}
@@ -213,9 +248,11 @@ def health(now=None):
   snapshot = hud.get('snapshot') if isinstance(hud.get('snapshot'), dict) else {}
   map_state = hud.get('map') if isinstance(hud.get('map'), dict) else {}
   diag = host.get('hud_diag') if isinstance(host.get('hud_diag'), dict) else {}
-  return {'comma': hud_ok and snapshot.get('ok') is True,
-          'map': hud_ok and map_state.get('sequence') is not None and map_state.get('stalled') is False,
-          'model': _fresh(host, now) and isinstance(diag.get('inference'), dict)}
+  state = {'comma': hud_ok and snapshot.get('ok') is True,
+           'map': hud_ok and map_state.get('sequence') is not None and map_state.get('stalled') is False}
+  if (inference_expected if expected is None else expected)():
+    state['model'] = _fresh(host, now) and isinstance(diag.get('inference'), dict)
+  return state
 
 
 def soft_reset(request_id, run=subprocess.run, sysfs=Path('/sys'), proc=Path('/proc'), sleep=time.sleep,
