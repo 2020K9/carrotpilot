@@ -491,6 +491,7 @@ function renderDeviceGroupItems(groupId, values) {
     html += renderDeviceInfoRow(getUIText("serial", "Serial"), data.HardwareSerial || "N/A");
     html += renderDeviceActionRow(getUIText("reboot", "Reboot"), getUIText("reboot_device_desc", "Reboot device"), getUIText("reboot", "Reboot"), "btnDeviceReboot");
     html += renderDeviceActionRow(getUIText("jetson_reboot", "Jetson Reboot"), getUIText("jetson_reboot_desc", "Reboot the Jetson that runs the driving model. Works in any state, including while driving."), getUIText("reboot", "Reboot"), "btnDeviceJetsonReboot");
+    html += renderDeviceActionRow(getUIText("jetson_soft_reset", "Jetson Soft Reset"), getUIText("jetson_soft_reset_desc", "Without rebooting: stop services, release GPU, reattach USB, re-check bundle and model, start services. Not healthy in 30 s -> full reboot."), getUIText("reset", "Reset"), "btnDeviceJetsonSoftReset");
     html += renderDeviceActionRow(getUIText("recalibration", "ReCalibration"), "", getUIText("reset", "Reset"), "btnDeviceRecalib");
     html += renderDeviceActionRow(getUIText("power_off", "Power Off"), getUIText("power_off_desc", "Power off device"), getUIText("power_off", "Power Off"), "btnDevicePoweroff", "smallBtn btn--danger");
     html += renderDeviceActionRow(getUIText("pair_device", "Pair Device"), getUIText("pair_device_desc", "Pair your device with comma connect (connect.comma.ai) and claim your comma prime offer."), getUIText("pair", "PAIR"), "btnDevicePair", "smallBtn", true);

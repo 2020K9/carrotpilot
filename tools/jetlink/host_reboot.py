@@ -50,6 +50,8 @@ def host_request(payload, run=subprocess.run):
     if len(payload) > 256:
       raise ValueError
     request = json.loads(bytes(payload))
+    if isinstance(request, dict) and (request.get('soft_reset') is True or request.get('soft_status') is True):
+      return _soft().host_request(request, run)   # 'Jetson soft reset' button (대감님 11/26 23:21)
     if not isinstance(request, dict) or request.get('reboot') is not True or not isinstance(request.get('id'), str):
       raise ValueError
   except (ValueError, TypeError):
@@ -63,6 +65,14 @@ def host_request(payload, run=subprocess.run):
     return {'id': request['id'], 'ok': False, 'reason': 'reboot command failed'}
   _state['rebooting'] = True
   return {'id': request['id'], 'ok': True}
+
+
+def _soft():
+  try:
+    import host_soft_reset
+  except ImportError:
+    from tools.jetlink import host_soft_reset  # noqa: TID251 -- comma side
+  return host_soft_reset
 
 
 def _ok(run, command, timeout=5):
@@ -161,8 +171,17 @@ class Client:
     self.enabled = isinstance(peer, dict) and peer.get(CAPABILITY) is True
     self.is_jetson = isinstance(peer, dict) and peer.get('carrot_host') == 'jetson'
     self.boot_checked = False
+    try:   # 'Jetson soft reset' button rides on the same idle calls (대감님 11/26 23:21)
+      self.soft = _soft().Client(peer)
+    except Exception:
+      self.soft = None
 
   def idle(self, client, params, now=None):
+    if self.soft is not None:
+      try:
+        self.soft.idle(client, now)
+      except Exception:
+        pass
     request = _read(REQUEST_FILE)
     if request is None:
       return

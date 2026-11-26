@@ -30,6 +30,7 @@ from host_health import health_worker
 from host_lpm import SessionLease
 from blink_protocol import Host as BlinkerHost, CAPABILITY as BLINKER_CAPABILITY, BEGIN as BLINKER_BEGIN, ACK as BLINKER_ACK, DATA as BLINKER_DATA
 from wifi_protocol import CAPABILITY as WIFI_CAPABILITY, MESSAGE as WIFI_MESSAGE, receive as receive_wifi
+from host_soft_reset import CAPABILITY as SOFT_RESET_CAPABILITY, progress as soft_reset_progress
 from host_reboot import CAPABILITY as REBOOT_CAPABILITY, REQUEST as REBOOT_REQUEST, RESPONSE as REBOOT_RESPONSE, host_request as reboot_request
 from model_library import CAPABILITY as LIBRARY_CAPABILITY, REQUEST as LIBRARY_REQUEST, RESPONSE as LIBRARY_RESPONSE, host_request as library_request
 from jetlink import protocol as P
@@ -107,7 +108,9 @@ class CarrotSession(Session):
              PUMP_CAPABILITY: legacy_display, WIFI_CAPABILITY: host == 'jetson', 'carrot_host': host,
              HUD_WIFI_CAPABILITY: self.hud_wifi_supported,
              HUD_USB_CAPABILITY: host == 'jetson' and legacy_display, LIBRARY_CAPABILITY: host == 'jetson',
-             REBOOT_CAPABILITY: host == 'jetson'}
+             REBOOT_CAPABILITY: host == 'jetson', SOFT_RESET_CAPABILITY: host == 'jetson'}
+      if host == 'jetson':
+        obj['carrot_soft_reset'] = soft_reset_progress()   # web step text (대감님 11/26 23:21)
       if host == 'jetson' and self.blinker.supported():
         obj[BLINKER_CAPABILITY] = True
       if self.deferred_negotiated:
