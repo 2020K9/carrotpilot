@@ -295,7 +295,9 @@ class ProcessContainer:
           trigger_empty_recv = any(m.which() == self.cfg.main_pub for m in self.msg_queue)
 
         # get output msgs from previous inputs
-        output_msgs = self.get_output_msgs(self.last_input_log_mono_time)
+        # inputs may all carry logMonoTime 0 (e.g. fuzzed logs); same fallback as the final flush
+        start_time = self.last_input_log_mono_time if self.last_input_log_mono_time > 0 else int(time.monotonic() * 1e9)
+        output_msgs = self.get_output_msgs(start_time)
 
         for m in self.msg_queue:
           self.pm.send(m.which(), m.as_builder())
