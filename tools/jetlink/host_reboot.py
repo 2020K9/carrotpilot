@@ -9,7 +9,7 @@ A Jetson without this file never advertises CAPABILITY, so comma reports 'old bu
 Clean reboot (대감님 11/26 18:50 "gpu.usb먼저 초기화하고 재부팅되게"): on a Jetson the request starts one root
 transient unit (PREPARE_COMMAND) that, after the reply is sent, stops the inference/HUD services, idles the nvgpu
 GPU, de-authorizes USB devices and switches USB port power off, then reboots. Every step is bounded and may fail;
-the reboot always follows (plus a 20 s fallback reboot timer, 대감님 11/26 19:57). If the unit cannot be started, the plain
+the reboot always follows (plus a 5 s fallback reboot timer, 대감님 11/26 19:57 / 22:19). If the unit cannot be started, the plain
 REBOOT_COMMAND runs as before.
 
 Boot reset (대감님 11/26 19:57): after the comma boots with a new git commit, a new comma model (DrivingModelName)
@@ -34,7 +34,7 @@ REBOOT_COMMAND = ('sudo', '-n', 'systemctl', '--no-block', 'reboot')
 PREPARE_UNIT = 'carrot-jetson-reboot-prepare'
 PREPARE_COMMAND = ('sudo', '-n', 'systemd-run', '--no-block', '--collect', f'--unit={PREPARE_UNIT}',
                    sys.executable, str(Path(__file__).resolve()), '--prepare-and-reboot')
-FALLBACK_SECONDS = 20
+FALLBACK_SECONDS = 5   # 대감님 11/26 22:19 (button and automatic reboot)
 BOOT_STATE_FILE = Path('/data/carrot_jetson_boot_reset.json')
 JETSON_MARKER = Path('/etc/nv_tegra_release')
 STOP_UNITS = ('carrot-jetlink-hud.service', 'carrot-jetlink.service')

@@ -68,14 +68,14 @@ def test_old_bundle_marks_done_without_message(state):
   assert _boot(dict(BASE, commit='c4'))[0] == []
 
 
-def test_fallback_timer_is_20s_and_same_prepare_code(tmp_path):
+def test_fallback_timer_is_5s_and_same_prepare_code(tmp_path):
   calls = []
 
   def run(cmd, **kw):
     calls.append(list(cmd))
     return SimpleNamespace(returncode=0)
   R.prepare_and_reboot(run, tmp_path, sleep=lambda s: None, log=lambda m: None)
-  assert R.FALLBACK_SECONDS == 20 and calls[0][:2] == ['systemd-run', '--on-active=20']
+  assert R.FALLBACK_SECONDS == 5 and calls[0][:2] == ['systemd-run', '--on-active=5']
   # button and boot reset both go through Client._send -> same REQUEST -> host_request -> PREPARE_COMMAND
   tree = ast.parse(Path(R.__file__).read_text())
   client = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Client')
