@@ -20,6 +20,9 @@ MARKS = {}
 # it never takes the other items or the whole HUD down. Written to the HUD status file and logged on change.
 REJECTED = {}
 _logged = {}
+# Live navigation link for the map-lost screen (hud_health.link_losses): carrotNavi alive, valid and connected
+# in the last snapshot. A lost or malformed snapshot clears it.
+LINK = {'navi': False}
 
 
 def note_item(name, reason):
@@ -167,6 +170,7 @@ class RemoteSubMaster:
     if snapshot is None:
       self.valid = dict.fromkeys(self.services, False)
       self.alive = dict.fromkeys(self.services, False)
+      LINK['navi'] = False
       return
     received, value = snapshot
     if received == self.last_received:
@@ -183,6 +187,7 @@ class RemoteSubMaster:
       note_item('snapshot', f'{type(exc).__name__}: {exc}'[:120])
       self.valid = dict.fromkeys(self.services, False)
       self.alive = dict.fromkeys(self.services, False)
+      LINK['navi'] = False
       return
     note_item('snapshot', None)
     dropped = value.get('dropped') if isinstance(value.get('dropped'), dict) else {}
@@ -219,6 +224,12 @@ class RemoteSubMaster:
       if name == 'carState' and self.valid[name]:
         MARKS['car_last'] = received   # a new carState (new logMonoTime), valid
         MARKS.setdefault('car', received)
+    if 'carrotNavi' in self.services:
+      try:
+        navi_connected = bool(self.data['carrotNavi'].carrotNavi.connected)
+      except Exception:
+        navi_connected = False
+      LINK['navi'] = bool(self.valid.get('carrotNavi') and self.alive.get('carrotNavi') and navi_connected)
 
 
 def main():
@@ -294,6 +305,7 @@ def main():
   from hud_health import HealthRenderer
   cluster.ClusterUiRenderer = HealthRenderer
   HealthRenderer.startup_marks = MARKS
+  HealthRenderer.link_state = LINK
   if '--help' not in sys.argv:
     scan = cluster.find_supported_usb_product
     wait_for_usb_display(scan, cluster.product_id_for_hud_mode(1))

@@ -7,6 +7,7 @@ import re
 import time
 
 from host_health import STATUS
+from hud_protocol import SNAPSHOT_STATE
 from openpilot.common.jetlink_status import _fresh
 from cluster_models import GitBranchStatus
 import cluster_version_badge as VB
@@ -398,8 +399,34 @@ def snapshot_comma_source(record, old):
   return values
 
 
+# 대감님 11/26 22:22: the Jetson map-lost box is a black field with white text naming only what is really lost.
+# 05:14 the comma rebooted: snapshots stopped and the map video stopped, but the last navigation state stayed, so
+# the screen said "연결됨". Each link is now judged from its own live state, never from the others.
+COMMA_SNAPSHOT_TIMEOUT_S = 1.   # same limit as hud.snapshot_status 'ok'
+LINK_TEXT = {'ko': {'comma': '콤마 연결 끊김', 'map': '지도 영상 없음', 'navi': '내비 정보 없음'},
+             'en': {'comma': 'Comma link lost', 'map': 'No map video', 'navi': 'No navigation data'}}
+
+
+def link_losses(snapshot_received, navi_ok, dashboard, now):
+  """Lost links in fixed order: comma snapshot age, navigation (carrotNavi alive·valid·connected on a fresh
+  snapshot), map video (stalled or no current map frame)."""
+  lost = []
+  comma_ok = snapshot_received is not None and 0 <= now - snapshot_received < COMMA_SNAPSHOT_TIMEOUT_S
+  if not comma_ok:
+    lost.append('comma')
+  map_ok = bool(dashboard is not None and not dashboard.map_stream_stalled
+                and any(f.key == 'render:map_main' and f.present for f in dashboard.media))
+  if not map_ok:
+    lost.append('map')
+  if not (comma_ok and navi_ok is True):
+    lost.append('navi')
+  return lost
+
+
 class HealthRenderer(ClusterUiRenderer):
   startup_marks = {}   # hud.py MARKS (Jetson monotonic)
+  link_state = {}      # hud.py LINK: {'navi': carrotNavi alive·valid·connected in the last snapshot}
+  _link_dashboard = None
   _strip_deferred = False
   _strip_inner = None
 
@@ -559,6 +586,7 @@ class HealthRenderer(ClusterUiRenderer):
       rl.rl_pop_matrix()
 
   def render(self, state, signal_lights=None):
+    self._link_dashboard = getattr(state, 'navi_dashboard', None)
     self._repo_in_footer = False
     try:
       self._repo_park = bool(self._ev6_park_screen_active(state))
@@ -614,6 +642,20 @@ class HealthRenderer(ClusterUiRenderer):
       self._draw_health_strip(self._health_strip_plan(None))
     finally:
       rl.rl_pop_matrix()
+
+  def k9_link_losses(self, now=None):
+    now = time.monotonic() if now is None else now
+    return link_losses(SNAPSHOT_STATE.get('received'), self.link_state.get('navi'), self._link_dashboard, now)
+
+  def _draw_navi_map_stalled(self, rect, age_ms):
+    rl.draw_rectangle_rec(rect, rl_color((0, 0, 0)))
+    texts = LINK_TEXT['ko' if self.language == 'ko' else 'en']
+    lines = [texts[k] for k in self.k9_link_losses()] or [texts['map']]
+    size, gap = 26., 40.
+    top = rect.y + rect.height * .5 - gap * (len(lines) - 1) * .5
+    for i, line in enumerate(lines):
+      self._draw_text(self._ellipsize_text(line, size, rect.width - 24), rect.x + rect.width * .5, top + gap * i,
+                      size, (255, 255, 255), anchor='center')
 
   def close(self):
     if self._strip_inner is not None:
