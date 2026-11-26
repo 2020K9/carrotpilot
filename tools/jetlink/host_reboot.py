@@ -6,11 +6,9 @@ offroad idle loop and between onroad frames) -> REQUEST message -> Jetson server
 One reboot command per Jetson server process; later requests answer 'rebooting' without a second command.
 A Jetson without this file never advertises CAPABILITY, so comma reports 'old bundle'.
 
-Clean reboot (대감님 11/26 18:50 "gpu.usb먼저 초기화하고 재부팅되게"): on a Jetson the request starts one root
-transient unit (PREPARE_COMMAND) that, after the reply is sent, stops the inference/HUD services, idles the nvgpu
-GPU, de-authorizes USB devices and switches USB port power off, then reboots. Every step is bounded and may fail;
-the reboot always follows (plus a 5 s fallback reboot timer, 대감님 11/26 19:57 / 22:19). If the unit cannot be started, the plain
-REBOOT_COMMAND runs as before.
+Clean reboot (11/27): stop inference/HUD, sync, then request OS reboot.
+GPU force-idle and USB deauthorization/port-disable operations removed by owner request.
+The fallback timer also requests OS reboot; physical power cycling is not guaranteed.
 
 Boot reset (대감님 11/26 19:57): after the comma boots with a new git commit, a new comma model (DrivingModelName)
 or a new Jetson model (frozen boot selection), jetlinkd sends the same REQUEST once as soon as the Jetson is
@@ -82,42 +80,14 @@ def _ok(run, command, timeout=5):
     return False
 
 
-def _sysfs_write(path, value):
-  try:
-    path.write_text(value)
-    return True
-  except OSError:
-    return False
-
-
-def reset_gpu(sysfs=Path('/sys')):
-  """nvgpu (Jetson iGPU) has no nvidia-smi reset; force_idle is the driver's own idle/reset hook."""
-  done = 0
-  for attr in sorted(sysfs.glob('devices/platform/**/force_idle')):
-    if (attr.parent / 'railgate_enable').exists() or 'gpu' in attr.parent.name:
-      done += _sysfs_write(attr, '1')
-  return done
-
-
-def reset_usb(sysfs=Path('/sys')):
-  """De-authorize every non-root USB device (deepest first), then switch port power off where possible."""
-  devices = sysfs / 'bus/usb/devices'
-  names = [p.name for p in devices.glob('*') if ':' not in p.name and not p.name.startswith('usb')]
-  deauth = sum(_sysfs_write(devices / n / 'authorized', '0') for n in sorted(names, key=len, reverse=True))
-  ports = sum(_sysfs_write(p, '1') for p in sorted(devices.glob('*/*-port*/disable')))
-  return deauth, ports
-
-
 def prepare_and_reboot(run=subprocess.run, sysfs=Path('/sys'), sleep=time.sleep, log=print):
-  """Root transient unit: 1 stop inference, 2 GPU, 3 USB, 4 reboot. The reboot is never skipped."""
+  """Root transient unit: stop inference/HUD, then reboot without GPU/USB sysfs writes. The reboot is never skipped."""
   steps = []
   try:
     steps.append(('fallback', _ok(run, ('systemd-run', f'--on-active={FALLBACK_SECONDS}', '--collect',
                                         f'--unit={PREPARE_UNIT}-fallback', 'systemctl', '--no-block', 'reboot'))))
     sleep(1.)   # the RESPONSE reaches the comma before the server stops
     steps.append(('stop', _ok(run, ('systemctl', 'stop', *STOP_UNITS), timeout=30)))
-    steps.append(('gpu', reset_gpu(sysfs)))
-    steps.append(('usb', reset_usb(sysfs)))
     os.sync()
   except Exception as exc:   # noqa: BLE001 -- any failure still reboots
     steps.append(('error', repr(exc)[:120]))

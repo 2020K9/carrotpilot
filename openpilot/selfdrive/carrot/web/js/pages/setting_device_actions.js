@@ -202,14 +202,15 @@ function bindJetsonReboot(container) {
 const JETSON_SOFT_RESET_POLL_MS = 500;
 const JETSON_SOFT_RESET_MAX_MS = 45000;
 const JETSON_SOFT_RESET_STEPS = ["", "jetson_soft_step1", "jetson_soft_step2", "jetson_soft_step3", "jetson_soft_step4", "jetson_soft_step5"];
-const JETSON_SOFT_RESET_STEP_EN = ["", "stopping services", "checking GPU memory", "reattaching USB", "receiving bundle/model, checking hash", "starting services, checking"];
+const JETSON_SOFT_RESET_STEP_EN = ["", "stopping services", "legacy stage", "legacy stage", "receiving bundle/model, checking hash", "starting services, checking"];
 
 function jetsonSoftResetText(result) {
   const state = result.state;
   if (state === "pending") return getUIText("jetson_reboot_sending", "sending...");
   if (state === "running") {
     const step = Math.max(1, Math.min(5, Number(result.step) || 1));
-    return getUIText("jetson_soft_step", "Step ") + step + "/5: " + getUIText(JETSON_SOFT_RESET_STEPS[step], JETSON_SOFT_RESET_STEP_EN[step]);
+    if (step === 2 || step === 3) return getUIText("jetson_needs_bundle", "Jetson needs the new bundle (next boot)");
+    return getUIText("jetson_soft_step", "Step ") + ({1: 1, 4: 2, 5: 3}[step]) + "/3: " + getUIText(JETSON_SOFT_RESET_STEPS[step], JETSON_SOFT_RESET_STEP_EN[step]);
   }
   if (state === "done") return getUIText("jetson_soft_done", "Jetson soft reset done");
   if (state === "reboot") return getUIText("jetson_soft_reboot", "Not recovered: full Jetson reboot") + (result.reason ? " (" + result.reason + ")" : "");

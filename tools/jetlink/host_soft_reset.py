@@ -4,9 +4,7 @@ Recover a Jetson error without an OS reboot. Web button -> SOFT_REQUEST_FILE -> 
 same places as the reboot button) -> REQUEST {'soft_reset': true} -> Jetson server.py -> one root transient unit
 (UNIT) that runs, in this order:
   1 stop the Jetson services (inference + HUD)
-  2 GPU: the reboot button's force_idle (host_reboot.reset_gpu), then check that no process still holds the GPU.
-    GPU not released -> full reboot at once.
-  3 USB: de-authorize / port power off (host_reboot.reset_usb), then attach again
+  GPU/USB manipulation removed 11/27; retain step IDs 4/5 for older clients.
   4 receive the comma's selected release again (the boot gate session, boot_update.Gate) and compare the
     installed bundle and model sha256 with it
   5 start the services, wait for: comma link, map video and model output all alive
@@ -18,7 +16,6 @@ Progress (step 1..5, running / done / reboot) is in PROGRESS; the comma reads it
 (boot_update.py belongs to the installed updater and is not changed).
 """
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -39,7 +36,6 @@ PROGRESS = Path('/run/carrot-jetson-soft-reset.json')
 START_UNITS = ('carrot-jetlink.service', 'carrot-jetlink-hud.service')
 HUD_STATUS = Path('/dev/shm/carrot-jetlink-hud-status.json')
 HOST_HEALTH = Path('/dev/shm/carrot-jetlink-health.json')
-GPU_RELEASE_SECONDS = 5.
 SOFT_REQUEST_FILE = Path('/dev/shm/carrot-jetson-soft-reset-request.json')
 SOFT_RESULT_FILE = Path('/dev/shm/carrot-jetson-soft-reset-result.json')
 STATUS_POLL_SECONDS = 1.
@@ -88,46 +84,6 @@ def _report(request_id, started, clock):
     except OSError:
       pass
   return report
-
-
-def gpu_holders(proc=Path('/proc')):
-  """PIDs that still have an nvgpu device node open (other than this process)."""
-  holders = []
-  for pid in proc.glob('[0-9]*'):
-    if pid.name == str(os.getpid()):
-      continue
-    try:
-      for fd in (pid / 'fd').iterdir():
-        target = os.readlink(fd)
-        if target.startswith('/dev/nvgpu') or (target.startswith('/dev/nvhost-') and target.endswith('gpu')):
-          holders.append(int(pid.name))
-          break
-    except OSError:
-      continue
-  return holders
-
-
-def release_gpu(sysfs, proc, sleep, clock):
-  """Step 2: force_idle (same as the reboot button) and no GPU user left. (idled attrs, holders)."""
-  idled = R.reset_gpu(sysfs)
-  until = clock() + GPU_RELEASE_SECONDS
-  holders = gpu_holders(proc)
-  while holders and clock() < until:
-    sleep(.2)
-    holders = gpu_holders(proc)
-  return idled, holders
-
-
-def reattach_usb(sysfs, sleep):
-  """Step 3: the reboot button's USB detach, then port power on and authorize again (shallowest first)."""
-  devices = sysfs / 'bus/usb/devices'
-  names = [p.name for p in devices.glob('*') if ':' not in p.name and not p.name.startswith('usb')]
-  detached = R.reset_usb(sysfs)
-  sleep(1.)
-  ports = sum(R._sysfs_write(p, '0') for p in sorted(devices.glob('*/*-port*/disable')))
-  sleep(.5)
-  authorized = sum(R._sysfs_write(devices / n / 'authorized', '1') for n in sorted(names, key=len))
-  return detached, (ports, authorized)
 
 
 def verify_release(manifest, root):
@@ -282,15 +238,6 @@ def soft_reset(request_id, run=subprocess.run, sysfs=Path('/sys'), proc=Path('/p
     report(1, 'running')
     sleep(1.)   # the RESPONSE reaches the comma before the server stops
     steps.append(('stop', R._ok(run, ('systemctl', 'stop', *R.STOP_UNITS), timeout=20)))
-    step = 2
-    report(2, 'running')
-    idled, holders = release_gpu(sysfs, proc, sleep, clock)
-    steps.append(('gpu', idled, len(holders)))
-    if not idled or holders:
-      return full_reboot('gpu not released')
-    step = 3
-    report(3, 'running')
-    steps.append(('usb', *reattach_usb(sysfs, sleep)))
     step = 4
     report(4, 'running')
     why = release(max(0., deadline - clock()))

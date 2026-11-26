@@ -1,4 +1,4 @@
-"""'Jetson soft reset' button (대감님 11/26 23:21): step order, GPU not released -> reboot at once,
+"""'Jetson soft reset' button (대감님 11/26 23:21): step order, GPU/USB untouched,
 not healthy in 30 s -> the existing full reboot, web step text."""
 import json
 from pathlib import Path
@@ -65,31 +65,24 @@ def _run_reset(tmp_path, release='', check=None, gpu=True):
   return steps, calls, reports, reboots, clock, (gpu_dir, usb)
 
 
-def test_order_stop_gpu_usb_release_start_done(tmp_path):
+def test_stop_release_start_preserves_gpu_usb(tmp_path):
   steps, calls, reports, reboots, clock, (gpu, usb) = _run_reset(tmp_path)
-  assert [s[0] for s in steps] == ['fallback', 'stop', 'gpu', 'usb', 'release', 'start', 'done']
-  assert [r[0] for r in reports] == [1, 2, 3, 4, 5, 5] and reports[-1] == (5, 'done')
+  assert [s[0] for s in steps] == ['fallback', 'stop', 'release', 'start', 'done']
+  assert [r[0] for r in reports] == [1, 4, 5, 5] and reports[-1] == (5, 'done')
   assert calls[0][:2] == ['systemd-run', f'--on-active={S.FALLBACK_SECONDS}'] and calls[0][-1] == '--prepare-and-reboot'
   assert calls[1] == ['systemctl', 'stop', *R.STOP_UNITS]
   assert calls[2] == ['systemctl', 'start', *S.START_UNITS]
   assert calls[3] == ['systemctl', 'stop', f'{S.UNIT}-fallback.timer']
-  assert (gpu / 'force_idle').read_text() == '1'
-  # USB detached (reboot button's reset_usb) then attached again
+  assert (gpu / 'force_idle').read_text() == '0'
+  # USB stays authorized and port stays enabled
   assert (usb / '1-1/authorized').read_text() == '1' and (usb / '1-1.2/authorized').read_text() == '1'
   assert (usb / '1-0:1.0/usb1-port1/disable').read_text() == '0'
   assert reboots == []
 
 
-def test_gpu_not_released_reboots_at_once(tmp_path):
+def test_missing_gpu_sysfs_does_not_trigger_reboot(tmp_path):
   steps, calls, reports, reboots, clock, _ = _run_reset(tmp_path, gpu=False)
-  assert [s[0] for s in steps] == ['fallback', 'stop', 'gpu', 'reboot'] and reports[-1] == (2, 'reboot')
-  assert len(reboots) == 1 and ['systemctl', 'start', *S.START_UNITS] not in calls
-
-
-def test_gpu_holder_left_reboots(tmp_path, monkeypatch):
-  monkeypatch.setattr(S, 'gpu_holders', lambda proc: [1234])
-  steps, calls, reports, reboots, clock, _ = _run_reset(tmp_path)
-  assert steps[-1] == ('reboot', 'gpu not released') and len(reboots) == 1
+  assert steps[-1][0] == 'done' and reboots == []
 
 
 def test_hash_mismatch_reboots(tmp_path):
@@ -111,7 +104,7 @@ def test_default_reboot_is_the_reboot_button_path(tmp_path, monkeypatch):
   (gpu / 'force_idle').unlink()
   run, calls = _runner()
   clock = Clock()
-  S.soft_reset('ab', run, sysfs, proc, clock.sleep, clock, report=lambda *a, **k: None, log=lambda m: None)
+  S.soft_reset('ab', run, sysfs, proc, clock.sleep, clock, release=lambda left: 'model sha256 differs', report=lambda *a, **k: None, log=lambda m: None)
   assert seen == ['full']
 
 
@@ -187,7 +180,7 @@ def test_web_button_below_reboot():
   assert page.index('"btnDeviceJetsonReboot"') < page.index('"btnDeviceJetsonSoftReset"') < page.index('"btnDeviceRecalib"')
   ko = (web / 'translations/ko.js').read_text()
   assert 'jetson_soft_reset: "젯슨 초기화"' in ko
-  for n in range(1, 6):
+  for n in (1, 4, 5):
     assert f'jetson_soft_step{n}:' in ko
 
 
@@ -219,3 +212,20 @@ def test_inference_expected_from_snapshot():
   assert S.inference_expected(snap(True, 10., 'park')) is False
   assert S.inference_expected(snap(False, 10.)) is False
   assert S.inference_expected((0., {})) is True
+
+
+def test_maintenance_paths_never_write_hardware_sysfs(tmp_path, monkeypatch):
+  sysfs, proc, gpu, usb = _sysfs(tmp_path)
+  original = Path.write_text
+  def guarded(path, *args, **kwargs):
+    assert not path.is_relative_to(sysfs), path
+    return original(path, *args, **kwargs)
+  monkeypatch.setattr(Path, "write_text", guarded)
+  run, calls = _runner()
+  clock = Clock()
+  steps = R.prepare_and_reboot(run, sysfs, clock.sleep, log=lambda m: None)
+  assert dict(steps)["reboot"] is True
+  steps = S.soft_reset("ab", run, sysfs, proc, clock.sleep, clock,
+                       release=lambda left: "", check=lambda: {"comma": True, "map": True},
+                       report=lambda *a, **k: None, log=lambda m: None)
+  assert steps[-1][0] == "done"

@@ -55,28 +55,27 @@ def test_prepare_unit_failure_falls_back_to_plain_reboot(monkeypatch, tmp_path):
   assert calls == [list(R.PREPARE_COMMAND), list(R.REBOOT_COMMAND)]
 
 
-def test_order_stop_gpu_usb_reboot(tmp_path):
+def test_stop_reboot_preserves_gpu_usb(tmp_path):
   root, gpu, usb = _sysfs(tmp_path)
   run, calls = _runner()
   seen = []
   steps = R.prepare_and_reboot(run, root, sleep=lambda s: seen.append(('sleep', len(calls))), log=lambda m: None)
-  assert [s[0] for s in steps] == ['fallback', 'stop', 'gpu', 'usb', 'reboot']
+  assert [s[0] for s in steps] == ['fallback', 'stop', 'reboot']
   assert calls[0][:2] == ['systemd-run', '--on-active=5']
   assert calls[1] == ['systemctl', 'stop', *R.STOP_UNITS] and calls[2] == ['systemctl', '--no-block', 'reboot']
   assert seen == [('sleep', 1)]
-  assert (gpu / 'force_idle').read_text() == '1'
-  assert (usb / '1-1/authorized').read_text() == '0' and (usb / '1-1.2/authorized').read_text() == '0'
+  assert (gpu / 'force_idle').read_text() == '0'
+  assert (usb / '1-1/authorized').read_text() == '1' and (usb / '1-1.2/authorized').read_text() == '1'
   assert (usb / 'usb1/authorized').read_text() == '1' and (usb / '1-1:1.0/authorized').read_text() == '1'
-  assert (usb / '1-0:1.0/usb1-port1/disable').read_text() == '1'
-  assert dict(steps)['usb'] == (2, 1) and dict(steps)['reboot'] is True
+  assert (usb / '1-0:1.0/usb1-port1/disable').read_text() == '0'
+  assert dict(steps)['reboot'] is True
 
 
 def test_reboot_even_when_every_step_fails(tmp_path, monkeypatch):
   run, calls = _runner(fail=('stop', 'systemd-run'))
-  monkeypatch.setattr(R, 'reset_gpu', lambda sysfs: (_ for _ in ()).throw(PermissionError('ro')))
   steps = R.prepare_and_reboot(run, tmp_path / 'missing', sleep=lambda s: None, log=lambda m: None)
   assert calls[-1] == ['systemctl', '--no-block', 'reboot'] and dict(steps)['reboot'] is True
-  assert 'error' in dict(steps)
+  assert dict(steps)['stop'] is False
 
 
 def test_forced_reboot_when_orderly_reboot_fails(tmp_path):
