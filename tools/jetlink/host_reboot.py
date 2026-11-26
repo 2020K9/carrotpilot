@@ -13,8 +13,8 @@ the reboot always follows (plus a 20 s fallback reboot timer, 대감님 11/26 19
 REBOOT_COMMAND runs as before.
 
 Boot reset (대감님 11/26 19:57): after the comma boots with a new git commit, a new comma model (DrivingModelName)
-or a new Jetson model (frozen boot selection), jetlinkd sends the same REQUEST once, so the Jetson runs the same
-clean reboot as the button. The fingerprint is stored in BOOT_STATE_FILE; an ordinary start (same fingerprint)
+or a new Jetson model (frozen boot selection), jetlinkd sends the same REQUEST once as soon as the Jetson is
+connected (no parked / drive-waiting condition, 대감님 11/26 21:51), so the Jetson runs the same clean reboot as the button. The fingerprint is stored in BOOT_STATE_FILE; an ordinary start (same fingerprint)
 does nothing, and one request per comma boot at most.
 """
 import json

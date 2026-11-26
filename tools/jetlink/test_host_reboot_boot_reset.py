@@ -84,6 +84,10 @@ def test_fallback_timer_is_20s_and_same_prepare_code(tmp_path):
   assert users == {'idle', 'boot_reset'}
 
 
-def test_daemon_calls_boot_reset_offroad_loop():
+def test_daemon_calls_boot_reset_on_connect():
   daemon = Path(R.__file__).resolve().parents[2] / 'openpilot/selfdrive/modeld/jetlink/daemon.py'
-  assert daemon.read_text().count('host_reboot.boot_reset(client)') == 1
+  text = daemon.read_text()
+  # 대감님 11/26 21:51: no parked / drive-waiting condition; sent right after the Jetson connects
+  assert text.count('.boot_reset(client)') == 1 and text.count('loading_reboot.boot_reset(client)') == 1
+  assert text.index('loading_reboot = HostReboot(peer)') < text.index('loading_reboot.boot_reset(client)') \
+    < text.index('wait_for_boot_update(client, peer')
