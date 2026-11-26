@@ -8,6 +8,7 @@ import time
 
 from host_health import STATUS
 from hud_protocol import SNAPSHOT_STATE
+from cluster_config import CLUSTER_SCREEN_MODE_NAVI
 from openpilot.common.jetlink_status import _fresh
 from cluster_models import GitBranchStatus
 import cluster_version_badge as VB
@@ -587,6 +588,9 @@ class HealthRenderer(ClusterUiRenderer):
 
   def render(self, state, signal_lights=None):
     self._link_dashboard = getattr(state, 'navi_dashboard', None)
+    if self.k9_link_down_screen(state):
+      self._draw_link_down_screen()
+      return
     self._repo_in_footer = False
     try:
       self._repo_park = bool(self._ev6_park_screen_active(state))
@@ -646,6 +650,28 @@ class HealthRenderer(ClusterUiRenderer):
   def k9_link_losses(self, now=None):
     now = time.monotonic() if now is None else now
     return link_losses(SNAPSHOT_STATE.get('received'), self.link_state.get('navi'), self._link_dashboard, now)
+
+  def k9_link_down_screen(self, state):
+    """대감님 11/26 23:12: on the navigation screen a lost map (the old MAP STREAM STALLED case) blanks the whole
+    Jetson screen; the left band (speed·limit) and the right band (navigation·연결됨·STREAMS) are hidden too."""
+    dashboard = getattr(state, 'navi_dashboard', None)
+    if dashboard is None or not dashboard.map_stream_stalled:
+      return False
+    try:
+      if self._ev6_park_screen_active(state) or self._ev6_reverse_screen_active(state):
+        return False
+      return self._effective_screen_mode(state) == CLUSTER_SCREEN_MODE_NAVI
+    except Exception:
+      return False
+
+  def _draw_link_down_screen(self):
+    rl.draw_rectangle(0, 0, int(self.width), int(self.height), rl_color((0, 0, 0)))
+    rl.rl_push_matrix()
+    rl.rl_scalef(self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT, 1.)
+    try:
+      self._draw_navi_map_stalled(rl.Rectangle(0., 0., float(DESIGN_WIDTH), float(DESIGN_HEIGHT)), None)
+    finally:
+      rl.rl_pop_matrix()
 
   def _draw_navi_map_stalled(self, rect, age_ms):
     rl.draw_rectangle_rec(rect, rl_color((0, 0, 0)))
