@@ -5,10 +5,18 @@ offroad idle loop and between onroad frames) -> REQUEST message -> Jetson server
 -> 'sudo -n systemctl --no-block reboot'. No vehicle condition (gear, speed, assistance, IsOnroad, signal age).
 One reboot command per Jetson server process; later requests answer 'rebooting' without a second command.
 A Jetson without this file never advertises CAPABILITY, so comma reports 'old bundle'.
+
+Clean reboot (대감님 11/26 18:50 "gpu.usb먼저 초기화하고 재부팅되게"): on a Jetson the request starts one root
+transient unit (PREPARE_COMMAND) that, after the reply is sent, stops the inference/HUD services, idles the nvgpu
+GPU, de-authorizes USB devices and switches USB port power off, then reboots. Every step is bounded and may fail;
+the reboot always follows (plus a 60 s fallback reboot timer). If the unit cannot be started, the plain
+REBOOT_COMMAND runs as before.
 """
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 import uuid
 
@@ -18,6 +26,11 @@ REQUEST_FILE = Path('/dev/shm/carrot-jetson-reboot-request.json')
 RESULT_FILE = Path('/dev/shm/carrot-jetson-reboot-result.json')
 REQUEST_TIMEOUT = 3.   # comma side: a request older than this is dropped, the UI reports "not connected"
 REBOOT_COMMAND = ('sudo', '-n', 'systemctl', '--no-block', 'reboot')
+PREPARE_UNIT = 'carrot-jetson-reboot-prepare'
+PREPARE_COMMAND = ('sudo', '-n', 'systemd-run', '--no-block', '--collect', f'--unit={PREPARE_UNIT}',
+                   sys.executable, str(Path(__file__).resolve()), '--prepare-and-reboot')
+JETSON_MARKER = Path('/etc/nv_tegra_release')
+STOP_UNITS = ('carrot-jetlink-hud.service', 'carrot-jetlink.service')
 
 
 # ---------------------------------------------------------------- Jetson side
@@ -36,14 +49,68 @@ def host_request(payload, run=subprocess.run):
     return {'ok': False, 'reason': 'invalid request'}
   if _state['rebooting']:
     return {'id': request['id'], 'ok': True, 'duplicate': True}
-  try:
-    result = run(list(REBOOT_COMMAND), capture_output=True, text=True, timeout=5, check=False)
-    if result.returncode != 0:
-      return {'id': request['id'], 'ok': False, 'reason': 'reboot command failed'}
-  except (OSError, subprocess.TimeoutExpired):
+  if JETSON_MARKER.exists() and _ok(run, PREPARE_COMMAND):
+    _state['rebooting'] = True
+    return {'id': request['id'], 'ok': True}
+  if not _ok(run, REBOOT_COMMAND):
     return {'id': request['id'], 'ok': False, 'reason': 'reboot command failed'}
   _state['rebooting'] = True
   return {'id': request['id'], 'ok': True}
+
+
+def _ok(run, command, timeout=5):
+  try:
+    return run(list(command), capture_output=True, text=True, timeout=timeout, check=False).returncode == 0
+  except (OSError, subprocess.SubprocessError):
+    return False
+
+
+def _sysfs_write(path, value):
+  try:
+    path.write_text(value)
+    return True
+  except OSError:
+    return False
+
+
+def reset_gpu(sysfs=Path('/sys')):
+  """nvgpu (Jetson iGPU) has no nvidia-smi reset; force_idle is the driver's own idle/reset hook."""
+  done = 0
+  for attr in sorted(sysfs.glob('devices/platform/**/force_idle')):
+    if (attr.parent / 'railgate_enable').exists() or 'gpu' in attr.parent.name:
+      done += _sysfs_write(attr, '1')
+  return done
+
+
+def reset_usb(sysfs=Path('/sys')):
+  """De-authorize every non-root USB device (deepest first), then switch port power off where possible."""
+  devices = sysfs / 'bus/usb/devices'
+  names = [p.name for p in devices.glob('*') if ':' not in p.name and not p.name.startswith('usb')]
+  deauth = sum(_sysfs_write(devices / n / 'authorized', '0') for n in sorted(names, key=len, reverse=True))
+  ports = sum(_sysfs_write(p, '1') for p in sorted(devices.glob('*/*-port*/disable')))
+  return deauth, ports
+
+
+def prepare_and_reboot(run=subprocess.run, sysfs=Path('/sys'), sleep=time.sleep, log=print):
+  """Root transient unit: 1 stop inference, 2 GPU, 3 USB, 4 reboot. The reboot is never skipped."""
+  steps = []
+  try:
+    steps.append(('fallback', _ok(run, ('systemd-run', '--on-active=60', '--collect',
+                                        f'--unit={PREPARE_UNIT}-fallback', 'systemctl', '--no-block', 'reboot'))))
+    sleep(1.)   # the RESPONSE reaches the comma before the server stops
+    steps.append(('stop', _ok(run, ('systemctl', 'stop', *STOP_UNITS), timeout=30)))
+    steps.append(('gpu', reset_gpu(sysfs)))
+    steps.append(('usb', reset_usb(sysfs)))
+    os.sync()
+  except Exception as exc:   # noqa: BLE001 -- any failure still reboots
+    steps.append(('error', repr(exc)[:120]))
+  finally:
+    rebooted = _ok(run, ('systemctl', '--no-block', 'reboot'))
+    if not rebooted:
+      rebooted = _ok(run, ('systemctl', '--force', 'reboot'))
+    steps.append(('reboot', rebooted))
+    log(json.dumps({'carrot_reboot_prepare': steps}))
+  return steps
 
 
 # ---------------------------------------------------------------- comma side
@@ -115,3 +182,7 @@ class Client:
       except Exception:
         result.update(state='disconnected', reason='')
     _write(RESULT_FILE, result)
+
+
+if __name__ == '__main__' and sys.argv[1:] == ['--prepare-and-reboot']:
+  prepare_and_reboot()
