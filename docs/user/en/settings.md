@@ -605,7 +605,7 @@ The ATC right lane-change distance uses 0m for off and 50m steps up to 500m. The
 
 ### Jetson reboot and soft reset (2026-11-27)
 
-Jetson Reboot stops inference/HUD services and requests an OS reboot. GPU force-idle and USB deauthorization/port-disable operations have been removed. Automatic reboot after an update and fallback reboot after a failed soft reset use this same path.
+Jetson Reboot stops inference/HUD services and requests an OS reboot. GPU force-idle and USB deauthorization/port-disable operations have been removed. Git pulls and commit-only changes no longer trigger automatic Jetson reboot. Existing model-selection-change and failed-soft-reset reboot paths remain. Missing model history establishes a baseline without rebooting.
 
 Soft Reset has three displayed stages: stop services; receive/verify the selected bundle and model hashes; start services and check health. It no longer separately resets GPU or USB. The existing 30-second health deadline and fallback reboot remain. Signatures, hash checks and models are unchanged.
 

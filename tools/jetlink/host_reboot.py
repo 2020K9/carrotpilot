@@ -10,7 +10,7 @@ Clean reboot (11/27): stop inference/HUD, sync, then request OS reboot.
 GPU force-idle and USB deauthorization/port-disable operations removed by owner request.
 The fallback timer also requests OS reboot; physical power cycling is not guaranteed.
 
-Boot reset (대감님 11/26 19:57): after the comma boots with a new git commit, a new comma model (DrivingModelName)
+Boot reset (대감님 11/26 19:57): after the comma boots with a new comma model (DrivingModelName)
 or a new Jetson model (frozen boot selection), jetlinkd sends the same REQUEST once as soon as the Jetson is
 connected (no parked / drive-waiting condition, 대감님 11/26 21:51), so the Jetson runs the same clean reboot as the button. The fingerprint is stored in BOOT_STATE_FILE; an ordinary start (same fingerprint)
 does nothing, and one request per comma boot at most.
@@ -165,13 +165,18 @@ class Client:
     _write(RESULT_FILE, self._send(client, request['id']))
 
   def boot_reset(self, client, fingerprint=None):
-    """Once per comma boot: same clean Jetson reboot after git pull / comma model / Jetson model change."""
+    """Once per comma boot: reboot for model changes only, never for Git revision changes."""
     if self.boot_checked or not self.is_jetson:
       return None
     self.boot_checked = True
     try:
       current = boot_fingerprint() if fingerprint is None else fingerprint
-      if _read(BOOT_STATE_FILE) == current:
+      previous = _read(BOOT_STATE_FILE)
+      keys = ("comma_model", "jetson_model")
+      if not isinstance(previous, dict) or any(k not in previous for k in keys):
+        _write(BOOT_STATE_FILE, current)  # first observation: establish baseline, do not reboot
+        return None
+      if all(previous[k] == current[k] for k in keys):
         return None
       _write(BOOT_STATE_FILE, current)   # marked first: never a second automatic reboot for this state
     except Exception:
@@ -199,19 +204,13 @@ class Client:
 
 
 def boot_fingerprint():
-  """(comma git commit, comma model, Jetson model) of this comma boot."""
-  root = Path(__file__).resolve().parents[2]
-  try:
-    commit = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True,
-                            timeout=5, check=False).stdout.strip()
-  except (OSError, subprocess.SubprocessError):
-    commit = ''
+  """Model selection of this comma boot; Git revision is deliberately excluded."""
   from openpilot.common.params import Params
   from openpilot.common.big_model_catalog import effective_id
   comma_model = Params().get('DrivingModelName') or ''
   if isinstance(comma_model, bytes):
     comma_model = comma_model.decode(errors='replace')
-  return {'commit': commit, 'comma_model': str(comma_model), 'jetson_model': effective_id()}
+  return {'comma_model': str(comma_model), 'jetson_model': effective_id()}
 
 
 if __name__ == '__main__' and sys.argv[1:] == ['--prepare-and-reboot']:

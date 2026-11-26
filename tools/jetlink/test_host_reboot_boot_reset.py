@@ -1,4 +1,4 @@
-"""Clean Jetson reboot once after comma git pull / comma model change / Jetson model change (대감님 11/26 19:57)."""
+"""Clean Jetson reboot once after model changes only, not git pull (대감님 11/26 19:57)."""
 import ast
 import json
 from pathlib import Path
@@ -38,8 +38,8 @@ def _boot(fingerprint):
   return wire.sent, result
 
 
-@pytest.mark.parametrize('key,value', [('commit', 'bbb'), ('comma_model', 'Other'), ('jetson_model', 'ls2')])
-def test_three_changes_reboot_once(state, key, value):
+@pytest.mark.parametrize('key,value', [('comma_model', 'Other'), ('jetson_model', 'ls2')])
+def test_model_changes_reboot_once(state, key, value):
   new = dict(BASE, **{key: value})
   sent, result = _boot(new)
   assert len(sent) == 1 and sent[0]['reboot'] is True and result['state'] == 'sent'
@@ -54,8 +54,8 @@ def test_ordinary_start_does_nothing(state):
 
 def test_one_check_per_client_and_jetson_only(state):
   client, wire = R.Client(PEER), Wire()
-  client.boot_reset(wire, dict(BASE, commit='c1'))
-  client.boot_reset(wire, dict(BASE, commit='c2'))
+  client.boot_reset(wire, dict(BASE, comma_model='c1'))
+  client.boot_reset(wire, dict(BASE, comma_model='c2'))
   assert len(wire.sent) == 1
   wire = Wire()
   assert R.Client({'carrot_host': 'pc'}).boot_reset(wire, dict(BASE, commit='c3')) is None and wire.sent == []
@@ -63,9 +63,9 @@ def test_one_check_per_client_and_jetson_only(state):
 
 def test_old_bundle_marks_done_without_message(state):
   wire = Wire()
-  result = R.Client({'carrot_host': 'jetson'}).boot_reset(wire, dict(BASE, commit='c4'))
+  result = R.Client({'carrot_host': 'jetson'}).boot_reset(wire, dict(BASE, comma_model='c4'))
   assert result['state'] == 'unsupported' and wire.sent == []
-  assert _boot(dict(BASE, commit='c4'))[0] == []
+  assert _boot(dict(BASE, comma_model='c4'))[0] == []
 
 
 def test_fallback_timer_is_5s_and_same_prepare_code(tmp_path):
@@ -91,3 +91,19 @@ def test_daemon_calls_boot_reset_on_connect():
   assert text.count('.boot_reset(client)') == 1 and text.count('loading_reboot.boot_reset(client)') == 1
   assert text.index('loading_reboot = HostReboot(peer)') < text.index('loading_reboot.boot_reset(client)') \
     < text.index('wait_for_boot_update(client, peer')
+
+
+def test_git_pull_never_sends_reboot(state):
+  for commit in ("new-code", "docs-only", ""):
+    assert _boot(dict(BASE, commit=commit)) == ([], None)
+  assert _boot({k: BASE[k] for k in ("comma_model", "jetson_model")}) == ([], None)
+
+
+@pytest.mark.parametrize("previous", [None, {}, {"commit": "old"}])
+def test_missing_model_baseline_does_not_reboot(state, previous):
+  if previous is None:
+    R.BOOT_STATE_FILE.unlink()
+  else:
+    R.BOOT_STATE_FILE.write_text(json.dumps(previous))
+  assert _boot(BASE) == ([], None)
+  assert json.loads(R.BOOT_STATE_FILE.read_text()) == BASE

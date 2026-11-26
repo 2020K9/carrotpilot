@@ -660,7 +660,7 @@ def main():
           # Jetson reboot also while the Jetson is still loading/waiting (대감님 11/21 15:21): before this
           # only the ready loop forwarded the request, so a stuck Jetson answered "not connected".
           loading_reboot = HostReboot(peer)
-          # Once per comma boot after git pull / model change (대감님 11/26 19:57), sent as soon as the Jetson
+          # Once per comma boot after model change only (Git changes excluded) (대감님 11/26 19:57), sent as soon as the Jetson
           # is connected and the change is seen, with no parked/waiting condition (대감님 11/26 21:51).
           loading_reboot.boot_reset(client)
           reboot_idle = lambda current=client, forwarder=loading_reboot: forwarder.idle(current, None)  # noqa: E731
