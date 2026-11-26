@@ -32,9 +32,9 @@ def test_updater_link_other_key_and_missing(tmp_path):
     '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAEhNI8j6VWOnj0/JAD+CbNLSnJVZUzCgqWmE57QO8YOw=\n-----END PUBLIC KEY-----\n')
   link = H.updater_link(tmp_path)
   assert link['release'] == 'someone/fork' and link['key'].startswith('121348f2')
-  assert H.link_line(link) == 'J 받기 someone/fork · 키 121348f2 · 모델 ?'
+  assert H.link_line(link) == '받기 someone/fork · 키 121348f2 · 모델 ?'
   assert H.updater_link(tmp_path / 'none') == {'release': '', 'key': ''}
-  assert H.link_line({}) == 'J 받기 ? · 키 ? · 모델 ?'
+  assert H.link_line({}) == '받기 ? · 키 ? · 모델 ?'
 
 
 def test_model_release_from_signed_manifests():
@@ -49,5 +49,5 @@ def test_model_release_from_signed_manifests():
 def test_link_line_full():
   link = {'release': '2020K9/carrotpilot', 'key': H.K9_RELEASE_KEY}
   assert H.link_line(link, '2020K9/carrotpilot', 'k9-comma4-big-light-speed-2-b4dead3e') == \
-    'J 받기 2020K9/carrotpilot · 키 2020K9 · 모델 light-speed-2-b4dead3e'
-  assert H.link_line(link, 'other/repo', 't1') == 'J 받기 2020K9/carrotpilot · 키 2020K9 · 모델 other/repo t1'
+    '받기 2020K9 · 키 2020K9 · 모델 ls2-b4dead3e'
+  assert H.link_line(link, 'other/repo', 't1') == '받기 2020K9 · 키 2020K9 · 모델 other/repo t1'

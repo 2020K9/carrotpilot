@@ -29,7 +29,7 @@ def test_lines_full():
   assert H.repo_lines(comma, jetson) == [
     'C ajouatom/openpilot carrot-wip 1cb2ef7e · Light speed 2 909a1400',
     'J 2020K9/carrotpilot carrot-wip 2f41618b · N16 Nav 01effc67',
-    'C /data/openpilot · J /opt/carrot-jetlink/current']
+    'C /data/openpilot · J current']
 
 
 def test_unknown_is_question_mark_never_guessed():
@@ -96,4 +96,4 @@ def test_bundle_origin_has_no_credentials(tmp_path):
 def test_release_folder_commit_is_shortened():
   lines = H.repo_lines({'path': '/data/openpilot'},
                        {'commit': '2f41618b', 'path': '/opt/carrot-jetlink/releases/2f41618bfb627806ac4831f070c59a950900f2a3'})
-  assert lines[2] == 'C /data/openpilot · J /opt/carrot-jetlink/releases/2f41618b'
+  assert lines[2] == 'C /data/openpilot · J 2f41618b'

@@ -202,12 +202,25 @@ def repo_lines(comma, jetson):
     return []
   return [side_line('C', *(comma.get(k) for k in REPO_KEYS)),
           side_line('J', *(jetson.get(k) for k in REPO_KEYS)),
-          f"C {_short_path(comma.get('path'))} · J {_short_path(jetson.get('path'))}"]
+          f"C {_short_path(comma.get('path'))} · J {_short_jetson_path(jetson.get('path'))}"]
 
 
 def _short_path(value):
   # releases/<40-hex commit> -> releases/<8>, so the line fits; '?' when unknown
   return re.sub(r'\b([0-9a-f]{8})[0-9a-f]{32}\b', r'\1', _text(value)) or UNKNOWN_TEXT
+
+
+# 11/26 18:44 (대감님 "3.4번째줄 요약좀해서 넣어라 너무길자넠?"): the Jetson always installs under
+# /opt/carrot-jetlink, so that part is left out: releases/<commit> -> <commit 8>, other folders by their name
+JETSON_ROOT = '/opt/carrot-jetlink/'
+
+
+def _short_jetson_path(value):
+  path = _short_path(value)
+  for prefix in (JETSON_ROOT + 'releases/', JETSON_ROOT):
+    if path.startswith(prefix) and len(path) > len(prefix):
+      return path[len(prefix):]
+  return path
 
 
 # 11/26 00:26 (대감님 "hud에 콤마·젯슨 어디하고 연결돼 있는지"): one more line under the three, read from what is
@@ -258,12 +271,33 @@ def model_release(sha256, roots=(CATALOG_DIR, BUNDLE_ROOT / 'openpilot/selfdrive
   return '', ''
 
 
+# 11/26 18:44: shorter fourth line. The usual repository name is left out (owner only), and the model release
+# names are shortened; any other repository or release is shown in full.
+RELEASE_REPO_NAME = 'carrotpilot'
+MODEL_TAG_SHORT = (('light-speed-2-', 'ls2-'), ('light-speed-', 'ls-'), ('fairy-tale-', 'ft-'), ('flip-flop-', 'ff-'),
+                   ('nav-n16-', 'n16-'), ('md-v3-', 'md3-'))
+
+
+def _short_repo(repo):
+  owner, _, name = repo.partition('/')
+  return owner if name == RELEASE_REPO_NAME else repo
+
+
+def _short_model_tag(tag):
+  tag = re.sub(r'^k9-comma4-big-', '', _text(tag))   # shared prefix of every model release, to fit
+  for long, short in MODEL_TAG_SHORT:
+    if tag.startswith(long):
+      return short + tag[len(long):]
+  return tag
+
+
 def link_line(link, model_repo='', model_tag=''):
   release, key = _text(link.get('release')), _text(link.get('key'))
   key_text = ('2020K9' if key == K9_RELEASE_KEY else key[:8]) if key else UNKNOWN_TEXT
-  model_tag = re.sub(r'^k9-comma4-big-', '', _text(model_tag))   # shared prefix of every model release, to fit
-  model = ' '.join(x for x in ((model_repo if model_repo != release else ''), model_tag) if x)
-  return f'J 받기 {release or UNKNOWN_TEXT} · 키 {key_text} · 모델 {model or UNKNOWN_TEXT}'
+  model_repo = _text(model_repo)
+  model = ' '.join(x for x in ((_short_repo(model_repo) if model_repo != release else ''), _short_model_tag(model_tag))
+                   if x)
+  return f'받기 {_short_repo(release) or UNKNOWN_TEXT} · 키 {key_text} · 모델 {model or UNKNOWN_TEXT}'
 
 
 def read_jetson_commit(path=SOURCE_COMMIT_FILE):
@@ -410,6 +444,7 @@ class HealthRenderer(ClusterUiRenderer):
   _repo_versions = {}
   _repo_badge_key = None
   _repo_badge = ()
+  _repo_park = False
 
   def repo_lines(self):
     now = time.monotonic()
@@ -450,6 +485,9 @@ class HealthRenderer(ClusterUiRenderer):
         self._repo_badge = version_lines(comma, {**jetson, 'commit': bundle_commit(jetson.get('commit'))},
                                          self._repo_versions)
       lines[:2] = self._repo_badge
+    # 11/26 18:56 (대감님 "p단화면에만 2줄로 표기해라"): the install-path and connection lines only on the P screen
+    if not self._repo_park:
+      lines = lines[:2]
     return lines
 
   def _repo_line_height(self):
@@ -522,6 +560,10 @@ class HealthRenderer(ClusterUiRenderer):
 
   def render(self, state, signal_lights=None):
     self._repo_in_footer = False
+    try:
+      self._repo_park = bool(self._ev6_park_screen_active(state))
+    except Exception:
+      self._repo_park = False
     self._render_health(state, signal_lights)
     if not self._repo_in_footer:
       self._draw_repo_label()
