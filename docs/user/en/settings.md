@@ -601,3 +601,12 @@ Mode 3 now adds 50% of mode 2's gap correction at/above about 1.5 km/h; below 1.
 After confirmed turn entry, the TBT indicator ends its hold as the wheel returns within ±15 degrees while moving, without waiting for the remaining 30m. Pre-turn traffic-light waits remain held; see [lane changes](lane-change.md) for the entry conditions.
 
 The ATC right lane-change distance uses 0m for off and 50m steps up to 500m. The former ON setting migrates to 250m at restart.
+
+
+### Jetson reboot and soft reset (2026-11-27)
+
+Jetson Reboot stops inference/HUD services and requests an OS reboot. GPU force-idle and USB deauthorization/port-disable operations have been removed. Automatic reboot after an update and fallback reboot after a failed soft reset use this same path.
+
+Soft Reset has three displayed stages: stop services; receive/verify the selected bundle and model hashes; start services and check health. It no longer separately resets GPU or USB. The existing 30-second health deadline and fallback reboot remain. Signatures, hash checks and models are unchanged.
+
+Updating Comma sources does not change the running Jetson code: its new model-specific signed bundle must be installed. A sent reboot request does not confirm completion; check the new boot ID, connection and inference state. An OS reboot is not a physical power cycle. Vehicle recovery remains unverified.
