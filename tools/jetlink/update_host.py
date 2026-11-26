@@ -327,6 +327,27 @@ def record_active(manifest, previous_model, previous_release=None):
                'previous_release': previous_release})
 
 
+def keeps_current(manifest):
+  """Same model already received: keep the running release when only the commit differs (대감님 11/27 05:43).
+
+  A comma git pull changes release.json source_commit/bundle, but the Jetson model file is stored by its
+  hash (cache/models/<sha256[:16]>.onnx). When the current release was activated with this model
+  (sha256 + size) and carries its spec, nothing is downloaded and the boot gate does not block.
+  Only a different model hash takes the install path.
+  """
+  if not isinstance(manifest, dict) or manifest.get('delivery') in ('usb', 'local') or 'model' not in manifest:
+    return False
+  try:
+    if active_model() != model_identity(manifest):
+      return False
+    path = model_path(manifest['model'])
+    if path.is_symlink() or not path.is_file() or path.stat().st_size != manifest['model']['size']:
+      return False
+    return release_spec(ROOT / 'current', manifest['model']) is not None
+  except (OSError, ValueError, KeyError, TypeError):
+    return False
+
+
 def selected_commit(selection):
   if selection.get('delivery') == 'usb':
     from usb_release import trusted, registered
@@ -355,6 +376,9 @@ def selected_commit(selection):
     # this value with current/SOURCE_COMMIT, so it must not look active until
     # the selected model has been staged, probed and recorded.
     return commit + ':' + selection['model']['sha256'][:16]
+  if current is not None and current != commit and keeps_current(selection):
+    # Commit-only change: the boot gate sees the running release as selected and needs no download.
+    return current
   return commit
 
 

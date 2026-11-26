@@ -98,6 +98,13 @@ def verify_release(manifest, root):
     verify_assets(resolve(root, manifest))
     return ''
   current = (root / 'current').resolve()
+  if (current / 'SOURCE_COMMIT').read_text().strip() != manifest['source_commit']:
+    # Commit-only change with the same model hash: the boot gate kept this release (대감님 11/27 05:43).
+    if not update.keeps_current(manifest):
+      return 'bundle sha256 differs'
+    if update.digest(update.model_path(manifest['model'])) != manifest['model']['sha256']:
+      return 'model sha256 differs'
+    return ''
   update.check_bundle(current, manifest)
   if (current / '.bundle-sha256').read_text().strip() != manifest['bundle']['sha256']:
     return 'bundle sha256 differs'
