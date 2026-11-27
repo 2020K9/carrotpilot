@@ -96,11 +96,12 @@ def test_modeld_other_models_keep_desire_helper_desire():
   import inspect
   from openpilot.selfdrive.modeld import modeld
   src = inspect.getsource(modeld.main)
-  block = ("    desire = DH.desire\n"
-           "    if is_jcd210(model):\n"
-           "      desire = jcd210_desire.update(DH, sm['carState'], sm['carrotMan'].atcType)\n"
-           "    else:\n"
-           "      jcd210_desire.reset()\n")
+  block = "".join(line + "\n" for line in (
+    "    desire = DH.desire",
+    "    if is_jcd210(model):",
+    "      desire = jcd210_desire.update(DH, sm['carState'], sm['carrotMan'].atcType)",
+    "    else:",
+    "      jcd210_desire.reset()"))
   assert src.count(block) == 1
   # The model input is still built only from this one desire value.
   assert src.count('vec_desire[desire] = 1') == 1
