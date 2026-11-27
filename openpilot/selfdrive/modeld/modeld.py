@@ -487,7 +487,7 @@ def main(demo=False):
       model.update(sm, meta_main)
     desire = DH.desire
     if is_jcd210(model):
-      desire = jcd210_desire.update(DH, sm['carState'], sm['carrotMan'].atcType)
+      desire = jcd210_desire.update(DH, sm, sm['carState'].vEgo)
     else:
       jcd210_desire.reset()
     is_rhd = sm["driverMonitoringState"].isRHD

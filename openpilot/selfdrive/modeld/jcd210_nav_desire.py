@@ -1,26 +1,32 @@
 """Jcd210 only: navigation guidance as a desire pulse repeated every second.
 
-Jcd210 has no navigation input. Carrot's ATC type (already limited by the
-existing ATC distance settings) is turned into a Jcd210 desire. A desire that
-stays on reverses the Jcd210 path, so the desire is sent as a one-frame pulse
-and sent again every second while it lasts. DesireHelper's own desire (ATC
-turn, lane change) has priority, so one desire path feeds the model.
+Jcd210 has no navigation input. It reads the same navigation command N16
+gets (navInstructionCarrot.allManeuvers through navigation_input, fresh for
+2 s, distance advanced by speed since receipt), so it does not depend on the
+auto turn control setting. Turns become turn desires; slight turns, ramps and forks become
+keep desires (never a lane change desire). A desire that stays on reverses
+the Jcd210 path, so it is sent as a one-frame pulse and again every second.
+DesireHelper's own desire has priority, so one desire path feeds the model.
 """
+import time
+
 from openpilot.cereal import log
 from openpilot.selfdrive.modeld.constants import ModelConstants
+from openpilot.selfdrive.navigation.helpers import navigation_input
 
 Desire = log.Desire
 PULSE_FRAMES = ModelConstants.MODEL_RUN_FREQ  # one pulse per second
+NAV_FRESH_S = 2.  # same freshness as N16 (MapInput)
+NAV_DESIRE_DIST = 100.  # N16 encodes distance in 100 m units; act within one unit
 
+# Valhalla command index (navigation_input) -> desire
 NAV_DESIRES = {
-  'turn left': Desire.turnLeft,
-  'turn right': Desire.turnRight,
-  'atc left': Desire.keepLeft,
-  'atc right': Desire.keepRight,
-  'fork left': Desire.keepLeft,
-  'fork right': Desire.keepRight,
+  9: Desire.keepRight, 10: Desire.turnRight, 11: Desire.turnRight,  # slight / right / sharp right
+  14: Desire.turnLeft, 15: Desire.turnLeft, 16: Desire.keepLeft,  # sharp left / left / slight left
+  18: Desire.keepRight, 19: Desire.keepLeft,  # on ramp
+  20: Desire.keepRight, 21: Desire.keepLeft,  # off ramp
+  23: Desire.keepRight, 24: Desire.keepLeft,  # fork
 }
-LEFT_DESIRES = (Desire.turnLeft, Desire.keepLeft, Desire.laneChangeLeft)
 
 _JCD210_SHA256: list[str | None] = []
 
@@ -42,14 +48,17 @@ def is_jcd210(model):
   return getattr(model, 'client', None) is not None and sha is not None and getattr(spec, 'sha256', None) == sha
 
 
-def nav_desire(dh, car_state, atc_type):
-  desire = NAV_DESIRES.get(atc_type, Desire.none)
-  # DesireHelper owns lane changes (including BSD waits) and driver conflicts.
-  if desire == Desire.none or dh.lane_change_state != log.LaneChangeState.off or dh.atc_active == 2:
+def nav_desire(sm, speed, now=None):
+  """Desire from the N16 navigation command, or none."""
+  now = time.monotonic() if now is None else now
+  if not (sm.valid['navInstructionCarrot'] and 0 <= now - sm.recv_time['navInstructionCarrot'] < NAV_FRESH_S):
     return Desire.none
-  if car_state.leftBlindspot if desire in LEFT_DESIRES else car_state.rightBlindspot:
+  nav = navigation_input(sm['navInstructionCarrot'].allManeuvers,
+                         max(0., speed) * (now - sm.recv_time['navInstructionCarrot']))
+  commands = nav[:-1].nonzero()[0]
+  if len(commands) == 0 or nav[-1] * 100. >= NAV_DESIRE_DIST:
     return Desire.none
-  return desire
+  return NAV_DESIRES.get(int(commands[0]), Desire.none)
 
 
 class Jcd210Desire:
@@ -60,8 +69,8 @@ class Jcd210Desire:
     self.current = Desire.none
     self.frames = 0
 
-  def update(self, dh, car_state, atc_type):
-    desire = dh.desire if dh.desire != Desire.none else nav_desire(dh, car_state, atc_type)
+  def update(self, dh, sm, speed, now=None):
+    desire = dh.desire if dh.desire != Desire.none else nav_desire(sm, speed, now)
     if desire == Desire.none:
       self.reset()
       return Desire.none
