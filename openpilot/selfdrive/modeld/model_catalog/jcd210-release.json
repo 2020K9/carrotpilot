@@ -1,0 +1,21 @@
+{
+  "format": 1,
+  "source_commit": "5da57620cdcc13dd48d8ac4d68f0c57c613aeace",
+  "runtime": {
+    "arch": "aarch64",
+    "l4t": "36.4.7",
+    "tensorrt": "10.3.0"
+  },
+  "bundle": {
+    "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetlink-host-5da57620cdcc13dd48d8ac4d68f0c57c613aeace/precompiled-runtime.tar.gz",
+    "sha256": "bcfac3ec140eef5ce44515e1f7bf2913a892c10538b9690a27d732a41a632a2a",
+    "size": 71227211
+  },
+  "model": {
+    "url": "https://github.com/2020K9/carrotpilot/releases/download/k9-jetson-jcd210-f73a9e53/big_driving_supercombo.onnx",
+    "sha256": "f73a9e535523d5e9acb9e642c64e33d631825dc8ba74123757d107cedd047bb5",
+    "size": 60792584
+  },
+  "storage_format": 1,
+  "signature": "BgbFyIn1N3RXQFvpi1JUfnzfbpQqywh/xYun8kzmFBo/GcfN8CK7/LCSUzJhM2YN+zAo/vETwR1mjaj0oRHyCg=="
+}
