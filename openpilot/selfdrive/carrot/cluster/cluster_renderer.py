@@ -7576,6 +7576,10 @@ class ClusterUiRenderer:
         rl.rl_scalef(sx, sy, 1.0)
         try:
             self._k9_ind_active = self._k9_indicator_active()
+            if self.k9_hud_menu == 2:
+                from cluster_k9_video import draw
+                draw(self, state, signal_lights)
+                return
             # 11/21 대감님 "외부hud 0.2.3지우란거": K9HudNavdy 1 one scene only (0 cards, 2, 3 3D board removed)
             self._k9_geo, self._k9_cx = K9L_ROAD_GEO, K9L_CX
             self._k9_exp1_setup(state)

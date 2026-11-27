@@ -392,7 +392,7 @@ class ClusterHudK9StyleParamReader:
 
 class K9HudNavdyParamReader:
     """K9HudNavdy: 1 = one scene (d2c46ecbb) / 0 = the same scene + 흔들림 줄임 (대감님 11/21 17:55).
-    A stored 2 / 3 (removed 11/21) or no value runs as 1."""
+    2 = video-inspired driving view. Unknown values fall back to 1."""
 
     def __init__(self) -> None:
         self._params = None
@@ -407,7 +407,8 @@ class K9HudNavdyParamReader:
         if self._params is None:
             return 1
         try:
-            return 0 if int(self._params.get_int("K9HudNavdy")) == 0 else 1
+            value = int(self._params.get_int("K9HudNavdy"))
+            return value if value in (0, 1, 2) else 1
         except Exception:
             return 1
 
@@ -1106,7 +1107,7 @@ def run_demo(
     renderer.set_k9_hud_style(1)  # 11/21: K9HudNavdy 1 one scene only
     renderer.set_k9_hud_navdy(1)  # Navdy road look
     renderer.set_k9_hud_res(True)  # 11/18 17:17: 1 = diagnostics in the screen-right block
-    renderer.set_k9_hud_menu(1)  # 11/18 17:35: menu 1 band on the ego lane lines (0 draws the same picture)
+    renderer.set_k9_hud_menu(2 if k9_hud_menu == 2 else 1)  # 0 retains the mode-1 picture
     renderer.set_k9_hud_smooth(k9_hud_menu == 0)  # 11/21 17:55: 0 = 1 + 흔들림 줄임
     report_frames = 0
     display_actual_fps: float | None = None
@@ -1319,7 +1320,9 @@ def run_demo(
                     )
                     active_hud_mirror_mode = next_hud_mirror_mode
                 next_hud_mirror_param_read = now + HUD_MIRROR_PARAM_POLL_SECONDS
-                renderer.set_k9_hud_smooth(k9_navdy_param_reader.read() == 0)  # K9HudNavdy 0/1, 1 s poll, no restart
+                k9_hud_menu = k9_navdy_param_reader.read()
+                renderer.set_k9_hud_menu(2 if k9_hud_menu == 2 else 1)
+                renderer.set_k9_hud_smooth(k9_hud_menu == 0)  # live display selection only
 
             if theme_override is None and now >= next_theme_param_read:
                 next_theme_mode = theme_param_reader.read() if theme_param_reader is not None else "auto"
