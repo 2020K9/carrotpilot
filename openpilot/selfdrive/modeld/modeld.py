@@ -34,6 +34,7 @@ from openpilot.selfdrive.modeld.camera_sync import FrameMeta
 from openpilot.selfdrive.modeld.camera_gap import CameraGapTrace
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
+from openpilot.selfdrive.modeld.jcd210_nav_desire import Jcd210Desire, is_jcd210
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
 from openpilot.selfdrive.modeld.helpers import (CHEDDAR_RUNTIME_DIR, get_tg_input_devices, load_oob, modeld_pkl_path,
                                                 refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
@@ -439,6 +440,7 @@ def main(demo=False):
                                    any(cfg.safetyParam & HyundaiSafetyFlags.CANFD_BLINKER_KICK for cfg in CP.safetyConfigs))
   boundary_observer = BoundaryObserver(cloudlog.event) if DH.boundary_indicator_supported else None
   nav_input = MapInput()
+  jcd210_desire = Jcd210Desire()
 
 
   frame = 0
@@ -484,6 +486,10 @@ def main(demo=False):
     if hasattr(model, 'update'):
       model.update(sm, meta_main)
     desire = DH.desire
+    if is_jcd210(model):
+      desire = jcd210_desire.update(DH, sm['carState'], sm['carrotMan'].atcType)
+    else:
+      jcd210_desire.reset()
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
