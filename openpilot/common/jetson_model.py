@@ -45,7 +45,13 @@ def selected_release(path, required=False):
   if Path('/TICI').is_file() and not any(Path(path).with_name(name).exists() for name in
       ('usb_host_sha256_release.json', 'local_host_release.json')):
     from openpilot.common.big_model_catalog import DIRECTORY, selected
-    path = DIRECTORY / selected()['jetson_release']
+    release = selected().get('jetson_release')
+    if release is None:
+      # Retired model (Fairy Tale) has no signed Jetson release any more.
+      if required:
+        raise ValueError('Selected Jetson model is retired and has no signed release')
+      return None
+    path = DIRECTORY / release
   usb = Path(path).with_name('usb_host_sha256_release.json')
   if usb.is_file():
     from tools.jetlink.usb_release import validate, identity  # noqa: TID251 -- shared standalone updater

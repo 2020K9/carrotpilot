@@ -163,6 +163,9 @@ def test_alias_delete_keeps_shared_selected_jetson_model(store):
 def test_catalog_releases_are_signed_and_match_exact_onnx_contracts():
   from update_host import validate_manifest, verify_signature
   for key, entry in C.catalog().items():
+    if 'jetson_release' not in entry:
+      assert entry.get('retired') is True and key not in C.available()
+      continue
     release = json.loads((C.DIRECTORY / entry['jetson_release']).read_text())
     validate_manifest(release)
     verify_signature(release)
@@ -260,6 +263,8 @@ def test_retired_alias_never_deletes_available_flip_onnx(store, monkeypatch):
 
 def test_fairy_tale_retired_selection_and_boot_transition(store, monkeypatch):
   assert C.catalog()["fairy-tale"]["retired"] is True
+  assert "jetson_release" not in C.catalog()["fairy-tale"]
+  assert not (C.DIRECTORY / "fairy-tale-release.json").exists()
   assert "fairy-tale" not in C.available()
   with pytest.raises(ValueError):
     C.select("fairy-tale")
