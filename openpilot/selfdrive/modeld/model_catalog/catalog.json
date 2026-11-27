@@ -70,5 +70,10 @@
     "retired": true,
     "jetson_spec": "fairy-tale.json",
     "jetson_release": "fairy-tale-release.json"
+  },
+  "jcd210": {
+    "name": "Jcd210",
+    "jetson_spec": "jcd210.json",
+    "jetson_release": "jcd210-release.json"
   }
 }
