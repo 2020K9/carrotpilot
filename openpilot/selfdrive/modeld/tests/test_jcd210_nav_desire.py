@@ -76,9 +76,9 @@ def test_no_desire_for_straight_uturn_roundabout_merge_arrive():
     assert nav_desire(nsm(man(kind, modifier, 10.)), 0., NOW) == D.none, (kind, modifier)
 
 
-def test_distance_window_and_travel_compensation():
-  assert nav_desire(nsm(man('turn', 'left', 99.)), 0., NOW) == D.turnLeft
-  assert nav_desire(nsm(man('turn', 'left', 100.)), 0., NOW) == D.none
+def test_distance_range_same_as_n16_and_travel_compensation():
+  for distance in (0., 99., 100., 500., 3000.):  # N16 passes any distance >= 0 to the model
+    assert nav_desire(nsm(man('turn', 'left', distance)), 0., NOW) == D.turnLeft, distance
   assert nav_desire(nsm(man('turn', 'left', 120.), age=1.), 30., NOW) == D.turnLeft  # 120 - 30 m
   assert nav_desire(nsm(man('turn', 'left', 5.), age=1.), 10., NOW) == D.none  # already passed
 
@@ -136,3 +136,15 @@ def test_modeld_other_models_keep_desire_helper_desire():
     "      jcd210_desire.reset()"))
   assert src.count(block) == 1
   assert src.count('vec_desire[desire] = 1') == 1
+
+
+def test_on_exactly_while_n16_gets_the_command():
+  from openpilot.selfdrive.navigation.helpers import navigation_input
+  cases = [(), (man('turn', 'left', 2500.),), (man('turn', 'straight', 10.), man('fork', 'right', 900.)),
+           (man('turn', 'right', 5.),), (man('arrive', 'left', 30.),)]
+  for maneuvers in cases:
+    for age, speed in ((0., 0.), (1., 10.), (2., 0.)):
+      s = nsm(*maneuvers, age=age)
+      n16 = navigation_input(maneuvers, speed * age) if age < 2. else None
+      on = n16 is not None and n16[:-1].any() and int(n16[:-1].nonzero()[0][0]) in jnd.NAV_DESIRES
+      assert (nav_desire(s, speed, NOW) != D.none) == on, (maneuvers, age, speed)

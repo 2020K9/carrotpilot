@@ -3,7 +3,8 @@
 Jcd210 has no navigation input. It reads the same navigation command N16
 gets (navInstructionCarrot.allManeuvers through navigation_input, fresh for
 2 s, distance advanced by speed since receipt), so it does not depend on the
-auto turn control setting. Turns become turn desires; slight turns, ramps and forks become
+auto turn control setting. It is on exactly while N16 would get that command
+(no distance limit of its own, like N16). Turns become turn desires; slight turns, ramps and forks become
 keep desires (never a lane change desire). A desire that stays on reverses
 the Jcd210 path, so it is sent as a one-frame pulse and again every second.
 DesireHelper's own desire has priority, so one desire path feeds the model.
@@ -17,7 +18,6 @@ from openpilot.selfdrive.navigation.helpers import navigation_input
 Desire = log.Desire
 PULSE_FRAMES = ModelConstants.MODEL_RUN_FREQ  # one pulse per second
 NAV_FRESH_S = 2.  # same freshness as N16 (MapInput)
-NAV_DESIRE_DIST = 100.  # N16 encodes distance in 100 m units; act within one unit
 
 # Valhalla command index (navigation_input) -> desire
 NAV_DESIRES = {
@@ -56,7 +56,7 @@ def nav_desire(sm, speed, now=None):
   nav = navigation_input(sm['navInstructionCarrot'].allManeuvers,
                          max(0., speed) * (now - sm.recv_time['navInstructionCarrot']))
   commands = nav[:-1].nonzero()[0]
-  if len(commands) == 0 or nav[-1] * 100. >= NAV_DESIRE_DIST:
+  if len(commands) == 0:
     return Desire.none
   return NAV_DESIRES.get(int(commands[0]), Desire.none)
 
