@@ -260,6 +260,9 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
     vi.type.tensor_type.elem_type = TensorProto.FLOAT16
 
   retyped = set()
+  if not any(c.input[0] in IMG_INPUTS for c in casts):
+    # Identity-bridged inputs: the bridges now carry fp16 as well.
+    retyped.update(_identity_aliases(g) - set(IMG_INPUTS))
   for cast in casts:
     # Everything downstream reads the cast's source directly now.
     source, produced = cast.input[0], cast.output[0]
@@ -447,6 +450,15 @@ def _head_casts(g) -> list:
   if per_input:
     return per_input
 
+  # Some exports (Jcd210 f73a9e53) put an Identity between each input and
+  # its Cast: img -> Identity -> vision/img -> Cast(fp16). Identity moves
+  # bytes only, so the Cast behind it is the head Cast all the same.
+  aliases = _identity_aliases(g) - set(IMG_INPUTS)
+  bridged = [n for n in g.node
+             if n.op_type == 'Cast' and len(n.input) == 1 and n.input[0] in aliases]
+  if bridged:
+    return bridged
+
   concat = next((n for n in g.node if n.op_type == 'Concat'
                  and all(i in IMG_INPUTS for i in n.input)), None)
   if concat is None:
@@ -454,6 +466,21 @@ def _head_casts(g) -> list:
   cat = concat.output[0]
   cast = next((n for n in g.node if n.op_type == 'Cast' and list(n.input) == [cat]), None)
   return [cast] if cast is not None else []
+
+
+def _identity_aliases(g) -> set[str]:
+  """The image input names plus every tensor reached from one through plain
+  one-in one-out Identity nodes only."""
+  aliases = {vi.name for vi in g.input if vi.name in IMG_INPUTS}
+  changed = True
+  while changed:
+    changed = False
+    for n in g.node:
+      if (n.op_type == 'Identity' and not n.domain and len(n.input) == 1 and len(n.output) == 1
+          and n.input[0] in aliases and n.output[0] not in aliases):
+        aliases.add(n.output[0])
+        changed = True
+  return aliases
 
 
 def patch_file(src: str, dst: str, check: bool = True) -> str:
