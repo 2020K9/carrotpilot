@@ -20,17 +20,17 @@ import cluster_renderer as cr
 from cluster_live import live_comma_resources
 
 
-def test_settings_menu_has_0_1_and_video_2():
+def test_settings_menu_has_0_and_1():
   data = json.loads((ROOT / "openpilot/selfdrive/carrot_settings.json").read_text())
   item = next(p for p in data["params"] if p["name"] == "K9HudNavdy")
-  assert (item["min"], item["max"], item["default"]) == (0, 2, 1)   # retain default 1; new mode 2 is opt-in
-  assert all(len(v) == 3 and all(label.startswith(str(i) + " ") for i, label in enumerate(v)) for v in item["options"].values())
+  assert (item["min"], item["max"], item["default"]) == (0, 1, 1)   # 11/21 17:55: 0 = 1 + 흔들림 줄임, default 1
+  assert all(len(v) == 2 and v[0].startswith("0 ") and v[1].startswith("1 ") for v in item["options"].values())
 
 
-def test_reader_preserves_0_1_2_and_rejects_unknown():
+def test_reader_0_is_0_everything_else_1():
   import main
   reader = main.K9HudNavdyParamReader()
-  for raw, want in ((0, 0), (1, 1), (2, 2), (3, 1), (4, 1), (-1, 1)):   # 2 is the new video-style view; unknown values retain the mode-1 fallback
+  for raw, want in ((0, 0), (1, 1), (2, 1), (3, 1), (4, 1), (-1, 1)):   # 2 / 3 were removed 11/21: run as 1
     reader._params = SimpleNamespace(get_int=lambda _k, v=raw: v)
     assert reader.read() == want
   reader._params = None

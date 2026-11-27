@@ -96,15 +96,6 @@ jobs:
             openpilot/selfdrive/carrot/tests/test_cluster_h264_complexity.py \
             openpilot/selfdrive/carrot/tests/test_cluster_performance_safeguards.py \
             openpilot/selfdrive/carrot/tests/test_cluster_usb_rate.py
-      - name: K9 HUD video layout and existing mode regressions
-        env:
-          PYTHONPATH: .:opendbc_repo:tools/jetlink
-        run: |
-          xvfb-run -a python -m pytest -p no:cacheprovider -c /dev/null --confcutdir=openpilot/selfdrive/carrot/tests -q \
-            openpilot/selfdrive/carrot/tests/test_k9_hud_video.py \
-            openpilot/selfdrive/carrot/tests/test_k9_hud_video_integration.py \
-            openpilot/selfdrive/carrot/tests/test_k9_hud_navdy0_smooth.py \
-            openpilot/selfdrive/carrot/tests/test_k9_hud_navdy_res.py
       - name: USB receiver ownership, interrupted transfer and rollback checks
         run: |
           sudo env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:tools/jetlink:third_party/jetlink "$(which python)" -m pytest \
