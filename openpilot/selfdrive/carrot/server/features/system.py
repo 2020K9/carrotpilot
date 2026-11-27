@@ -271,71 +271,6 @@ async def api_regulatory(request: web.Request) -> web.Response:
     return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
-JETSON_REBOOT = web.AppKey("jetson_reboot", dict)
-
-
-def _jetson_reboot_protocol():
-  from tools.jetlink import host_reboot  # noqa: TID251 -- same request file as the comma UI button
-  return host_reboot
-
-
-async def api_jetson_reboot(request: web.Request) -> web.Response:
-  # Same path as Settings > Device on the comma: request file -> jetlinkd -> Jetson.
-  # Any vehicle state, onroad/engaged included (대감님 11/19 08:29); no _reject_if_engaged here.
-  try:
-    protocol = _jetson_reboot_protocol()
-    requested_at = time.monotonic()
-    request_id = protocol.submit(requested_at)
-    request.app[JETSON_REBOOT]["request"] = (request_id, requested_at)
-    return web.json_response({"ok": True, "id": request_id, "state": "pending", "reason": ""})
-  except Exception as e:
-    return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
-async def api_jetson_reboot_status(request: web.Request) -> web.Response:
-  pending = request.app[JETSON_REBOOT].get("request")
-  request_id = request.query.get("id", "")
-  if pending is None or (request_id and request_id != pending[0]):
-    return web.json_response({"ok": False, "error": "unknown request"}, status=404)
-  try:
-    state, reason = _jetson_reboot_protocol().status(pending[0], pending[1])
-    return web.json_response({"ok": True, "id": pending[0], "state": state, "reason": reason})
-  except Exception as e:
-    return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
-JETSON_SOFT_RESET = web.AppKey("jetson_soft_reset", dict)
-
-
-def _jetson_soft_reset_protocol():
-  from tools.jetlink import host_soft_reset  # noqa: TID251 -- request file read by jetlinkd
-  return host_soft_reset
-
-
-async def api_jetson_soft_reset(request: web.Request) -> web.Response:
-  # 'Jetson soft reset' below 'Jetson Reboot' (대감님 11/26 23:21): no OS reboot unless not healthy in 30 s.
-  try:
-    protocol = _jetson_soft_reset_protocol()
-    requested_at = time.monotonic()
-    request_id = protocol.submit(requested_at)
-    request.app[JETSON_SOFT_RESET]["request"] = (request_id, requested_at)
-    return web.json_response({"ok": True, "id": request_id, "state": "pending", "step": 0, "reason": ""})
-  except Exception as e:
-    return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
-async def api_jetson_soft_reset_status(request: web.Request) -> web.Response:
-  pending = request.app[JETSON_SOFT_RESET].get("request")
-  request_id = request.query.get("id", "")
-  if pending is None or (request_id and request_id != pending[0]):
-    return web.json_response({"ok": False, "error": "unknown request"}, status=404)
-  try:
-    value = _jetson_soft_reset_protocol().status(pending[0], pending[1])
-    return web.json_response({"ok": True, "id": pending[0], **value})
-  except Exception as e:
-    return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
 async def api_poweroff(request: web.Request) -> web.Response:
   blocked = _reject_if_engaged(request)
   if blocked is not None:
@@ -437,12 +372,6 @@ def register(app: web.Application) -> None:
   app.router.add_get("/api/calibration_status", api_calibration_status)
   app.router.add_get("/api/regulatory", api_regulatory)
   app.router.add_post("/api/reboot", api_reboot)
-  app[JETSON_REBOOT] = {}
-  app.router.add_post("/api/jetson_reboot", api_jetson_reboot)
-  app.router.add_get("/api/jetson_reboot_status", api_jetson_reboot_status)
-  app[JETSON_SOFT_RESET] = {}
-  app.router.add_post("/api/jetson_soft_reset", api_jetson_soft_reset)
-  app.router.add_get("/api/jetson_soft_reset_status", api_jetson_soft_reset_status)
   app.router.add_post("/api/poweroff", api_poweroff)
   app.router.add_post("/api/recalibrate", api_recalibrate)
   app.router.add_post("/api/set_default", api_set_default)

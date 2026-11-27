@@ -7,8 +7,6 @@ function bindDeviceTabEvents(container) {
   bindDeviceLanguage(container);
 
   bindDeviceAction(container, "btnDeviceReboot", "/api/reboot", getUIText("confirm_reboot", "Reboot now?"));
-  bindJetsonReboot(container);
-  bindJetsonSoftReset(container);
   bindDeviceAction(container, "btnDevicePoweroff", "/api/poweroff", getUIText("power_off_confirm", "Power off device?"));
   bindDeviceAction(container, "btnDeviceRecalib", "/api/recalibrate", getUIText("reset_calibration_confirm", "Reset calibration and reboot?"));
 
@@ -142,107 +140,6 @@ function bindDeviceDisabledControls(container) {
       if (event.key !== "Enter" && event.key !== " ") return;
       showMessage(event);
     });
-  });
-}
-
-// Jetson reboot: same request as the comma Settings > Device button (tools/jetlink/host_reboot.py),
-// no vehicle-state gate. Result text shown in the row and as a toast.
-const JETSON_REBOOT_POLL_MS = 300;
-const JETSON_REBOOT_MAX_MS = 6000;
-
-function jetsonRebootText(state, reason) {
-  if (state === "pending") return getUIText("jetson_reboot_sending", "sending...");
-  if (state === "sent") return getUIText("jetson_rebooting", "Jetson rebooting");
-  if (state === "disconnected") return getUIText("jetson_not_connected", "Jetson not connected");
-  if (state === "unsupported") return getUIText("jetson_needs_bundle", "Jetson needs the new bundle (next boot)");
-  if (reason === "reboot command failed") return getUIText("jetson_reboot_cmd_failed", "reboot command failed");
-  return getUIText("jetson_reboot_rejected", "rejected: ") + (reason || state || "");
-}
-
-function showJetsonRebootText(button, text, tone) {
-  const row = button.closest(".settingTop");
-  let el = row && row.querySelector(".jetson-reboot-status");
-  if (!el && row) {
-    el = document.createElement("div");
-    el.className = "descr jetson-reboot-status";
-    row.querySelector(".title")?.parentElement?.appendChild(el);
-  }
-  if (el) el.textContent = text;
-  if (tone) showAppToast(text, { tone });
-}
-
-function bindJetsonReboot(container) {
-  const button = container.querySelector("#btnDeviceJetsonReboot");
-  if (!button) return;
-  button.addEventListener("click", async () => {
-    const confirmed = await appConfirm(getUIText("jetson_reboot_confirm", "Are you sure you want to reboot the Jetson?"), {
-      title: getUIText("confirm_title", "Confirm"),
-      confirmLabel: getUIText("ok", "OK"),
-      cancelLabel: getUIText("cancel", "Cancel"),
-    });
-    if (!confirmed) return;
-    try {
-      const started = await postJson("/api/jetson_reboot", {});
-      showJetsonRebootText(button, jetsonRebootText("pending", ""), "");
-      const deadline = Date.now() + JETSON_REBOOT_MAX_MS;
-      let result = started;
-      while (result.state === "pending" && Date.now() < deadline) {
-        await waitMs(JETSON_REBOOT_POLL_MS);
-        result = await getJson("/api/jetson_reboot_status?id=" + encodeURIComponent(started.id));
-      }
-      const tone = result.state === "sent" ? "success" : "error";
-      showJetsonRebootText(button, jetsonRebootText(result.state, result.reason), tone);
-    } catch (err) {
-      showJetsonRebootText(button, err.message || getUIText("failed", "Failed"), "error");
-    }
-  });
-}
-
-// Jetson soft reset (대감님 11/26 23:21): tools/jetlink/host_soft_reset.py, step text while it runs.
-const JETSON_SOFT_RESET_POLL_MS = 500;
-const JETSON_SOFT_RESET_MAX_MS = 45000;
-const JETSON_SOFT_RESET_STEPS = ["", "jetson_soft_step1", "jetson_soft_step2", "jetson_soft_step3", "jetson_soft_step4", "jetson_soft_step5"];
-const JETSON_SOFT_RESET_STEP_EN = ["", "stopping services", "legacy stage", "legacy stage", "receiving bundle/model, checking hash", "starting services, checking"];
-
-function jetsonSoftResetText(result) {
-  const state = result.state;
-  if (state === "pending") return getUIText("jetson_reboot_sending", "sending...");
-  if (state === "running") {
-    const step = Math.max(1, Math.min(5, Number(result.step) || 1));
-    if (step === 2 || step === 3) return getUIText("jetson_needs_bundle", "Jetson needs the new bundle (next boot)");
-    return getUIText("jetson_soft_step", "Step ") + ({1: 1, 4: 2, 5: 3}[step]) + "/3: " + getUIText(JETSON_SOFT_RESET_STEPS[step], JETSON_SOFT_RESET_STEP_EN[step]);
-  }
-  if (state === "done") return getUIText("jetson_soft_done", "Jetson soft reset done");
-  if (state === "reboot") return getUIText("jetson_soft_reboot", "Not recovered: full Jetson reboot") + (result.reason ? " (" + result.reason + ")" : "");
-  if (state === "disconnected") return getUIText("jetson_not_connected", "Jetson not connected");
-  if (state === "unsupported") return getUIText("jetson_needs_bundle", "Jetson needs the new bundle (next boot)");
-  return getUIText("jetson_reboot_rejected", "rejected: ") + (result.reason || state || "");
-}
-
-function bindJetsonSoftReset(container) {
-  const button = container.querySelector("#btnDeviceJetsonSoftReset");
-  if (!button) return;
-  button.addEventListener("click", async () => {
-    const confirmed = await appConfirm(getUIText("jetson_soft_reset_confirm", "Reset the Jetson without rebooting?"), {
-      title: getUIText("confirm_title", "Confirm"),
-      confirmLabel: getUIText("ok", "OK"),
-      cancelLabel: getUIText("cancel", "Cancel"),
-    });
-    if (!confirmed) return;
-    try {
-      const started = await postJson("/api/jetson_soft_reset", {});
-      showJetsonRebootText(button, jetsonSoftResetText(started), "");
-      const deadline = Date.now() + JETSON_SOFT_RESET_MAX_MS;
-      let result = started;
-      while ((result.state === "pending" || result.state === "running") && Date.now() < deadline) {
-        await waitMs(JETSON_SOFT_RESET_POLL_MS);
-        result = await getJson("/api/jetson_soft_reset_status?id=" + encodeURIComponent(started.id));
-        showJetsonRebootText(button, jetsonSoftResetText(result), "");
-      }
-      showJetsonRebootText(button, jetsonSoftResetText(result), result.state === "done" ? "success" : "error");
-    } catch (err) {
-      showJetsonRebootText(button, err.message || getUIText("failed", "Failed"), "error");
-    }
   });
 }
 

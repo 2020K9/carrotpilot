@@ -1,5 +1,5 @@
 """'Jetson soft reset' button (대감님 11/26 23:21): step order, GPU/USB untouched,
-not healthy in 30 s -> the existing full reboot, web step text."""
+not healthy in 30 s -> the existing full reboot, protocol progress states; web controls removed 2026-11-27."""
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,7 +145,7 @@ class Link:
     return SimpleNamespace(payload=json.dumps(self.replies.pop(0)).encode())
 
 
-def test_comma_steps_shown_on_web():
+def test_comma_protocol_progress_steps():
   peer = {'carrot_host': 'jetson', S.CAPABILITY: True, R.CAPABILITY: True}
   rid = S.submit(now=0.)
   link = Link([{'ok': True}, {'ok': True, 'progress': {'id': rid, 'step': 2, 'state': 'running'}}])
@@ -172,16 +172,6 @@ def test_old_bundle_unsupported():
   rid = S.submit(now=0.)
   R.Client({'carrot_host': 'jetson', R.CAPABILITY: True}).idle(Link([]), None, now=.1)
   assert S.status(rid, 0., now=.2)['state'] == 'unsupported'
-
-
-def test_web_button_below_reboot():
-  web = Path(__file__).resolve().parents[2] / 'openpilot/selfdrive/carrot/web/js'
-  page = (web / 'pages/setting_device.js').read_text()
-  assert page.index('"btnDeviceJetsonReboot"') < page.index('"btnDeviceJetsonSoftReset"') < page.index('"btnDeviceRecalib"')
-  ko = (web / 'translations/ko.js').read_text()
-  assert 'jetson_soft_reset: "젯슨 초기화"' in ko
-  for n in (1, 4, 5):
-    assert f'jetson_soft_step{n}:' in ko
 
 
 def test_standstill_press_does_not_reboot(tmp_path):
