@@ -76,6 +76,17 @@ def _on_segment(px, a, b, tol=10.):
   return np.linalg.norm(px - (a + t[..., None] * ab), axis=-1) <= tol
 
 
+def _freeze_system_stats(r, monkeypatch):
+  # this worker's live CPU/MEM gauges (right 'system' card) are not drawn per frame: they sit in the trip-report
+  # cache texture, redrawn from _system_stats once a second (TRIP_REPORT_CACHE_REFRESH_SECONDS). Freeze the
+  # sample and redraw the cache from it on the first frame, so a 1 s redraw between the two screens draws the
+  # same gauges (11/21: freezing the sample alone still failed 2 of 11 runs). 11/27: every pixel-identical
+  # comparison of two screens needs this (test_no_strip_frame_is_unchanged[done_100] failed 3 of 20 runs without it)
+  fixed = r._system_stats.sample()
+  monkeypatch.setattr(r._system_stats, 'sample', lambda *a, **k: fixed)
+  monkeypatch.setattr(r, '_trip_report_cache_valid', False)
+
+
 @pytest.mark.parametrize('name', list(STRIP_CASES))
 def test_strip_and_percent_cover_and_touch_nothing(renderer, monkeypatch, name):
   health, marks = STRIP_CASES[name]
@@ -109,6 +120,8 @@ def test_no_strip_frame_is_unchanged(renderer, monkeypatch, name, health, marks,
   used = []
   outer = hud.HealthRenderer._strip_outer
   monkeypatch.setattr(hud.HealthRenderer, '_strip_outer', lambda self: used.append(1) or outer(self))
+  if alert is None:
+    _freeze_system_stats(r, monkeypatch)
   img, _ = _frame(renderer, health, marks, monkeypatch, st2)
   assert r._health_strip_plan(getattr(st2, 'alert', None)) is None
   assert not used   # the shrink path is never entered
@@ -158,13 +171,7 @@ def test_ok_jetson_without_car_data_has_no_strip_any_more(renderer, monkeypatch)
   # 23:12: this state (all server stages done, no car data yet) used to get a %-only strip ('ok_83');
   # without the % there is no strip: the normal full-size screen, pixel-identical to the old path
   r, _st = renderer
-  # this worker's live CPU/MEM gauges (right 'system' card) are not drawn per frame: they sit in the trip-report
-  # cache texture, redrawn from _system_stats once a second (TRIP_REPORT_CACHE_REFRESH_SECONDS). Freeze the
-  # sample and redraw the cache from it on the first frame, so a 1 s redraw between the two screens draws the
-  # same gauges (11/21: freezing the sample alone still failed 2 of 11 runs)
-  fixed = r._system_stats.sample()
-  monkeypatch.setattr(r._system_stats, 'sample', lambda *a, **k: fixed)
-  monkeypatch.setattr(r, '_trip_report_cache_valid', False)
+  _freeze_system_stats(r, monkeypatch)
   health, marks = _h('ok', **ALL4), {}
   used = []
   outer = hud.HealthRenderer._strip_outer
