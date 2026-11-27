@@ -38,7 +38,7 @@ def test_only_reviewed_models_selectable(store, key):
 
 
 def test_official_inputs_and_retired_legacy_alias():
-  assert set(C.available()) == {'n16', 'flip-flop', 'light-speed', 'light-speed-2', 'fairy-tale'}
+  assert set(C.available()) == {'n16', 'flip-flop', 'light-speed', 'light-speed-2'}
   assert C.catalog()['md-v3']['retired']
   assert C.noo('n16')
   assert not C.noo('md-v3') and not C.noo('flip-flop') and not C.noo('light-speed') and not C.noo('light-speed-2')
@@ -51,7 +51,7 @@ def test_official_inputs_and_retired_legacy_alias():
   for key in C.catalog():
     spec = ModelSpec.from_dict(C.model_spec(key))
     assert validate_model_spec(spec) is spec
-    assert model_name(spec) == ('N16 Nav (96244b1f)' if key == 'n16' else 'Light speed 2 (ea2f516f)' if key == 'light-speed-2' else 'Light speed (f22b8b34)' if key == 'light-speed' else 'Fairy Tale (e0623b24)' if key == 'fairy-tale' else 'Flip Flop (1365126a)')
+    assert model_name(spec) == ('N16 Nav (96244b1f)' if key == 'n16' else 'Light speed 2 (ea2f516f)' if key == 'light-speed-2' else 'Light speed (f22b8b34)' if key == 'light-speed' else 'App model bc125a9af330' if key == 'fairy-tale' else 'Flip Flop (1365126a)')
   from openpilot.selfdrive.modeld.generic_model_runtime import model_metadata
 
   for key, fixture in [('md-v3', 'md_v3_metadata.json'), ('flip-flop', 'flip_flop_metadata.json'), ('light-speed', 'light_speed_metadata.json'), ('light-speed-2', 'light_speed_2_metadata.json')]:
@@ -209,10 +209,10 @@ def test_retirement_preserves_running_boot_and_falls_back_next_boot(store, monke
   with pytest.raises(ValueError):
     C.select('md-v3')
   offroad = SimpleNamespace(get_bool=lambda key: key == 'IsOffroad')
-  assert library.reconcile_retired(offroad) == []
+  assert library.reconcile_retired(offroad) == ["fairy-tale"]
   monkeypatch.setattr(C, 'boot_id', lambda: 'next-boot')
   assert C.freeze_boot() == 'n16'
-  assert library.reconcile_retired(offroad) == ['md-v3']
+  assert library.reconcile_retired(offroad) == ["md-v3", "fairy-tale"]
 
 
 def test_curated_retirement_only_deletes_offroad_after_active_transition(store, monkeypatch):
@@ -226,12 +226,12 @@ def test_curated_retirement_only_deletes_offroad_after_active_transition(store, 
   offroad = SimpleNamespace(get_bool=lambda key: key == 'IsOffroad')
   assert library.reconcile_retired(onroad) == [] and target.exists()
   C.atomic_json(store / 'state.json', {'active': C.catalog()['md-v3']['egpu']})
-  assert library.reconcile_retired(offroad) == [] and target.exists()
+  assert library.reconcile_retired(offroad) == ["fairy-tale"] and target.exists()
   C.atomic_json(store / 'state.json', {'active': C.catalog()['n16']['egpu']})
-  assert library.reconcile_retired(offroad) == ['md-v3']
+  assert library.reconcile_retired(offroad) == ["md-v3", "fairy-tale"]
   assert not target.exists() and keep.read_text() == 'keep'
-  assert C.read_json(store / 'jetson-delete.json')['models'] == ['md-v3']
-  assert 'md-v3' not in {m['id'] for m in library.status()['models']}
+  assert C.read_json(store / "jetson-delete.json")["models"] == ["fairy-tale", "md-v3"]
+  assert "md-v3" not in {m['id'] for m in library.status()['models']}
 
 
 def test_hidden_preferences_migrate_to_full_curated_list(store):
@@ -256,3 +256,22 @@ def test_retired_alias_never_deletes_available_flip_onnx(store, monkeypatch):
   wire.Client({wire.CAPABILITY: True})._exchange(client)
   assert sent[-1][2] == {'delete': []}
   assert C.read_json(store / 'jetson-delete.json')['models'] == []
+
+
+def test_fairy_tale_retired_selection_and_boot_transition(store, monkeypatch):
+  assert C.catalog()["fairy-tale"]["retired"] is True
+  assert "fairy-tale" not in C.available()
+  with pytest.raises(ValueError):
+    C.select("fairy-tale")
+  C.atomic_json(store / "selection.json", {"selected": "fairy-tale"})
+  C.atomic_json(store / "boot-selection.json", {"selected": "fairy-tale", "boot": C.boot_id()})
+  assert C.effective_id() == C.freeze_boot() == "fairy-tale"
+  assert C.preferences()["selected"] == "n16"
+  assert "fairy-tale" not in {row["id"] for row in library.status()["models"]}
+  offroad = SimpleNamespace(get_bool=lambda key: key == "IsOffroad")
+  assert "fairy-tale" not in library.reconcile_retired(offroad)
+  monkeypatch.setattr(C, "boot_id", lambda: "next-boot")
+  assert C.freeze_boot() == "n16"
+  assert library.paths("fairy-tale") == []
+  assert "fairy-tale" in library.reconcile_retired(offroad)
+  assert "fairy-tale" in C.read_json(store / "jetson-delete.json")["models"]
