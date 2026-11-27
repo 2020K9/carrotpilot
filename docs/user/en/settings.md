@@ -612,3 +612,11 @@ Jetson Reboot stops inference/HUD services and requests an OS reboot. GPU force-
 Soft Reset has three displayed stages: stop services; receive/verify the selected bundle and model hashes; start services and check health. It no longer separately resets GPU or USB. The existing 30-second health deadline and fallback reboot remain. Signatures, hash checks and models are unchanged.
 
 Updating Comma sources does not change the running Jetson code: its new model-specific signed bundle must be installed. A sent reboot request does not confirm completion; check the new boot ID, connection and inference state. An OS reboot is not a physical power cycle. Vehicle recovery remains unverified.
+
+## K9 D layout 2: ported source driving scene
+
+In Carrot Web settings, open **CLUSTER HUD → K9 D Screen Layout (Trial)** (`K9HudNavdy`) and select **2 Video-style driving view**. The default remains 1; stored values are not rewritten automatically. A previously stored 2 selects the new layout after updating. Mode 0 retains the existing scene with jitter reduction, mode 1 retains the existing scene, and unknown values such as 3 fall back to 1.
+
+Mode 2 ports the source road, lanes, path, traffic and camera behavior while preserving its 3:2 aspect ratio. The ego remains the existing black K9 photograph; speed, navigation and diagnostic panels remain unchanged. P/R displays and vehicle control are unaffected. Missing measured lanes or paths are not invented; decorative road ground is not a detection.
+
+This is not a pixel-identical Android display. Touch orbit/zoom UI and always-on traffic taillights without a corresponding input are not included. In-vehicle readability and FPS remain unverified; extreme dense scenes can be slower. See [source and adapter details](../../hud2-source.md). Publishing code does not install it on the vehicle.
