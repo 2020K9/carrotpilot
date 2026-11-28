@@ -38,7 +38,7 @@ def test_only_reviewed_models_selectable(store, key):
 
 
 def test_official_inputs_and_retired_legacy_alias():
-  assert set(C.available()) == {'n16', 'flip-flop', 'light-speed', 'light-speed-2', 'jcd210'}
+  assert set(C.available()) == {'n16', 'flip-flop', 'light-speed', 'light-speed-2'}
   assert C.catalog()['md-v3']['retired']
   assert C.noo('n16')
   assert not C.noo('md-v3') and not C.noo('flip-flop') and not C.noo('light-speed') and not C.noo('light-speed-2')
@@ -51,7 +51,7 @@ def test_official_inputs_and_retired_legacy_alias():
   for key in C.catalog():
     spec = ModelSpec.from_dict(C.model_spec(key))
     assert validate_model_spec(spec) is spec
-    assert model_name(spec) == ('N16 Nav (96244b1f)' if key == 'n16' else 'Light speed 2 (ea2f516f)' if key == 'light-speed-2' else 'Light speed (f22b8b34)' if key == 'light-speed' else 'App model bc125a9af330' if key == 'fairy-tale' else 'Jcd210 (6a7d09ad)' if key == 'jcd210' else 'Flip Flop (1365126a)')
+    assert model_name(spec) == ('N16 Nav (96244b1f)' if key == 'n16' else 'Light speed 2 (ea2f516f)' if key == 'light-speed-2' else 'Light speed (f22b8b34)' if key == 'light-speed' else 'App model bc125a9af330' if key == 'fairy-tale' else 'Flip Flop (1365126a)')
   from openpilot.selfdrive.modeld.generic_model_runtime import model_metadata
 
   for key, fixture in [('md-v3', 'md_v3_metadata.json'), ('flip-flop', 'flip_flop_metadata.json'), ('light-speed', 'light_speed_metadata.json'), ('light-speed-2', 'light_speed_2_metadata.json')]:
